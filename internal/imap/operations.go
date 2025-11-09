@@ -3,7 +3,6 @@ package imap
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"strings"
 	_ "time"
 
@@ -210,7 +209,7 @@ func (c *Client) messageToEmail(msg *imap.Message, includeAttachments bool) *mod
 			switch h := part.Header.(type) {
 			case *mail.InlineHeader:
 				contentType, _, _ := h.ContentType()
-				body, _ := ioutil.ReadAll(part.Body)
+				body, _ := io.ReadAll(part.Body)
 
 				if strings.HasPrefix(contentType, "text/plain") {
 					email.TextBody = string(body)
@@ -222,7 +221,7 @@ func (c *Client) messageToEmail(msg *imap.Message, includeAttachments bool) *mod
 				if includeAttachments {
 					filename, _ := h.Filename()
 					contentType, _, _ := h.ContentType()
-					data, _ := ioutil.ReadAll(part.Body)
+					data, _ := io.ReadAll(part.Body)
 
 					email.Attachments = append(email.Attachments, models.Attachment{
 						Filename:    filename,
