@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"os"
 
@@ -11,6 +12,11 @@ import (
 )
 
 func main() {
+	// Parse command line flags
+	httpMode := flag.Bool("http", false, "Run in HTTP mode instead of stdio mode")
+	httpAddr := flag.String("addr", "localhost:8080", "HTTP server address (only used with -http)")
+	flag.Parse()
+
 	// Configure logging
 	log.SetOutput(os.Stderr) // MCP servers should log to stderr
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
@@ -43,7 +49,16 @@ func main() {
 
 	log.Println("")
 	ctx := context.Background()
-	if err := srv.Start(ctx); err != nil {
-		log.Fatalf("❌ Server error: %v", err)
+
+	if *httpMode {
+		log.Printf("📡 Starting in HTTP mode on %s", *httpAddr)
+		if err := srv.StartHTTP(ctx, *httpAddr); err != nil {
+			log.Fatalf("❌ HTTP Server error: %v", err)
+		}
+	} else {
+		log.Println("📡 Starting in stdio mode")
+		if err := srv.Start(ctx); err != nil {
+			log.Fatalf("❌ Server error: %v", err)
+		}
 	}
 }

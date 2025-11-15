@@ -36,10 +36,15 @@ build:
 	@$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) $(MAIN_PATH)
 	@echo "$(GREEN)Build complete: $(BINARY_PATH)$(NC)"
 
-## run: Build and run the application
-run: build
+## run: Build and run the MCP server in stdio mode
+run/stdio: build
 	@echo "$(GREEN)Running $(BINARY_NAME)...$(NC)"
 	@$(BINARY_PATH)
+
+## run: Build and run the MCP server in HTTP mode
+run/http: build
+	@echo "$(GREEN)Running $(BINARY_NAME)...$(NC)"
+	@$(BINARY_PATH) -http -addr localhost:8080
 
 ## dev: Run the application without building binary (using go run)
 dev:

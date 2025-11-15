@@ -8,6 +8,7 @@ require (
 	github.com/go-mail/mail/v2 v2.3.0
 	github.com/joho/godotenv v1.5.1
 	github.com/mark3labs/mcp-go v0.6.0
+	github.com/rs/cors v1.11.1
 	github.com/stretchr/testify v1.11.1
 )
 

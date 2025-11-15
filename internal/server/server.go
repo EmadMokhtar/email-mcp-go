@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/config"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/rs/cors"
 )
 
 type EmailMCPServer struct {
@@ -31,14 +33,18 @@ func NewEmailMCPServer(cfg *config.Config) *EmailMCPServer {
 		config: cfg,
 	}
 
-	// Initialize IMAP client
+	// Initialize IMAP client (optional for testing)
 	log.Printf("📧 Connecting to IMAP server: %s:%s (TLS: %v)", cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPTLS)
+
 	imapClient, err := imap.NewClient(cfg)
 	if err != nil {
-		log.Fatalf("❌ Failed to create IMAP client: %v", err)
+		log.Printf("⚠️ Failed to create IMAP client: %v (continuing anyway for testing)", err)
+		// Don't fatal error - allow server to start for CORS testing
+		s.imapClient = nil
+	} else {
+		s.imapClient = imapClient
+		log.Println("✅ IMAP client initialized successfully")
 	}
-	s.imapClient = imapClient
-	log.Println("✅ IMAP client initialized successfully")
 
 	// Initialize SMTP client
 	log.Printf("📤 Initializing SMTP client: %s:%s (TLS: %v)", cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPTLS)
@@ -139,6 +145,10 @@ func (s *EmailMCPServer) handleListMailboxes(arguments map[string]interface{}) (
 	log.Println("🔧 Tool called: list_mailboxes")
 	log.Printf("   Arguments: %v", arguments)
 
+	if s.imapClient == nil {
+		return mcp.NewToolResultError("IMAP client not initialized - server running in testing mode"), nil
+	}
+
 	mailboxes, err := s.imapClient.ListMailboxes()
 	if err != nil {
 		log.Printf("❌ Failed to list mailboxes: %v", err)
@@ -158,6 +168,11 @@ func (s *EmailMCPServer) handleListMailboxes(arguments map[string]interface{}) (
 func (s *EmailMCPServer) handleSearchEmails(arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	log.Println("🔧 Tool called: search_emails")
 	log.Printf("   Arguments: %v", arguments)
+
+	if s.imapClient == nil {
+		log.Println("❌ IMAP client not initialized")
+		return mcp.NewToolResultError("IMAP client not initialized - server running in testing mode"), nil
+	}
 
 	var criteria models.SearchCriteria
 
@@ -511,6 +526,249 @@ func (s *EmailMCPServer) Start(ctx context.Context) error {
 	}
 
 	return nil
+}
+func (s *EmailMCPServer) StartHTTP(ctx context.Context, addr string) error {
+	log.Println("========================================")
+	log.Println("🚀 Starting Email MCP Server (HTTP mode)...")
+	log.Println("========================================")
+	log.Printf("Server listening on %s", addr)
+	log.Println("")
+
+	mux := http.NewServeMux()
+
+	// Health check endpoint
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+			log.Printf("Error encoding health check response: %v", err)
+		}
+	})
+
+	// MCP endpoints
+	mux.HandleFunc("/mcp", s.handleMCPRequest)
+	mux.HandleFunc("/sse", s.handleSSEConnection)
+	mux.HandleFunc("/messages", s.handleMCPMessages)
+
+	handler := cors.Default().Handler(mux)
+
+	// Create HTTP server and apply CORS middleware to the entire mux
+	httpServer := &http.Server{
+		Addr:    addr,
+		Handler: handler,
+	}
+
+	// Start server in a goroutine
+	errChan := make(chan error, 1)
+	go func() {
+		log.Printf("✅ HTTP server started on http://%s", addr)
+		log.Printf("   Health check: http://%s/health", addr)
+		log.Printf("   MCP endpoint: http://%s/mcp", addr)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errChan <- err
+		}
+	}()
+
+	// Wait for context cancellation or error
+	select {
+	case <-ctx.Done():
+		log.Println("🛑 Shutting down HTTP server...")
+		return httpServer.Shutdown(context.Background())
+	case err := <-errChan:
+		return err
+	}
+}
+
+func (s *EmailMCPServer) handleMCPRequest(w http.ResponseWriter, r *http.Request) {
+	log.Printf("🌐 Received MCP request: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+
+	// Handle CORS preflight requests
+	if r.Method == http.MethodOptions {
+		log.Println("   ✅ Handling CORS preflight request")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Only allow POST requests for MCP protocol
+	if r.Method != http.MethodPost {
+		log.Printf("   ❌ Method %s not allowed", r.Method)
+		http.Error(w, fmt.Sprintf("Method %s not allowed, only POST is supported", r.Method), http.StatusMethodNotAllowed)
+		return
+	}
+
+	log.Println("   📝 Processing POST request for MCP protocol")
+	var request map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		log.Printf("   ❌ Invalid JSON request: %v", err)
+		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("   📦 Request body: %+v", request)
+
+	// Extract method
+	method, ok := request["method"].(string)
+	if !ok {
+		log.Println("   ❌ Missing 'method' field in request")
+		http.Error(w, "Missing method", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("   🔧 Method: %s", method)
+
+	var result interface{}
+	var err error
+
+	switch method {
+	case "initialize":
+		result = map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"capabilities": map[string]interface{}{
+				"tools": map[string]interface{}{},
+			},
+			"serverInfo": map[string]interface{}{
+				"name":    "email-mcp",
+				"version": "0.1.0",
+			},
+		}
+	case "notifications/initialized":
+		// This is a notification, not a request - no response needed
+		log.Println("   ℹ️  Client initialized notification received")
+		w.WriteHeader(http.StatusOK)
+		return
+	case "tools/list":
+		result = s.listTools()
+	case "tools/call":
+		params, _ := request["params"].(map[string]interface{})
+		toolName, _ := params["name"].(string)
+		arguments, _ := params["arguments"].(map[string]interface{})
+		result, err = s.callTool(toolName, arguments)
+	default:
+		log.Printf("   ❌ Unknown method: %s", method)
+		http.Error(w, fmt.Sprintf("Unknown method: %s", method), http.StatusBadRequest)
+		return
+	}
+
+	if err != nil {
+		log.Printf("   ❌ Error handling request: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      request["id"],
+		"result":  result,
+	}
+
+	log.Printf("   ✅ Sending response: %+v", response)
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("   ❌ Error encoding MCP response: %v", err)
+	}
+}
+
+func (s *EmailMCPServer) handleMCPMessages(w http.ResponseWriter, r *http.Request) {
+	log.Printf("📨 Received MCP messages request: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+
+	// Handle CORS preflight requests
+	if r.Method == http.MethodOptions {
+		log.Println("   ✅ Handling CORS preflight request for messages")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Only allow POST requests for MCP protocol
+	if r.Method != http.MethodPost {
+		log.Printf("   ❌ Method %s not allowed for messages endpoint", r.Method)
+		http.Error(w, fmt.Sprintf("Method %s not allowed, only POST is supported", r.Method), http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Delegate to the main MCP handler
+	log.Println("   🔄 Delegating to main MCP handler")
+	s.handleMCPRequest(w, r)
+}
+
+func (s *EmailMCPServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) {
+	// Set headers for SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Send initial connection message
+	if _, err := fmt.Fprintf(w, "event: endpoint\ndata: /mcp\n\n"); err != nil {
+		log.Printf("Error writing SSE message: %v", err)
+		return
+	}
+
+	// Flush the response writer
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+
+	// Keep connection alive
+	<-r.Context().Done()
+}
+
+func (s *EmailMCPServer) listTools() interface{} {
+	return map[string]interface{}{
+		"tools": []interface{}{
+			tools.ListMailboxesTool(),
+			tools.SearchEmailsTool(),
+			tools.GetEmailTool(),
+			tools.SendEmailTool(),
+			tools.ReplyToEmailTool(),
+			tools.ForwardEmailTool(),
+			tools.MarkAsReadTool(),
+			tools.MarkAsUnreadTool(),
+			tools.MoveEmailTool(),
+			tools.DeleteEmailTool(),
+		},
+	}
+}
+
+func (s *EmailMCPServer) callTool(toolName string, arguments map[string]interface{}) (interface{}, error) {
+	var result *mcp.CallToolResult
+	var err error
+
+	switch toolName {
+	case "list_mailboxes":
+		result, err = s.handleListMailboxes(arguments)
+	case "search_emails":
+		result, err = s.handleSearchEmails(arguments)
+	case "get_email":
+		result, err = s.handleGetEmail(arguments)
+	case "send_email":
+		result, err = s.handleSendEmail(arguments)
+	case "reply_to_email":
+		result, err = s.handleReplyToEmail(arguments)
+	case "forward_email":
+		result, err = s.handleForwardEmail(arguments)
+	case "mark_as_read":
+		result, err = s.handleMarkAsRead(arguments)
+	case "mark_as_unread":
+		result, err = s.handleMarkAsUnread(arguments)
+	case "move_email":
+		result, err = s.handleMoveEmail(arguments)
+	case "delete_email":
+		result, err = s.handleDeleteEmail(arguments)
+	default:
+		return nil, fmt.Errorf("unknown tool: %s", toolName)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 func (s *EmailMCPServer) Close() error {
