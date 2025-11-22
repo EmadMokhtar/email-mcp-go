@@ -8,6 +8,12 @@ GO=go
 GOFLAGS=-v
 LDFLAGS=-ldflags "-s -w"
 
+# Docker variables
+DOCKER_IMAGE=email-mcp-go
+DOCKER_TAG=latest
+DOCKER_REGISTRY?=
+DOCKER_FULL_IMAGE=$(if $(DOCKER_REGISTRY),$(DOCKER_REGISTRY)/,)$(DOCKER_IMAGE):$(DOCKER_TAG)
+
 # Go related variables
 GOBASE=$(shell pwd)
 GOBIN=$(GOBASE)/bin
@@ -19,7 +25,8 @@ GREEN=\033[0;32m
 YELLOW=\033[0;33m
 NC=\033[0m # No Color
 
-.PHONY: all build run test clean install uninstall fmt vet lint deps tidy help dev
+.PHONY: all build run test clean install uninstall fmt vet lint deps tidy help dev \
+	docker/build docker/run docker/run-http docker/push docker/pull docker/clean docker/test
 
 ## all: Default target - build the application
 all: build
@@ -170,4 +177,42 @@ install-claude:
 	@echo "$(GREEN)Installing Email MCP for Claude Desktop...$(NC)"
 	@./install-claude.sh
 	@echo "$(GREEN)Installation complete! Restart Claude Desktop to use the email MCP server.$(NC)"
+
+## docker/build: Build the Docker image
+docker/build:
+	@echo "$(GREEN)Building Docker image $(DOCKER_FULL_IMAGE)...$(NC)"
+	@docker build -t $(DOCKER_FULL_IMAGE) .
+	@echo "$(GREEN)Docker image built successfully$(NC)"
+
+## docker/run: Run the Docker container in stdio mode
+docker/run:
+	@echo "$(GREEN)Running Docker container in stdio mode...$(NC)"
+	@docker run --rm -it --env-file .env $(DOCKER_FULL_IMAGE)
+
+## docker/run-http: Run the Docker container in HTTP mode
+docker/run-http:
+	@echo "$(GREEN)Running Docker container in HTTP mode on port 8080...$(NC)"
+	@docker run --rm -it -p 8080:8080 --env-file .env $(DOCKER_FULL_IMAGE) /app/email-mcp -http -addr 0.0.0.0:8080
+
+## docker/push: Push the Docker image to the registry
+docker/push:
+	@echo "$(GREEN)Pushing Docker image $(DOCKER_FULL_IMAGE) to registry...$(NC)"
+	@docker push $(DOCKER_FULL_IMAGE)
+
+## docker/pull: Pull the Docker image from the registry
+docker/pull:
+	@echo "$(GREEN)Pulling Docker image $(DOCKER_FULL_IMAGE) from registry...$(NC)"
+	@docker pull $(DOCKER_FULL_IMAGE)
+
+## docker/clean: Remove Docker images and containers
+docker/clean:
+	@echo "$(YELLOW)Cleaning Docker images and containers...$(NC)"
+	@docker compose down -v 2>/dev/null || true
+	@docker rmi $(DOCKER_FULL_IMAGE) 2>/dev/null || true
+	@echo "$(GREEN)Docker cleanup complete$(NC)"
+
+## docker/test: Run the Docker test script
+docker/test:
+	@echo "$(GREEN)Running Docker tests...$(NC)"
+	@./test_docker.sh
 

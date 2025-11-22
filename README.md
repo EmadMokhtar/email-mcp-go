@@ -49,6 +49,27 @@ go build -o email-mcp ./cmd/email-mcp
 go install github.com/EmadMokhtar/email-mcp-go/cmd/email-mcp@latest
 ```
 
+### Docker Installation
+
+Run the MCP server in a Docker container:
+
+```bash
+# Build the image
+docker build -t email-mcp-go:latest .
+
+# Run in stdio mode (default)
+docker run -it --rm --env-file .env email-mcp-go:latest
+
+# Run in HTTP mode
+docker run -d -p 8080:8080 --env-file .env email-mcp-go:latest ./email-mcp -http -addr 0.0.0.0:8080
+```
+
+Or use Docker Compose:
+
+```bash
+docker compose up
+```
+
 ## Configuration
 
 ### Environment Variables

@@ -1,0 +1,55 @@
+# Git
+.git/
+.gitignore
+.github/
+
+# Environment files
+.env
+.env.local
+
+# Build artifacts
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+*.out
+
+# Go workspace file
+go.work
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation (keep README for context)
+*.md
+!README.md
+
+# CI/CD
+.gitlab-ci.yml
+.travis.yml
+
+# Logs
+*.log
+server.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Scripts that are not needed in container
+*.sh
+install-claude.sh
+test_http.sh
+
+# Examples (optional - uncomment if you don't want examples in image)
+# examples/
+
