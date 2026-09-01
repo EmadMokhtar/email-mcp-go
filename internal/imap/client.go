@@ -3,12 +3,19 @@ package imap
 import (
 	"crypto/tls"
 	"fmt"
+	"sync"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/config"
 	"github.com/emersion/go-imap/client"
 )
 
 type Client struct {
+	// mu serializes every IMAP command. The client holds a single
+	// connection, and IMAP is stateful: each operation selects a mailbox
+	// and then acts on it. Two commands running at the same time would
+	// interleave and act on the wrong mailbox. Callers do not need to
+	// lock; every exported method locks for itself.
+	mu     sync.Mutex
 	client *client.Client
 	config *config.Config
 }
@@ -49,12 +56,17 @@ func NewClient(cfg *config.Config) (*Client, error) {
 }
 
 func (c *Client) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.client != nil {
 		return c.client.Logout()
 	}
 	return nil
 }
 
+// reconnect drops the current connection and opens a new one.
+// The caller must already hold c.mu.
 func (c *Client) reconnect() error {
 	if c.client != nil {
 		err := c.client.Logout()

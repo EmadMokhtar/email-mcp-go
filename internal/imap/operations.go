@@ -12,6 +12,9 @@ import (
 )
 
 func (c *Client) ListMailboxes() ([]string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	mailboxes := make(chan *imap.MailboxInfo, 10)
 	done := make(chan error, 1)
 
@@ -32,6 +35,9 @@ func (c *Client) ListMailboxes() ([]string, error) {
 }
 
 func (c *Client) SearchEmails(criteria *models.SearchCriteria) ([]*models.Email, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	// Select mailbox
 	folder := criteria.Folder
 	if folder == "" {
@@ -127,6 +133,9 @@ func (c *Client) SearchEmails(criteria *models.SearchCriteria) ([]*models.Email,
 }
 
 func (c *Client) GetEmail(id uint32, folder string, includeAttachments bool) (*models.Email, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	// Select mailbox
 	_, err := c.client.Select(folder, false)
 	if err != nil {
@@ -238,6 +247,9 @@ func (c *Client) messageToEmail(msg *imap.Message, includeAttachments bool) *mod
 }
 
 func (c *Client) MarkAsRead(emailIDs []uint32, folder string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	_, err := c.client.Select(folder, false)
 	if err != nil {
 		return fmt.Errorf("failed to select mailbox: %w", err)
@@ -257,6 +269,9 @@ func (c *Client) MarkAsRead(emailIDs []uint32, folder string) error {
 }
 
 func (c *Client) MarkAsUnread(emailIDs []uint32, folder string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	_, err := c.client.Select(folder, false)
 	if err != nil {
 		return fmt.Errorf("failed to select mailbox: %w", err)
@@ -276,6 +291,9 @@ func (c *Client) MarkAsUnread(emailIDs []uint32, folder string) error {
 }
 
 func (c *Client) MoveEmail(emailID uint32, fromFolder, toFolder string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	_, err := c.client.Select(fromFolder, false)
 	if err != nil {
 		return fmt.Errorf("failed to select mailbox: %w", err)
@@ -292,6 +310,9 @@ func (c *Client) MoveEmail(emailID uint32, fromFolder, toFolder string) error {
 }
 
 func (c *Client) DeleteEmail(emailID uint32, folder string, permanent bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	_, err := c.client.Select(folder, false)
 	if err != nil {
 		return fmt.Errorf("failed to select mailbox: %w", err)
