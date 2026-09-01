@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,6 +12,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/config"
@@ -24,10 +27,12 @@ import (
 )
 
 type EmailMCPServer struct {
-	mcpServer  *server.MCPServer
-	imapClient *imap.Client
-	smtpClient *smtp.Client
-	config     *config.Config
+	// sseSessions maps a session id to its open event stream.
+	sseSessions sync.Map
+	mcpServer   *server.MCPServer
+	imapClient  *imap.Client
+	smtpClient  *smtp.Client
+	config      *config.Config
 }
 
 func NewEmailMCPServer(cfg *config.Config) *EmailMCPServer {
@@ -735,24 +740,39 @@ func (s *EmailMCPServer) handleMCPRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	response, status := s.dispatch(request)
+	if response == nil {
+		// A notification: acknowledged, nothing to send back.
+		w.WriteHeader(status)
+		return
+	}
+
+	log.Printf("   ✅ Responding to id=%v", response["id"])
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("   ❌ Error encoding MCP response: %v", err)
+	}
+}
+
+// dispatch runs one JSON-RPC request and returns the response to send along
+// with the HTTP status. A nil response means the request was a notification,
+// which has no reply. Errors come back as JSON-RPC error objects so that both
+// transports report them the same way.
+func (s *EmailMCPServer) dispatch(request map[string]interface{}) (map[string]interface{}, int) {
 	log.Printf("   📦 Request id=%v method=%v", request["id"], request["method"])
 
-	// Extract method
 	method, ok := request["method"].(string)
 	if !ok {
-		log.Println("   ❌ Missing 'method' field in request")
-		http.Error(w, "Missing method", http.StatusBadRequest)
-		return
+		return jsonRPCError(request["id"], jsonRPCInvalidRequest, "Missing method"), http.StatusBadRequest
 	}
 
 	log.Printf("   🔧 Method: %s", method)
 
-	var result interface{}
-	var err error
-
 	switch method {
 	case "initialize":
-		result = map[string]interface{}{
+		return jsonRPCResult(request["id"], map[string]interface{}{
 			"protocolVersion": "2024-11-05",
 			"capabilities": map[string]interface{}{
 				"tools": map[string]interface{}{},
@@ -761,90 +781,218 @@ func (s *EmailMCPServer) handleMCPRequest(w http.ResponseWriter, r *http.Request
 				"name":    "email-mcp",
 				"version": "0.1.0",
 			},
-		}
+		}), http.StatusOK
+
 	case "notifications/initialized":
-		// This is a notification, not a request - no response needed
 		log.Println("   ℹ️  Client initialized notification received")
-		w.WriteHeader(http.StatusOK)
-		return
+		return nil, http.StatusAccepted
+
 	case "tools/list":
-		result = s.listTools()
+		return jsonRPCResult(request["id"], s.listTools()), http.StatusOK
+
 	case "tools/call":
 		params, _ := request["params"].(map[string]interface{})
 		toolName, _ := params["name"].(string)
 		arguments, _ := params["arguments"].(map[string]interface{})
-		result, err = s.callTool(toolName, arguments)
+
+		result, err := s.callTool(toolName, arguments)
+		if err != nil {
+			log.Printf("   ❌ Error handling request: %v", err)
+			return jsonRPCError(request["id"], jsonRPCInternalError, err.Error()), http.StatusOK
+		}
+
+		return jsonRPCResult(request["id"], result), http.StatusOK
+
 	default:
 		log.Printf("   ❌ Unknown method: %s", method)
-		http.Error(w, fmt.Sprintf("Unknown method: %s", method), http.StatusBadRequest)
-		return
-	}
-
-	if err != nil {
-		log.Printf("   ❌ Error handling request: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	response := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      request["id"],
-		"result":  result,
-	}
-
-	log.Printf("   ✅ Responding to id=%v", response["id"])
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("   ❌ Error encoding MCP response: %v", err)
+		return jsonRPCError(request["id"], jsonRPCMethodNotFound, "Unknown method: "+method), http.StatusOK
 	}
 }
 
-func (s *EmailMCPServer) handleMCPMessages(w http.ResponseWriter, r *http.Request) {
-	log.Printf("📨 Received MCP messages request: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+// JSON-RPC 2.0 error codes used by the transports.
+const (
+	jsonRPCInvalidRequest = -32600
+	jsonRPCMethodNotFound = -32601
+	jsonRPCInternalError  = -32603
+)
 
-	// Handle CORS preflight requests
-	if r.Method == http.MethodOptions {
-		log.Println("   ✅ Handling CORS preflight request for messages")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.WriteHeader(http.StatusOK)
+func jsonRPCResult(id interface{}, result interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"result":  result,
+	}
+}
+
+func jsonRPCError(id interface{}, code int, message string) map[string]interface{} {
+	return map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error": map[string]interface{}{
+			"code":    code,
+			"message": message,
+		},
+	}
+}
+
+// sseSession is one open SSE stream. Responses for that client are queued on
+// messages and written by the goroutine serving the stream.
+type sseSession struct {
+	messages chan []byte
+	done     chan struct{}
+}
+
+// sseQueueSize bounds how many pending responses a slow client may accumulate
+// before the server stops waiting for it.
+const sseQueueSize = 16
+
+// handleSSEConnection opens the event stream for an MCP SSE client.
+//
+// The transport is two-sided: the client opens this stream with GET, and the
+// server answers with an "endpoint" event naming the URL to POST requests to.
+// That URL carries a session id, which is how a reply arriving here is matched
+// to the request that produced it. Replies travel on this stream as "message"
+// events, never as the body of the POST.
+func (s *EmailMCPServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Only GET is supported for the SSE stream", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Only allow POST requests for MCP protocol
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming is not supported by this connection", http.StatusInternalServerError)
+		return
+	}
+
+	sessionID, err := newSessionID()
+	if err != nil {
+		log.Printf("   ❌ Failed to create a session id: %v", err)
+		http.Error(w, "Failed to create a session", http.StatusInternalServerError)
+		return
+	}
+
+	session := &sseSession{
+		messages: make(chan []byte, sseQueueSize),
+		done:     make(chan struct{}),
+	}
+	s.sseSessions.Store(sessionID, session)
+
+	defer func() {
+		s.sseSessions.Delete(sessionID)
+		close(session.done)
+		log.Printf("   🔌 SSE session %s closed", sessionID)
+	}()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	// Proxies that buffer would defeat the point of a stream.
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	log.Printf("   🔗 SSE session %s opened for %s", sessionID, r.RemoteAddr)
+
+	if _, err := fmt.Fprintf(w, "event: endpoint\ndata: /messages?sessionId=%s\n\n", sessionID); err != nil {
+		log.Printf("   ❌ Failed to send the endpoint event: %v", err)
+		return
+	}
+	flusher.Flush()
+
+	// Comments keep idle connections from being closed by intermediaries.
+	heartbeat := time.NewTicker(30 * time.Second)
+	defer heartbeat.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+
+		case message := <-session.messages:
+			if _, err := fmt.Fprintf(w, "event: message\ndata: %s\n\n", message); err != nil {
+				log.Printf("   ❌ Failed to write an SSE message: %v", err)
+				return
+			}
+			flusher.Flush()
+
+		case <-heartbeat.C:
+			if _, err := fmt.Fprint(w, ": keep-alive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+// handleMCPMessages accepts a JSON-RPC request belonging to an open SSE
+// session. The reply is queued on that session's stream, and the POST itself
+// is answered with 202, as the SSE transport requires.
+func (s *EmailMCPServer) handleMCPMessages(w http.ResponseWriter, r *http.Request) {
+	log.Printf("📨 Received MCP message: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+
 	if r.Method != http.MethodPost {
-		log.Printf("   ❌ Method %s not allowed for messages endpoint", r.Method)
 		http.Error(w, fmt.Sprintf("Method %s not allowed, only POST is supported", r.Method), http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Delegate to the main MCP handler
-	log.Println("   🔄 Delegating to main MCP handler")
-	s.handleMCPRequest(w, r)
-}
-
-func (s *EmailMCPServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) {
-	// Set headers for SSE
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	// Send initial connection message
-	if _, err := fmt.Fprintf(w, "event: endpoint\ndata: /mcp\n\n"); err != nil {
-		log.Printf("Error writing SSE message: %v", err)
+	sessionID := r.URL.Query().Get("sessionId")
+	if sessionID == "" {
+		http.Error(w, "Missing sessionId", http.StatusBadRequest)
 		return
 	}
 
-	// Flush the response writer
-	if flusher, ok := w.(http.Flusher); ok {
-		flusher.Flush()
+	stored, ok := s.sseSessions.Load(sessionID)
+	if !ok {
+		// The stream is gone, so there is nowhere to deliver a reply.
+		http.Error(w, "Unknown or closed session", http.StatusNotFound)
+		return
+	}
+	session := stored.(*sseSession)
+
+	var request map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		log.Printf("   ❌ Invalid JSON request: %v", err)
+		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+		return
 	}
 
-	// Keep connection alive
-	<-r.Context().Done()
+	response, _ := s.dispatch(request)
+	if response == nil {
+		// A notification has no reply, but it was accepted.
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		log.Printf("   ❌ Failed to encode the response: %v", err)
+		http.Error(w, "Failed to encode the response", http.StatusInternalServerError)
+		return
+	}
+
+	select {
+	case session.messages <- encoded:
+		log.Printf("   ✅ Queued response for id=%v on session %s", response["id"], sessionID)
+		w.WriteHeader(http.StatusAccepted)
+
+	case <-session.done:
+		http.Error(w, "Session closed before the response could be delivered", http.StatusGone)
+
+	case <-time.After(5 * time.Second):
+		// The client is not reading its stream; do not block this handler.
+		log.Printf("   ⚠️  Session %s is not draining its stream", sessionID)
+		http.Error(w, "Session is not reading its event stream", http.StatusServiceUnavailable)
+	}
+}
+
+// newSessionID returns an unguessable identifier for an SSE session.
+func newSessionID() (string, error) {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(raw), nil
 }
 
 func (s *EmailMCPServer) listTools() interface{} {
