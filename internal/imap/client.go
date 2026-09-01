@@ -42,10 +42,9 @@ func NewClient(cfg *config.Config) (*Client, error) {
 
 	// Login
 	if err := c.Login(cfg.IMAPUsername, cfg.IMAPPassword); err != nil {
-		err = c.Logout()
-		if err != nil {
-			return nil, err
-		}
+		// Close the connection, but report the login failure. A logout error
+		// here is a consequence of the failed login, not the cause.
+		_ = c.Logout()
 		return nil, fmt.Errorf("failed to login: %w", err)
 	}
 
@@ -69,10 +68,10 @@ func (c *Client) Close() error {
 // The caller must already hold c.mu.
 func (c *Client) reconnect() error {
 	if c.client != nil {
-		err := c.client.Logout()
-		if err != nil {
-			return err
-		}
+		// Ignore the logout error. Reconnecting is most often needed because
+		// the old connection is already broken, and a failing logout must not
+		// stop us from opening a new one.
+		_ = c.client.Logout()
 	}
 
 	newClient, err := NewClient(c.config)
