@@ -9,8 +9,18 @@ func ListMailboxesTool() mcp.Tool {
 		Name:        "list_mailboxes",
 		Description: "List all mailboxes/folders in the email account",
 		InputSchema: mcp.ToolInputSchema{
-			Type:       "object",
-			Properties: map[string]interface{}{},
+			Type: "object",
+			// This tool takes no input, but some MCP clients reject a tool
+			// whose "properties" object is empty. So we declare a single
+			// optional placeholder field. It is never read. Do not remove it
+			// without checking that those clients still accept the tool.
+			Properties: map[string]interface{}{
+				"_": map[string]interface{}{
+					"type":        "string",
+					"description": "Unused placeholder. Do not set it.",
+				},
+			},
+			Required: []string{},
 		},
 	}
 }

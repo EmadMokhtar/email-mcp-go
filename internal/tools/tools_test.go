@@ -13,6 +13,12 @@ func TestListMailboxesTool(t *testing.T) {
 	assert.NotEmpty(t, tool.Description)
 	assert.Equal(t, "object", tool.InputSchema.Type)
 	assert.NotNil(t, tool.InputSchema.Properties)
+
+	// The tool takes no input, but the schema must still declare at least one
+	// property, because some MCP clients reject an empty "properties" object.
+	// The placeholder must stay optional.
+	assert.NotEmpty(t, tool.InputSchema.Properties)
+	assert.Empty(t, tool.InputSchema.Required)
 }
 
 func TestSearchEmailsTool(t *testing.T) {
