@@ -27,6 +27,8 @@ type Config struct {
 	ClientID     string
 	ClientSecret string
 	RefreshToken string
+	// OAuthTokenURL overrides the token endpoint. Empty uses Google's.
+	OAuthTokenURL string
 
 	// HTTP mode only.
 	// AuthToken is the bearer token every /mcp request must carry.
@@ -50,10 +52,11 @@ func Load() (*Config, error) {
 		SMTPPassword: os.Getenv("SMTP_PASSWORD"),
 		SMTPTLS:      getEnv("SMTP_TLS", "true") == "true",
 
-		UseOAuth:     getEnv("USE_OAUTH", "false") == "true",
-		ClientID:     os.Getenv("OAUTH_CLIENT_ID"),
-		ClientSecret: os.Getenv("OAUTH_CLIENT_SECRET"),
-		RefreshToken: os.Getenv("OAUTH_REFRESH_TOKEN"),
+		UseOAuth:      getEnv("USE_OAUTH", "false") == "true",
+		ClientID:      os.Getenv("OAUTH_CLIENT_ID"),
+		ClientSecret:  os.Getenv("OAUTH_CLIENT_SECRET"),
+		RefreshToken:  os.Getenv("OAUTH_REFRESH_TOKEN"),
+		OAuthTokenURL: os.Getenv("OAUTH_TOKEN_URL"),
 
 		AuthToken:      os.Getenv("MCP_AUTH_TOKEN"),
 		AllowedOrigins: splitList(os.Getenv("MCP_ALLOWED_ORIGINS")),
@@ -70,6 +73,12 @@ func (c *Config) Validate() error {
 	if c.IMAPUsername == "" || c.IMAPPassword == "" {
 		if !c.UseOAuth {
 			return fmt.Errorf("IMAP credentials are required")
+		}
+	}
+
+	if c.UseOAuth {
+		if c.ClientID == "" || c.ClientSecret == "" || c.RefreshToken == "" {
+			return fmt.Errorf("USE_OAUTH is set, so OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET and OAUTH_REFRESH_TOKEN are all required")
 		}
 	}
 

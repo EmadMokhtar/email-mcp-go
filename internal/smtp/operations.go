@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/EmadMokhtar/email-mcp-go/internal/oauth"
 	"github.com/EmadMokhtar/email-mcp-go/pkg/models"
 	"github.com/go-mail/mail/v2"
 )
@@ -24,6 +25,16 @@ func (c *Client) newDialer() (*mail.Dialer, error) {
 	}
 
 	d := mail.NewDialer(c.config.SMTPHost, port, c.config.SMTPUsername, c.config.SMTPPassword)
+
+	if c.config.UseOAuth {
+		token, err := c.tokens.Token()
+		if err != nil {
+			return nil, fmt.Errorf("failed to obtain an OAuth access token: %w", err)
+		}
+
+		d.Auth = oauth.NewSMTPAuth(c.config.SMTPUsername, token)
+	}
+
 	if c.config.SMTPTLS {
 		// The library default is opportunistic STARTTLS, which silently sends
 		// the credentials and the message in the clear if the server does not

@@ -162,11 +162,26 @@ func TestValidate(t *testing.T) {
 				UseOAuth:     true,
 				ClientID:     "client123",
 				ClientSecret: "secret123",
+				RefreshToken: "refresh123",
 				SMTPUsername: "user@example.com",
 				IMAPPort:     "993",
 				SMTPPort:     "587",
 			},
 			wantErr: false,
+		},
+		{
+			// OAuth cannot authenticate without a refresh token, so accepting
+			// this config would only fail later at connection time.
+			name: "OAuth without a refresh token",
+			config: &Config{
+				UseOAuth:     true,
+				ClientID:     "client123",
+				ClientSecret: "secret123",
+				SMTPUsername: "user@example.com",
+				IMAPPort:     "993",
+				SMTPPort:     "587",
+			},
+			wantErr: true,
 		},
 		{
 			// The username is the From address on every outgoing message.
