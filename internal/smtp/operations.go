@@ -1,6 +1,7 @@
 package smtp
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -50,7 +51,7 @@ func (c *Client) SendEmail(req *models.SendEmailRequest) error {
 
 	// Add attachments
 	for _, att := range req.Attachments {
-		m.AttachReader(att.Filename, strings.NewReader(string(att.Data)))
+		m.AttachReader(att.Filename, bytes.NewReader(att.Data))
 	}
 
 	d, err := c.newDialer()
@@ -162,7 +163,7 @@ func (c *Client) ForwardEmail(originalEmail *models.Email, to []string, message 
 
 	// Forward attachments
 	for _, att := range originalEmail.Attachments {
-		m.AttachReader(att.Filename, strings.NewReader(string(att.Data)))
+		m.AttachReader(att.Filename, bytes.NewReader(att.Data))
 	}
 
 	d, err := c.newDialer()
