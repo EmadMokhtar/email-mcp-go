@@ -12,10 +12,11 @@ make docker/run
 ```bash
 make docker/build
 make docker/run-http
-# Access at http://localhost:8080
+# Access at http://localhost:8080 (needs MCP_AUTH_TOKEN in .env)
 ```
 
 ### Using Docker Compose
+Uses `compose.yaml` in the repository root. Copy `.env.example` to `.env` first.
 ```bash
 docker compose up
 ```
@@ -241,5 +242,5 @@ docker stats <container-name>
 
 ---
 
-For complete documentation, see [DOCKER.md](DOCKER.md)
+For the project overview and configuration reference, see [README.md](README.md)
 

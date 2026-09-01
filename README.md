@@ -7,7 +7,7 @@
 A Model Context Protocol (MCP) server that provides email capabilities through IMAP and SMTP protocols. This server enables AI assistants to interact with email accounts, read messages, send emails, and manage mailboxes.
 
 **Quick Links:**
-📚 [Quick Reference](QUICK_REFERENCE.md) | 🚀 [How It Works](HOW_IT_WORKS.md) | ⚙️ [Claude Setup](CLAUDE_SETUP.md) | 🐛 [Debugging](DEBUGGING.md)
+🐳 [Docker guide](DOCKER.md)
 
 ## Features
 
@@ -61,7 +61,9 @@ docker build -t email-mcp-go:latest .
 docker run -it --rm --env-file .env email-mcp-go:latest
 
 # Run in HTTP mode
-docker run -d -p 8080:8080 --env-file .env email-mcp-go:latest ./email-mcp -http -addr 0.0.0.0:8080
+# HTTP mode needs MCP_AUTH_TOKEN set in .env, and should stay bound to
+# localhost unless it sits behind a proxy that terminates TLS.
+docker run -d -p 127.0.0.1:8080:8080 --env-file .env email-mcp-go:latest ./email-mcp -http -addr 0.0.0.0:8080
 ```
 
 Or use Docker Compose:
@@ -139,7 +141,7 @@ SMTP_TLS=false
 
 ### Using with Claude Desktop
 
-> **💡 You don't need to run the server manually!** Claude Desktop automatically starts and manages the MCP server. See [HOW_IT_WORKS.md](HOW_IT_WORKS.md) for details.
+> **💡 You don't need to run the server manually!** Claude Desktop automatically starts and manages the MCP server. Claude Desktop launches it over stdio using the configuration below.
 
 #### Quick Setup (Recommended)
 
@@ -162,7 +164,7 @@ That's it! The email MCP server is now available in Claude. **No need to run any
 
 #### Manual Setup
 
-See [CLAUDE_SETUP.md](CLAUDE_SETUP.md) for detailed manual configuration instructions.
+To configure it by hand, add the `email` entry shown above to your `claude_desktop_config.json`.
 
 #### Quick Manual Setup
 
@@ -398,7 +400,7 @@ go run ./cmd/email-mcp
 
 ### Debugging
 
-The Email MCP Server includes comprehensive logging to help debug issues. See **[DEBUGGING.md](DEBUGGING.md)** for detailed information about:
+The Email MCP Server logs to stderr. Email content is deliberately kept out of the logs; only metadata such as folder names, message UIDs and counts is recorded. The logs cover:
 
 - Viewing logs in Claude Desktop
 - Running the server standalone for debugging

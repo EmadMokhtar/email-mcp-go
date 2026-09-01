@@ -1,9 +1,15 @@
 ---
 description: 'Documentation and content creation standards'
-applyTo: '**/*.md'
+applyTo: 'docs/**/*.md'
 ---
 
 ## Markdown Content Rules
+
+These rules describe published article content under `docs/`, which is
+rendered by a system that supplies the page title itself. They deliberately do
+not apply to the repository's own documentation: `README.md` and `DOCKER.md`
+open with an H1 and carry no front matter, which is correct for files read
+directly on GitHub.
 
 The following markdown content rules are enforced in the validators:
 
