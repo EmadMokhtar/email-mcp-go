@@ -155,6 +155,36 @@ func TestForwardEmailValidation(t *testing.T) {
 	})
 }
 
+func TestReplyAllCc(t *testing.T) {
+	t.Run("combines original To and Cc recipients", func(t *testing.T) {
+		email := &models.Email{
+			From: []string{"sender@example.com"},
+			To:   []string{"first@example.com", "second@example.com"},
+			Cc:   []string{"copied@example.com"},
+		}
+
+		cc := replyAllCc(email)
+
+		// Every original recipient must survive. Setting the Cc header once
+		// per list would have kept only the last list.
+		assert.Equal(t, []string{
+			"first@example.com",
+			"second@example.com",
+			"copied@example.com",
+		}, cc)
+	})
+
+	t.Run("works when the original had no Cc", func(t *testing.T) {
+		email := &models.Email{To: []string{"only@example.com"}}
+
+		assert.Equal(t, []string{"only@example.com"}, replyAllCc(email))
+	})
+
+	t.Run("returns an empty list when there is nobody to copy", func(t *testing.T) {
+		assert.Empty(t, replyAllCc(&models.Email{}))
+	})
+}
+
 func TestInvalidSMTPPortIsReported(t *testing.T) {
 	c := NewClient(&config.Config{
 		SMTPHost:     "smtp.example.com",

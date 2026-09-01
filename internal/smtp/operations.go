@@ -65,6 +65,18 @@ func (c *Client) SendEmail(req *models.SendEmailRequest) error {
 	return nil
 }
 
+// replyAllCc returns everyone to copy on a reply-all: the original To and Cc
+// recipients in one list. They must be combined, because SetHeader replaces
+// the field instead of adding to it, so setting "Cc" twice would keep only
+// the recipients from the second call.
+func replyAllCc(originalEmail *models.Email) []string {
+	cc := make([]string, 0, len(originalEmail.To)+len(originalEmail.Cc))
+	cc = append(cc, originalEmail.To...)
+	cc = append(cc, originalEmail.Cc...)
+
+	return cc
+}
+
 func (c *Client) ReplyToEmail(originalEmail *models.Email, body string, replyAll bool, isHTML bool) error {
 	m := mail.NewMessage()
 
@@ -75,13 +87,10 @@ func (c *Client) ReplyToEmail(originalEmail *models.Email, body string, replyAll
 		m.SetHeader("To", originalEmail.From[0])
 	}
 
-	// Reply all - include all original recipients
+	// Reply all - copy everyone the original message reached.
 	if replyAll {
-		if len(originalEmail.To) > 0 {
-			m.SetHeader("Cc", originalEmail.To...)
-		}
-		if len(originalEmail.Cc) > 0 {
-			m.SetHeader("Cc", originalEmail.Cc...)
+		if cc := replyAllCc(originalEmail); len(cc) > 0 {
+			m.SetHeader("Cc", cc...)
 		}
 	}
 
