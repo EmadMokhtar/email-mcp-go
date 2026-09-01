@@ -57,6 +57,7 @@ func TestLoad(t *testing.T) {
 				"OAUTH_CLIENT_ID":     "client123",
 				"OAUTH_CLIENT_SECRET": "secret123",
 				"OAUTH_REFRESH_TOKEN": "refresh123",
+				"SMTP_USERNAME":       "user@example.com",
 			},
 			wantErr: false,
 		},
@@ -65,6 +66,7 @@ func TestLoad(t *testing.T) {
 			envVars: map[string]string{
 				"IMAP_USERNAME": "user@example.com",
 				"IMAP_PASSWORD": "password123",
+				"SMTP_USERNAME": "user@example.com",
 				"IMAP_TLS":      "false",
 				"SMTP_TLS":      "false",
 			},
@@ -137,6 +139,9 @@ func TestValidate(t *testing.T) {
 			config: &Config{
 				IMAPUsername: "user@example.com",
 				IMAPPassword: "password",
+				SMTPUsername: "user@example.com",
+				IMAPPort:     "993",
+				SMTPPort:     "587",
 			},
 			wantErr: false,
 		},
@@ -157,8 +162,45 @@ func TestValidate(t *testing.T) {
 				UseOAuth:     true,
 				ClientID:     "client123",
 				ClientSecret: "secret123",
+				SMTPUsername: "user@example.com",
+				IMAPPort:     "993",
+				SMTPPort:     "587",
 			},
 			wantErr: false,
+		},
+		{
+			// The username is the From address on every outgoing message.
+			name: "missing SMTP username",
+			config: &Config{
+				IMAPUsername: "user@example.com",
+				IMAPPassword: "password",
+				IMAPPort:     "993",
+				SMTPPort:     "587",
+			},
+			wantErr: true,
+		},
+		{
+			// A non-numeric port used to become port 0 at dial time.
+			name: "non-numeric SMTP port",
+			config: &Config{
+				IMAPUsername: "user@example.com",
+				IMAPPassword: "password",
+				SMTPUsername: "user@example.com",
+				IMAPPort:     "993",
+				SMTPPort:     "not-a-number",
+			},
+			wantErr: true,
+		},
+		{
+			name: "non-numeric IMAP port",
+			config: &Config{
+				IMAPUsername: "user@example.com",
+				IMAPPassword: "password",
+				SMTPUsername: "user@example.com",
+				IMAPPort:     "oops",
+				SMTPPort:     "587",
+			},
+			wantErr: true,
 		},
 	}
 

@@ -2,11 +2,15 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/config"
 	"github.com/EmadMokhtar/email-mcp-go/internal/imap"
@@ -141,12 +145,70 @@ func (s *EmailMCPServer) registerTools() {
 	)
 }
 
+// loggableArgs lists the tool arguments that carry no private content and are
+// therefore safe to write to the logs. Everything else - message bodies,
+// subjects, recipients, attachments - is redacted, because these logs are
+// plain files and, under Claude Desktop, are kept on disk.
+var loggableArgs = map[string]bool{
+	"folder":              true,
+	"from_folder":         true,
+	"to_folder":           true,
+	"id":                  true,
+	"email_id":            true,
+	"email_ids":           true,
+	"limit":               true,
+	"permanent":           true,
+	"reply_all":           true,
+	"is_html":             true,
+	"include_attachments": true,
+	"seen":                true,
+	"unseen":              true,
+	"since":               true,
+	"before":              true,
+}
+
+// argSummary renders tool arguments for the log, keeping the keys so a call can
+// still be traced but replacing any value that could hold email content.
+func argSummary(arguments map[string]interface{}) string {
+	if len(arguments) == 0 {
+		return "(none)"
+	}
+
+	keys := make([]string, 0, len(arguments))
+	for k := range arguments {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if loggableArgs[k] {
+			parts = append(parts, fmt.Sprintf("%s=%v", k, arguments[k]))
+			continue
+		}
+		parts = append(parts, k+"=<redacted>")
+	}
+
+	return strings.Join(parts, " ")
+}
+
+// requireIMAP returns the error result to send when there is no IMAP
+// connection. The server deliberately starts without one so the HTTP layer can
+// be exercised, so every IMAP-backed handler has to check before using it.
+func (s *EmailMCPServer) requireIMAP() *mcp.CallToolResult {
+	if s.imapClient == nil {
+		return mcp.NewToolResultError("IMAP client not initialized - server running in testing mode")
+	}
+
+	return nil
+}
+
 func (s *EmailMCPServer) handleListMailboxes(arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	log.Println("🔧 Tool called: list_mailboxes")
-	log.Printf("   Arguments: %v", arguments)
+	log.Printf("   Arguments: %s", argSummary(arguments))
 
-	if s.imapClient == nil {
-		return mcp.NewToolResultError("IMAP client not initialized - server running in testing mode"), nil
+	if res := s.requireIMAP(); res != nil {
+		return res, nil
 	}
 
 	mailboxes, err := s.imapClient.ListMailboxes()
@@ -167,11 +229,10 @@ func (s *EmailMCPServer) handleListMailboxes(arguments map[string]interface{}) (
 
 func (s *EmailMCPServer) handleSearchEmails(arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	log.Println("🔧 Tool called: search_emails")
-	log.Printf("   Arguments: %v", arguments)
+	log.Printf("   Arguments: %s", argSummary(arguments))
 
-	if s.imapClient == nil {
-		log.Println("❌ IMAP client not initialized")
-		return mcp.NewToolResultError("IMAP client not initialized - server running in testing mode"), nil
+	if res := s.requireIMAP(); res != nil {
+		return res, nil
 	}
 
 	var criteria models.SearchCriteria
@@ -188,7 +249,7 @@ func (s *EmailMCPServer) handleSearchEmails(arguments map[string]interface{}) (*
 		return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 	}
 
-	log.Printf("   Search criteria: %+v", criteria)
+	log.Printf("   Search criteria: folder=%q limit=%d unseen=%v seen=%v", criteria.Folder, criteria.Limit, criteria.Unseen, criteria.Seen)
 	emails, err := s.imapClient.SearchEmails(&criteria)
 	if err != nil {
 		log.Printf("❌ Failed to search emails: %v", err)
@@ -207,7 +268,11 @@ func (s *EmailMCPServer) handleSearchEmails(arguments map[string]interface{}) (*
 
 func (s *EmailMCPServer) handleGetEmail(arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	log.Println("🔧 Tool called: get_email")
-	log.Printf("   Arguments: %v", arguments)
+	log.Printf("   Arguments: %s", argSummary(arguments))
+
+	if res := s.requireIMAP(); res != nil {
+		return res, nil
+	}
 
 	var params struct {
 		ID                 uint32 `json:"id"`
@@ -238,7 +303,7 @@ func (s *EmailMCPServer) handleGetEmail(arguments map[string]interface{}) (*mcp.
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get email: %v", err)), nil
 	}
 
-	log.Printf("✅ Retrieved email: %s", email.Subject)
+	log.Printf("✅ Retrieved email uid=%d (%d attachment(s), %d bytes)", email.ID, len(email.Attachments), email.Size)
 	result, err := json.Marshal(email)
 	if err != nil {
 		log.Printf("❌ Failed to marshal result: %v", err)
@@ -250,7 +315,7 @@ func (s *EmailMCPServer) handleGetEmail(arguments map[string]interface{}) (*mcp.
 
 func (s *EmailMCPServer) handleSendEmail(arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	log.Println("🔧 Tool called: send_email")
-	log.Printf("   Arguments: %v", arguments)
+	log.Printf("   Arguments: %s", argSummary(arguments))
 
 	var emailReq models.SendEmailRequest
 
@@ -266,7 +331,7 @@ func (s *EmailMCPServer) handleSendEmail(arguments map[string]interface{}) (*mcp
 		return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 	}
 
-	log.Printf("   Sending email to %v, subject: '%s'", emailReq.To, emailReq.Subject)
+	log.Printf("   Sending email to %d recipient(s), %d attachment(s)", len(emailReq.To)+len(emailReq.Cc)+len(emailReq.Bcc), len(emailReq.Attachments))
 	if err := s.smtpClient.SendEmail(&emailReq); err != nil {
 		log.Printf("❌ Failed to send email: %v", err)
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to send email: %v", err)), nil
@@ -278,7 +343,11 @@ func (s *EmailMCPServer) handleSendEmail(arguments map[string]interface{}) (*mcp
 
 func (s *EmailMCPServer) handleReplyToEmail(arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	log.Println("🔧 Tool called: reply_to_email")
-	log.Printf("   Arguments: %v", arguments)
+	log.Printf("   Arguments: %s", argSummary(arguments))
+
+	if res := s.requireIMAP(); res != nil {
+		return res, nil
+	}
 
 	var params struct {
 		EmailID  uint32 `json:"email_id"`
@@ -324,7 +393,11 @@ func (s *EmailMCPServer) handleReplyToEmail(arguments map[string]interface{}) (*
 
 func (s *EmailMCPServer) handleForwardEmail(arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	log.Println("🔧 Tool called: forward_email")
-	log.Printf("   Arguments: %v", arguments)
+	log.Printf("   Arguments: %s", argSummary(arguments))
+
+	if res := s.requireIMAP(); res != nil {
+		return res, nil
+	}
 
 	var params struct {
 		EmailID uint32   `json:"email_id"`
@@ -349,7 +422,7 @@ func (s *EmailMCPServer) handleForwardEmail(arguments map[string]interface{}) (*
 		params.Folder = "INBOX"
 	}
 
-	log.Printf("   Forwarding email ID %d from folder '%s' to %v", params.EmailID, params.Folder, params.To)
+	log.Printf("   Forwarding email uid=%d from folder '%s' to %d recipient(s)", params.EmailID, params.Folder, len(params.To))
 	// Get original email
 	originalEmail, err := s.imapClient.GetEmail(params.EmailID, params.Folder, true)
 	if err != nil {
@@ -369,7 +442,11 @@ func (s *EmailMCPServer) handleForwardEmail(arguments map[string]interface{}) (*
 
 func (s *EmailMCPServer) handleMarkAsRead(arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	log.Println("🔧 Tool called: mark_as_read")
-	log.Printf("   Arguments: %v", arguments)
+	log.Printf("   Arguments: %s", argSummary(arguments))
+
+	if res := s.requireIMAP(); res != nil {
+		return res, nil
+	}
 
 	var params struct {
 		EmailIDs []uint32 `json:"email_ids"`
@@ -404,7 +481,11 @@ func (s *EmailMCPServer) handleMarkAsRead(arguments map[string]interface{}) (*mc
 
 func (s *EmailMCPServer) handleMarkAsUnread(arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	log.Println("🔧 Tool called: mark_as_unread")
-	log.Printf("   Arguments: %v", arguments)
+	log.Printf("   Arguments: %s", argSummary(arguments))
+
+	if res := s.requireIMAP(); res != nil {
+		return res, nil
+	}
 
 	var params struct {
 		EmailIDs []uint32 `json:"email_ids"`
@@ -439,7 +520,11 @@ func (s *EmailMCPServer) handleMarkAsUnread(arguments map[string]interface{}) (*
 
 func (s *EmailMCPServer) handleMoveEmail(arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	log.Println("🔧 Tool called: move_email")
-	log.Printf("   Arguments: %v", arguments)
+	log.Printf("   Arguments: %s", argSummary(arguments))
+
+	if res := s.requireIMAP(); res != nil {
+		return res, nil
+	}
 
 	var params struct {
 		EmailID    uint32 `json:"email_id"`
@@ -475,7 +560,11 @@ func (s *EmailMCPServer) handleMoveEmail(arguments map[string]interface{}) (*mcp
 
 func (s *EmailMCPServer) handleDeleteEmail(arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	log.Println("🔧 Tool called: delete_email")
-	log.Printf("   Arguments: %v", arguments)
+	log.Printf("   Arguments: %s", argSummary(arguments))
+
+	if res := s.requireIMAP(); res != nil {
+		return res, nil
+	}
 
 	var params struct {
 		EmailID   uint32 `json:"email_id"`
@@ -527,12 +616,47 @@ func (s *EmailMCPServer) Start(ctx context.Context) error {
 
 	return nil
 }
+
+// requireAuth rejects requests that do not carry the configured bearer token.
+// Preflight requests pass through, because a browser never attaches
+// credentials to them; the real request that follows is still checked.
+func (s *EmailMCPServer) requireAuth(next http.Handler) http.Handler {
+	want := []byte("Bearer " + s.config.AuthToken)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		got := []byte(r.Header.Get("Authorization"))
+
+		// Compare in constant time so the response time does not reveal how
+		// much of the token was correct. Lengths are checked first because
+		// ConstantTimeCompare returns 0 for unequal lengths regardless.
+		if len(got) != len(want) || subtle.ConstantTimeCompare(got, want) != 1 {
+			log.Printf("   ⛔ Rejected request without a valid token from %s", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *EmailMCPServer) StartHTTP(ctx context.Context, addr string) error {
 	log.Println("========================================")
 	log.Println("🚀 Starting Email MCP Server (HTTP mode)...")
 	log.Println("========================================")
 	log.Printf("Server listening on %s", addr)
 	log.Println("")
+
+	// Without a token these endpoints let anyone who can reach the port read,
+	// send and delete mail with the configured credentials. Refuse to start
+	// rather than expose the mailbox.
+	if s.config.AuthToken == "" {
+		return fmt.Errorf("MCP_AUTH_TOKEN must be set to run in HTTP mode, otherwise the email tools on %s are open to any client that can reach them", addr)
+	}
 
 	mux := http.NewServeMux()
 
@@ -544,17 +668,32 @@ func (s *EmailMCPServer) StartHTTP(ctx context.Context, addr string) error {
 		}
 	})
 
-	// MCP endpoints
-	mux.HandleFunc("/mcp", s.handleMCPRequest)
-	mux.HandleFunc("/sse", s.handleSSEConnection)
-	mux.HandleFunc("/messages", s.handleMCPMessages)
+	// MCP endpoints. These read, send and delete mail, so they sit behind the
+	// bearer token. /health stays open so container health checks still work.
+	mux.Handle("/mcp", s.requireAuth(http.HandlerFunc(s.handleMCPRequest)))
+	mux.Handle("/sse", s.requireAuth(http.HandlerFunc(s.handleSSEConnection)))
+	mux.Handle("/messages", s.requireAuth(http.HandlerFunc(s.handleMCPMessages)))
 
-	handler := cors.Default().Handler(mux)
+	// cors.Default allows every origin, which would let any web page a browser
+	// visits drive these endpoints. Allow only the configured origins; with
+	// none configured there is no cross-origin access at all.
+	corsHandler := cors.New(cors.Options{
+		AllowedOrigins:   s.config.AllowedOrigins,
+		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodOptions},
+		AllowedHeaders:   []string{"Content-Type", "Authorization"},
+		AllowCredentials: false,
+	})
 
-	// Create HTTP server and apply CORS middleware to the entire mux
+	if len(s.config.AllowedOrigins) == 0 {
+		log.Println("   🔒 CORS: no cross-origin access (set MCP_ALLOWED_ORIGINS to allow specific origins)")
+	} else {
+		log.Printf("   🔒 CORS: allowed origins %v", s.config.AllowedOrigins)
+	}
+
 	httpServer := &http.Server{
-		Addr:    addr,
-		Handler: handler,
+		Addr:              addr,
+		Handler:           corsHandler.Handler(mux),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	// Start server in a goroutine
@@ -581,16 +720,6 @@ func (s *EmailMCPServer) StartHTTP(ctx context.Context, addr string) error {
 func (s *EmailMCPServer) handleMCPRequest(w http.ResponseWriter, r *http.Request) {
 	log.Printf("🌐 Received MCP request: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 
-	// Handle CORS preflight requests
-	if r.Method == http.MethodOptions {
-		log.Println("   ✅ Handling CORS preflight request")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	// Only allow POST requests for MCP protocol
 	if r.Method != http.MethodPost {
 		log.Printf("   ❌ Method %s not allowed", r.Method)
@@ -606,7 +735,7 @@ func (s *EmailMCPServer) handleMCPRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	log.Printf("   📦 Request body: %+v", request)
+	log.Printf("   📦 Request id=%v method=%v", request["id"], request["method"])
 
 	// Extract method
 	method, ok := request["method"].(string)
@@ -663,7 +792,7 @@ func (s *EmailMCPServer) handleMCPRequest(w http.ResponseWriter, r *http.Request
 		"result":  result,
 	}
 
-	log.Printf("   ✅ Sending response: %+v", response)
+	log.Printf("   ✅ Responding to id=%v", response["id"])
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
