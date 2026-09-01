@@ -6,6 +6,9 @@
 
 A Model Context Protocol (MCP) server that provides email capabilities through IMAP and SMTP protocols. This server enables AI assistants to interact with email accounts, read messages, send emails, and manage mailboxes.
 
+**Quick Links:**
+🐳 [Docker guide](DOCKER.md)
+
 ## Features
 
 ### IMAP (Reading & Managing Emails)
@@ -44,6 +47,29 @@ go build -o email-mcp ./cmd/email-mcp
 
 ```bash
 go install github.com/EmadMokhtar/email-mcp-go/cmd/email-mcp@latest
+```
+
+### Docker Installation
+
+Run the MCP server in a Docker container:
+
+```bash
+# Build the image
+docker build -t email-mcp-go:latest .
+
+# Run in stdio mode (default)
+docker run -it --rm --env-file .env email-mcp-go:latest
+
+# Run in HTTP mode
+# HTTP mode needs MCP_AUTH_TOKEN set in .env, and should stay bound to
+# localhost unless it sits behind a proxy that terminates TLS.
+docker run -d -p 127.0.0.1:8080:8080 --env-file .env email-mcp-go:latest ./email-mcp -http -addr 0.0.0.0:8080
+```
+
+Or use Docker Compose:
+
+```bash
+docker compose up
 ```
 
 ## Configuration
@@ -113,24 +139,46 @@ SMTP_TLS=false
 
 ## Usage
 
-### Running the Server
-
-```bash
-./email-mcp
-```
-
 ### Using with Claude Desktop
 
-Add to your Claude Desktop configuration file:
+> **💡 You don't need to run the server manually!** Claude Desktop automatically starts and manages the MCP server. Claude Desktop launches it over stdio using the configuration below.
 
-**MacOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows**: `%APPDATA%/Claude/claude_desktop_config.json`
+#### Quick Setup (Recommended)
 
+1. Clone and configure:
+```bash
+git clone https://github.com/EmadMokhtar/email-mcp-go.git
+cd email-mcp-go
+cp .env.example .env
+# Edit .env with your email credentials
+```
+
+2. Run the installer:
+```bash
+./install-claude.sh
+```
+
+3. Restart Claude Desktop
+
+That's it! The email MCP server is now available in Claude. **No need to run anything manually!**
+
+#### Manual Setup
+
+To configure it by hand, add the `email` entry shown above to your `claude_desktop_config.json`.
+
+#### Quick Manual Setup
+
+1. Build the binary:
+```bash
+make build
+```
+
+2. Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 ```json
 {
   "mcpServers": {
     "email": {
-      "command": "/path/to/email-mcp",
+      "command": "/absolute/path/to/email-mcp-go/bin/email-mcp",
       "env": {
         "IMAP_HOST": "imap.gmail.com",
         "IMAP_PORT": "993",
@@ -146,6 +194,21 @@ Add to your Claude Desktop configuration file:
     }
   }
 }
+```
+
+3. Restart Claude Desktop
+
+### Running the Server Standalone
+
+```bash
+# Using the binary
+./bin/email-mcp
+
+# Or with make
+make run
+
+# Or in development mode
+make dev
 ```
 
 ## Available Tools
@@ -335,6 +398,28 @@ go run ./cmd/email-mcp
 
 ## Troubleshooting
 
+### Debugging
+
+The Email MCP Server logs to stderr. Email content is deliberately kept out of the logs; only metadata such as folder names, message UIDs and counts is recorded. The logs cover:
+
+- Viewing logs in Claude Desktop
+- Running the server standalone for debugging
+- Understanding log messages and icons
+- Common error patterns and solutions
+
+**Quick Debug**: Run the server standalone to see all logs:
+```bash
+make run
+# or
+./bin/email-mcp
+```
+
+All logs are sent to stderr and include:
+- 🚀 Startup and initialization
+- 🔧 Tool calls and arguments
+- ✅ Success messages
+- ❌ Error details
+
 ### Common Issues
 
 #### "Connection refused" or "Timeout"
@@ -351,6 +436,12 @@ go run ./cmd/email-mcp
 - Update Go to the latest version
 - Check system certificates are up to date
 - For self-signed certificates, you may need to disable TLS verification (not recommended for production)
+
+#### Not seeing the server in Claude Desktop
+- Check the configuration file path is correct
+- Verify the binary path is absolute
+- Restart Claude Desktop
+- Check Claude Desktop logs: `~/Library/Logs/Claude/` (macOS)
 
 ## Contributing
 

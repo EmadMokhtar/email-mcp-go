@@ -1,0 +1,21 @@
+# Docker Compose configuration for the Email MCP server in HTTP mode.
+#
+# Copy .env.example to .env and fill it in first. HTTP mode refuses to start
+# without MCP_AUTH_TOKEN, because the tools it exposes can read, send and
+# delete mail.
+services:
+  email-mcp:
+    build: .
+    image: email-mcp-go:latest
+    env_file: .env
+    command: ["/app/email-mcp", "-http", "-addr", "0.0.0.0:8080"]
+    ports:
+      # Bound to localhost on purpose. Publish on 0.0.0.0 only behind a proxy
+      # that terminates TLS and keeps the bearer token secret.
+      - "127.0.0.1:${HTTP_PORT:-8080}:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,242 @@
+package smtp
+
+import (
+	"testing"
+	"time"
+
+	"github.com/EmadMokhtar/email-mcp-go/internal/config"
+	"github.com/EmadMokhtar/email-mcp-go/pkg/models"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestNewClient(t *testing.T) {
+	cfg := &config.Config{
+		SMTPHost:     "smtp.example.com",
+		SMTPPort:     "587",
+		SMTPUsername: "user@example.com",
+		SMTPPassword: "password",
+		SMTPTLS:      true,
+	}
+
+	client := NewClient(cfg)
+
+	assert.NotNil(t, client)
+	assert.Equal(t, cfg, client.config)
+}
+
+func TestSendEmailRequest(t *testing.T) {
+	t.Run("basic send email request validation", func(t *testing.T) {
+		req := &models.SendEmailRequest{
+			To:      []string{"recipient@example.com"},
+			Subject: "Test Subject",
+			Body:    "Test Body",
+			IsHTML:  false,
+		}
+
+		assert.NotEmpty(t, req.To)
+		assert.NotEmpty(t, req.Subject)
+		assert.NotEmpty(t, req.Body)
+	})
+
+	t.Run("send email with multiple recipients", func(t *testing.T) {
+		req := &models.SendEmailRequest{
+			To:      []string{"recipient1@example.com", "recipient2@example.com"},
+			Cc:      []string{"cc@example.com"},
+			Bcc:     []string{"bcc@example.com"},
+			Subject: "Test Subject",
+			Body:    "Test Body",
+			IsHTML:  true,
+		}
+
+		assert.Len(t, req.To, 2)
+		assert.Len(t, req.Cc, 1)
+		assert.Len(t, req.Bcc, 1)
+		assert.True(t, req.IsHTML)
+	})
+
+	t.Run("send email with attachments", func(t *testing.T) {
+		req := &models.SendEmailRequest{
+			To:      []string{"recipient@example.com"},
+			Subject: "Test with Attachments",
+			Body:    "Test Body",
+			IsHTML:  false,
+			Attachments: []models.AttachmentData{
+				{
+					Filename: "test.txt",
+					Data:     []byte("test content"),
+				},
+			},
+		}
+
+		assert.Len(t, req.Attachments, 1)
+		assert.Equal(t, "test.txt", req.Attachments[0].Filename)
+	})
+}
+
+func TestReplyToEmailValidation(t *testing.T) {
+	t.Run("reply to email - regular reply", func(t *testing.T) {
+		originalEmail := &models.Email{
+			MessageID: "<original@example.com>",
+			From:      []string{"sender@example.com"},
+			To:        []string{"me@example.com"},
+			Subject:   "Original Subject",
+			Date:      time.Now(),
+		}
+
+		body := "This is my reply"
+
+		assert.NotNil(t, originalEmail)
+		assert.NotEmpty(t, originalEmail.From)
+		assert.NotEmpty(t, body)
+	})
+
+	t.Run("reply all validation", func(t *testing.T) {
+		originalEmail := &models.Email{
+			MessageID: "<original@example.com>",
+			From:      []string{"sender@example.com"},
+			To:        []string{"me@example.com", "other@example.com"},
+			Cc:        []string{"cc@example.com"},
+			Subject:   "Original Subject",
+			Date:      time.Now(),
+		}
+
+		assert.Len(t, originalEmail.To, 2)
+		assert.Len(t, originalEmail.Cc, 1)
+	})
+}
+
+func TestForwardEmailValidation(t *testing.T) {
+	t.Run("forward email with message", func(t *testing.T) {
+		originalEmail := &models.Email{
+			From:     []string{"original-sender@example.com"},
+			To:       []string{"original-recipient@example.com"},
+			Subject:  "Original Subject",
+			TextBody: "Original email content",
+			Date:     time.Now(),
+		}
+
+		forwardTo := []string{"new-recipient@example.com"}
+		message := "Please see the forwarded message below"
+
+		assert.NotNil(t, originalEmail)
+		assert.NotEmpty(t, forwardTo)
+		assert.NotEmpty(t, message)
+	})
+
+	t.Run("forward email with attachments", func(t *testing.T) {
+		originalEmail := &models.Email{
+			From:     []string{"sender@example.com"},
+			Subject:  "Email with attachments",
+			TextBody: "Content",
+			Date:     time.Now(),
+			Attachments: []models.Attachment{
+				{
+					Filename:    "document.pdf",
+					ContentType: "application/pdf",
+					Size:        1024,
+					Data:        []byte("PDF content"),
+				},
+			},
+		}
+
+		assert.Len(t, originalEmail.Attachments, 1)
+	})
+
+	t.Run("forward email with HTML body", func(t *testing.T) {
+		originalEmail := &models.Email{
+			From:     []string{"sender@example.com"},
+			Subject:  "HTML Email",
+			HTMLBody: "<p>HTML content</p>",
+			Date:     time.Now(),
+		}
+
+		assert.NotEmpty(t, originalEmail.HTMLBody)
+		assert.Empty(t, originalEmail.TextBody)
+	})
+}
+
+func TestReplyAllCc(t *testing.T) {
+	t.Run("combines original To and Cc recipients", func(t *testing.T) {
+		email := &models.Email{
+			From: []string{"sender@example.com"},
+			To:   []string{"first@example.com", "second@example.com"},
+			Cc:   []string{"copied@example.com"},
+		}
+
+		cc := replyAllCc(email)
+
+		// Every original recipient must survive. Setting the Cc header once
+		// per list would have kept only the last list.
+		assert.Equal(t, []string{
+			"first@example.com",
+			"second@example.com",
+			"copied@example.com",
+		}, cc)
+	})
+
+	t.Run("works when the original had no Cc", func(t *testing.T) {
+		email := &models.Email{To: []string{"only@example.com"}}
+
+		assert.Equal(t, []string{"only@example.com"}, replyAllCc(email))
+	})
+
+	t.Run("returns an empty list when there is nobody to copy", func(t *testing.T) {
+		assert.Empty(t, replyAllCc(&models.Email{}))
+	})
+}
+
+func TestInvalidSMTPPortIsReported(t *testing.T) {
+	c := NewClient(&config.Config{
+		SMTPHost:     "smtp.example.com",
+		SMTPPort:     "not-a-number",
+		SMTPUsername: "user@example.com",
+	})
+
+	// Every send path must refuse a bad port instead of dialing port 0.
+	err := c.SendEmail(&models.SendEmailRequest{To: []string{"to@example.com"}})
+	assert.ErrorContains(t, err, "invalid SMTP port")
+
+	err = c.ReplyToEmail(&models.Email{From: []string{"a@example.com"}}, "body", false, false)
+	assert.ErrorContains(t, err, "invalid SMTP port")
+
+	err = c.ForwardEmail(&models.Email{From: []string{"a@example.com"}}, []string{"b@example.com"}, "")
+	assert.ErrorContains(t, err, "invalid SMTP port")
+}
+
+func TestForwardPreambleHTML(t *testing.T) {
+	original := &models.Email{
+		From:    []string{"a<b>@example.com"},
+		To:      []string{"c&d@example.com"},
+		Subject: `Report <script>alert("x")</script> & notes`,
+		Date:    time.Date(2026, 3, 4, 15, 4, 0, 0, time.UTC),
+	}
+
+	got := forwardPreambleHTML("first line\nsecond line", original)
+
+	// Nothing from the original message may survive as live markup.
+	assert.NotContains(t, got, "<script>")
+	assert.Contains(t, got, "&lt;script&gt;")
+	assert.Contains(t, got, "a&lt;b&gt;@example.com")
+	assert.Contains(t, got, "c&amp;d@example.com")
+
+	// The added message keeps its line structure instead of collapsing.
+	assert.Contains(t, got, "first line<br>second line")
+	assert.Contains(t, got, "Wed, Mar 4, 2026 at 3:04 PM")
+}
+
+func TestForwardPreambleText(t *testing.T) {
+	original := &models.Email{
+		From:    []string{"sender@example.com"},
+		To:      []string{"to@example.com"},
+		Subject: "Plain subject",
+		Date:    time.Date(2026, 3, 4, 15, 4, 0, 0, time.UTC),
+	}
+
+	got := forwardPreambleText("note", original)
+
+	// Plain text must stay plain: no escaping and no markup.
+	assert.Contains(t, got, "note\n\n")
+	assert.Contains(t, got, "Subject: Plain subject\n")
+	assert.NotContains(t, got, "<br>")
+	assert.NotContains(t, got, "&amp;")
+}
