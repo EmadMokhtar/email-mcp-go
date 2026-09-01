@@ -20,7 +20,14 @@ func (c *Client) newDialer() (*mail.Dialer, error) {
 	}
 
 	d := mail.NewDialer(c.config.SMTPHost, port, c.config.SMTPUsername, c.config.SMTPPassword)
-	if !c.config.SMTPTLS {
+	if c.config.SMTPTLS {
+		// The library default is opportunistic STARTTLS, which silently sends
+		// the credentials and the message in the clear if the server does not
+		// offer STARTTLS or an attacker strips it. Require it instead.
+		// NewDialer already turns on implicit TLS for port 465, where
+		// StartTLSPolicy does not apply.
+		d.StartTLSPolicy = mail.MandatoryStartTLS
+	} else {
 		d.StartTLSPolicy = mail.NoStartTLS
 	}
 
