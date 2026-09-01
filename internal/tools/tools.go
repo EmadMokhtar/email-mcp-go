@@ -82,7 +82,7 @@ func GetEmailTool() mcp.Tool {
 			Properties: map[string]interface{}{
 				"id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Email sequence number",
+					"description": "Email UID, as returned by search_emails. Stable across mailbox changes",
 				},
 				"folder": map[string]interface{}{
 					"type":        "string",
@@ -147,7 +147,7 @@ func ReplyToEmailTool() mcp.Tool {
 			Properties: map[string]interface{}{
 				"email_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "ID of email to reply to",
+					"description": "UID of the email to reply to, as returned by search_emails",
 				},
 				"folder": map[string]interface{}{
 					"type":        "string",
@@ -180,7 +180,7 @@ func ForwardEmailTool() mcp.Tool {
 			Properties: map[string]interface{}{
 				"email_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "ID of email to forward",
+					"description": "UID of the email to forward, as returned by search_emails",
 				},
 				"folder": map[string]interface{}{
 					"type":        "string",
@@ -211,7 +211,7 @@ func MarkAsReadTool() mcp.Tool {
 				"email_ids": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]string{"type": "integer"},
-					"description": "Array of email IDs",
+					"description": "Array of email UIDs, as returned by search_emails",
 				},
 				"folder": map[string]interface{}{
 					"type":        "string",
@@ -233,7 +233,7 @@ func MarkAsUnreadTool() mcp.Tool {
 				"email_ids": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]string{"type": "integer"},
-					"description": "Array of email IDs",
+					"description": "Array of email UIDs, as returned by search_emails",
 				},
 				"folder": map[string]interface{}{
 					"type":        "string",
@@ -254,7 +254,7 @@ func MoveEmailTool() mcp.Tool {
 			Properties: map[string]interface{}{
 				"email_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Email ID to move",
+					"description": "UID of the email to move, as returned by search_emails",
 				},
 				"from_folder": map[string]interface{}{
 					"type":        "string",
@@ -279,7 +279,7 @@ func DeleteEmailTool() mcp.Tool {
 			Properties: map[string]interface{}{
 				"email_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Email ID to delete",
+					"description": "UID of the email to delete, as returned by search_emails",
 				},
 				"folder": map[string]interface{}{
 					"type":        "string",
@@ -287,7 +287,7 @@ func DeleteEmailTool() mcp.Tool {
 				},
 				"permanent": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Permanently delete vs move to trash (default: false)",
+					"description": "Permanently remove the email. When false the email is moved to the Trash mailbox (default: false)",
 				},
 			},
 			Required: []string{"email_id"},
