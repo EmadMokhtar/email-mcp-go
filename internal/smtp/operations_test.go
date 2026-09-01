@@ -202,3 +202,41 @@ func TestInvalidSMTPPortIsReported(t *testing.T) {
 	err = c.ForwardEmail(&models.Email{From: []string{"a@example.com"}}, []string{"b@example.com"}, "")
 	assert.ErrorContains(t, err, "invalid SMTP port")
 }
+
+func TestForwardPreambleHTML(t *testing.T) {
+	original := &models.Email{
+		From:    []string{"a<b>@example.com"},
+		To:      []string{"c&d@example.com"},
+		Subject: `Report <script>alert("x")</script> & notes`,
+		Date:    time.Date(2026, 3, 4, 15, 4, 0, 0, time.UTC),
+	}
+
+	got := forwardPreambleHTML("first line\nsecond line", original)
+
+	// Nothing from the original message may survive as live markup.
+	assert.NotContains(t, got, "<script>")
+	assert.Contains(t, got, "&lt;script&gt;")
+	assert.Contains(t, got, "a&lt;b&gt;@example.com")
+	assert.Contains(t, got, "c&amp;d@example.com")
+
+	// The added message keeps its line structure instead of collapsing.
+	assert.Contains(t, got, "first line<br>second line")
+	assert.Contains(t, got, "Wed, Mar 4, 2026 at 3:04 PM")
+}
+
+func TestForwardPreambleText(t *testing.T) {
+	original := &models.Email{
+		From:    []string{"sender@example.com"},
+		To:      []string{"to@example.com"},
+		Subject: "Plain subject",
+		Date:    time.Date(2026, 3, 4, 15, 4, 0, 0, time.UTC),
+	}
+
+	got := forwardPreambleText("note", original)
+
+	// Plain text must stay plain: no escaping and no markup.
+	assert.Contains(t, got, "note\n\n")
+	assert.Contains(t, got, "Subject: Plain subject\n")
+	assert.NotContains(t, got, "<br>")
+	assert.NotContains(t, got, "&amp;")
+}

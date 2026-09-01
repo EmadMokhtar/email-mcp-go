@@ -132,6 +132,27 @@ func SendEmailTool() mcp.Tool {
 					"items":       map[string]string{"type": "string"},
 					"description": "BCC recipients",
 				},
+				// SendEmailRequest accepts attachments and the README
+				// advertises them, so the schema has to declare them or strict
+				// clients will never offer the argument.
+				"attachments": map[string]interface{}{
+					"type":        "array",
+					"description": "Files to attach",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"filename": map[string]interface{}{
+								"type":        "string",
+								"description": "Name shown to the recipient",
+							},
+							"data": map[string]interface{}{
+								"type":        "string",
+								"description": "File contents, base64 encoded",
+							},
+						},
+						"required": []string{"filename", "data"},
+					},
+				},
 			},
 			Required: []string{"to", "subject", "body"},
 		},

@@ -3,12 +3,16 @@ package smtp
 import (
 	"bytes"
 	"fmt"
+	"html"
 	"strconv"
 	"strings"
 
 	"github.com/EmadMokhtar/email-mcp-go/pkg/models"
 	"github.com/go-mail/mail/v2"
 )
+
+// forwardDateLayout is how the original send time is shown in a forward.
+const forwardDateLayout = "Mon, Jan 2, 2006 at 3:04 PM"
 
 // newDialer builds an SMTP dialer from the configuration. The port is stored
 // as a string, so parse it here and report a clear error when it is not a
@@ -133,6 +137,52 @@ func (c *Client) ReplyToEmail(originalEmail *models.Email, body string, replyAll
 	return nil
 }
 
+// forwardPreambleText renders the "forwarded message" header block for a
+// plain text forward.
+func forwardPreambleText(message string, originalEmail *models.Email) string {
+	var b strings.Builder
+
+	if message != "" {
+		b.WriteString(message)
+		b.WriteString("\n\n")
+	}
+
+	b.WriteString("---------- Forwarded message ---------\n")
+	b.WriteString(fmt.Sprintf("From: %s\n", strings.Join(originalEmail.From, ", ")))
+	b.WriteString(fmt.Sprintf("Date: %s\n", originalEmail.Date.Format(forwardDateLayout)))
+	b.WriteString(fmt.Sprintf("Subject: %s\n", originalEmail.Subject))
+	b.WriteString(fmt.Sprintf("To: %s\n", strings.Join(originalEmail.To, ", ")))
+	b.WriteString("\n\n")
+
+	return b.String()
+}
+
+// forwardPreambleHTML renders the same header block for an HTML forward. Every
+// value is escaped, and line breaks become <br> so the block still reads as
+// separate lines once a mail client renders it.
+func forwardPreambleHTML(message string, originalEmail *models.Email) string {
+	var b strings.Builder
+
+	if message != "" {
+		b.WriteString(htmlLines(message))
+		b.WriteString("<br><br>")
+	}
+
+	b.WriteString("---------- Forwarded message ---------<br>")
+	b.WriteString("From: " + html.EscapeString(strings.Join(originalEmail.From, ", ")) + "<br>")
+	b.WriteString("Date: " + html.EscapeString(originalEmail.Date.Format(forwardDateLayout)) + "<br>")
+	b.WriteString("Subject: " + html.EscapeString(originalEmail.Subject) + "<br>")
+	b.WriteString("To: " + html.EscapeString(strings.Join(originalEmail.To, ", ")) + "<br>")
+	b.WriteString("<br><br>")
+
+	return b.String()
+}
+
+// htmlLines escapes text and keeps its line structure.
+func htmlLines(text string) string {
+	return strings.ReplaceAll(html.EscapeString(text), "\n", "<br>")
+}
+
 func (c *Client) ForwardEmail(originalEmail *models.Email, to []string, message string) error {
 	m := mail.NewMessage()
 
@@ -146,26 +196,14 @@ func (c *Client) ForwardEmail(originalEmail *models.Email, to []string, message 
 	}
 	m.SetHeader("Subject", subject)
 
-	// Build forwarded message body
-	var body strings.Builder
-	if message != "" {
-		body.WriteString(message)
-		body.WriteString("\n\n")
-	}
-
-	body.WriteString("---------- Forwarded message ---------\n")
-	body.WriteString(fmt.Sprintf("From: %s\n", strings.Join(originalEmail.From, ", ")))
-	body.WriteString(fmt.Sprintf("Date: %s\n", originalEmail.Date.Format("Mon, Jan 2, 2006 at 3:04 PM")))
-	body.WriteString(fmt.Sprintf("Subject: %s\n", originalEmail.Subject))
-	body.WriteString(fmt.Sprintf("To: %s\n", strings.Join(originalEmail.To, ", ")))
-	body.WriteString("\n\n")
-
+	// Build forwarded message body. The preamble is plain text, so when the
+	// original body is HTML it has to be escaped and given real line breaks;
+	// pasting it in raw would collapse the lines and let a "<" or "&" in a
+	// subject or address be read as markup.
 	if originalEmail.HTMLBody != "" {
-		body.WriteString(originalEmail.HTMLBody)
-		m.SetBody("text/html", body.String())
+		m.SetBody("text/html", forwardPreambleHTML(message, originalEmail)+originalEmail.HTMLBody)
 	} else {
-		body.WriteString(originalEmail.TextBody)
-		m.SetBody("text/plain", body.String())
+		m.SetBody("text/plain", forwardPreambleText(message, originalEmail)+originalEmail.TextBody)
 	}
 
 	// Forward attachments
