@@ -8,6 +8,7 @@ import (
 
 	"github.com/EmadMokhtar/email-mcp-go/pkg/models"
 	"github.com/emersion/go-imap"
+	"github.com/emersion/go-message"
 	"github.com/emersion/go-message/mail"
 )
 
@@ -157,25 +158,55 @@ func (c *Client) GetEmail(id uint32, folder string, includeAttachments bool) (*m
 	seqset := new(imap.SeqSet)
 	seqset.AddNum(id)
 
-	messages := make(chan *imap.Message, 1)
-	// Peek here too: reading an email is an explicit mark_as_read decision,
-	// not a side effect of fetching it.
+	if !includeAttachments {
+		// Fetching the whole message would download every attachment only to
+		// throw it away. Ask for the structure first and pull just the text.
+		email, err := c.getEmailTextOnly(seqset)
+		if err == nil {
+			return email, nil
+		}
+
+		// Fall back to the complete message rather than fail: a server or a
+		// message shape we cannot map is not a reason to lose the email.
+		log.Printf("ℹ️  Falling back to a full fetch for uid %d: %v", id, err)
+	}
+
+	msg, err := c.fetchOne(seqset, bodyPeekItems())
+	if err != nil {
+		return nil, err
+	}
+
+	return c.messageToEmail(msg, includeAttachments), nil
+}
+
+// bodyPeekItems is the fetch list for a whole message, without marking it read.
+func bodyPeekItems() []imap.FetchItem {
 	section := &imap.BodySectionName{Peek: true}
-	items := []imap.FetchItem{
+
+	return []imap.FetchItem{
 		imap.FetchEnvelope,
 		imap.FetchFlags,
 		imap.FetchUid,
 		imap.FetchRFC822Size,
 		section.FetchItem(),
 	}
+}
 
+// fetchOne runs a UID fetch expected to return exactly one message.
+func (c *Client) fetchOne(seqset *imap.SeqSet, items []imap.FetchItem) (*imap.Message, error) {
+	messages := make(chan *imap.Message, 1)
 	done := make(chan error, 1)
+
 	go func() {
 		done <- c.client.UidFetch(seqset, items, messages)
 	}()
 
 	msg := <-messages
 	if msg == nil {
+		if err := <-done; err != nil {
+			return nil, fmt.Errorf("failed to fetch message: %w", err)
+		}
+
 		return nil, fmt.Errorf("email not found")
 	}
 
@@ -183,7 +214,129 @@ func (c *Client) GetEmail(id uint32, folder string, includeAttachments bool) (*m
 		return nil, fmt.Errorf("failed to fetch message: %w", err)
 	}
 
-	return c.messageToEmail(msg, includeAttachments), nil
+	return msg, nil
+}
+
+// getEmailTextOnly fetches the envelope plus only the text parts of a message,
+// leaving attachments on the server.
+func (c *Client) getEmailTextOnly(seqset *imap.SeqSet) (*models.Email, error) {
+	structure, err := c.fetchOne(seqset, []imap.FetchItem{
+		imap.FetchEnvelope,
+		imap.FetchFlags,
+		imap.FetchUid,
+		imap.FetchRFC822Size,
+		imap.FetchBodyStructure,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if structure.BodyStructure == nil {
+		return nil, fmt.Errorf("server returned no body structure")
+	}
+
+	parts := textParts(structure.BodyStructure, nil)
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("no text parts found in the body structure")
+	}
+
+	// Ask for each text part together with its MIME header, so the content can
+	// be decoded from its own transfer encoding and charset.
+	sections := make([]*imap.BodySectionName, 0, len(parts)*2)
+	items := make([]imap.FetchItem, 0, len(parts)*2+1)
+	for _, path := range parts {
+		header := &imap.BodySectionName{Peek: true, BodyPartName: imap.BodyPartName{Specifier: imap.MIMESpecifier, Path: path}}
+		body := &imap.BodySectionName{Peek: true, BodyPartName: imap.BodyPartName{Path: path}}
+
+		sections = append(sections, header, body)
+		items = append(items, header.FetchItem(), body.FetchItem())
+	}
+
+	fetched, err := c.fetchOne(seqset, items)
+	if err != nil {
+		return nil, err
+	}
+
+	email := c.envelopeToEmail(structure)
+
+	for i := 0; i < len(sections); i += 2 {
+		header := fetched.GetBody(sections[i])
+		body := fetched.GetBody(sections[i+1])
+		if header == nil || body == nil {
+			continue
+		}
+
+		contentType, text, err := decodePart(header, body)
+		if err != nil {
+			log.Printf("⚠️  Skipping a text part that could not be decoded: %v", err)
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(contentType, "text/plain") && email.TextBody == "":
+			email.TextBody = text
+		case strings.HasPrefix(contentType, "text/html") && email.HTMLBody == "":
+			email.HTMLBody = text
+		}
+	}
+
+	return email, nil
+}
+
+// decodePart reads one body part given its MIME header and encoded body,
+// returning the content type and the decoded text.
+func decodePart(header, body io.Reader) (string, string, error) {
+	entity, err := message.Read(io.MultiReader(header, strings.NewReader("\r\n"), body))
+	if err != nil && !message.IsUnknownCharset(err) {
+		return "", "", err
+	}
+
+	contentType, _, err := entity.Header.ContentType()
+	if err != nil {
+		return "", "", err
+	}
+
+	text, err := io.ReadAll(entity.Body)
+	if err != nil {
+		return "", "", err
+	}
+
+	return contentType, string(text), nil
+}
+
+// textParts walks a body structure and returns the paths of the text parts that
+// are part of the message body, skipping anything sent as an attachment.
+func textParts(bs *imap.BodyStructure, path []int) [][]int {
+	if len(bs.Parts) > 0 {
+		var found [][]int
+		for i, part := range bs.Parts {
+			child := append(append([]int{}, path...), i+1)
+			found = append(found, textParts(part, child)...)
+		}
+
+		return found
+	}
+
+	if !strings.EqualFold(bs.MIMEType, "text") || strings.EqualFold(bs.Disposition, "attachment") {
+		return nil
+	}
+
+	if len(path) == 0 {
+		// A message that is a single text part with no multipart wrapper.
+		path = []int{1}
+	}
+
+	return [][]int{path}
+}
+
+// envelopeToEmail builds an email from a fetch that carried no body.
+func (c *Client) envelopeToEmail(msg *imap.Message) *models.Email {
+	return c.messageToEmail(&imap.Message{
+		Uid:      msg.Uid,
+		Size:     msg.Size,
+		Flags:    msg.Flags,
+		Envelope: msg.Envelope,
+	}, false)
 }
 
 func (c *Client) messageToEmail(msg *imap.Message, includeAttachments bool) *models.Email {
