@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	_ "time"
 
 	"github.com/EmadMokhtar/email-mcp-go/pkg/models"
 	"github.com/emersion/go-imap"
