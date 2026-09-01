@@ -17,7 +17,12 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+# TARGETOS/TARGETARCH come from BuildKit and describe the image being built.
+# Hard-coding amd64 here produced an amd64 binary inside an arm64 image, which
+# fails at startup with "exec format error".
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build \
     -ldflags="-s -w" \
     -o email-mcp \
     ./cmd/email-mcp

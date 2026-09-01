@@ -78,28 +78,75 @@ if [ -f "$CONFIG_FILE" ]; then
     echo "📋 Backed up existing config to: $BACKUP_FILE"
 fi
 
-# Create the configuration JSON
-cat > "$CONFIG_FILE" << EOF
-{
-  "mcpServers": {
-    "email": {
-      "command": "$BINARY_PATH",
-      "env": {
-        "IMAP_HOST": "${IMAP_HOST}",
-        "IMAP_PORT": "${IMAP_PORT}",
-        "IMAP_USERNAME": "${IMAP_USERNAME}",
-        "IMAP_PASSWORD": "${IMAP_PASSWORD}",
-        "IMAP_TLS": "${IMAP_TLS}",
-        "SMTP_HOST": "${SMTP_HOST}",
-        "SMTP_PORT": "${SMTP_PORT}",
-        "SMTP_USERNAME": "${SMTP_USERNAME}",
-        "SMTP_PASSWORD": "${SMTP_PASSWORD}",
-        "SMTP_TLS": "${SMTP_TLS}"
-      }
-    }
-  }
+# Update only the "email" entry in the configuration.
+#
+# Writing the whole file would delete any other MCP servers the user has set
+# up. Values are passed as arguments to a JSON encoder rather than pasted into
+# a template, so a quote, backslash or newline in a path or password cannot
+# produce a broken config file.
+if [ -f "$CONFIG_FILE" ]; then
+    EXISTING_CONFIG=$(cat "$CONFIG_FILE")
+else
+    EXISTING_CONFIG='{}'
+fi
+
+if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$EXISTING_CONFIG" | jq \
+        --arg command "$BINARY_PATH" \
+        --arg imap_host "$IMAP_HOST" \
+        --arg imap_port "$IMAP_PORT" \
+        --arg imap_username "$IMAP_USERNAME" \
+        --arg imap_password "$IMAP_PASSWORD" \
+        --arg imap_tls "$IMAP_TLS" \
+        --arg smtp_host "$SMTP_HOST" \
+        --arg smtp_port "$SMTP_PORT" \
+        --arg smtp_username "$SMTP_USERNAME" \
+        --arg smtp_password "$SMTP_PASSWORD" \
+        --arg smtp_tls "$SMTP_TLS" \
+        '.mcpServers.email = {
+            command: $command,
+            env: {
+                IMAP_HOST: $imap_host,
+                IMAP_PORT: $imap_port,
+                IMAP_USERNAME: $imap_username,
+                IMAP_PASSWORD: $imap_password,
+                IMAP_TLS: $imap_tls,
+                SMTP_HOST: $smtp_host,
+                SMTP_PORT: $smtp_port,
+                SMTP_USERNAME: $smtp_username,
+                SMTP_PASSWORD: $smtp_password,
+                SMTP_TLS: $smtp_tls
+            }
+        }' > "$CONFIG_FILE.tmp"
+elif command -v python3 >/dev/null 2>&1; then
+    EXISTING_CONFIG="$EXISTING_CONFIG" \
+    BINARY_PATH="$BINARY_PATH" \
+    IMAP_HOST="$IMAP_HOST" IMAP_PORT="$IMAP_PORT" \
+    IMAP_USERNAME="$IMAP_USERNAME" IMAP_PASSWORD="$IMAP_PASSWORD" IMAP_TLS="$IMAP_TLS" \
+    SMTP_HOST="$SMTP_HOST" SMTP_PORT="$SMTP_PORT" \
+    SMTP_USERNAME="$SMTP_USERNAME" SMTP_PASSWORD="$SMTP_PASSWORD" SMTP_TLS="$SMTP_TLS" \
+    python3 -c '
+import json, os, sys
+
+config = json.loads(os.environ["EXISTING_CONFIG"] or "{}")
+config.setdefault("mcpServers", {})["email"] = {
+    "command": os.environ["BINARY_PATH"],
+    "env": {key: os.environ[key] for key in (
+        "IMAP_HOST", "IMAP_PORT", "IMAP_USERNAME", "IMAP_PASSWORD", "IMAP_TLS",
+        "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_TLS",
+    )},
 }
-EOF
+json.dump(config, sys.stdout, indent=2)
+sys.stdout.write("\n")
+' > "$CONFIG_FILE.tmp"
+else
+    echo "❌ Need either jq or python3 to update the configuration safely."
+    echo "   Install one of them, or add the \"email\" server to $CONFIG_FILE by hand."
+    exit 1
+fi
+
+# Only replace the real file once the new content was written successfully.
+mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
 
 echo "✅ Configuration written to: $CONFIG_FILE"
 echo ""

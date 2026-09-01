@@ -6,6 +6,9 @@ BINARY_PATH=./bin/$(BINARY_NAME)
 MAIN_PATH=./cmd/email-mcp
 GO=go
 GOFLAGS=-v
+# Ask the toolchain for GOPATH. Make does not define it, so $(GOPATH) would be
+# empty and "$(GOPATH)/bin/email-mcp" would resolve to "/bin/email-mcp".
+GOPATH_BIN=$(shell $(GO) env GOPATH)/bin
 LDFLAGS=-ldflags "-s -w"
 
 # HTTP mode address. Override on the command line when the port is taken,
@@ -18,6 +21,7 @@ DOCKER_IMAGE=email-mcp-go
 DOCKER_TAG=latest
 DOCKER_REGISTRY?=
 DOCKER_FULL_IMAGE=$(if $(DOCKER_REGISTRY),$(DOCKER_REGISTRY)/,)$(DOCKER_IMAGE):$(DOCKER_TAG)
+DOCKER_TEST_NAME=email-mcp-smoke-test
 
 # Go related variables
 GOBASE=$(shell pwd)
@@ -48,7 +52,10 @@ build:
 	@$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) $(MAIN_PATH)
 	@echo "$(GREEN)Build complete: $(BINARY_PATH)$(NC)"
 
-## run: Build and run the MCP server in stdio mode
+## run: Build and run the MCP server in stdio mode (alias for run/stdio)
+run: run/stdio
+
+## run/stdio: Build and run the MCP server in stdio mode
 run/stdio: build
 	@echo "$(GREEN)Running $(BINARY_NAME)...$(NC)"
 	@$(BINARY_PATH)
@@ -102,7 +109,7 @@ install:
 ## uninstall: Remove the binary from GOPATH/bin
 uninstall:
 	@echo "$(YELLOW)Uninstalling $(BINARY_NAME)...$(NC)"
-	@rm -f $(GOPATH)/bin/$(BINARY_NAME)
+	@rm -f $(GOPATH_BIN)/$(BINARY_NAME)
 	@echo "$(GREEN)Uninstall complete$(NC)"
 
 ## fmt: Format Go source code
@@ -216,8 +223,26 @@ docker/clean:
 	@docker rmi $(DOCKER_FULL_IMAGE) 2>/dev/null || true
 	@echo "$(GREEN)Docker cleanup complete$(NC)"
 
-## docker/test: Run the Docker test script
-docker/test:
-	@echo "$(GREEN)Running Docker tests...$(NC)"
-	@./test_docker.sh
+## docker/test: Build the image and check the server answers on /health
+docker/test: docker/build
+	@echo "$(GREEN)Starting container for smoke test...$(NC)"
+	@docker rm -f $(DOCKER_TEST_NAME) >/dev/null 2>&1 || true
+	@docker run -d --rm --name $(DOCKER_TEST_NAME) -p $(HTTP_PORT):8080 \
+		-e IMAP_HOST=127.0.0.1 -e IMAP_PORT=1 \
+		-e IMAP_USERNAME=smoke@example.com -e IMAP_PASSWORD=smoke \
+		-e SMTP_USERNAME=smoke@example.com -e SMTP_PASSWORD=smoke \
+		-e MCP_AUTH_TOKEN=smoke-test-token \
+		$(DOCKER_FULL_IMAGE) /app/email-mcp -http -addr 0.0.0.0:8080 >/dev/null
+	@for i in $$(seq 1 30); do \
+		if curl -sf http://127.0.0.1:$(HTTP_PORT)/health >/dev/null 2>&1; then \
+			echo "$(GREEN)Health check passed$(NC)"; \
+			docker rm -f $(DOCKER_TEST_NAME) >/dev/null; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "$(RED)Health check failed$(NC)"; \
+	docker logs $(DOCKER_TEST_NAME) || true; \
+	docker rm -f $(DOCKER_TEST_NAME) >/dev/null 2>&1 || true; \
+	exit 1
 
