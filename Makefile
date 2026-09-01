@@ -8,6 +8,11 @@ GO=go
 GOFLAGS=-v
 LDFLAGS=-ldflags "-s -w"
 
+# HTTP mode address. Override on the command line when the port is taken,
+# for example: make run/http HTTP_PORT=8888
+HTTP_HOST?=localhost
+HTTP_PORT?=8080
+
 # Docker variables
 DOCKER_IMAGE=email-mcp-go
 DOCKER_TAG=latest
@@ -48,10 +53,10 @@ run/stdio: build
 	@echo "$(GREEN)Running $(BINARY_NAME)...$(NC)"
 	@$(BINARY_PATH)
 
-## run: Build and run the MCP server in HTTP mode
+## run/http: Build and run the MCP server in HTTP mode (override with HTTP_PORT=...)
 run/http: build
-	@echo "$(GREEN)Running $(BINARY_NAME)...$(NC)"
-	@$(BINARY_PATH) -http -addr localhost:8080
+	@echo "$(GREEN)Running $(BINARY_NAME) on $(HTTP_HOST):$(HTTP_PORT)...$(NC)"
+	@$(BINARY_PATH) -http -addr $(HTTP_HOST):$(HTTP_PORT)
 
 ## dev: Run the application without building binary (using go run)
 dev:
@@ -189,10 +194,10 @@ docker/run:
 	@echo "$(GREEN)Running Docker container in stdio mode...$(NC)"
 	@docker run --rm -it --env-file .env $(DOCKER_FULL_IMAGE)
 
-## docker/run-http: Run the Docker container in HTTP mode
+## docker/run-http: Run the Docker container in HTTP mode (override host port with HTTP_PORT=...)
 docker/run-http:
-	@echo "$(GREEN)Running Docker container in HTTP mode on port 8080...$(NC)"
-	@docker run --rm -it -p 8080:8080 --env-file .env $(DOCKER_FULL_IMAGE) /app/email-mcp -http -addr 0.0.0.0:8080
+	@echo "$(GREEN)Running Docker container in HTTP mode on port $(HTTP_PORT)...$(NC)"
+	@docker run --rm -it -p $(HTTP_PORT):8080 --env-file .env $(DOCKER_FULL_IMAGE) /app/email-mcp -http -addr 0.0.0.0:8080
 
 ## docker/push: Push the Docker image to the registry
 docker/push:
