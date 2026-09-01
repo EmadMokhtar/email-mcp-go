@@ -154,3 +154,21 @@ func TestForwardEmailValidation(t *testing.T) {
 		assert.Empty(t, originalEmail.TextBody)
 	})
 }
+
+func TestInvalidSMTPPortIsReported(t *testing.T) {
+	c := NewClient(&config.Config{
+		SMTPHost:     "smtp.example.com",
+		SMTPPort:     "not-a-number",
+		SMTPUsername: "user@example.com",
+	})
+
+	// Every send path must refuse a bad port instead of dialing port 0.
+	err := c.SendEmail(&models.SendEmailRequest{To: []string{"to@example.com"}})
+	assert.ErrorContains(t, err, "invalid SMTP port")
+
+	err = c.ReplyToEmail(&models.Email{From: []string{"a@example.com"}}, "body", false, false)
+	assert.ErrorContains(t, err, "invalid SMTP port")
+
+	err = c.ForwardEmail(&models.Email{From: []string{"a@example.com"}}, []string{"b@example.com"}, "")
+	assert.ErrorContains(t, err, "invalid SMTP port")
+}

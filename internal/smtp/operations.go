@@ -9,6 +9,23 @@ import (
 	"github.com/go-mail/mail/v2"
 )
 
+// newDialer builds an SMTP dialer from the configuration. The port is stored
+// as a string, so parse it here and report a clear error when it is not a
+// number, rather than silently dialing port 0.
+func (c *Client) newDialer() (*mail.Dialer, error) {
+	port, err := strconv.Atoi(c.config.SMTPPort)
+	if err != nil {
+		return nil, fmt.Errorf("invalid SMTP port %q: %w", c.config.SMTPPort, err)
+	}
+
+	d := mail.NewDialer(c.config.SMTPHost, port, c.config.SMTPUsername, c.config.SMTPPassword)
+	if !c.config.SMTPTLS {
+		d.StartTLSPolicy = mail.NoStartTLS
+	}
+
+	return d, nil
+}
+
 func (c *Client) SendEmail(req *models.SendEmailRequest) error {
 	m := mail.NewMessage()
 
@@ -36,11 +53,9 @@ func (c *Client) SendEmail(req *models.SendEmailRequest) error {
 		m.AttachReader(att.Filename, strings.NewReader(string(att.Data)))
 	}
 
-	port, _ := strconv.Atoi(c.config.SMTPPort)
-	d := mail.NewDialer(c.config.SMTPHost, port, c.config.SMTPUsername, c.config.SMTPPassword)
-
-	if !c.config.SMTPTLS {
-		d.StartTLSPolicy = mail.NoStartTLS
+	d, err := c.newDialer()
+	if err != nil {
+		return err
 	}
 
 	if err := d.DialAndSend(m); err != nil {
@@ -89,11 +104,9 @@ func (c *Client) ReplyToEmail(originalEmail *models.Email, body string, replyAll
 		m.SetBody("text/plain", body)
 	}
 
-	port, _ := strconv.Atoi(c.config.SMTPPort)
-	d := mail.NewDialer(c.config.SMTPHost, port, c.config.SMTPUsername, c.config.SMTPPassword)
-
-	if !c.config.SMTPTLS {
-		d.StartTLSPolicy = mail.NoStartTLS
+	d, err := c.newDialer()
+	if err != nil {
+		return err
 	}
 
 	if err := d.DialAndSend(m); err != nil {
@@ -143,11 +156,9 @@ func (c *Client) ForwardEmail(originalEmail *models.Email, to []string, message 
 		m.AttachReader(att.Filename, strings.NewReader(string(att.Data)))
 	}
 
-	port, _ := strconv.Atoi(c.config.SMTPPort)
-	d := mail.NewDialer(c.config.SMTPHost, port, c.config.SMTPUsername, c.config.SMTPPassword)
-
-	if !c.config.SMTPTLS {
-		d.StartTLSPolicy = mail.NoStartTLS
+	d, err := c.newDialer()
+	if err != nil {
+		return err
 	}
 
 	if err := d.DialAndSend(m); err != nil {
