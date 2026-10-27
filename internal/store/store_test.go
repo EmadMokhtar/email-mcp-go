@@ -478,6 +478,7 @@ func TestWritesRejectUnsafeIDs(t *testing.T) {
 			require.ErrorIs(t, s.UpdateAccount(ctx, testAccount(tenant, badAccount, testNow)), ErrInvalidID)
 
 			require.ErrorIs(t, s.PutTenantKey(ctx, badTenant, 1, []byte("w"), "kek"), ErrInvalidID)
+			require.ErrorIs(t, s.RewrapTenantKey(ctx, badTenant, 1, []byte("w"), "kek"), ErrInvalidID)
 
 			require.ErrorIs(t, s.PutAccountSecret(ctx, badTenant, "acct1", "password", 1, []byte("s")), ErrInvalidID)
 			require.ErrorIs(t, s.PutAccountSecret(ctx, tenant, badAccount, "password", 1, []byte("s")), ErrInvalidID)

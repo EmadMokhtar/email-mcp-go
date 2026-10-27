@@ -33,6 +33,10 @@ const dbFileName = "email-mcp.db"
 // exists for another tenant.
 var ErrNotFound = errors.New("not found")
 
+// ErrExists means that an insert-only call found the row already there and left
+// it as it was. See PutTenantKey and PutServerKey.
+var ErrExists = errors.New("already exists")
+
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 

@@ -20,9 +20,16 @@ type TenantKeyRow struct {
 	KEKID   string
 }
 
-// PutTenantKey saves a wrapped tenant key. Versions start at 1. A put for a
-// version that exists replaces it. A change of master key does this when it
-// wraps every tenant key again.
+// PutTenantKey creates a wrapped tenant key. It only creates: it never replaces
+// a key. Versions start at 1.
+//
+// If the tenant already has a key with this version, PutTenantKey returns
+// ErrExists and leaves the stored key as it is. This matters when two programs
+// start together. Both can see no key and make one, and the second must not
+// overwrite the first, because secrets sealed with the first key could then
+// never be opened. The program that gets ErrExists reads the stored key with
+// TenantKey. To replace the wrapped bytes of an existing key, use
+// RewrapTenantKey.
 //
 // It fails if the tenant does not exist.
 func (s *Store) PutTenantKey(ctx context.Context, tenant account.TenantID, version int, wrapped []byte, kekID string) error {
@@ -32,15 +39,43 @@ func (s *Store) PutTenantKey(ctx context.Context, tenant account.TenantID, versi
 	if version < 1 {
 		return errors.New("store: tenant key version must be at least 1")
 	}
-	_, err := s.db.ExecContext(ctx,
+	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO tenant_keys (tenant_id, version, wrapped, kek_id, created_at)
 		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT (tenant_id, version) DO UPDATE SET
-			wrapped = excluded.wrapped,
-			kek_id = excluded.kek_id`,
+		ON CONFLICT (tenant_id, version) DO NOTHING`,
 		string(tenant), version, wrapped, kekID, time.Now().UnixMilli())
 	if err != nil {
 		return fmt.Errorf("store: put tenant key: %w", err)
+	}
+	return requireInserted(result, "put tenant key")
+}
+
+// RewrapTenantKey replaces the wrapped bytes and the master key id of an
+// existing tenant key. A change of master key uses it to wrap every tenant key
+// again. It does not create a key. It returns ErrNotFound if the tenant has no
+// key with this version. To create a key, use PutTenantKey.
+func (s *Store) RewrapTenantKey(ctx context.Context, tenant account.TenantID, version int, wrapped []byte, kekID string) error {
+	if err := validateID("tenant", string(tenant)); err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE tenant_keys SET wrapped = ?, kek_id = ? WHERE tenant_id = ? AND version = ?`,
+		wrapped, kekID, string(tenant), version)
+	if err != nil {
+		return fmt.Errorf("store: rewrap tenant key: %w", err)
+	}
+	return requireOneRow(result, "rewrap tenant key")
+}
+
+// requireInserted returns ErrExists if an insert with ON CONFLICT DO NOTHING
+// added no row, because the row was already there.
+func requireInserted(result sql.Result, action string) error {
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: %s: %w", action, err)
+	}
+	if n == 0 {
+		return ErrExists
 	}
 	return nil
 }
@@ -112,18 +147,36 @@ func (s *Store) ServerKey(ctx context.Context) (wrapped []byte, kekID string, er
 	return wrapped, kekID, nil
 }
 
-// PutServerKey saves the wrapped server key. It replaces the key that was saved
-// before, if there is one.
+// PutServerKey creates the wrapped server key. It only creates: it never
+// replaces the key.
+//
+// If a server key exists already, PutServerKey returns ErrExists and leaves the
+// stored key as it is. The reason is the same as for PutTenantKey: two programs
+// that start together must not overwrite each other's key. The program that
+// gets ErrExists reads the stored key with ServerKey. To replace the wrapped
+// bytes of the existing key, use RewrapServerKey.
 func (s *Store) PutServerKey(ctx context.Context, wrapped []byte, kekID string) error {
-	_, err := s.db.ExecContext(ctx,
+	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO server_keys (id, wrapped, kek_id, created_at)
 		VALUES (1, ?, ?, ?)
-		ON CONFLICT (id) DO UPDATE SET
-			wrapped = excluded.wrapped,
-			kek_id = excluded.kek_id`,
+		ON CONFLICT (id) DO NOTHING`,
 		wrapped, kekID, time.Now().UnixMilli())
 	if err != nil {
 		return fmt.Errorf("store: put server key: %w", err)
 	}
-	return nil
+	return requireInserted(result, "put server key")
+}
+
+// RewrapServerKey replaces the wrapped bytes and the master key id of the
+// existing server key. A change of master key uses it to wrap the key again. It
+// does not create a key. It returns ErrNotFound if there is no server key. To
+// create the key, use PutServerKey.
+func (s *Store) RewrapServerKey(ctx context.Context, wrapped []byte, kekID string) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE server_keys SET wrapped = ?, kek_id = ? WHERE id = 1`,
+		wrapped, kekID)
+	if err != nil {
+		return fmt.Errorf("store: rewrap server key: %w", err)
+	}
+	return requireOneRow(result, "rewrap server key")
 }
