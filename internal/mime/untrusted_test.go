@@ -12,11 +12,16 @@ import (
 // one of them is then caught by the other.
 func isRemovedRune(r rune) bool {
 	switch {
-	case r >= 0xE0000 && r <= 0xE007F,
-		r >= 0x200B && r <= 0x200F,
-		r >= 0x202A && r <= 0x202E,
-		r >= 0x2066 && r <= 0x2069,
-		r == 0xFEFF:
+	case r >= 0xE0000 && r <= 0xE007F, // tag characters
+		r >= 0xE0100 && r <= 0xE01EF, // variation selectors supplement
+		r == 0x200B,                  // zero width space
+		r >= 0x200E && r <= 0x200F,   // direction marks
+		r >= 0x202A && r <= 0x202E,   // bidi embeddings and overrides
+		r >= 0x2060 && r <= 0x2064,   // word joiner and invisible operators
+		r >= 0x2066 && r <= 0x2069,   // bidi isolates
+		r == 0x00AD,                  // soft hyphen
+		r == 0x180E,                  // Mongolian vowel separator
+		r == 0xFEFF:                  // byte order mark
 		return true
 	}
 	isControl := r < 0x20 || (r >= 0x7F && r <= 0x9F)
@@ -33,9 +38,14 @@ func TestCleanUntrustedRemovesWholeRanges(t *testing.T) {
 		from, to rune
 	}{
 		{"tag characters", 0xE0000, 0xE007F},
-		{"zero width and direction marks", 0x200B, 0x200F},
+		{"variation selectors supplement", 0xE0100, 0xE01EF},
+		{"zero width space", 0x200B, 0x200B},
+		{"direction marks", 0x200E, 0x200F},
 		{"bidi embeddings and overrides", 0x202A, 0x202E},
+		{"word joiner and invisible operators", 0x2060, 0x2064},
 		{"bidi isolates", 0x2066, 0x2069},
+		{"soft hyphen", 0x00AD, 0x00AD},
+		{"Mongolian vowel separator", 0x180E, 0x180E},
 		{"byte order mark", 0xFEFF, 0xFEFF},
 	}
 	for _, rg := range ranges {
@@ -49,7 +59,38 @@ func TestCleanUntrustedRemovesWholeRanges(t *testing.T) {
 
 func TestCleanUntrustedKeepsRunesOutsideTheRanges(t *testing.T) {
 	// Each rune sits right next to a removed range.
-	for _, r := range []rune{0x200A, 0x2010, 0x202F, 0x206A, 0xE0080} {
+	for _, r := range []rune{
+		0x00AC, 0x00AE, // around the soft hyphen
+		0x180D, 0x180F, // around the Mongolian vowel separator
+		0x200A, 0x2010, // around the zero width space and the direction marks
+		0x202F,  // after the bidi overrides
+		0x205F,  // before the word joiner
+		0x206A,  // after the bidi isolates
+		0xFF01,  // after the byte order mark
+		0xE0080, // after the tag characters
+		0xE01F0, // after the variation selectors supplement
+	} {
+		in := "a" + string(r) + "b"
+		require.Equal(t, in, CleanUntrusted(in), "U+%04X", r)
+	}
+}
+
+// Persian, Urdu and other Arabic-script text needs ZWNJ (U+200C). Emoji
+// sequences need ZWJ (U+200D) and the variation selectors U+FE00 to U+FE0F.
+func TestCleanUntrustedKeepsJoinersAndEmojiSelectors(t *testing.T) {
+	for _, in := range []string{
+		"a\U0000200Cb", // ZWNJ
+		"a\U0000200Db", // ZWJ
+		// Persian "mi-ravam" is written with a ZWNJ after "mi".
+		"\U00000645\U000006CC\U0000200C\U00000631\U00000648\U00000645",
+		// Family emoji: man, ZWJ, woman, ZWJ, girl.
+		"\U0001F468\U0000200D\U0001F469\U0000200D\U0001F467",
+		// Heart with emoji presentation selector.
+		"\U00002764\U0000FE0F",
+	} {
+		require.Equal(t, in, CleanUntrusted(in), "%q", in)
+	}
+	for r := rune(0xFE00); r <= 0xFE0F; r++ {
 		in := "a" + string(r) + "b"
 		require.Equal(t, in, CleanUntrusted(in), "U+%04X", r)
 	}

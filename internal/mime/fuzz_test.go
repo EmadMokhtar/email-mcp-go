@@ -19,6 +19,9 @@ func FuzzCleanUntrusted(f *testing.F) {
 		"\U0000FEFFbom\U00002066iso\U00002069",
 		"\xed\xa0\x80 surrogate",
 		"emoji \U0001F600 and \U00004E16\U0000754C",
+		"keep a\U0000200Cb\U0000200Dc but not a\U0000200Bb",
+		"soft\U000000ADhyphen \U0000180E\U00002060\U00002064",
+		"x\U000E0100y\U000E01EFz and \U00002764\U0000FE0F",
 	}
 	for _, s := range seeds {
 		f.Add(s)
@@ -52,6 +55,15 @@ func FuzzHTMLToText(f *testing.F) {
 		`<a href=" jav&#x09;ascript:x">a</a><a href="mailto:a@b.test"></a>`,
 		`<div style="display:none` + `"><p>unterminated`,
 		`<![CDATA[x]]><!--x--><?php x ?>`,
+		"<p>keep a\U0000200Cb\U0000200Dc, drop a\U000000ADb\U00002060c</p>",
+		`<style>.x{display:none}</style><div class="x">y</div><p>Hi</p>`,
+		`<style>#a,p,.b{font-size:1px}@media a{.x{b:c}}.z{visibility:hidden}</style><p id="a">x</p>`,
+		`<style><!-- .x{opacity:0} --></style><i class="x">y</i>`,
+		`<style>.x{font-family:'/*';display:none;y:'*/'}</style><i class="X y">z</i>`,
+		`<style>.\78 {d\69splay:n\6fne}</style><i class="x">y</i>`,
+		`<style>.x{.a{color:red}display:none}.y{</style><i class="x">y</i>`,
+		`<style>}{;"'\(/*@.a,,{{</style><p>x</p>`,
+		`<p style="font-family:'/*';display:none;x:'*/'">y</p>`,
 	}
 	for _, s := range seeds {
 		f.Add(s)

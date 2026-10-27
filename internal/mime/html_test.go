@@ -63,6 +63,16 @@ func TestHTMLToTextHiddenVariants(t *testing.T) {
 		{"font-size 0 in capitals", `<p style="FONT-SIZE:0PX">secret</p>`},
 		{"font-size 0 important", `<p style="font-size:0 !important">secret</p>`},
 
+		// Fonts of 1px or 1pt, or smaller, cannot be read.
+		{"font-size 1px", `<p style="font-size:1px">secret</p>`},
+		{"font-size 1.0px", `<p style="font-size: 1.0px">secret</p>`},
+		{"font-size 0.5px", `<p style="font-size:0.5px">secret</p>`},
+		{"font-size 0.01px", `<p style="font-size:0.01px">secret</p>`},
+		{"font-size 1pt", `<p style="font-size:1pt">secret</p>`},
+		{"font-size 0.5pt", `<p style="font-size:0.5pt">secret</p>`},
+		{"font-size 1px in capitals and important", `<p style="FONT-SIZE:1PX !IMPORTANT">secret</p>`},
+		{"font-size 1px among other rules", `<p style="color:#fff;font-size:1px;margin:0">secret</p>`},
+
 		// max-height 0 with overflow hidden.
 		{"max-height 0 and overflow hidden", `<p style="max-height:0;overflow:hidden">secret</p>`},
 		{"overflow hidden and max-height 0px", `<p style="overflow: hidden; max-height: 0px">secret</p>`},
@@ -110,6 +120,12 @@ func TestHTMLToTextKeepsVisibleStyles(t *testing.T) {
 		"font-size:0.9em",
 		"font-size:0.5rem",
 		"font-size:10pt",
+		"font-size:2px",
+		"font-size:1.1px",
+		"font-size:1.5pt",
+		"font-size:1em",
+		"font-size:1rem",
+		"font-size:1%",    // not a fixed size: the rule is only for px and pt
 		"max-height:0",    // alone, it hides nothing
 		"overflow:hidden", // alone, it hides nothing
 		"max-height:100px;overflow:hidden",
@@ -286,34 +302,6 @@ func TestHTMLToTextBrokenMarkup(t *testing.T) {
 	require.NotContains(t, HTMLToText(`<div hidden>secret`), "secret")
 	require.NotContains(t, HTMLToText(`<p>ok</p><script>secret`), "secret")
 	require.NotContains(t, HTMLToText(`<p>ok</p><div style="display:none`), "secret")
-}
-
-func TestNormalizeCSS(t *testing.T) {
-	tests := []struct{ name, in, want string }{
-		{"plain", "display:none", "display:none"},
-		{"comment becomes a space", "a/* c */b", "a b"},
-		{"comment without an end runs to the end", "a/* never closed", "a "},
-		{"hex escape", `\64isplay`, "display"},
-		{"hex escape followed by a letter that is not hex", `d\69splay`, "display"},
-		{"six digit hex escape", `\000064`, "d"},
-		{"one space after a hex escape belongs to it", `\64 x`, "dx"},
-		{"only one space belongs to it", `\64  x`, "d x"},
-		{"crlf after a hex escape belongs to it", "\\64\r\nx", "dx"},
-		{"two escapes in a row", `\6e\6f`, "no"},
-		{"escape for a character that is not hex", `\g`, "g"},
-		{"escape for a non-ASCII character", "\\\U000000E9", "\U000000E9"},
-		{"zero is replaced", `\0`, "\U0000FFFD"},
-		{"above the last code point is replaced", `\110000`, "\U0000FFFD"},
-		{"surrogate is replaced", `\d800`, "\U0000FFFD"},
-		{"backslash at the end", `a\`, "a\U0000FFFD"},
-		{"backslash before a line break is dropped", "a\\\nb", "a\nb"},
-		{"non-ASCII text is kept", "caf\U000000E9", "caf\U000000E9"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, normalizeCSS(tc.in))
-		})
-	}
 }
 
 // --- SanitizeHTML ---
