@@ -1,0 +1,14 @@
+# golangci-lint v2 configuration.
+version: "2"
+
+linters:
+  # The standard set is errcheck, govet, ineffassign, staticcheck and unused.
+  default: standard
+  enable:
+    # Security checks: weak crypto, unsafe file permissions, SQL built from
+    # strings, and similar problems.
+    - gosec
+
+formatters:
+  enable:
+    - gofmt
