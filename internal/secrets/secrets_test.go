@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -244,9 +245,33 @@ func TestSecretNeverPrints(t *testing.T) {
 		logger.Info("login", slog.Group("account", slog.Any("password", secret)))
 		logger.With("password", secret).Info("login")
 
+		// slog resolves LogValue only on the attribute itself. A Secret inside
+		// a struct, slice or map is encoded by encoding/json, which uses
+		// MarshalText.
+		logger.Info("login", "account", holder{Password: secret})
+		logger.Info("login", "account", &holder{Password: secret})
+		logger.Info("login", "passwords", []Secret{secret})
+		logger.Info("login", "passwords", map[string]Secret{"k": secret})
+
 		out := buf.String()
 		require.NotContains(t, out, "hunter2")
-		require.Equal(t, 4, strings.Count(out, `[redacted]`))
+		require.Equal(t, 8, strings.Count(out, `[redacted]`))
+	})
+
+	t.Run("encoding/json", func(t *testing.T) {
+		for name, value := range map[string]any{
+			"value":        secret,
+			"pointer":      &secret,
+			"struct field": holder{Password: secret},
+			"slice":        []Secret{secret},
+			"map value":    map[string]Secret{"k": secret},
+			"nested":       map[string][]holder{"k": {{Password: secret}}},
+		} {
+			out, err := json.Marshal(value)
+			require.NoError(t, err, name)
+			require.NotContains(t, string(out), "hunter2", name)
+			require.Contains(t, string(out), "[redacted]", name)
+		}
 	})
 
 	t.Run("slog text handler", func(t *testing.T) {
@@ -254,10 +279,21 @@ func TestSecretNeverPrints(t *testing.T) {
 		logger := slog.New(slog.NewTextHandler(&buf, nil))
 
 		logger.Info("login", "password", secret)
+		logger.Info("login", "account", holder{Password: secret})
+		logger.Info("login", "passwords", []Secret{secret})
+		logger.Info("login", "passwords", map[string]Secret{"k": secret})
 
 		require.NotContains(t, buf.String(), "hunter2")
-		require.Contains(t, buf.String(), "[redacted]")
+		require.Equal(t, 4, strings.Count(buf.String(), "[redacted]"))
 	})
+}
+
+// Redaction must only apply when a Secret is written out. Reading a value into
+// a Secret (for example from a config file) must keep the real value.
+func TestSecretDecodesFromJSON(t *testing.T) {
+	var decoded holder
+	require.NoError(t, json.Unmarshal([]byte(`{"Password":"hunter2"}`), &decoded))
+	require.Equal(t, "hunter2", decoded.Password.Reveal())
 }
 
 // --- Keychain master key ---

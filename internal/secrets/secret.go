@@ -14,23 +14,56 @@ const redacted = "[redacted]"
 
 // Secret is a string that must not appear in logs, errors or output.
 //
-// Printing a Secret with fmt (any verb), or logging it with log/slog, shows
-// "[redacted]". The only way to get the real value is Reveal, so every place
-// that uses the value is easy to find in code review.
+// A Secret shows "[redacted]" in these places:
+//   - fmt, with every verb except %p (see Format);
+//   - log/slog, as an attribute (see LogValue);
+//   - encoding/json, and so also the log/slog JSON handler, when the Secret is
+//     inside a struct, slice or map (see MarshalText).
+//
+// The only way to get the real value is Reveal, so every place that uses the
+// value is easy to find in code review. Code that must write the real value
+// to a file or to a network connection has to call Reveal.
+//
+// Reading is not affected. Decoding text into a Secret, for example from a
+// JSON config file, keeps the real value.
+//
+// Two things are not covered:
+//   - A Secret used as a map key. The classic encoding/json writes the raw
+//     text of a map key whose type is a string type, and it does not call
+//     MarshalText. (Checked with Go 1.24, and with Go 1.27 when built with
+//     GOEXPERIMENT=nojsonv2. The default encoding/json of Go 1.27 does call
+//     MarshalText.) Do not use a Secret as a map key.
+//   - %p with a Secret that is not a pointer. See Format.
 type Secret string
 
 // String returns "[redacted]".
 func (Secret) String() string { return redacted }
 
 // LogValue makes log/slog log "[redacted]" instead of the value.
+//
+// slog calls LogValue only for the attribute itself. For a Secret inside a
+// struct, slice or map, the JSON handler calls encoding/json, which uses
+// MarshalText.
 func (Secret) LogValue() slog.Value { return slog.StringValue(redacted) }
 
-// Format makes every fmt verb print "[redacted]".
+// MarshalText makes encoding/json write "[redacted]" for a Secret that is
+// inside a struct, slice or map. Without it, encoding/json writes the
+// underlying string, and neither String nor Format is used.
+//
+// There is no UnmarshalText on purpose. Decoding into a Secret must keep the
+// real value.
+func (Secret) MarshalText() ([]byte, error) { return []byte(redacted), nil }
+
+// Format makes the fmt verbs print "[redacted]".
 //
 // String alone is not enough. fmt does not call String for %#v, and for a verb
-// that does not fit a string (such as %d) it prints the raw value and does not
-// call any method. Format is checked first for every verb, so it covers all of
-// them.
+// that does not fit a string (such as %d) it prints the raw value and calls no
+// method. fmt looks for Format before both, so Format covers them.
+//
+// One verb is not covered: %p with a Secret that is not a pointer. fmt handles
+// %p before it looks for Format, and its error text for the wrong verb
+// contains the raw value. go vet does not report this, because it accepts
+// every verb for a type that has a Format method. Do not use %p with a Secret.
 func (Secret) Format(f fmt.State, _ rune) {
 	// A write error to a fmt buffer cannot be reported to the caller of Sprintf.
 	_, _ = io.WriteString(f, redacted)
