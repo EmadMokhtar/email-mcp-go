@@ -37,6 +37,12 @@ var ErrNotFound = errors.New("not found")
 // it as it was. See PutTenantKey and PutServerKey.
 var ErrExists = errors.New("already exists")
 
+// ErrConflict means that the keys in the database are not the keys that the
+// caller expected. ReplaceWrappedKeys returns it when the set of stored keys
+// changed after the caller listed them. The call changed nothing, and the
+// caller should start again.
+var ErrConflict = errors.New("conflict")
+
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 

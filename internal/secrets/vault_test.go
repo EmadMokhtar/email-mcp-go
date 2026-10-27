@@ -161,8 +161,12 @@ type spyStore struct {
 	// barrier, if set, holds every call that finds no tenant key or no server
 	// key, until all the expected callers have found the same.
 	barrier *barrier
-	// listHook, if set, changes the result of ListTenantKeys.
+	// listHook, if set, changes the result of ListTenantKeys. It runs after the
+	// real call, so it can change the database after the rows were read.
 	listHook func([]store.TenantKeyRow) []store.TenantKeyRow
+	// serverKeyHook, if set, runs after the real ServerKey call and gets its
+	// error.
+	serverKeyHook func(err error)
 	// tenantKeyGate, if set, is received from before TenantKey returns, and
 	// tenantKeyEntered is closed when the first call is waiting for it.
 	tenantKeyGate    chan struct{}
@@ -207,6 +211,9 @@ func (s *spyStore) ServerKey(ctx context.Context) ([]byte, string, error) {
 	wrapped, kekID, err := s.VaultStore.ServerKey(ctx)
 	if errors.Is(err, store.ErrNotFound) && s.barrier != nil {
 		s.barrier.wait()
+	}
+	if s.serverKeyHook != nil {
+		s.serverKeyHook(err)
 	}
 	return wrapped, kekID, err
 }
@@ -1004,11 +1011,19 @@ func newRewrapFixture(t *testing.T) *rewrapFixture {
 }
 
 // requireUnchangedAndWorking checks that a failed RewrapAll left the stored
-// keys as they were, and that the Vault still works with its old master key.
+// keys as they were in the fixture, and that the Vault still works with its old
+// master key.
 func (r *rewrapFixture) requireUnchangedAndWorking(t *testing.T, newKEK KEK) {
 	t.Helper()
+	r.requireUnchangedSince(t, newKEK, r.before)
+}
+
+// requireUnchangedSince is the same check against a snapshot that the test took
+// itself, for example after it added a key.
+func (r *rewrapFixture) requireUnchangedSince(t *testing.T, newKEK KEK, want keySnapshot) {
+	t.Helper()
 	ctx := context.Background()
-	require.Equal(t, r.before, snapshotKeys(t, r.st), "a failed RewrapAll must change nothing")
+	require.Equal(t, want, snapshotKeys(t, r.st), "a failed RewrapAll must change nothing")
 
 	got, err := r.vault.Decrypt(ctx, "local", 1, r.aad, r.sealed)
 	require.NoError(t, err)
@@ -1072,6 +1087,110 @@ func TestRewrapAllNewKEKFailures(t *testing.T) {
 			r.requireUnchangedAndWorking(t, realNew)
 		})
 	}
+}
+
+// TestRewrapAllRefusesWhenTheKeySetChanges covers the race that would lose
+// data. Another program (or a second Vault) adds a key after RewrapAll has
+// listed the keys. That key is wrapped by the old master key. If RewrapAll
+// reported success, the operator would destroy the old master key, and the new
+// key could never be opened. RewrapAll must refuse and change nothing.
+func TestRewrapAllRefusesWhenTheKeySetChanges(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a tenant key is added after the listing", func(t *testing.T) {
+		r := newRewrapFixture(t)
+		newKEK := newTestFileKEK(t)
+		var addedDEK []byte
+		var afterInsert keySnapshot
+		r.spy.listHook = func(listed []store.TenantKeyRow) []store.TenantKeyRow {
+			// RewrapAll has the rows. Now another program adds a key.
+			addedDEK = r.putTenantKey("other", 2, r.kek)
+			afterInsert = snapshotKeys(t, r.st)
+			return listed
+		}
+
+		err := r.vault.RewrapAll(ctx, newKEK)
+
+		require.ErrorIs(t, err, store.ErrConflict)
+		require.ErrorContains(t, err, "run the rotation again")
+		// The error is the one from the store, not changed by the Vault.
+		require.True(t, strings.HasPrefix(err.Error(), "store: replace wrapped keys:"), err.Error())
+		require.Len(t, afterInsert.tenantKeys, len(r.before.tenantKeys)+1)
+		readsBefore, _, _ := r.spy.counts()
+		r.requireUnchangedSince(t, newKEK, afterInsert)
+		readsAfter, _, _ := r.spy.counts()
+		require.Equal(t, readsBefore, readsAfter, "the Vault must keep its cache")
+
+		// The Vault is still on the old master key: a key it creates uses it.
+		f := r.vaultFixture
+		f.addTenant("third")
+		_, _, err = r.vault.Encrypt(ctx, "third", r.aad, []byte("x"))
+		require.NoError(t, err)
+		_, kekID, err := f.st.TenantKey(ctx, "third", 1)
+		require.NoError(t, err)
+		require.Equal(t, r.kek.ID(), kekID)
+
+		// The operator runs the rotation again. The key set is stable now, and
+		// the key that was added is wrapped again like the others.
+		r.spy.listHook = nil
+		require.NoError(t, r.vault.RewrapAll(ctx, newKEK))
+		sealed, err := Seal(addedDEK, []byte("added later"), r.aad)
+		require.NoError(t, err)
+		fresh := NewVault(r.st, newKEK)
+		got, err := fresh.Decrypt(ctx, "other", 2, r.aad, sealed)
+		require.NoError(t, err)
+		require.Equal(t, []byte("added later"), got)
+		for _, row := range snapshotKeys(t, r.st).tenantKeys {
+			require.Equal(t, newKEK.ID(), row.KEKID)
+		}
+	})
+
+	t.Run("a server key is created after RewrapAll found none", func(t *testing.T) {
+		f := newVaultFixture(t)
+		spy := &spyStore{VaultStore: f.st}
+		v := NewVault(spy, f.kek)
+		aad := AAD("local", "acct-1", "password")
+		version, sealed, err := v.Encrypt(ctx, "local", aad, []byte("hunter2"))
+		require.NoError(t, err)
+		_, _, err = f.st.ServerKey(ctx)
+		require.ErrorIs(t, err, store.ErrNotFound, "this test needs a store without a server key")
+
+		var addedKey []byte
+		var afterInsert keySnapshot
+		spy.serverKeyHook = func(err error) {
+			if !errors.Is(err, store.ErrNotFound) {
+				return
+			}
+			// RewrapAll saw no server key. Now another program creates one.
+			addedKey = randomBytes(t, keySize)
+			wrapped, wrapErr := f.kek.Wrap(ctx, addedKey)
+			require.NoError(t, wrapErr)
+			require.NoError(t, f.st.PutServerKey(ctx, wrapped, f.kek.ID()))
+			afterInsert = snapshotKeys(t, f.st)
+		}
+		newKEK := newTestFileKEK(t)
+
+		err = v.RewrapAll(ctx, newKEK)
+
+		require.ErrorIs(t, err, store.ErrConflict)
+		require.Equal(t, afterInsert, snapshotKeys(t, f.st), "a refused rotation must change nothing")
+		// Still on the old master key: it opens the key that was added.
+		spy.serverKeyHook = nil
+		serverKey, err := v.ServerKey(ctx)
+		require.NoError(t, err)
+		require.Equal(t, addedKey, serverKey)
+		got, err := v.Decrypt(ctx, "local", version, aad, sealed)
+		require.NoError(t, err)
+		require.Equal(t, []byte("hunter2"), got)
+		_, err = NewVault(f.st, newKEK).Decrypt(ctx, "local", version, aad, sealed)
+		require.ErrorIs(t, err, ErrDecrypt, "no key may be wrapped by the new master key")
+
+		// Run again: now the server key is rotated too.
+		require.NoError(t, v.RewrapAll(ctx, newKEK))
+		gotServerKey, err := NewVault(f.st, newKEK).ServerKey(ctx)
+		require.NoError(t, err)
+		require.Equal(t, addedKey, gotServerKey)
+	})
 }
 
 func TestRewrapAllWithWrongOldKEK(t *testing.T) {

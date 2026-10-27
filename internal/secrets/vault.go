@@ -20,8 +20,10 @@ import (
 //
 // The create methods (PutTenantKey and PutServerKey) only insert, and return
 // store.ErrExists when the key is there already. The Vault depends on this when
-// two programs meet at the first use of a key. ReplaceWrappedKeys changes many
-// stored keys in one transaction: all of them, or none.
+// two programs meet at the first use of a key. ReplaceWrappedKeys replaces ALL
+// stored wrapped keys in one transaction: all of them, or none. It returns an
+// error that matches store.ErrConflict if the stored keys are not exactly the
+// keys it was given.
 type VaultStore interface {
 	LatestTenantKeyVersion(ctx context.Context, tenant account.TenantID) (int, error)
 	TenantKey(ctx context.Context, tenant account.TenantID, version int) (wrapped []byte, kekID string, err error)
@@ -151,14 +153,33 @@ func (v *Vault) ServerKey(ctx context.Context) ([]byte, error) {
 // It is all or nothing. First it unwraps every key with the current master key,
 // wraps it with newKEK, and checks that newKEK can unwrap the result. All of
 // this happens in memory. Then it saves every new wrapped key in one database
-// transaction. If anything fails, the stored keys are as they were and the
-// Vault keeps its current master key.
+// transaction, and the store checks in that transaction that the stored keys
+// are exactly the keys that RewrapAll listed. If anything fails, the stored
+// keys are as they were and the Vault keeps its current master key and cache.
 //
-// RewrapAll waits for running calls to finish, and calls that start meanwhile
-// wait for it. It rewraps the keys that exist when it lists them. Another
-// program that creates a key during the call would wrap it with the old master
-// key, and RewrapAll would not see it. Stop other programs that use the same
-// database before a change of master key.
+// If a key was added after RewrapAll listed the keys (by another program, or by
+// a second Vault), that key is wrapped by the old master key and RewrapAll did
+// not see it. The store refuses the change, and RewrapAll returns the store's
+// error, which matches store.ErrConflict. Run the rotation again.
+//
+// A nil result is the signal that every stored key is wrapped by newKEK and
+// that the old master key is no longer needed. The caller must keep to these
+// rules:
+//   - Store the new master key durably BEFORE calling RewrapAll. After a
+//     success, the old master key cannot open any stored key.
+//   - Keep the old master key until RewrapAll returns nil. After an error the
+//     stored keys are still wrapped by the old master key.
+//   - Stop every other process that uses the database during the rotation, and
+//     start them again afterwards. Their Vaults hold the old master key and
+//     old cached keys. They cannot open the keys after a success. A running
+//     process can also add a key during the rotation, which makes it fail with
+//     store.ErrConflict.
+//   - Use exactly one Vault per process. The lock that makes RewrapAll wait for
+//     running calls belongs to one Vault, so a second Vault on the same
+//     database is the same as another process.
+//
+// RewrapAll waits for running calls of this Vault to finish, and calls that
+// start meanwhile wait for it.
 func (v *Vault) RewrapAll(ctx context.Context, newKEK KEK) error {
 	if newKEK == nil {
 		return errors.New("secrets: rewrap: new master key is nil")
@@ -194,8 +215,10 @@ func (v *Vault) RewrapAll(ctx context.Context, newKEK KEK) error {
 		return fmt.Errorf("secrets: rewrap: read server key: %w", err)
 	}
 
+	// The error is returned as it is. The store's message already says what
+	// happened, and for store.ErrConflict it says what to do.
 	if err := v.st.ReplaceWrappedKeys(ctx, newRows, newServerWrapped, newKEKID); err != nil {
-		return fmt.Errorf("secrets: rewrap: save wrapped keys: %w", err)
+		return err
 	}
 
 	// The stored keys now belong to newKEK. From here on the Vault must use it.
