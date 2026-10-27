@@ -22,6 +22,7 @@ func FuzzCleanUntrusted(f *testing.F) {
 		"keep a\U0000200Cb\U0000200Dc but not a\U0000200Bb",
 		"soft\U000000ADhyphen \U0000180E\U00002060\U00002064",
 		"x\U000E0100y\U000E01EFz and \U00002764\U0000FE0F",
+		"\U0000061C\U0000115F\U00001160\U00003164\U0000FFA0\U0000034F\U0000206A\U0000206F\U0000FFF9\U0000FFFB",
 	}
 	for _, s := range seeds {
 		f.Add(s)
@@ -64,6 +65,15 @@ func FuzzHTMLToText(f *testing.F) {
 		`<style>.x{.a{color:red}display:none}.y{</style><i class="x">y</i>`,
 		`<style>}{;"'\(/*@.a,,{{</style><p>x</p>`,
 		`<p style="font-family:'/*';display:none;x:'*/'">y</p>`,
+		`<div style="font-size:0"><span style="font-size:13px">a</span> <span style="font-size:2em">b</span></div>`,
+		`<style>.a{font-size:0}.b{font-size:2em;visibility:visible}</style><i class="a"><b class="b">x</b></i>`,
+		`<html style="font-size:0"><body><p style="font-size:1rem">y</p></body></html>`,
+		`<p style="font:0/0 a;opacity:-1e999;font-size:1e999em">z</p><p style="font-size:0e0px">w</p>`,
+		`<div style="font-size:0"><div style="font-size:1e999%"><span style="font-size:0em">q</span></div></div>`,
+		`<div style="visibility:hidden"><span style="visibility:visible">a</span></div><b style="visibility:collapse">b</b>`,
+		`<a href="https://x.test/) a (b">c</a><a href="mailto:a@b.test?x=y z"><img src="i.png"></a>`,
+		`<a href="https://x.test/%zz">a</a><a href="http://x.test:port/">b</a><a href="https://[::1/">c</a>`,
+		`<a style="font-size:0" href="https://x.test">hidden</a><div style="font-size:0"><a href="https://x.test">h</a></div>`,
 	}
 	for _, s := range seeds {
 		f.Add(s)

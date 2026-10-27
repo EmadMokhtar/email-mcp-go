@@ -1,6 +1,8 @@
 package mime
 
 import (
+	"bytes"
+	"net/url"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -18,27 +20,38 @@ import (
 //     (script, style, head, title, template, iframe, object, embed, svg and
 //     more), and images, including their alt text;
 //   - elements with the hidden attribute or aria-hidden="true";
-//   - elements that an inline style hides, or that a rule in a style element
-//     hides (see styleHides for what counts as hiding: display:none,
-//     visibility:hidden, zero opacity, a font size of zero or of 1px or 1pt or
-//     less, and max-height:0 with overflow:hidden);
+//   - elements, with everything inside, that a style hides as a whole:
+//     display:none, an opacity of zero or less, and a height of zero with
+//     clipped overflow (see parseStyle);
+//   - text that has no readable size, or is not visible, because of the
+//     inherited properties font-size and visibility. Children inherit them,
+//     but a child can set its own value: text in a child with font-size:13px
+//     is shown even if its parent has font-size:0, and a relative size such
+//     as 2em is a multiple of the size of the parent. A size of 1pt (about
+//     1.33px) or less is not readable;
 //   - comments.
 //
-// Rules in style elements are used only when the selector is one class, one
-// id or one element name, alone or in a comma list. Longer selectors
-// (descendant, child, attribute or pseudo selectors, and so on) are ignored,
-// and so are @media and the other at-rules. A hiding rule is applied even if
-// another rule or the style attribute would show the element again.
+// Styles come from the style attribute and from the rules in style elements.
+// A rule is used only when the selector is one class, one id or one element
+// name, alone or in a comma list. Longer selectors (descendant, child,
+// attribute or pseudo selectors, and so on) are ignored, and so are @media
+// and the other at-rules. For a property that is set more than once, the
+// style attribute is the strongest, then an id rule, then class rules, then an
+// element rule. A display:none is applied even if something else would show
+// the element again.
 //
 // It does not find text that is hidden in other ways. Colour tricks, such as
 // white text on a white background, are not detected. The same is true for
-// small but not tiny fonts, text moved off the page, zero width or height, and
-// text clipped away.
+// small but not tiny fonts, text moved off the page, zero width, and text
+// clipped away. The default styles of the browser are not applied, and sizes
+// that need a calculation (calc, var) are not worked out.
 //
-// Links are written as "text (url)". The url is only shown for the http, https
-// and mailto schemes. Block elements become line breaks. The result is passed
-// through CleanUntrusted, so it is always valid UTF-8 with no invisible
-// characters.
+// Links are written as "text (url)". The url is parsed and shown with spaces,
+// round brackets and other unsafe characters written as %XX, so that it is one
+// word. It is shown only for http, https and mailto, only if it is no longer
+// than 2048 characters, and only if the link can be seen. Block elements
+// become line breaks. The result is passed through CleanUntrusted, so it is
+// always valid UTF-8 with no invisible characters.
 func HTMLToText(markup string) string {
 	// Scripting is off because a mail client does not run scripts. With it on,
 	// the parser would treat the content of noscript as raw text.
@@ -49,7 +62,11 @@ func HTMLToText(markup string) string {
 		// that was not checked.
 		return ""
 	}
-	r := textRenderer{rules: collectHidingRules(doc)}
+	r := textRenderer{
+		rules:  collectStyleRules(doc),
+		root:   initialFontSize,
+		states: []inherited{{fontSize: initialFontSize}},
+	}
 	r.walk(doc)
 	return CleanUntrusted(tidyLines(string(r.buf)))
 }
@@ -86,10 +103,45 @@ func tagSet(names ...string) map[string]bool {
 // textRenderer collects the text of a parsed document.
 type textRenderer struct {
 	buf    []byte
-	rules  *hidingRules // rules in style elements that hide elements
-	pre    int          // how many pre elements we are inside
-	bullet bool         // a list item started and its "- " is not written yet
-	links  []linkMark   // links that are open, innermost last
+	rules  *styleRules // rules in style elements
+	states []inherited // inherited properties of the open elements, innermost last
+	root   float64     // font size of the html element, in pixels (for rem)
+	pre    int         // how many pre elements we are inside
+	bullet bool        // a list item started and its "- " is not written yet
+	links  []linkMark  // links that are open, innermost last
+}
+
+// inherited holds the properties that an element gets from its parent.
+type inherited struct {
+	invisible bool    // visibility is hidden or collapse
+	fontSize  float64 // font size in pixels
+}
+
+// textHidden reports whether text with these properties cannot be seen.
+func (s inherited) textHidden() bool {
+	return s.invisible || s.fontSize <= minReadableFontSize
+}
+
+// state returns the properties of the element that is open now.
+func (r *textRenderer) state() inherited {
+	return r.states[len(r.states)-1]
+}
+
+// push opens an element with the given effect and works out its properties.
+func (r *textRenderer) push(n *html.Node, e styleEffect) {
+	s := r.state()
+	switch e.visibility {
+	case visHidden:
+		s.invisible = true
+	case visVisible:
+		s.invisible = false
+	}
+	s.fontSize = e.fontSize.resolve(s.fontSize, r.root)
+	// rem is relative to the html element. Its own size uses the default.
+	if n.Data == "html" && n.Parent != nil && n.Parent.Type == html.DocumentNode {
+		r.root = s.fontSize
+	}
+	r.states = append(r.states, s)
 }
 
 // linkMark remembers where the text of an open link starts.
@@ -132,7 +184,9 @@ func (r *textRenderer) enter(n *html.Node) bool {
 	case html.DocumentNode:
 		return true
 	case html.TextNode:
-		r.text(CleanUntrusted(n.Data))
+		if !r.state().textHidden() {
+			r.text(CleanUntrusted(n.Data))
+		}
 		return false
 	case html.ElementNode:
 		// Handled below.
@@ -141,13 +195,24 @@ func (r *textRenderer) enter(n *html.Node) bool {
 	}
 
 	tag := n.Data
-	if dropTags[tag] || r.isHidden(n) {
+	if dropTags[tag] || hasHiddenAttribute(n) {
 		return false
 	}
-	switch {
-	case tag == "br":
+	effect := r.rules.effectFor(n)
+	if style, ok := attributeValue(n, "style"); ok {
+		effect = effect.then(parseStyle(style))
+	}
+	if effect.drop {
+		return false
+	}
+	if tag == "br" {
 		r.hardBreak()
 		return false
+	}
+
+	// From here the element is open, and exit must close it.
+	r.push(n, effect)
+	switch {
 	case paragraphTags[tag]:
 		r.newline(2)
 	case lineTags[tag]:
@@ -159,6 +224,10 @@ func (r *textRenderer) enter(n *html.Node) bool {
 	case "pre":
 		r.pre++
 	case "a":
+		// A link that cannot be seen shows nothing, not even its url.
+		if r.state().textHidden() {
+			break
+		}
 		if u := linkURL(n); u != "" {
 			// Write a pending "- " first, so it is not counted as link text.
 			r.flushBullet()
@@ -190,6 +259,7 @@ func (r *textRenderer) exit(n *html.Node) {
 	case lineTags[tag]:
 		r.newline(1)
 	}
+	r.states = r.states[:len(r.states)-1]
 }
 
 // endLink writes the url after the text of a link.
@@ -201,14 +271,16 @@ func (r *textRenderer) endLink(n *html.Node) {
 	m := r.links[last]
 	r.links = r.links[:last]
 
-	shown := strings.TrimSpace(string(r.buf[m.start:]))
-	switch shown {
-	case "":
+	// bytes.TrimSpace does not copy, and neither does the comparison. A copy of
+	// the text of every open link would be slow for links inside links.
+	shown := bytes.TrimSpace(r.buf[m.start:])
+	switch {
+	case len(shown) == 0:
 		// No visible text, for example a link around an image. Show the url
 		// alone, so the reader still sees where the link goes.
 		r.space()
 		r.text(m.url)
-	case m.url:
+	case string(shown) == m.url:
 		// The text already is the url. Show it once.
 	default:
 		r.text(" (" + m.url + ")")
@@ -305,18 +377,20 @@ func tidyLines(s string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
+// maxShownURL is the longest url that is shown, in characters.
+const maxShownURL = 2048
+
 // linkURL returns the url to show for an a element, or "" when none is shown.
-// Only http, https and mailto urls are shown.
+//
+// The href is parsed. If it does not parse, or its scheme is not http, https
+// or mailto, nothing is shown. What is shown is the parsed url written out
+// again, with every character that is not safe in one word written as %XX.
+// That includes spaces and round brackets. Without this, a sender could write
+// an href that ends the url early and goes on with a sentence that looks like
+// text of the mail. A url that is longer than maxShownURL is not shown.
 func linkURL(n *html.Node) string {
-	href := ""
-	found := false
-	for _, a := range n.Attr {
-		if a.Key == "href" {
-			href, found = a.Val, true
-			break
-		}
-	}
-	if !found {
+	href, ok := attributeValue(n, "href")
+	if !ok {
 		return ""
 	}
 	href = CleanUntrusted(href)
@@ -330,21 +404,64 @@ func linkURL(n *html.Node) string {
 	}, href)
 	href = strings.TrimSpace(href)
 
-	scheme, _, ok := strings.Cut(href, ":")
-	if !ok {
-		return "" // a relative url has no meaning in a mail
+	u, err := url.Parse(href)
+	if err != nil {
+		return ""
 	}
-	switch lowerASCII(scheme) {
+	switch u.Scheme { // url.Parse writes the scheme in lower case
 	case "http", "https", "mailto":
-		return href
+	default:
+		return "" // includes a relative url, which has no meaning in a mail
 	}
-	return ""
+	shown := escapeURL(u.String())
+	if len(shown) > maxShownURL {
+		return ""
+	}
+	return shown
+}
+
+// escapeURL writes every byte of a url that is not safe in one word as %XX.
+// Letters, digits, the characters that a url uses to mark its parts, and an
+// existing %XX are kept. Spaces, round brackets, quotes, angle brackets,
+// backslashes, control characters and non-ASCII bytes are written as %XX.
+func escapeURL(s string) string {
+	const hex = "0123456789ABCDEF"
+	safe := func(c byte) bool {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+			return true
+		}
+		return strings.IndexByte("-._~:/?#[]@!$&'*+,;=%", c) >= 0
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; safe(c) {
+			b.WriteByte(c)
+		} else {
+			b.WriteByte('%')
+			b.WriteByte(hex[c>>4])
+			b.WriteByte(hex[c&0x0F])
+		}
+	}
+	return b.String()
+}
+
+// attributeValue returns the value of an attribute of the element.
+func attributeValue(n *html.Node, key string) (string, bool) {
+	for _, a := range n.Attr {
+		if a.Key == key {
+			return a.Val, true
+		}
+	}
+	return "", false
 }
 
 // --- hidden elements ---
 
-// isHidden reports whether a reader of a mail client cannot see the element.
-func (r *textRenderer) isHidden(n *html.Node) bool {
+// hasHiddenAttribute reports whether an attribute of the element hides it, with
+// everything inside: the hidden attribute, aria-hidden="true", and a dialog
+// that is not open. (A hiding style is read separately, see parseStyle.)
+func hasHiddenAttribute(n *html.Node) bool {
 	hasOpen := false
 	for _, a := range n.Attr {
 		switch a.Key {
@@ -354,18 +471,11 @@ func (r *textRenderer) isHidden(n *html.Node) bool {
 			if strings.EqualFold(strings.TrimSpace(a.Val), "true") {
 				return true
 			}
-		case "style":
-			if styleHides(a.Val) {
-				return true
-			}
 		case "open":
 			hasOpen = true
 		}
 	}
-	if n.Data == "dialog" && !hasOpen {
-		return true
-	}
-	return r.rules.matches(n)
+	return n.Data == "dialog" && !hasOpen
 }
 
 // --- SanitizeHTML ---

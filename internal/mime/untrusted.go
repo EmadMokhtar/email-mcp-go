@@ -24,9 +24,12 @@ import (
 //     supplement (U+E0100 to U+E01EF, used to hide data), the zero width space
 //     (U+200B), the direction marks (U+200E and U+200F), the bidi embeddings
 //     and overrides (U+202A to U+202E), the word joiner and invisible
-//     operators (U+2060 to U+2064), the bidi isolates (U+2066 to U+2069), the
-//     soft hyphen (U+00AD), the Mongolian vowel separator (U+180E) and the
-//     byte order mark (U+FEFF).
+//     operators (U+2060 to U+2064), the bidi isolates and the deprecated
+//     format characters (U+2066 to U+206F), the soft hyphen (U+00AD), the
+//     combining grapheme joiner (U+034F), the Arabic letter mark (U+061C),
+//     the Hangul fillers (U+115F, U+1160, U+3164, U+FFA0), the Mongolian
+//     vowel separator (U+180E), the interlinear annotation marks (U+FFF9 to
+//     U+FFFB) and the byte order mark (U+FEFF).
 //   - Removes control characters, except "\n" and "\t".
 //
 // It keeps the zero width non-joiner (U+200C) and the zero width joiner
@@ -63,9 +66,17 @@ func isHiddenRune(r rune) bool {
 		return true
 	case r >= 0x2060 && r <= 0x2064: // word joiner and invisible operators
 		return true
-	case r >= 0x2066 && r <= 0x2069: // bidi isolates
+	case r >= 0x2066 && r <= 0x206F: // bidi isolates and deprecated format characters
+		return true
+	case r >= 0xFFF9 && r <= 0xFFFB: // interlinear annotation
 		return true
 	case r == 0x00AD: // soft hyphen
+		return true
+	case r == 0x034F: // combining grapheme joiner
+		return true
+	case r == 0x061C: // Arabic letter mark
+		return true
+	case r == 0x115F || r == 0x1160 || r == 0x3164 || r == 0xFFA0: // Hangul fillers
 		return true
 	case r == 0x180E: // Mongolian vowel separator
 		return true

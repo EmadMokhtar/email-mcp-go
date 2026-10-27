@@ -19,9 +19,15 @@ func isRemovedRune(r rune) bool {
 		r >= 0x202A && r <= 0x202E,   // bidi embeddings and overrides
 		r >= 0x2060 && r <= 0x2064,   // word joiner and invisible operators
 		r >= 0x2066 && r <= 0x2069,   // bidi isolates
+		r >= 0x206A && r <= 0x206F,   // deprecated format characters
+		r >= 0xFFF9 && r <= 0xFFFB,   // interlinear annotation
 		r == 0x00AD,                  // soft hyphen
-		r == 0x180E,                  // Mongolian vowel separator
-		r == 0xFEFF:                  // byte order mark
+		r == 0x034F,                  // combining grapheme joiner
+		r == 0x061C,                  // Arabic letter mark
+		r == 0x115F, r == 0x1160,     // Hangul fillers
+		r == 0x180E,              // Mongolian vowel separator
+		r == 0x3164, r == 0xFFA0, // Hangul fillers
+		r == 0xFEFF: // byte order mark
 		return true
 	}
 	isControl := r < 0x20 || (r >= 0x7F && r <= 0x9F)
@@ -44,7 +50,15 @@ func TestCleanUntrustedRemovesWholeRanges(t *testing.T) {
 		{"bidi embeddings and overrides", 0x202A, 0x202E},
 		{"word joiner and invisible operators", 0x2060, 0x2064},
 		{"bidi isolates", 0x2066, 0x2069},
+		{"deprecated format characters", 0x206A, 0x206F},
+		{"interlinear annotation", 0xFFF9, 0xFFFB},
 		{"soft hyphen", 0x00AD, 0x00AD},
+		{"combining grapheme joiner", 0x034F, 0x034F},
+		{"Arabic letter mark", 0x061C, 0x061C},
+		{"Hangul choseong filler", 0x115F, 0x115F},
+		{"Hangul jungseong filler", 0x1160, 0x1160},
+		{"Hangul filler", 0x3164, 0x3164},
+		{"halfwidth Hangul filler", 0xFFA0, 0xFFA0},
 		{"Mongolian vowel separator", 0x180E, 0x180E},
 		{"byte order mark", 0xFEFF, 0xFEFF},
 	}
@@ -63,9 +77,15 @@ func TestCleanUntrustedKeepsRunesOutsideTheRanges(t *testing.T) {
 		0x00AC, 0x00AE, // around the soft hyphen
 		0x180D, 0x180F, // around the Mongolian vowel separator
 		0x200A, 0x2010, // around the zero width space and the direction marks
-		0x202F,  // after the bidi overrides
-		0x205F,  // before the word joiner
-		0x206A,  // after the bidi isolates
+		0x202F,         // after the bidi overrides
+		0x205F,         // before the word joiner
+		0x2070,         // after the deprecated format characters
+		0x061B, 0x061D, // around the Arabic letter mark
+		0x034E, 0x0350, // around the combining grapheme joiner
+		0x115E, 0x1161, // around the Hangul fillers (1161 is a normal vowel)
+		0x3163, 0x3165, // around the Hangul filler
+		0xFF9F, 0xFFA1, // around the halfwidth Hangul filler
+		0xFFF8, 0xFFFC, // around the interlinear annotation
 		0xFF01,  // after the byte order mark
 		0xE0080, // after the tag characters
 		0xE01F0, // after the variation selectors supplement

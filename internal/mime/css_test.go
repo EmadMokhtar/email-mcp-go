@@ -55,6 +55,15 @@ func TestHTMLToTextStyleSheetRuleHides(t *testing.T) {
 		{"visibility hidden", `.x{visibility:hidden}`, `<div class="x">ignore</div>`},
 		{"opacity 0", `.x{opacity:0}`, `<div class="x">ignore</div>`},
 		{"font-size 0", `.x{font-size:0}`, `<div class="x">ignore</div>`},
+		{"font-size 0 inherited by children", `.x{font-size:0}`, `<div class="x"><p><b>ignore</b></p></div>`},
+		{"visibility hidden inherited by children", `.x{visibility:hidden}`, `<div class="x"><p>ignore</p></div>`},
+		{"visibility collapse", `.x{visibility:collapse}`, `<div class="x">ignore</div>`},
+		{"font shorthand with zero size", `.x{font:0/0 a}`, `<div class="x">ignore</div>`},
+		{"opacity below zero", `.x{opacity:-1}`, `<div class="x">ignore</div>`},
+		{"opacity zero in an odd spelling", `.x{opacity:0e0}`, `<div class="x">ignore</div>`},
+		{"font-size in inches", `.x{font-size:0.01in}`, `<div class="x">ignore</div>`},
+		{"max-height 0 and overflow clip", `.x{max-height:0;overflow:clip}`, `<div class="x">ignore</div>`},
+		{"height 0 and overflow hidden", `.x{height:0;overflow:hidden}`, `<div class="x">ignore</div>`},
 		{"font-size 0px", `.x{font-size:0px}`, `<div class="x">ignore</div>`},
 		{"font-size 1px", `.x{font-size:1px}`, `<div class="x">ignore</div>`},
 		{"max-height 0 and overflow hidden", `.x{max-height:0;overflow:hidden}`, `<div class="x">ignore</div>`},
@@ -177,8 +186,11 @@ func TestHTMLToTextStyleSheetIgnoresRulesThatDoNotHide(t *testing.T) {
 		"opacity:0.5",
 		"font-size:12px",
 		"font-size:2px",
-		"font-size:1.1px",
+		"font-size:1.5px",
 		"font-size:1em",
+		"font:12px/1.5 Arial",
+		"opacity:50%",
+		"visibility:inherit",
 		"max-height:0",
 		"overflow:hidden",
 		"max-height:100px;overflow:hidden",
@@ -221,6 +233,286 @@ func TestHTMLToTextStyleSheetBrokenInput(t *testing.T) {
 		// Only a check that it does not crash and does not hide the paragraph.
 		out := HTMLToText(`<style>` + sheet + `</style><p>Hi</p>`)
 		require.Contains(t, out, "Hi", "sheet %q", sheet)
+	}
+}
+
+// --- font size and visibility are inherited ---
+
+// A zero font size or a hidden visibility is passed to the children, and a
+// child can set its own value. Only the text that is still hidden is dropped.
+
+const mjmlColumn = `<div style="margin:0px auto;max-width:600px;"><table role="presentation" style="width:100%;"><tbody><tr>` +
+	`<td style="direction:ltr;font-size:0px;padding:20px 0;text-align:center;">` +
+	`<div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;">` +
+	`<table role="presentation" style="vertical-align:top;" width="100%"><tbody><tr>` +
+	`<td align="left" style="font-size:0px;padding:10px 25px;word-break:break-word;">` +
+	`<div style="font-family:ubuntu, helvetica;font-size:13px;line-height:1;text-align:left;color:#000000;">Your order has shipped</div>` +
+	`</td></tr></tbody></table></div></td></tr></tbody></table></div>`
+
+func TestHTMLToTextMJMLColumnKeepsItsText(t *testing.T) {
+	require.Equal(t, "Your order has shipped", HTMLToText(mjmlColumn))
+	// The same, with the sizes in a style element.
+	sheet := `<style>.col{font-size:0px} .txt{font-size:13px}</style>` +
+		`<table><tr><td class="col"><div class="col"><table><tr><td class="col"><div class="txt">Your order has shipped</div></td></tr></table></div></td></tr></table>`
+	require.Equal(t, "Your order has shipped", HTMLToText(sheet))
+}
+
+func TestHTMLToTextFontSizeChildWithOwnSizeIsShown(t *testing.T) {
+	sizes := []string{
+		"13px", "10pt", "0.2in", "0.5cm", "4mm", "10q", "1pc", "1rem", "2rem", "20", // 20 is px in quirks mode
+		"small", "medium", "large", "x-large", "xx-large", "xxx-large", "x-small", "xx-small",
+		"1vw", "1.5px", "100px",
+		"initial",
+		"13PX", "13px !important", "1e1px",
+	}
+	for _, size := range sizes {
+		out := HTMLToText(`<div style="font-size:0">secret<span style="font-size:` + size + `">shown</span>secret</div>`)
+		require.Equal(t, "shown", out, "size %q", size)
+	}
+	// The font shorthand sets the size too.
+	for _, font := range []string{"13px Arial", "bold 13px/1.5 Arial", "italic 700 small-caps 10pt serif", "small serif", "medium serif"} {
+		out := HTMLToText(`<div style="font-size:0">secret<span style="font:` + font + `">shown</span>secret</div>`)
+		require.Equal(t, "shown", out, "font %q", font)
+	}
+}
+
+func TestHTMLToTextFontSizeRelativeChildStaysHidden(t *testing.T) {
+	// A relative size is a multiple of the parent size, and a multiple of zero
+	// is zero.
+	sizes := []string{"1em", "2em", "100em", "200%", "100%", "5ex", "5ch", "larger", "smaller", "inherit", "unset", "bogus", "-5px", "calc(10px)"}
+	for _, size := range sizes {
+		out := HTMLToText(`<div style="font-size:0"><span style="font-size:` + size + `">secret</span></div>`)
+		require.Equal(t, "", out, "size %q", size)
+	}
+	require.Equal(t, "", HTMLToText(`<div style="font-size:0"><span style="font:inherit">secret</span></div>`))
+	require.Equal(t, "", HTMLToText(`<div style="font-size:0"><div style="font-size:2em"><span style="font-size:3em">secret</span></div></div>`),
+		"a chain of relative sizes is still zero")
+	require.Equal(t, "", HTMLToText(`<div style="font-size:0"><div><div><div><p><b><i>secret</i></b></p></div></div></div></div>`))
+}
+
+func TestHTMLToTextFontSizeRelativeSizeIsAMultiple(t *testing.T) {
+	// 0.5px times 2 is 1px, which is too small to read. 0.5px times 3 is 1.5px.
+	require.Equal(t, "", HTMLToText(`<div style="font-size:0.5px"><span style="font-size:2em">secret</span></div>`))
+	require.Equal(t, "shown", HTMLToText(`<div style="font-size:0.5px"><span style="font-size:3em">shown</span></div>`))
+	require.Equal(t, "", HTMLToText(`<div style="font-size:0.5px"><span style="font-size:200%">secret</span></div>`))
+	require.Equal(t, "shown", HTMLToText(`<div style="font-size:0.5px"><span style="font-size:300%">shown</span></div>`))
+	// The smaller keyword divides by 1.2 and larger multiplies by 1.2.
+	require.Equal(t, "", HTMLToText(`<div style="font-size:1px"><span style="font-size:larger">secret</span></div>`))
+	// A big font made smaller stays readable.
+	require.Equal(t, "shown", HTMLToText(`<div style="font-size:20px"><span style="font-size:50%">shown</span></div>`))
+	// Text with no style at all gets the 16px default.
+	require.Equal(t, "shown", HTMLToText(`<p><span style="font-size:50%">shown</span></p>`))
+	require.Equal(t, "", HTMLToText(`<p><span style="font-size:5%">secret</span></p>`))
+}
+
+func TestHTMLToTextRemSizeUsesTheRootSize(t *testing.T) {
+	// rem is relative to the html element, so a zero root hides rem sizes too.
+	require.Equal(t, "", HTMLToText(`<html style="font-size:0"><body><p style="font-size:2rem">secret</p></body></html>`))
+	require.Equal(t, "shown", HTMLToText(`<html style="font-size:0"><body><p style="font-size:20px">shown</p></body></html>`))
+	require.Equal(t, "shown", HTMLToText(`<html style="font-size:20px"><body><p style="font-size:1rem">shown</p></body></html>`))
+	// The root size does not change because of a rule on a body or a div.
+	require.Equal(t, "shown", HTMLToText(`<body style="font-size:0"><p style="font-size:1rem">shown</p></body>`))
+	require.Equal(t, "", HTMLToText(`<style>html{font-size:0}</style><p style="font-size:3rem">secret</p>`))
+}
+
+func TestHTMLToTextFontSizeIsRestoredAfterTheElement(t *testing.T) {
+	require.Equal(t, "shown", HTMLToText(`<div style="font-size:0"><p>secret</p></div><p>shown</p>`))
+	require.Equal(t, "b", HTMLToText(`<span style="visibility:hidden">a</span>b`))
+	require.Equal(t, "ab", HTMLToText(`<span style="font-size:0">x</span>a<span style="visibility:hidden">y</span>b`))
+	require.Equal(t, "x\nshown", HTMLToText(`<div style="font-size:0"><div style="font-size:13px">x</div></div>shown`),
+		"the child shows its text, and the text after the parent is not affected")
+}
+
+func TestHTMLToTextZeroSizeContainerDropsItsWhiteSpace(t *testing.T) {
+	// The white space between two inline blocks has the size of its parent. In
+	// a browser a zero size makes that gap disappear (this is why MJML uses it).
+	out := HTMLToText(`<div style="font-size:0"><span style="font-size:13px">a</span> <span style="font-size:13px">b</span></div>`)
+	require.Equal(t, "ab", out)
+}
+
+func TestHTMLToTextVisibilityChildCanBeVisibleAgain(t *testing.T) {
+	require.Equal(t, "shown", HTMLToText(`<div style="visibility:hidden"><span style="visibility:visible">shown</span></div>`))
+	require.Equal(t, "shown", HTMLToText(`<div style="visibility:hidden">secret<span style="visibility:visible">shown</span>secret</div>`))
+	require.Equal(t, "shown", HTMLToText(`<div style="visibility:collapse"><span style="visibility:visible">shown</span></div>`))
+	require.Equal(t, "shown", HTMLToText(`<div style="visibility:hidden"><div><div style="visibility:visible"><p><b>shown</b></p></div></div></div>`))
+	require.Equal(t, "shown", HTMLToText(`<div style="visibility:hidden"><span style="visibility:initial">shown</span></div>`))
+	// A grandchild can hide again.
+	require.Equal(t, "shown", HTMLToText(`<div style="visibility:hidden"><div style="visibility:visible">shown<span style="visibility:hidden">secret</span></div></div>`))
+	// These keep the value of the parent.
+	for _, v := range []string{"inherit", "unset", "bogus", ""} {
+		out := HTMLToText(`<div style="visibility:hidden"><span style="visibility:` + v + `">secret</span></div>`)
+		require.Equal(t, "", out, "visibility %q", v)
+	}
+}
+
+// display, opacity and the max-height rule work on the whole element: a child
+// cannot undo them, so they still drop the whole subtree.
+func TestHTMLToTextWholeElementHidersAreNotUndoneByChildren(t *testing.T) {
+	for _, markup := range []string{
+		`<div style="display:none"><span style="display:block">secret</span></div>`,
+		`<div style="display:none"><span style="display:inline;visibility:visible;font-size:20px;opacity:1">secret</span></div>`,
+		`<div style="opacity:0"><span style="opacity:1">secret</span></div>`,
+		`<div style="opacity:-1"><span style="opacity:1;font-size:20px">secret</span></div>`,
+		`<div style="max-height:0;overflow:hidden"><span style="max-height:none;overflow:visible">secret</span></div>`,
+		`<div style="max-height:0;overflow:clip"><span style="font-size:20px">secret</span></div>`,
+		`<div style="height:0;overflow:hidden"><span style="font-size:20px">secret</span></div>`,
+		`<div hidden><span style="font-size:20px;visibility:visible">secret</span></div>`,
+	} {
+		require.Equal(t, "", HTMLToText(markup), "markup %q", markup)
+	}
+}
+
+func TestHTMLToTextHiddenLinkShowsNoUrl(t *testing.T) {
+	// A link that cannot be seen shows neither its text nor its url.
+	for _, markup := range []string{
+		`<a href="https://evil.test" style="font-size:0">secret</a>`,
+		`<a href="https://evil.test" style="visibility:hidden">secret</a>`,
+		`<div style="font-size:0"><a href="https://evil.test">secret</a></div>`,
+		`<div style="visibility:hidden"><a href="https://evil.test">secret</a></div>`,
+		`<div style="font-size:0"><a href="https://evil.test"><img src="x.png"></a></div>`,
+	} {
+		require.Equal(t, "shown", HTMLToText(markup+`<p>shown</p>`), "markup %q", markup)
+	}
+	// A link that can be seen, with a child that is hidden, shows its url.
+	require.Equal(t, "go (https://x.test)", HTMLToText(`<a href="https://x.test"><span style="font-size:0">secret</span>go</a>`))
+	require.Equal(t, "https://x.test", HTMLToText(`<a href="https://x.test"><span style="font-size:0">secret</span></a>`))
+	// A visible link in a zero size container.
+	require.Equal(t, "go (https://x.test)", HTMLToText(`<div style="font-size:0"><a href="https://x.test" style="font-size:14px">go</a></div>`))
+}
+
+// --- the same, from rules in style elements ---
+
+func TestHTMLToTextStyleSheetFontSizeIsInherited(t *testing.T) {
+	tests := []struct{ name, sheet, markup, want string }{
+		{"child class with its own size is shown",
+			`.z{font-size:0} .t{font-size:13px}`,
+			`<div class="z">secret<div class="t">shown</div>secret</div>`, "shown"},
+		{"child with an em size stays hidden",
+			`.z{font-size:0} .t{font-size:2em}`,
+			`<div class="z"><div class="t">secret</div></div>`, ""},
+		{"child with a percent size stays hidden",
+			`.z{font-size:0} .t{font-size:300%}`,
+			`<div class="z"><div class="t">secret</div></div>`, ""},
+		{"element rules",
+			`td{font-size:0} p{font-size:13px}`,
+			`<table><tr><td>secret<p>shown</p></td></tr></table>`, "shown"},
+		{"id rules",
+			`#a{font-size:0} #b{font-size:13px}`,
+			`<div id="a">secret<div id="b">shown</div></div>`, "shown"},
+		{"visibility",
+			`.h{visibility:hidden} .v{visibility:visible}`,
+			`<div class="h">secret<span class="v">shown</span></div>`, "shown"},
+		{"visibility collapse",
+			`.h{visibility:collapse} .v{visibility:visible}`,
+			`<div class="h">secret<span class="v">shown</span></div>`, "shown"},
+		{"child with inline size under a class with zero size",
+			`.z{font-size:0}`,
+			`<div class="z">secret<span style="font-size:13px">shown</span></div>`, "shown"},
+		{"child with inline em size under a class with zero size",
+			`.z{font-size:0}`,
+			`<div class="z"><span style="font-size:2em">secret</span></div>`, ""},
+		{"font shorthand in a rule",
+			`.z{font:0/0 a} .t{font:13px Arial}`,
+			`<div class="z">secret<div class="t">shown</div></div>`, "shown"},
+		{"a rule that only sets a size hides nothing",
+			`.t{font-size:13px} .v{visibility:visible}`,
+			`<div class="t v">shown</div>`, "shown"},
+		{"size on html and rem",
+			`html{font-size:0}`,
+			`<p style="font-size:2rem">secret</p>`, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, HTMLToText(`<style>`+tc.sheet+`</style>`+tc.markup))
+		})
+	}
+}
+
+// The order of strength is: element rules, class rules, id rules, then the
+// style attribute. A later rule of the same kind wins over an earlier one.
+func TestHTMLToTextStyleSheetOrderOfStrength(t *testing.T) {
+	tests := []struct{ name, sheet, markup, want string }{
+		{"style attribute over a class rule",
+			`.x{font-size:0}`, `<div class="x" style="font-size:13px">shown</div>`, "shown"},
+		{"style attribute over an id rule",
+			`#x{font-size:0}`, `<div id="x" style="font-size:13px">shown</div>`, "shown"},
+		{"style attribute can hide what a rule shows",
+			`.x{font-size:13px}`, `<div class="x" style="font-size:0">secret</div>`, ""},
+		{"visibility in the style attribute over a rule",
+			`.x{visibility:hidden}`, `<div class="x" style="visibility:visible">shown</div>`, "shown"},
+		{"class rule over an element rule",
+			`p{font-size:0} .t{font-size:13px}`, `<p class="t">shown</p>`, "shown"},
+		{"class rule can hide what an element rule shows",
+			`p{font-size:13px} .z{font-size:0}`, `<p class="z">secret</p>`, ""},
+		{"id rule over a class rule",
+			`.x{font-size:13px} #y{font-size:0}`, `<div id="y" class="x">secret</div>`, ""},
+		{"id rule over a class rule, the other way",
+			`.x{font-size:0} #y{font-size:13px}`, `<div id="y" class="x">shown</div>`, "shown"},
+		{"later rule of the same kind",
+			`.x{font-size:0} .x{font-size:13px}`, `<div class="x">shown</div>`, "shown"},
+		{"later rule of the same kind that hides",
+			`.x{font-size:13px} .x{font-size:0}`, `<div class="x">secret</div>`, ""},
+		{"later rule keeps what it does not set",
+			`.x{font-size:0} .x{color:red}`, `<div class="x">secret</div>`, ""},
+		// display:none is a whole-element rule and nothing shows it again.
+		{"display none is not undone by a later rule",
+			`.x{display:none} .x{display:block}`, `<div class="x">secret</div>`, ""},
+		{"display none is not undone by the style attribute",
+			`.x{display:none}`, `<div class="x" style="display:block">secret</div>`, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, HTMLToText(`<style>`+tc.sheet+`</style>`+tc.markup))
+		})
+	}
+}
+
+func TestNumberWithUnit(t *testing.T) {
+	tests := []struct {
+		in   string
+		num  float64
+		unit string
+		ok   bool
+	}{
+		{"0", 0, "", true},
+		{"12px", 12, "px", true},
+		{"-5px", -5, "px", true},
+		{"+5px", 5, "px", true},
+		{".5em", 0.5, "em", true},
+		{"0.5em", 0.5, "em", true},
+		{"50%", 50, "%", true},
+		{"1e3px", 1000, "px", true},
+		{"1E3px", 1000, "px", true},
+		{"1e+3px", 1000, "px", true},
+		{"1e-3px", 0.001, "px", true},
+		{"0e0px", 0, "px", true},
+		{"5e-1", 0.5, "", true},
+		// "e" followed by a letter is the em or ex unit, not an exponent.
+		{"1em", 1, "em", true},
+		{"2ex", 2, "ex", true},
+		{"1e", 1, "e", true},
+		{"1e+", 1, "e+", false},
+		{"1e999", 1e12, "", true},   // too big: kept at the limit
+		{"-1e999", -1e12, "", true}, // too big: kept at the limit
+		{"1e-999", 0, "", true},
+		{"", 0, "", false},
+		{"px", 0, "", false},
+		{"-", 0, "", false},
+		{".", 0, "", false},
+		{"1.", 1, ".", false},
+		{"1.5.5px", 0, "", false},
+		{"1 px", 0, "", false},
+		{"1px2", 0, "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			num, unit, ok := numberWithUnit(tc.in)
+			require.Equal(t, tc.ok, ok)
+			if tc.ok {
+				require.InDelta(t, tc.num, num, 1e-12)
+				require.Equal(t, tc.unit, unit)
+			}
+		})
 	}
 }
 

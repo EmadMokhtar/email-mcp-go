@@ -1,6 +1,7 @@
 package mime
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"unicode"
@@ -14,21 +15,99 @@ import (
 // elements, and it knows about comments, strings, escapes and brackets, so a
 // sender cannot hide a declaration from us by writing it in an odd way.
 
-// --- hiding declarations ---
+// --- what a list of declarations does ---
 
-// styleHides reports whether a list of declarations hides the element. The
-// list is the value of a style attribute, or the inside of a rule. It finds:
+// visibility is the value of the visibility property. The property is
+// inherited: an element that does not set it keeps the value of its parent.
+type visibility uint8
+
+const (
+	visInherit visibility = iota // not set
+	visVisible
+	visHidden // hidden or collapse
+)
+
+// fontSizeMode says how a font-size declaration is worked out.
+type fontSizeMode uint8
+
+const (
+	fsInherit fontSizeMode = iota // not set: the size of the parent
+	fsPixels                      // a size in pixels, whatever the parent is
+	fsParent                      // a multiple of the size of the parent (em, %, ex, larger)
+	fsRoot                        // a multiple of the size of the html element (rem)
+)
+
+// fontSize is the value of a font-size declaration. The property is inherited.
+type fontSize struct {
+	mode  fontSizeMode
+	value float64
+}
+
+const (
+	// initialFontSize is "medium", the size of the page when nothing sets it.
+	initialFontSize = 16.0
+	// minReadableFontSize is 1pt. Text of this size or smaller cannot be read.
+	minReadableFontSize = 96.0 / 72.0
+	// maxFontSize keeps sizes finite, so that a multiple of zero is zero and
+	// never a number that is not a number.
+	maxFontSize = 1e12
+)
+
+// resolve returns the size in pixels for an element, given the size of its
+// parent and the size of the html element.
+func (f fontSize) resolve(parent, root float64) float64 {
+	var size float64
+	switch f.mode {
+	case fsPixels:
+		size = f.value
+	case fsParent:
+		size = parent * f.value
+	case fsRoot:
+		size = root * f.value
+	default:
+		return parent
+	}
+	return min(size, maxFontSize)
+}
+
+// styleEffect is what a list of declarations does to an element.
+type styleEffect struct {
+	// drop means the element and everything in it is not shown, and nothing
+	// inside can show itself again. display:none, a zero opacity and a zero
+	// height with clipped overflow work like this.
+	drop bool
+	// visibility and fontSize are inherited. They hide the text of the element
+	// and of its children, but a child can set its own value.
+	visibility visibility
+	fontSize   fontSize
+}
+
+// then adds the effect of a rule that is stronger than e. A drop stays. A
+// value that the stronger rule sets replaces the one in e.
+func (e styleEffect) then(stronger styleEffect) styleEffect {
+	e.drop = e.drop || stronger.drop
+	if stronger.visibility != visInherit {
+		e.visibility = stronger.visibility
+	}
+	if stronger.fontSize.mode != fsInherit {
+		e.fontSize = stronger.fontSize
+	}
+	return e
+}
+
+// parseStyle reads a list of declarations: the value of a style attribute, or
+// the inside of a rule. It looks for:
 //   - display:none
-//   - visibility:hidden
-//   - opacity:0
-//   - a font size of zero (0, 0px, 0em, 0% and so on), or of 1px or 1pt or
-//     less
-//   - max-height:0 together with overflow:hidden
+//   - opacity of zero or less
+//   - max-height:0 or height:0, together with overflow of hidden or clip
+//   - visibility:hidden and visibility:collapse
+//   - the font size, from font-size and from the font shorthand
 //
 // Names and values are matched the way a browser does it: ignoring case,
 // white space, comments, escapes and "!important".
-func styleHides(style string) bool {
-	maxHeightZero, overflowHidden := false, false
+func parseStyle(style string) styleEffect {
+	var e styleEffect
+	zeroHeight, clipped := false, false
 	for _, decl := range declarations(stripCSSComments(style)) {
 		name, value, ok := strings.Cut(decl, ":")
 		if !ok {
@@ -41,94 +120,216 @@ func styleHides(style string) bool {
 		switch name {
 		case "display":
 			if value == "none" {
-				return true
+				e.drop = true
 			}
 		case "visibility":
-			if value == "hidden" {
-				return true
+			switch value {
+			case "hidden", "collapse":
+				e.visibility = visHidden
+			case "visible", "initial":
+				e.visibility = visVisible
 			}
 		case "opacity":
-			if isZeroNumber(value) {
-				return true
+			if n, _, ok := numberWithUnit(value); ok && n <= 0 {
+				e.drop = true
 			}
 		case "font-size":
-			if isUnreadableFontSize(value) {
-				return true
+			if f, ok := parseFontSize(value, true); ok {
+				e.fontSize = f
 			}
-		case "max-height":
-			maxHeightZero = maxHeightZero || isZeroNumber(value)
+		case "font":
+			if f, ok := fontShorthandSize(value); ok {
+				e.fontSize = f
+			}
+		case "max-height", "height":
+			if n, _, ok := numberWithUnit(value); ok && n <= 0 {
+				zeroHeight = true
+			}
 		case "overflow", "overflow-y":
-			overflowHidden = overflowHidden || value == "hidden"
+			// With two values the second one is for the vertical direction.
+			if words := strings.Fields(value); len(words) > 0 {
+				last := words[len(words)-1]
+				clipped = clipped || last == "hidden" || last == "clip"
+			}
 		}
 	}
-	return maxHeightZero && overflowHidden
+	if zeroHeight && clipped {
+		e.drop = true
+	}
+	return e
 }
 
-// numberWithUnit splits a value such as "0.5px" into the number and the unit.
-// It returns false if v is not a number with an optional unit of letters or
-// "%".
+// numberWithUnit splits a value such as "0.5px" or "1e3px" into the number
+// and the unit. The unit must already be in lower case. It returns false if
+// v is not a number with an optional unit of letters or "%". A number that is
+// too big for a size is kept at the limit.
 func numberWithUnit(v string) (number float64, unit string, ok bool) {
-	end := 0
-	for end < len(v) && strings.IndexByte("+-.0123456789", v[end]) >= 0 {
-		end++
+	isDigit := func(c byte) bool { return c >= '0' && c <= '9' }
+
+	i, digits := 0, 0
+	if i < len(v) && (v[i] == '+' || v[i] == '-') {
+		i++
 	}
-	if end == 0 {
+	for i < len(v) && isDigit(v[i]) {
+		i++
+		digits++
+	}
+	if i+1 < len(v) && v[i] == '.' && isDigit(v[i+1]) {
+		i++
+		for i < len(v) && isDigit(v[i]) {
+			i++
+			digits++
+		}
+	}
+	if digits == 0 {
 		return 0, "", false
 	}
-	f, err := strconv.ParseFloat(v[:end], 64)
-	if err != nil {
+	// An exponent is "e" and digits, with an optional sign. "e" with no digit
+	// after it is the start of a unit such as "em".
+	if i < len(v) && (v[i] == 'e' || v[i] == 'E') {
+		j := i + 1
+		if j < len(v) && (v[j] == '+' || v[j] == '-') {
+			j++
+		}
+		if j < len(v) && isDigit(v[j]) {
+			for j < len(v) && isDigit(v[j]) {
+				j++
+			}
+			i = j
+		}
+	}
+
+	f, err := strconv.ParseFloat(v[:i], 64)
+	if err != nil && !errors.Is(err, strconv.ErrRange) {
 		return 0, "", false
 	}
-	for _, c := range v[end:] {
+	for _, c := range v[i:] {
 		if (c < 'a' || c > 'z') && c != '%' {
 			return 0, "", false
 		}
 	}
-	return f, v[end:], true
+	return max(-maxFontSize, min(f, maxFontSize)), v[i:], true
 }
 
-// isZeroNumber reports whether v is the number zero with an optional unit,
-// for example "0", "0.0", "0px" or "0%".
-func isZeroNumber(v string) bool {
-	f, _, ok := numberWithUnit(v)
-	return ok && f == 0
+// absoluteUnits give the size of one unit in pixels.
+var absoluteUnits = map[string]float64{
+	"px": 1,
+	"pt": 96.0 / 72.0,
+	"pc": 16,
+	"in": 96,
+	"cm": 96 / 2.54,
+	"mm": 96 / 25.4,
+	"q":  96 / 101.6,
 }
 
-// isUnreadableFontSize reports whether text of this font size cannot be read:
-// zero in any unit, or 1px or 1pt or less.
-func isUnreadableFontSize(v string) bool {
-	f, unit, ok := numberWithUnit(v)
-	if !ok {
-		return false
+// fontSizeKeywords give the size of the keywords of font-size in pixels.
+var fontSizeKeywords = map[string]float64{
+	"xx-small":  9,
+	"x-small":   10,
+	"small":     13,
+	"medium":    16,
+	"large":     18,
+	"x-large":   24,
+	"xx-large":  32,
+	"xxx-large": 48,
+}
+
+// parseFontSize reads the value of font-size. The value must already be in
+// lower case. It returns false for a value that a browser would not accept and
+// for values that keep the size of the parent (inherit, unset), so the element
+// then keeps the size it has. Functions such as calc() are not worked out and
+// are treated the same way.
+//
+// A number with no unit is a size in pixels if unitlessIsPixels is true (a page
+// without a doctype does this). Zero never needs a unit.
+func parseFontSize(v string, unitlessIsPixels bool) (fontSize, bool) {
+	if px, ok := fontSizeKeywords[v]; ok {
+		return fontSize{fsPixels, px}, true
 	}
-	if f == 0 {
-		return true
+	switch v {
+	case "initial":
+		return fontSize{fsPixels, initialFontSize}, true
+	case "larger":
+		return fontSize{fsParent, 1.2}, true
+	case "smaller":
+		return fontSize{fsParent, 1 / 1.2}, true
 	}
-	return (unit == "px" || unit == "pt") && f > 0 && f <= 1
+
+	n, unit, ok := numberWithUnit(v)
+	if !ok || n < 0 {
+		return fontSize{}, false
+	}
+	if unit == "" {
+		if n == 0 || unitlessIsPixels {
+			return fontSize{fsPixels, n}, true
+		}
+		return fontSize{}, false
+	}
+	if px, ok := absoluteUnits[unit]; ok {
+		return fontSize{fsPixels, n * px}, true
+	}
+	switch unit {
+	case "em":
+		return fontSize{fsParent, n}, true
+	case "%":
+		return fontSize{fsParent, n / 100}, true
+	case "ex", "ch":
+		return fontSize{fsParent, n / 2}, true
+	case "rem":
+		return fontSize{fsRoot, n}, true
+	case "vw", "vh", "vmin", "vmax":
+		// The width of the window is not known. Take 1000 pixels.
+		return fontSize{fsPixels, n * 10}, true
+	}
+	return fontSize{}, false
+}
+
+// fontShorthandSize reads the size from the value of the font shorthand:
+// "font: [style] [weight] size[/line-height] family". The size is the first
+// word, before any "/", that is zero or has a unit, or that is a size keyword.
+// A number with no unit is a weight, and an angle is the slant of "oblique".
+func fontShorthandSize(value string) (fontSize, bool) {
+	for _, word := range strings.Fields(value) {
+		word, _, _ = strings.Cut(word, "/")
+		if word == "" {
+			continue
+		}
+		if _, unit, ok := numberWithUnit(word); ok {
+			switch unit {
+			case "deg", "grad", "rad", "turn":
+				continue
+			}
+		}
+		if f, ok := parseFontSize(word, false); ok {
+			return f, true
+		}
+	}
+	return fontSize{}, false
 }
 
 // --- rules in style elements ---
 
-// hidingRules are the names that style elements hide. A rule is used only if
-// its selector is one class (.x), one id (#x) or one element name (p), alone
-// or in a comma list, and its declarations hide (see styleHides). Everything
-// else is ignored: selectors with more than one part, and at-rules such as
-// @media and @import.
+// styleRules are the effects of the rules in the style elements, by the name
+// that the rule is for. A rule is used only if its selector is one class
+// (.x), one id (#x) or one element name (p), alone or in a comma list.
+// Everything else is ignored: selectors with more than one part, and at-rules
+// such as @media and @import.
 //
-// A name is hidden even if another rule, or the style attribute, would show
-// the element again. That is the safe choice, because it shows less.
-type hidingRules struct {
-	classes  map[string]bool
-	ids      map[string]bool
-	elements map[string]bool
+// A rule is kept if it hides, and also if it sets a font size or a
+// visibility, because a child can use its own size to show its text in a
+// parent that has none.
+type styleRules struct {
+	classes  map[string]styleEffect
+	ids      map[string]styleEffect
+	elements map[string]styleEffect
 }
 
-// collectHidingRules reads every style element of the document.
-func collectHidingRules(doc *html.Node) *hidingRules {
-	h := &hidingRules{
-		classes:  map[string]bool{},
-		ids:      map[string]bool{},
-		elements: map[string]bool{},
+// collectStyleRules reads every style element of the document.
+func collectStyleRules(doc *html.Node) *styleRules {
+	h := &styleRules{
+		classes:  map[string]styleEffect{},
+		ids:      map[string]styleEffect{},
+		elements: map[string]styleEffect{},
 	}
 	for n := doc; n != nil; n = nextNode(n) {
 		if n.Type != html.ElementNode || n.Data != "style" {
@@ -159,28 +360,30 @@ func nextNode(n *html.Node) *html.Node {
 	return nil
 }
 
-// matches reports whether a rule hides the element.
-func (h *hidingRules) matches(n *html.Node) bool {
-	if h.elements[n.Data] {
-		return true
-	}
+// effectFor returns what the rules do to the element. The element rules come
+// first, then the class rules, then the id rule: a stronger rule replaces the
+// size or visibility of a weaker one. Names are compared ignoring case,
+// because a page without a doctype matches classes and ids that way.
+func (h *styleRules) effectFor(n *html.Node) styleEffect {
+	e := h.elements[n.Data]
+	var class, id string
 	for _, a := range n.Attr {
 		switch a.Key {
-		case "id":
-			// Names are compared ignoring case, because a page without a
-			// doctype matches classes and ids that way.
-			if h.ids[lowerASCII(a.Val)] {
-				return true
-			}
 		case "class":
-			for _, c := range strings.FieldsFunc(a.Val, isASCIISpace) {
-				if h.classes[lowerASCII(c)] {
-					return true
-				}
-			}
+			class = a.Val
+		case "id":
+			id = a.Val
 		}
 	}
-	return false
+	if class != "" && len(h.classes) > 0 {
+		for _, c := range strings.FieldsFunc(class, isASCIISpace) {
+			e = e.then(h.classes[lowerASCII(c)])
+		}
+	}
+	if id != "" && len(h.ids) > 0 {
+		e = e.then(h.ids[lowerASCII(id)])
+	}
+	return e
 }
 
 func isASCIISpace(c rune) bool {
@@ -188,7 +391,7 @@ func isASCIISpace(c rune) bool {
 }
 
 // addStyleSheet reads the rules of one style element.
-func (h *hidingRules) addStyleSheet(css string) {
+func (h *styleRules) addStyleSheet(css string) {
 	s := stripCSSComments(css)
 	for i := 0; i < len(s); {
 		j := scanCSS(s, i, "{;")
@@ -208,11 +411,12 @@ func (h *hidingRules) addStyleSheet(css string) {
 		// not a name, so addSelector ignores it, and its block has been read
 		// past without looking inside.
 		prelude = trimPrelude(prelude)
-		if !styleHides(body) {
+		effect := parseStyle(body)
+		if effect == (styleEffect{}) {
 			continue
 		}
 		for _, sel := range splitCSS(prelude, ',') {
-			h.addSelector(strings.TrimSpace(sel))
+			h.addSelector(strings.TrimSpace(sel), effect)
 		}
 	}
 }
@@ -231,21 +435,24 @@ func trimPrelude(s string) string {
 	}
 }
 
-// addSelector remembers a selector if it is one class, one id or one element
-// name.
-func (h *hidingRules) addSelector(sel string) {
+// addSelector remembers the effect for a selector, if it is one class, one id
+// or one element name. A later rule for the same name is stronger.
+func (h *styleRules) addSelector(sel string, effect styleEffect) {
+	var names map[string]styleEffect
+	var name string
 	switch {
 	case strings.HasPrefix(sel, "."):
-		if name := sel[1:]; isCSSIdent(name) {
-			h.classes[lowerASCII(unescapeCSS(name))] = true
-		}
+		names, name = h.classes, sel[1:]
 	case strings.HasPrefix(sel, "#"):
-		if name := sel[1:]; isCSSIdent(name) {
-			h.ids[lowerASCII(unescapeCSS(name))] = true
-		}
-	case isCSSIdent(sel):
-		h.elements[lowerASCII(unescapeCSS(sel))] = true
+		names, name = h.ids, sel[1:]
+	default:
+		names, name = h.elements, sel
 	}
+	if !isCSSIdent(name) {
+		return
+	}
+	name = lowerASCII(unescapeCSS(name))
+	names[name] = names[name].then(effect)
 }
 
 // isCSSIdent reports whether s is one name: letters, digits, "-", "_",
