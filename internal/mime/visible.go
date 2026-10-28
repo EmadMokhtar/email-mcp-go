@@ -35,7 +35,7 @@ import (
 //
 // The whole document is needed. A style rule at the end can hide an element at
 // the start, so the caller must not pass the start of a document alone. A
-// document that would make the parser build too many nodes gives an error that
+// document that would make the parser do too much work gives an error that
 // wraps ErrHTMLTooComplex (see HTMLToText).
 func VisibleHTML(markup string) (string, error) {
 	doc, err := parseHTML(markup)

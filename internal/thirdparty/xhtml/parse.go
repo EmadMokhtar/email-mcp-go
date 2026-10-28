@@ -54,58 +54,82 @@ type parser struct {
 	// textNodes holds buffers for TextNodes that have had multiple text
 	// tokens coalesced into them.
 	textNodes map[*Node][]byte
-	// email-mcp: nodes is the number of nodes that the parser has made and kept,
-	// email-mcp: the document node included. copiedAttrs is the number of
-	// email-mcp: attributes that clones copied. limited says that maxNodes is
-	// email-mcp: used: the parser stops when nodes + copiedAttrs is above it.
-	nodes, copiedAttrs int  // email-mcp: counters for ParseWithLimit
-	maxNodes           int  // email-mcp: the limit of ParseWithLimit
-	limited            bool // email-mcp: true if maxNodes is used
+	// email-mcp: cost is the work that the parser has done (see ParseWithLimit).
+	// email-mcp: It only goes up. maxCost is the limit of ParseWithLimit, and
+	// email-mcp: limited says that it is used.
+	cost    int  // email-mcp: the work done so far
+	maxCost int  // email-mcp: the limit of ParseWithLimit
+	limited bool // email-mcp: true if maxCost is used
 }
 
-// email-mcp: ErrTooManyNodes is the error of ParseWithLimit for a document that
-// email-mcp: makes the parser build more nodes than the limit.
-var ErrTooManyNodes = errors.New("xhtml: the document has too many nodes")
+// email-mcp: ErrTooComplex is the error of ParseWithLimit for a document that
+// email-mcp: needs more work than the limit, or that has a tag with more than
+// email-mcp: maxTagAttrs attributes.
+var ErrTooComplex = errors.New("xhtml: the document is too complex to parse")
 
-// email-mcp: nodeLimitReached is what the parser panics with when it passes its
-// email-mcp: limit. parse recovers it and returns ErrTooManyNodes (it recovers
-// email-mcp: every panic, and it makes an error of it). It is private so that
-// email-mcp: nothing else can make the same panic.
-type nodeLimitReached struct{}
+// email-mcp: The units of the cost of ParseWithLimit. Each node that the parser
+// email-mcp: makes costs NodeCost. Each attribute of such a node costs AttrCost,
+// email-mcp: plus one for each byte of its namespace, key and value. A node takes
+// email-mcp: 112 bytes of memory and an attribute 48 bytes plus its strings, so a
+// email-mcp: unit is a few bytes. The bytes of the attributes count for each copy
+// email-mcp: of an element too: the copy shares the strings, but the code after
+// email-mcp: the parser reads them once for each copy.
+const (
+	NodeCost = 16 // email-mcp: the cost of one node
+	AttrCost = 16 // email-mcp: the cost of one attribute, without its bytes
+)
 
-// email-mcp: newNode counts a node that the parser made. Every node that the
-// email-mcp: parser makes goes through this method (or through cloneNode), so
-// email-mcp: the count is exact. It panics when the limit is passed, before the
+// email-mcp: maxTagAttrs is the most attributes that one tag may have with
+// email-mcp: ParseWithLimit. The tokenizer keeps several copies of the attributes
+// email-mcp: of a tag (about 300 bytes for each) before the parser sees the tag,
+// email-mcp: so the cost cannot stop a tag with half a million attributes in time.
+// email-mcp: Real tags have fewer than a hundred.
+const maxTagAttrs = 1000
+
+// email-mcp: costLimitReached is what the parser panics with when the cost
+// email-mcp: passes the limit. parse recovers it and returns ErrTooComplex (it
+// email-mcp: recovers every panic, and it makes an error of it). It is private so
+// email-mcp: that nothing else can make the same panic.
+type costLimitReached struct{}
+
+// email-mcp: charge adds work to the cost. It panics when the cost is over the
+// email-mcp: limit, so the caller must call it before it does the work.
+func (p *parser) charge(work int) {
+	p.cost += work
+	if p.limited && p.cost > p.maxCost {
+		panic(costLimitReached{})
+	}
+}
+
+// email-mcp: attrCost returns the cost of one attribute.
+func attrCost(attr Attribute) int {
+	return AttrCost + len(attr.Namespace) + len(attr.Key) + len(attr.Val)
+}
+
+// email-mcp: nodeCost returns the cost of a node with the attributes of n.
+func nodeCost(n *Node) int {
+	work := NodeCost
+	for _, attr := range n.Attr {
+		work += attrCost(attr)
+	}
+	return work
+}
+
+// email-mcp: newNode counts a node that the parser made, with its attributes.
+// email-mcp: Every node that the parser makes goes through this method or
+// email-mcp: through cloneNode. It panics when the limit is passed, before the
 // email-mcp: node is used.
 func (p *parser) newNode(n *Node) *Node {
-	p.nodes++
-	p.checkLimit()
+	p.charge(nodeCost(n))
 	return n
 }
 
-// email-mcp: cloneNode is n.clone() for the parser. A clone copies the
-// email-mcp: attributes of n, and a parser that copies one element many times
-// email-mcp: would copy them as many times, so the attributes count too.
+// email-mcp: cloneNode is n.clone() for the parser. The copy has the attributes
+// email-mcp: of n, and it costs as much as n. The cost is counted before the copy
+// email-mcp: is made.
 func (p *parser) cloneNode(n *Node) *Node {
-	p.copiedAttrs += len(n.Attr)
-	return p.newNode(n.clone())
-}
-
-// email-mcp: subtreeSize returns the number of nodes of the tree of n, n
-// email-mcp: included.
-func subtreeSize(n *Node) int {
-	size := 1
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		size += subtreeSize(c)
-	}
-	return size
-}
-
-// email-mcp: checkLimit stops the parser when it has passed its limit.
-func (p *parser) checkLimit() {
-	if p.limited && p.nodes+p.copiedAttrs > p.maxNodes {
-		panic(nodeLimitReached{})
-	}
+	p.charge(nodeCost(n))
+	return n.clone()
 }
 
 func (p *parser) top() *Node {
@@ -363,13 +387,13 @@ func (p *parser) addText(text string) {
 	}
 
 	if p.shouldFosterParent() {
-		n := &Node{
+		n := &Node{ // email-mcp: keep the node, to count it below
 			Type: TextNode,
 			Data: text,
-		}
+		} // email-mcp: end of the node
 		if p.fosterParent(n) { // email-mcp: a text that is merged is not a node
-			p.newNode(n) // email-mcp: count the node
-		}
+			p.newNode(n) // email-mcp: count the node (after it is in the tree)
+		} // email-mcp: end of the new if
 		return
 	}
 
@@ -912,16 +936,18 @@ func afterHeadIM(p *parser) bool {
 }
 
 // copyAttributes copies attributes of src not found on dst to dst.
-func copyAttributes(dst *Node, src Token) {
+func (p *parser) copyAttributes(dst *Node, src Token) { // email-mcp: a method, to count the work
 	if len(src.Attr) == 0 {
 		return
 	}
+	p.charge(AttrCost * len(dst.Attr)) // email-mcp: the map below has an entry for each attribute of dst
 	attr := map[string]string{}
 	for _, t := range dst.Attr {
 		attr[t.Key] = t.Val
 	}
 	for _, t := range src.Attr {
 		if _, ok := attr[t.Key]; !ok {
+			p.charge(attrCost(t)) // email-mcp: dst gets a new attribute
 			dst.Attr = append(dst.Attr, t)
 			attr[t.Key] = t.Val
 		}
@@ -961,7 +987,7 @@ func inBodyIM(p *parser) bool {
 			if p.oe.contains(a.Template) {
 				return true
 			}
-			copyAttributes(p.oe[0], p.tok)
+			p.copyAttributes(p.oe[0], p.tok) // email-mcp: a method now
 		case a.Base, a.Basefont, a.Bgsound, a.Link, a.Meta, a.Noframes, a.Script, a.Style, a.Template, a.Title:
 			return inHeadIM(p)
 		case a.Body:
@@ -972,7 +998,7 @@ func inBodyIM(p *parser) bool {
 				body := p.oe[1]
 				if body.Type == ElementNode && body.DataAtom == a.Body {
 					p.framesetOK = false
-					copyAttributes(body, p.tok)
+					p.copyAttributes(body, p.tok) // email-mcp: a method now
 				}
 			}
 		case a.Frameset:
@@ -983,7 +1009,6 @@ func inBodyIM(p *parser) bool {
 			body := p.oe[1]
 			if body.Parent != nil {
 				body.Parent.RemoveChild(body)
-				p.nodes -= subtreeSize(body) // email-mcp: the nodes of the body are not in the tree any more
 			}
 			p.oe = p.oe[:1]
 			p.addElement()
@@ -2295,10 +2320,10 @@ func (p *parser) parseCurrentToken() {
 func (p *parser) parse() (err error) {
 	defer func() {
 		if panicErr := recover(); panicErr != nil {
-			if _, ok := panicErr.(nodeLimitReached); ok { // email-mcp: the limit is not a bug of the parser
-				err = ErrTooManyNodes // email-mcp: return the error of the limit as it is
-				return                // email-mcp: do not make a text of it
-			}
+			if _, ok := panicErr.(costLimitReached); ok { // email-mcp: the limit is not a bug of the parser
+				err = ErrTooComplex // email-mcp: return the error of the limit as it is
+				return              // email-mcp: do not make a text of it
+			} // email-mcp: end of the new if
 			err = fmt.Errorf("%s", panicErr)
 		}
 	}()
@@ -2374,7 +2399,7 @@ func ParseWithOptions(r io.Reader, opts ...ParseOption) (*Node, error) {
 		scripting:  true,
 		framesetOK: true,
 		im:         initialIM,
-		nodes:      1, // email-mcp: the document node
+		cost:       NodeCost, // email-mcp: the document node
 	}
 
 	for _, f := range opts {
@@ -2388,17 +2413,38 @@ func ParseWithOptions(r io.Reader, opts ...ParseOption) (*Node, error) {
 }
 
 // email-mcp: ParseWithLimit is like ParseWithOptions, but it stops with
-// email-mcp: ErrTooManyNodes when the parser has made more than maxNodes nodes.
-// email-mcp: The count is exact: it is the number of nodes in the tree (the
-// email-mcp: document node included), plus the attributes that the parser copies
-// email-mcp: when it makes a copy of an element (the list of formatting elements
-// email-mcp: and the adoption agency do this). Without a limit, the size of the
-// email-mcp: input does not bound the nodes: a few tens of kilobytes can make
-// email-mcp: millions of them. The parser stops at the first node over the limit,
-// email-mcp: so it never keeps more than maxNodes nodes.
-func ParseWithLimit(r io.Reader, maxNodes int, opts ...ParseOption) (*Node, error) {
+// email-mcp: ErrTooComplex when the work of the parser is more than maxCost.
+// email-mcp:
+// email-mcp: Without a limit, the size of the input does not bound the work of
+// email-mcp: the parser and of the code that reads the tree. A few tens of
+// email-mcp: kilobytes can make millions of nodes (the parser copies the open
+// email-mcp: formatting elements for each piece of text), a copy of an element
+// email-mcp: with a long attribute is read again by the code after the parser,
+// email-mcp: and a repeated <html> or <body> tag makes the parser go over all the
+// email-mcp: attributes of that element again.
+// email-mcp:
+// email-mcp: The cost is the sum of:
+// email-mcp:   - NodeCost for each node that the parser makes (elements, text,
+// email-mcp:     comments, the doctype, the document, and each copy of an element);
+// email-mcp:   - AttrCost plus the bytes of the namespace, key and value for each
+// email-mcp:     attribute of such a node, for the nodes made from the input and for
+// email-mcp:     the copies, and for each attribute that a repeated <html> or <body>
+// email-mcp:     tag adds to the element;
+// email-mcp:   - AttrCost for each attribute that the element has already, each time a
+// email-mcp:     repeated <html> or <body> tag with attributes is merged into it.
+// email-mcp: The cost never goes down, also when the parser takes a node out of
+// email-mcp: the tree again (a frameset takes out the body). The text in the nodes
+// email-mcp: is not counted: the input bounds it. The parser stops at the first step
+// email-mcp: after which the cost is over maxCost, before it does that step (a
+// email-mcp: text node in a table is counted just after it is put in the tree).
+// email-mcp: A limit below NodeCost stops it at the first node.
+// email-mcp:
+// email-mcp: A tag with more than maxTagAttrs different attributes stops the
+// email-mcp: tokenizer with ErrTooComplex too (see maxTagAttrs).
+func ParseWithLimit(r io.Reader, maxCost int, opts ...ParseOption) (*Node, error) {
 	limit := func(p *parser) {
-		p.limited, p.maxNodes = true, maxNodes
+		p.limited, p.maxCost = true, maxCost
+		p.tokenizer.maxAttrs = maxTagAttrs
 	}
 	return ParseWithOptions(r, append(opts[:len(opts):len(opts)], limit)...)
 }
@@ -2425,7 +2471,7 @@ func ParseFragmentWithOptions(r io.Reader, context *Node, opts ...ParseOption) (
 		scripting: true,
 		fragment:  true,
 		context:   context,
-		nodes:     1, // email-mcp: the document node
+		cost:      NodeCost, // email-mcp: the document node
 	}
 	if context != nil && context.Namespace != "" {
 		p.tokenizer = NewTokenizer(r)

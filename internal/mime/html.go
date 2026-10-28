@@ -69,7 +69,7 @@ import (
 // become line breaks. The result is passed through CleanUntrusted, so it is
 // always valid UTF-8 with no invisible characters.
 //
-// A document that would make the parser build too many nodes, or that is nested
+// A document that would make the parser do too much work, or that is nested
 // more than 512 elements deep, gives an empty string and an error that wraps
 // ErrHTMLTooComplex. Nothing is returned for it, instead of text that was not
 // checked. The size of the markup is not limited here: the caller does that.
@@ -83,35 +83,41 @@ func HTMLToText(markup string) (string, error) {
 	return CleanUntrusted(tidyLines(string(r.buf))), nil
 }
 
-// ErrHTMLTooComplex means that HTML would make the parser build too many nodes,
-// so it was not parsed. HTMLToText and VisibleHTML return it, also for a
-// document that is nested too deep for the parser.
+// ErrHTMLTooComplex means that HTML would make the parser do too much work, so
+// it was not parsed. HTMLToText and VisibleHTML return it, also for a document
+// that is nested too deep for the parser.
 //
-// The size of the input does not bound the work of the parser. The tree
-// builder keeps a list of the formatting elements (a, b, i, font and so on)
-// that it has not closed. For each piece of text it copies every element of
-// that list into the tree again ("reconstruct the active formatting
-// elements"). A few tens of kilobytes of input that opens hundreds of
-// formatting elements with different attributes, and then has many paragraphs,
-// make millions of nodes and gigabytes of memory. The parser that is used here
-// (internal/thirdparty/xhtml) counts the nodes that it makes and stops at the
-// limit, so the memory is bounded whatever the markup is.
+// The size of the input does not bound the work of the parser and of the code
+// that reads the tree. The tree builder keeps a list of the formatting elements
+// (a, b, i, font and so on) that it has not closed. For each piece of text it
+// copies every element of that list into the tree again ("reconstruct the
+// active formatting elements"). A few tens of kilobytes of input that opens
+// hundreds of formatting elements with different attributes, and then has many
+// paragraphs, make millions of nodes and gigabytes of memory. A copy of an
+// element with a long attribute (a link of a megabyte) shares the attribute
+// with the original, but this package reads and writes the attribute again for
+// each copy. The parser that is used here (internal/thirdparty/xhtml) counts
+// its work and stops at a limit, so the memory and the time are bounded
+// whatever the markup is.
 var ErrHTMLTooComplex = errors.New("mime: html too complex to convert")
 
-// maxHTMLNodes is the most nodes that the parser may make for one document. A
-// real mail has far fewer: a marketing mail of 4 MiB with tables, links and
-// inline styles has about 230,000. At this limit the parser uses about 75 MiB.
-const maxHTMLNodes = 1_000_000
+// maxHTMLCost is the most work that the parser may do for one document (see
+// xhtml.ParseWithLimit). A node costs xhtml.NodeCost (16) and an attribute
+// xhtml.AttrCost (16) plus its bytes, so the limit is one million nodes, or 16
+// MB of attributes. A marketing mail of 4 MiB with tables, links and inline
+// styles costs about 6.9 million (232,000 nodes, 75,000 attributes, 2 MB of
+// attributes).
+const maxHTMLCost = 16_000_000
 
-// parseHTML parses HTML mail with a limit on the nodes. The error wraps
-// ErrHTMLTooComplex, for a document with too many nodes and for one that is
-// nested more than 512 elements deep. HTMLToText and VisibleHTML parse in the
-// same way, so they see the same document.
+// parseHTML parses HTML mail with a limit on the work of the parser. The error
+// wraps ErrHTMLTooComplex, for a document that needs too much work and for one
+// that is nested more than 512 elements deep. HTMLToText and VisibleHTML parse
+// in the same way, so they see the same document.
 //
 // Scripting is off because a mail client does not run scripts. With it on, the
 // parser would treat the content of noscript as raw text.
 func parseHTML(markup string) (*xhtml.Node, error) {
-	doc, err := xhtml.ParseWithLimit(strings.NewReader(markup), maxHTMLNodes, xhtml.ParseOptionEnableScripting(false))
+	doc, err := xhtml.ParseWithLimit(strings.NewReader(markup), maxHTMLCost, xhtml.ParseOptionEnableScripting(false))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrHTMLTooComplex, err)
 	}

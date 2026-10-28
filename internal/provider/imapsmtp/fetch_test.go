@@ -10,6 +10,7 @@ import (
 	"math"
 	"mime/quotedprintable"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -2070,6 +2071,41 @@ func TestGetMessageHTMLThatTheParserCopiesFromATableIsRefused(t *testing.T) {
 	require.Less(t, time.Since(started), 5*time.Second)
 }
 
+// longLinkCopiedHTML has a link with an address of s bytes, and then c
+// paragraphs. The HTML parser copies the link element into each paragraph. The
+// copies share the address, but the conversion reads or writes it once for each
+// copy.
+func longLinkCopiedHTML(s, c int) string {
+	return `<p><a href="https://e.example/` + strings.Repeat("a", s) + `">` + strings.Repeat("<p>y", c)
+}
+
+func TestGetMessageHTMLWithALongLinkCopiedIsRefused(t *testing.T) {
+	// 70 KB. Before the parser counted the bytes of the copies, the html format
+	// took 267 MiB, and the result was 65 MB of HTML.
+	html := longLinkCopiedHTML(64<<10, 1000)
+	require.Less(t, len(html), 72<<10)
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, textMail("html", "utf-8", "", html))
+
+	for _, format := range []mail.BodyFormat{mail.BodyText, mail.BodyHTML} {
+		var msg *mail.Message
+		var err error
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		msg, err = b.GetMessage(t.Context(), ref, mail.BodyOptions{Format: format})
+		runtime.ReadMemStats(&after)
+		require.ErrorIs(t, err, mail.ErrTooLarge, format)
+		require.ErrorIs(t, err, mime.ErrHTMLTooComplex, format)
+		require.Contains(t, err.Error(), `body_format "none"`, format)
+		require.Nil(t, msg)
+		// Everything that was allocated, also what was freed again: the fetch, the
+		// test server in this process, and the refused parse.
+		require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(32<<20), format)
+	}
+}
+
 func TestGetMessageComplexHTMLWithAPlainAlternative(t *testing.T) {
 	srv := imaptest.New(t)
 	b := newTestBackend(t, srv)
@@ -2088,7 +2124,7 @@ func TestGetMessageComplexHTMLWithAPlainAlternative(t *testing.T) {
 
 func TestGetMessageLargeButSimpleHTMLIsConverted(t *testing.T) {
 	// A mail of 1 MiB with tables, links and formatting is far below the limit on
-	// the number of nodes.
+	// the work of the parser.
 	html := newsletterHTML(1 << 20)
 	srv := imaptest.New(t)
 	b := newTestBackend(t, srv)

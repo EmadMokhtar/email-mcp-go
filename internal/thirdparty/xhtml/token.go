@@ -170,6 +170,9 @@ type Tokenizer struct {
 	convertNUL bool
 	// allowCDATA is whether CDATA sections are allowed in the current context.
 	allowCDATA bool
+	// email-mcp: maxAttrs, if above 0, is the most attributes that one tag may
+	// email-mcp: have. readTag sets err to ErrTooComplex for a tag with more.
+	maxAttrs int // email-mcp: set by ParseWithLimit
 }
 
 // AllowCDATA sets whether or not the tokenizer recognizes <![CDATA[foo]]> as
@@ -905,6 +908,10 @@ func (z *Tokenizer) readTag(saveAttr bool) {
 		if saveAttr && z.pendingAttr[0].start != z.pendingAttr[0].end && !z.attrNames[key] {
 			z.attr = append(z.attr, z.pendingAttr)
 			z.attrNames[key] = true
+			if z.maxAttrs > 0 && len(z.attr) > z.maxAttrs { // email-mcp: too many attributes
+				z.err = ErrTooComplex // email-mcp: stop before more are kept
+				return                // email-mcp: the token is an ErrorToken
+			} // email-mcp: end of the new if
 		}
 		if z.skipWhiteSpace(); z.err != nil {
 			break

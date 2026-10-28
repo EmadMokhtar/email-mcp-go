@@ -1,5 +1,5 @@
 //go:build !race
 
-package xhtml // email-mcp: tests of the node limit (not from upstream)
+package xhtml // email-mcp: tests of the cost limit (not from upstream)
 
 const raceEnabled = false
