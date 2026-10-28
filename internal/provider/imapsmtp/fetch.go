@@ -609,6 +609,28 @@ func newMessage(r imapRef, m *imapclient.FetchMessageBuffer) *mail.Message {
 	return msg
 }
 
+// renderFunc makes the text of a page from the decoded text of a body part. It
+// returns an error that wraps mail.ErrTooLarge when the part cannot be turned
+// into text.
+type renderFunc func(decoded string) (string, error)
+
+// cleanText is the renderFunc for a plain text part.
+func cleanText(decoded string) (string, error) { return mime.CleanUntrusted(decoded), nil }
+
+// convertible makes a renderFunc of a conversion of HTML. The conversion
+// refuses HTML that is too complex (see mime.ErrHTMLTooComplex). Then the error
+// of the renderFunc wraps mail.ErrTooLarge, like the error for HTML that is
+// larger than maxHTMLBytes, and says what the caller can do.
+func convertible(what, advice string, convert func(string) (string, error)) renderFunc {
+	return func(decoded string) (string, error) {
+		out, err := convert(decoded)
+		if errors.Is(err, mime.ErrHTMLTooComplex) {
+			return "", fmt.Errorf("%w: the HTML body is too complex to %s (%w); %s", mail.ErrTooLarge, what, err, advice)
+		}
+		return out, err
+	}
+}
+
 // chooseBody picks the part that the body comes from, how to turn its decoded
 // text into the text of the page, and whether that text is HTML. It returns a
 // nil part when the message has no body to show.
@@ -616,12 +638,18 @@ func newMessage(r imapRef, m *imapclient.FetchMessageBuffer) *mail.Message {
 // An HTML part larger than maxHTMLBytes is not converted. The text format then
 // uses the plain text part, if there is one. Without a plain text part, and for
 // the html format, the error wraps mail.ErrTooLarge. The caller can still ask
-// for the headers and the attachments with the format "none".
-func chooseBody(bs imap.BodyStructure, format mail.BodyFormat) (part *textPart, render func(string) string, isHTML bool, err error) {
+// for the headers and the attachments with the format "none". The same holds
+// for HTML that is smaller but too complex to convert.
+func chooseBody(bs imap.BodyStructure, format mail.BodyFormat) (part *textPart, render renderFunc, isHTML bool, err error) {
 	plain, html := textSections(bs)
 	var htmlPart *textPart
 	if html != nil {
 		htmlPart = bodyPartAt(bs, html)
+	}
+	adviceNone := `use body_format "none" to read the headers and the attachments only`
+	adviceHTML := adviceNone // for the html format
+	if plain != nil {
+		adviceHTML = `use body_format "text" to read the plain text part, or "none" for the headers and the attachments only`
 	}
 	tooLarge := func(what, advice string) error {
 		return fmt.Errorf("%w: the HTML body is too large to %s (%d bytes, the limit is %d bytes); %s",
@@ -631,20 +659,20 @@ func chooseBody(bs imap.BodyStructure, format mail.BodyFormat) (part *textPart, 
 	switch {
 	case format == mail.BodyHTML && htmlPart != nil:
 		if htmlPart.size > maxHTMLBytes {
-			advice := `use body_format "none" to read the headers and the attachments only`
-			if plain != nil {
-				advice = `use body_format "text" to read the plain text part, or "none" for the headers and the attachments only`
-			}
-			return nil, nil, false, tooLarge("clean", advice)
+			return nil, nil, false, tooLarge("clean", adviceHTML)
 		}
-		return htmlPart, func(s string) string { return mime.CleanUntrusted(mime.VisibleHTML(s)) }, true, nil
+		visible := func(s string) (string, error) {
+			out, err := mime.VisibleHTML(s)
+			return mime.CleanUntrusted(out), err
+		}
+		return htmlPart, convertible("clean", adviceHTML, visible), true, nil
 	case plain != nil:
-		return bodyPartAt(bs, plain), mime.CleanUntrusted, false, nil
+		return bodyPartAt(bs, plain), cleanText, false, nil
 	case htmlPart != nil:
 		if htmlPart.size > maxHTMLBytes {
-			return nil, nil, false, tooLarge("convert", `use body_format "none" to read the headers and the attachments only`)
+			return nil, nil, false, tooLarge("convert", adviceNone)
 		}
-		return htmlPart, mime.HTMLToText, false, nil
+		return htmlPart, convertible("convert", adviceNone, mime.HTMLToText), false, nil
 	}
 	return nil, nil, false, nil
 }
@@ -689,7 +717,7 @@ func fillBody(c *imapclient.Client, uid imap.UID, bs imap.BodyStructure, format 
 // has many characters that are removed) and the part is longer, it fetches the
 // whole part in a second command, up to the cap. It never fetches more than
 // twice. An HTML part is fetched whole in the first command.
-func fetchBodyText(c *imapclient.Client, uid imap.UID, p *textPart, need int, render func(string) string) (text string, partial bool, err error) {
+func fetchBodyText(c *imapclient.Client, uid imap.UID, p *textPart, need int, render renderFunc) (text string, partial bool, err error) {
 	first := textFetchBytes(p, need+tailRunes)
 	text, partial, err = fetchBodyStart(c, uid, p, first, render)
 	if err != nil {
@@ -712,7 +740,7 @@ func fetchBodyText(c *imapclient.Client, uid imap.UID, p *textPart, need int, re
 // An HTML part is only used whole: n must be its size. If the server sends more
 // than that, the structure was wrong, and the error wraps mail.ErrTooLarge.
 // The backend never makes text of the start of an HTML part.
-func fetchBodyStart(c *imapclient.Client, uid imap.UID, p *textPart, n int64, render func(string) string) (text string, cut bool, err error) {
+func fetchBodyStart(c *imapclient.Client, uid imap.UID, p *textPart, n int64, render renderFunc) (text string, cut bool, err error) {
 	var raw []byte
 	found, err := readSection(c, uid, &imap.FetchItemBodySection{
 		Part:    p.path,
@@ -755,7 +783,11 @@ func fetchBodyStart(c *imapclient.Client, uid imap.UID, p *textPart, n int64, re
 	if cut {
 		decoded = dropLastRunes(decoded, tailRunes)
 	}
-	return render(decoded), cut, nil
+	text, err = render(decoded)
+	if err != nil {
+		return "", false, err
+	}
+	return text, cut, nil
 }
 
 // GetRaw returns the whole message as the server stores it (RFC 5322).

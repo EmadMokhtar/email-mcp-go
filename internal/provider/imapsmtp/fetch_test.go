@@ -752,7 +752,7 @@ func TestGetMessageHTMLFormat(t *testing.T) {
 		partText("html", "utf-8", "", html)))
 
 	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyHTML})
-	require.Equal(t, mime.VisibleHTML(html), msg.HTML)
+	require.Equal(t, mustVisibleHTML(t, html), msg.HTML)
 	require.Contains(t, msg.HTML, "<b>world</b>")
 	require.NotContains(t, msg.HTML, "script")
 	require.NotContains(t, msg.HTML, "onclick")
@@ -1124,7 +1124,7 @@ func TestGetMessageReadsAllOfAnHTMLPart(t *testing.T) {
 			require.True(t, strings.HasPrefix(msg.Text, "word 00000\n\nword 00001"), "the hidden paragraph is gone")
 			require.Equal(t, 5000, utf8.RuneCountInString(msg.Text))
 			if size <= 1<<20 { // the reference conversion is slow for the large part
-				whole := []rune(mime.HTMLToText(html.String()))
+				whole := []rune(mustHTMLText(t, html.String()))
 				require.Equal(t, string(whole[:5000]), msg.Text)
 			}
 			require.True(t, msg.Truncated)
@@ -1139,7 +1139,7 @@ func TestGetMessageReadsAllOfAnHTMLPart(t *testing.T) {
 			require.NotContains(t, msg.HTML, "HIDDEN")
 			require.True(t, strings.HasPrefix(msg.HTML, "<p>word 00000</p>"))
 			if size <= 1<<20 {
-				require.Equal(t, string([]rune(mime.CleanUntrusted(mime.VisibleHTML(html.String())))[:300]), msg.HTML)
+				require.Equal(t, string([]rune(mime.CleanUntrusted(mustVisibleHTML(t, html.String())))[:300]), msg.HTML)
 			}
 			require.Len(t, withPrefix(sectionsSince(srv, sections), "BODY.PEEK[1]"), 1)
 		})
@@ -1162,6 +1162,22 @@ func TestGetMessageHTMLFormatDropsHiddenContent(t *testing.T) {
 	require.Contains(t, msg.HTML, "<p>Visible</p>")
 	require.Equal(t, "Visible", mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyText}).Text,
 		"the text format shows the same part")
+}
+
+// mustHTMLText returns mime.HTMLToText of markup. The test fails on an error.
+func mustHTMLText(t *testing.T, markup string) string {
+	t.Helper()
+	out, err := mime.HTMLToText(markup)
+	require.NoError(t, err)
+	return out
+}
+
+// mustVisibleHTML returns mime.VisibleHTML of markup. The test fails on an error.
+func mustVisibleHTML(t *testing.T, markup string) string {
+	t.Helper()
+	out, err := mime.VisibleHTML(markup)
+	require.NoError(t, err)
+	return out
 }
 
 // bigHTML returns HTML of exactly n bytes without line breaks, so the part has
@@ -1224,16 +1240,25 @@ func TestGetMessageLargeHTMLWithAPlainAlternative(t *testing.T) {
 	}
 }
 
+// bigTextHTML returns HTML of exactly n bytes that is one paragraph with a long
+// text, so it has few nodes and is not too complex.
+func bigTextHTML(n int) string {
+	const head, tail = "<html><body><p>", "</p></body></html>"
+	text := strings.Repeat("word ", (n-len(head)-len(tail))/5)
+	pad := n - len(head) - len(text) - len(tail)
+	return head + text + strings.Repeat("a", pad) + tail
+}
+
 func TestHTMLCapIsOnTheSizeOfThePart(t *testing.T) {
 	srv := imaptest.New(t)
 	b := newTestBackend(t, srv)
 	refs := appendRefs(t, srv, b, "INBOX",
-		textMail("html", "utf-8", "", bigHTML(maxHTMLBytes)),
-		textMail("html", "utf-8", "", bigHTML(maxHTMLBytes+1)))
+		textMail("html", "utf-8", "", bigTextHTML(maxHTMLBytes)),
+		textMail("html", "utf-8", "", bigTextHTML(maxHTMLBytes+1)))
 
-	require.Len(t, bigHTML(maxHTMLBytes), maxHTMLBytes)
+	require.Len(t, bigTextHTML(maxHTMLBytes), maxHTMLBytes)
 	msg := mustGet(t, b, refs[0], mail.BodyOptions{MaxChars: 10})
-	require.Equal(t, "word\n\nword", msg.Text, "a part of exactly the cap is converted")
+	require.Equal(t, "word word ", msg.Text, "a part of exactly the cap is converted")
 
 	_, err := b.GetMessage(t.Context(), refs[1], mail.BodyOptions{MaxChars: 10})
 	require.ErrorIs(t, err, mail.ErrTooLarge, "one byte more is not")
@@ -1870,11 +1895,11 @@ func TestCutTextIsAlwaysTheStartOfTheWholeText(t *testing.T) {
 				sizes = int64(part.size)
 
 				var cut bool
-				if whole, cut, err = fetchBodyStart(c, uid, part, sizes, mime.CleanUntrusted); err != nil || cut {
+				if whole, cut, err = fetchBodyStart(c, uid, part, sizes, cleanText); err != nil || cut {
 					return fmt.Errorf("the whole part: cut %v, error %v", cut, err)
 				}
 				for n := int64(1); n < sizes; n++ {
-					got, cut, err := fetchBodyStart(c, uid, part, n, mime.CleanUntrusted)
+					got, cut, err := fetchBodyStart(c, uid, part, n, cleanText)
 					if err != nil {
 						return err
 					}
@@ -1965,4 +1990,94 @@ func TestPlainTextCutAtTheCapIsTruncated(t *testing.T) {
 	msg := mustGet(t, b, small, mail.BodyOptions{MaxChars: 50_000})
 	require.Equal(t, 30_000, utf8.RuneCountInString(msg.Text))
 	require.False(t, msg.Truncated)
+}
+
+// amplifyingHTML is small (about 21 KB for 500 and 4000) but makes the HTML
+// parser build millions of nodes: it opens n formatting elements with different
+// attributes, and then has m paragraphs. The parser copies the n elements for
+// each paragraph.
+func amplifyingHTML(n, m int) string {
+	var b strings.Builder
+	b.WriteString("<p>")
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "<b x=%d>", i)
+	}
+	for i := 0; i < m; i++ {
+		b.WriteString("<p>x")
+	}
+	return b.String()
+}
+
+func TestGetMessageHTMLThatMakesTheParserExplodeIsRefused(t *testing.T) {
+	// Without the check, this mail makes the parser use hundreds of MiB, and a
+	// larger one gigabytes. The mail is far below the size cap on HTML.
+	html := amplifyingHTML(500, 4000)
+	require.Less(t, len(html), maxHTMLBytes/100)
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, textMail("html", "utf-8", "", html))
+
+	started := time.Now()
+	for _, format := range []mail.BodyFormat{mail.BodyText, mail.BodyHTML} {
+		msg, err := b.GetMessage(t.Context(), ref, mail.BodyOptions{Format: format})
+		require.ErrorIs(t, err, mail.ErrTooLarge, format)
+		require.ErrorIs(t, err, mime.ErrHTMLTooComplex, format)
+		require.Contains(t, err.Error(), "too complex", format)
+		require.Contains(t, err.Error(), `body_format "none"`, format)
+		require.Nil(t, msg)
+	}
+	require.Less(t, time.Since(started), 2*time.Second, "refused without building the tree")
+
+	// The headers and the attachment list are still there.
+	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyNone})
+	require.Equal(t, "test", msg.Subject)
+}
+
+func TestGetMessageComplexHTMLWithAPlainAlternative(t *testing.T) {
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, multiMail("alternative",
+		partText("plain", "utf-8", "", "the plain version"),
+		partText("html", "utf-8", "", amplifyingHTML(500, 4000))))
+
+	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyText})
+	require.Equal(t, "the plain version", msg.Text, "the text format does not touch the HTML")
+
+	_, err := b.GetMessage(t.Context(), ref, mail.BodyOptions{Format: mail.BodyHTML})
+	require.ErrorIs(t, err, mail.ErrTooLarge)
+	require.ErrorIs(t, err, mime.ErrHTMLTooComplex)
+	require.Contains(t, err.Error(), `body_format "text"`, "the error says that the plain text part can be read")
+}
+
+func TestGetMessageLargeButSimpleHTMLIsConverted(t *testing.T) {
+	// A mail of 1 MiB with tables, links and formatting is far below the limit on
+	// the number of nodes.
+	html := newsletterHTML(1 << 20)
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, textMail("html", "utf-8", "", html))
+
+	msg := mustGet(t, b, ref, mail.BodyOptions{MaxChars: 1000})
+	require.Contains(t, msg.Text, "Read more about this (https://example.com/item/0")
+	require.Equal(t, 1000, utf8.RuneCountInString(msg.Text))
+	msg = mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyHTML, MaxChars: 1000})
+	require.Contains(t, msg.HTML, "Read more about this")
+	require.NotContains(t, msg.HTML, "style=")
+}
+
+// newsletterHTML makes a document like a marketing mail of about n bytes:
+// nested tables, divs, links, spans and inline styles, with some formatting
+// elements.
+func newsletterHTML(n int) string {
+	var b strings.Builder
+	b.WriteString(`<!DOCTYPE html><html><head><title>News</title><style>.h{display:none} td{padding:0}</style></head><body style="margin:0">`)
+	b.WriteString(`<table width="600" cellpadding="0" cellspacing="0" style="background:#fff">`)
+	for i := 0; b.Len() < n; i++ {
+		fmt.Fprintf(&b, `<tr><td style="padding:10px;font-family:Arial"><div style="font-size:14px;color:#333"><span style="font-weight:bold">Item %d</span> `+
+			`<a href="https://example.com/item/%d?utm_source=news&amp;utm_medium=email" style="color:#06c;text-decoration:none">Read more about this</a> `+
+			`<b>bold</b> <i>italic</i> <font color="#999" size="2">small print</font> <strong>strong</strong></div>`+
+			`<p style="margin:0">Some paragraph text with <em>emphasis</em> and a <a href="https://example.com/x/%d">link</a>.</p></td></tr>`, i, i, i)
+	}
+	b.WriteString(`</table></body></html>`)
+	return b.String()
 }

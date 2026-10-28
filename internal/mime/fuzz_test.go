@@ -91,7 +91,12 @@ func FuzzHTMLToText(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, in string) {
-		out := HTMLToText(in)
+		out, err := HTMLToText(in)
+		if err != nil {
+			require.ErrorIs(t, err, ErrHTMLTooComplex)
+			require.Empty(t, out)
+			return
+		}
 		require.True(t, utf8.ValidString(out), "output must be valid UTF-8")
 		require.Equal(t, -1, strings.IndexFunc(out, isRemovedRune), "a removed code point is still in the output")
 

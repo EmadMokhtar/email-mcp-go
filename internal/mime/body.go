@@ -26,10 +26,18 @@ type bodies struct {
 // composeBodies makes the bodies of a message from Compose. A message with
 // HTML and no text gets the text form of its HTML, so that no mail program
 // shows an empty text part. A forward adds the original text.
-func composeBodies(c mail.Compose, original *mail.Message) bodies {
+//
+// The HTML of Compose comes from the caller. If it is too complex to make
+// text of (see ErrHTMLTooComplex), the error wraps that error. The HTML of the
+// original does not stop a forward: see newForwarded.
+func composeBodies(c mail.Compose, original *mail.Message) (bodies, error) {
 	b := bodies{text: c.Body, html: c.HTMLBody}
 	if b.text == "" && b.html != "" {
-		b.text = HTMLToText(b.html)
+		text, err := HTMLToText(b.html)
+		if err != nil {
+			return bodies{}, fmt.Errorf("mime: html body: %w", err)
+		}
+		b.text = text
 	}
 	if c.ForwardOf != nil {
 		f := newForwarded(original)
@@ -38,7 +46,7 @@ func composeBodies(c mail.Compose, original *mail.Message) bodies {
 			b.html += f.html()
 		}
 	}
-	return b
+	return b, nil
 }
 
 // writeAlternative writes the text part and then the HTML part. Mail programs
@@ -79,8 +87,10 @@ func newForwarded(o *mail.Message) forwarded {
 	text := o.Text
 	if text == "" && o.HTML != "" {
 		// Never forward the raw HTML. The text form leaves out what a reader
-		// of the message could not see.
-		text = HTMLToText(o.HTML)
+		// of the message could not see. The original comes from a third party,
+		// and HTML that is too complex to convert must not stop the forward:
+		// the forward then has no text of the original.
+		text, _ = HTMLToText(o.HTML)
 	}
 	to := make([]string, len(o.To))
 	for i, a := range o.To {

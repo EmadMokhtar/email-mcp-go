@@ -1202,3 +1202,30 @@ func FuzzBuildHeaders(f *testing.F) {
 		requireEnvelopeSafe(t, raw.From)
 	})
 }
+
+func TestBuildRefusesHTMLBodyThatIsTooComplexToMakeTextOf(t *testing.T) {
+	// The HTML comes from the caller. With no text body, Build must make the text
+	// form of it, and it cannot do this for HTML that makes the parser explode.
+	raw, err := Build(mail.Compose{To: []string{"bob@x"}, HTMLBody: amplifiedHTML(500, 4000)}, newContext())
+	require.ErrorIs(t, err, ErrHTMLTooComplex)
+	require.Nil(t, raw)
+
+	// With a text body there is nothing to convert. The HTML is sent as it is.
+	raw = mustBuild(t, mail.Compose{To: []string{"bob@x"}, Body: "plain", HTMLBody: amplifiedHTML(500, 4000)}, newContext())
+	require.Equal(t, "plain", parsedOf(t, raw.Data).Text)
+}
+
+func TestForwardOfOriginalWithHTMLThatIsTooComplexHasNoTextOfIt(t *testing.T) {
+	// The original comes from a third party. It must not stop the forward.
+	bc := newContext()
+	bc.Original = originalMessage()
+	bc.Original.Text = ""
+	bc.Original.HTML = amplifiedHTML(500, 4000)
+
+	raw := mustBuild(t, mail.Compose{ForwardOf: forwardOf(), To: []string{"dave@x"}, Body: "fyi"}, bc)
+
+	text := parsedOf(t, raw.Data).Text
+	require.Contains(t, text, forwardedMarker)
+	require.Contains(t, text, "Subject: Plans")
+	require.True(t, strings.HasSuffix(strings.TrimSpace(text), "To: me@x, bob@x"), "no text of the original: %q", text)
+}

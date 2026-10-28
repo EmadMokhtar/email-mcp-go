@@ -2,6 +2,7 @@ package mime
 
 import (
 	"bytes"
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -66,24 +67,42 @@ import (
 // than 2048 characters, and only if the link can be seen. Block elements
 // become line breaks. The result is passed through CleanUntrusted, so it is
 // always valid UTF-8 with no invisible characters.
-func HTMLToText(markup string) string {
+//
+// A document that would make the parser build too many nodes, or that is nested
+// more than 512 elements deep, gives an empty string and an error that wraps
+// ErrHTMLTooComplex. Nothing is returned for it, instead of text that was not
+// checked. The size of the markup is not limited here: the caller does that.
+func HTMLToText(markup string) (string, error) {
 	doc, err := parseHTML(markup)
 	if err != nil {
-		// The parser refuses a document that is nested more than 512 elements
-		// deep. A string reader cannot fail. Return nothing, instead of text
-		// that was not checked.
-		return ""
+		return "", err
 	}
 	r := textRenderer{visibility: newVisibility(doc)}
 	r.walk(doc)
-	return CleanUntrusted(tidyLines(string(r.buf)))
+	return CleanUntrusted(tidyLines(string(r.buf))), nil
 }
 
-// parseHTML parses HTML mail. Scripting is off because a mail client does not
-// run scripts. With it on, the parser would treat the content of noscript as
-// raw text. HTMLToText and VisibleHTML parse in the same way, so they see the
-// same document.
+// parseHTML checks that markup is not too complex (see checkHTMLComplexity) and
+// parses it. The error wraps ErrHTMLTooComplex. HTMLToText and VisibleHTML parse
+// in the same way, so they see the same document.
 func parseHTML(markup string) (*html.Node, error) {
+	if err := checkHTMLComplexity(markup); err != nil {
+		return nil, err
+	}
+	doc, err := parseHTMLUnchecked(markup)
+	if err != nil {
+		// The parser refuses a document that is nested more than 512 elements
+		// deep. A string reader cannot fail.
+		return nil, fmt.Errorf("%w: %w", ErrHTMLTooComplex, err)
+	}
+	return doc, nil
+}
+
+// parseHTMLUnchecked parses HTML mail. Scripting is off because a mail client
+// does not run scripts. With it on, the parser would treat the content of
+// noscript as raw text. Use parseHTML, which also checks the markup. Tests of
+// the check use this function to see what the parser does.
+func parseHTMLUnchecked(markup string) (*html.Node, error) {
 	return html.ParseWithOptions(strings.NewReader(markup), html.ParseOptionEnableScripting(false))
 }
 

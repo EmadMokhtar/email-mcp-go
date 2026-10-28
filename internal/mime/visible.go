@@ -2,6 +2,7 @@ package mime
 
 import (
 	"bytes"
+	"fmt"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
@@ -21,17 +22,25 @@ import (
 // (no img, script or style element, no style attribute, and only http, https
 // and mailto links), and nothing that HTMLToText hides.
 //
+// The only attribute that stays is href. The others (title, lang, id, alt,
+// cite and so on) hold text that a reader never sees, and a sender can use them
+// to give instructions to an agent. So the table cells lose their colspan and
+// rowspan too. An element in the MathML or SVG namespace that is a textarea is
+// removed, because its content is read as text by the sanitizer, and its
+// attributes would come out as visible text.
+//
 // A link that cannot be seen loses its href. As in HTMLToText, an element
 // inside a hidden parent is still shown when it sets its own font size or
 // visibility.
 //
 // The whole document is needed. A style rule at the end can hide an element at
-// the start, so the caller must not pass the start of a document alone.
-func VisibleHTML(markup string) string {
+// the start, so the caller must not pass the start of a document alone. A
+// document that would make the parser build too many nodes gives an error that
+// wraps ErrHTMLTooComplex (see HTMLToText).
+func VisibleHTML(markup string) (string, error) {
 	doc, err := parseHTML(markup)
 	if err != nil {
-		// See HTMLToText: return nothing, instead of markup that was not checked.
-		return ""
+		return "", err
 	}
 	v := newVisibility(doc)
 	v.prune(doc)
@@ -39,9 +48,9 @@ func VisibleHTML(markup string) string {
 	var buf bytes.Buffer
 	if err := html.Render(&buf, doc); err != nil {
 		// A buffer cannot fail to write. Return nothing to be safe.
-		return ""
+		return "", fmt.Errorf("mime: render html: %w", err)
 	}
-	return SanitizeHTML(buf.String())
+	return SanitizeHTML(buf.String()), nil
 }
 
 // prune removes from the tree below parent everything that a reader cannot
@@ -69,7 +78,7 @@ func (v *visibility) prune(parent *html.Node) {
 
 func (v *visibility) pruneElement(parent, n *html.Node) {
 	effect, shown := v.classify(n)
-	if !shown {
+	if !shown || (n.Data == "textarea" && n.Namespace != "") {
 		parent.RemoveChild(n)
 		return
 	}
@@ -94,7 +103,22 @@ func (v *visibility) pruneElement(parent, n *html.Node) {
 			n.Data, n.DataAtom = "pre", atom.Pre
 		}
 	}
+	// The styles and the other attributes were read above (here and for the
+	// elements below, which read their own). Nothing but the link stays.
+	keepOnly(n, "href")
 	v.prune(n)
+}
+
+// keepOnly removes every attribute of the element except the one with the given
+// key.
+func keepOnly(n *html.Node, key string) {
+	kept := n.Attr[:0]
+	for _, a := range n.Attr {
+		if a.Key == key && a.Namespace == "" {
+			kept = append(kept, a)
+		}
+	}
+	n.Attr = kept
 }
 
 // removeAttribute removes the attributes with the given key.

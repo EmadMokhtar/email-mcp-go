@@ -103,7 +103,11 @@ type BuildContext struct {
 // is never copied.
 //
 // Build returns mail.ErrTooLarge when the attachments, new and forwarded
-// together, are over 10 MB. Build does not change its arguments.
+// together, are over 10 MB. It returns an error that wraps ErrHTMLTooComplex
+// when Compose has HTML and no text, and the HTML is too complex to make the
+// text form of it. (The HTML of a forwarded original is not an error: the
+// forward then has no text of the original.) Build does not change its
+// arguments.
 func Build(c mail.Compose, bc BuildContext) (*mail.RawMessage, error) {
 	if c.ReplyTo != nil && c.ForwardOf != nil {
 		return nil, ErrReplyAndForward
@@ -137,6 +141,11 @@ func Build(c mail.Compose, bc BuildContext) (*mail.RawMessage, error) {
 		now = time.Now()
 	}
 
+	body, err := composeBodies(c, bc.Original)
+	if err != nil {
+		return nil, err
+	}
+
 	m := &outgoing{
 		from:     from,
 		rcpt:     rcpt,
@@ -145,7 +154,7 @@ func Build(c mail.Compose, bc BuildContext) (*mail.RawMessage, error) {
 		id:       id,
 		date:     now,
 		forDraft: bc.ForDraft,
-		body:     composeBodies(c, bc.Original),
+		body:     body,
 		atts:     atts,
 	}
 	var buf bytes.Buffer

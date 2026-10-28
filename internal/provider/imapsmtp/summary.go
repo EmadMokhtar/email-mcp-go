@@ -281,7 +281,9 @@ func makeSnippet(p *textPart, raw []byte) string {
 		text = strings.TrimRight(text, "\U0000fffd")
 	}
 	if p.html {
-		text = mime.HTMLToText(text)
+		// HTML that is too complex to convert gives no snippet, and no error:
+		// the snippet is only a help to read the list.
+		text, _ = mime.HTMLToText(text)
 	}
 	text = mime.CleanUntrusted(text)
 	text = strings.Join(strings.Fields(text), " ")
