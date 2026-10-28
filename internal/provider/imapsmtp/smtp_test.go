@@ -526,6 +526,74 @@ func TestSendSaysWhenTheOutcomeIsNotKnown(t *testing.T) {
 	require.Len(t, smtpSrv.Messages(), 1)
 }
 
+// finalReplyFake returns a fake SMTP server that takes the whole message and
+// then sends final as the reply to the end of the data.
+func finalReplyFake(t *testing.T, final string) *fakeSMTP {
+	t.Helper()
+	inData := false
+	return newFakeSMTP(t, "220 fake ESMTP ready\r\n", func(line string) (string, fakeThen) {
+		if inData {
+			// The line with only a dot ends the data. A dot in the message is
+			// doubled on the wire, so it is not mistaken for this one.
+			if line == "." {
+				inData = false
+				return final, fakeStay
+			}
+			return "", fakeStay
+		}
+		switch smtpVerb(line) {
+		case "EHLO":
+			return "250-fake\r\n250 AUTH PLAIN\r\n", fakeStay
+		case "AUTH":
+			return "235 2.7.0 accepted\r\n", fakeStay
+		case "MAIL", "RCPT":
+			return "250 ok\r\n", fakeStay
+		case "DATA":
+			inData = true
+			return "354 go ahead\r\n", fakeStay
+		}
+		return "502 unexpected\r\n", fakeStay
+	})
+}
+
+func TestSendFinalReplyKeepsServerTextOutOfTheError(t *testing.T) {
+	// After the final dot, only a reply code from 400 to 599 is a sure refusal.
+	// Anything else that is not 250 leaves the outcome open: the server may have
+	// taken the message, and a retry could send it twice. The server line can
+	// hold an address, so no part of it may reach the error.
+	for name, tc := range map[string]struct {
+		final   string
+		unknown bool
+		code    string
+	}{
+		"malformed reply":     {"2500 queued for <leak-bob@example.com>\r\n", true, ""},
+		"reply that is short": {"25\r\n", true, ""},
+		"no reply code":       {"queued for <leak-bob@example.com>\r\n", true, ""},
+		"251":                 {"251 2.0.0 queued as X for <leak-bob@example.com>\r\n", true, "251"},
+		"354":                 {"354 queued for <leak-bob@example.com>\r\n", true, "354"},
+		"421":                 {"421 4.3.2 queued for <leak-bob@example.com>\r\n", false, "421"},
+		"451":                 {"451 4.7.1 queued for <leak-bob@example.com>\r\n", false, "451"},
+		"554":                 {"554 5.7.1 queued for <leak-bob@example.com>\r\n", false, "554"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := finalReplyFake(t, tc.final)
+			b := newSMTPBackend(t, fake.config(account.SecurityPlain))
+
+			err := b.Send(t.Context(), outgoing("one", "Lunch", "bob@example.com"))
+
+			require.Error(t, err)
+			require.Equal(t, tc.unknown, errors.Is(err, ErrDeliveryUnknown), "%v", err)
+			if tc.unknown {
+				require.ErrorContains(t, err, "may have been delivered")
+			}
+			if tc.code != "" {
+				require.ErrorContains(t, err, tc.code)
+			}
+			requireNoneOf(t, err.Error(), "leak-bob", "example.com", "queued", "<", ">")
+		})
+	}
+}
+
 func TestSendKeepsTheWarningWhenTimeEndsAfterTheData(t *testing.T) {
 	// The server has read the whole message and does not answer. The context
 	// ends, or the time limit passes. The message may be delivered, and the

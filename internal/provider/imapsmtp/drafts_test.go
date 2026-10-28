@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -226,6 +227,82 @@ func TestSaveDraftIsNotRetriedAfterAReset(t *testing.T) {
 
 	require.Error(t, err)
 	require.Equal(t, 1, strings.Count(fake.Received(), " APPEND "), "APPEND was sent once")
+}
+
+func TestSaveDraftSaysItWasSavedWhenTheRefCannotBeFound(t *testing.T) {
+	// The draft is in the folder as soon as APPEND works. Whatever fails after
+	// that, the error must say so, or an agent saves the draft a second time.
+	selectReply := func(tag string) string {
+		return "* 1 EXISTS\r\n* OK [UIDVALIDITY 7] ok\r\n* OK [UIDNEXT 6] ok\r\n* FLAGS (\\Seen)\r\n" +
+			"* OK [PERMANENTFLAGS (\\Seen \\*)] ok\r\n" + tag + " OK [READ-ONLY] done\r\n"
+	}
+	for name, fail := range map[string]string{
+		"the folder cannot be opened": "examine",
+		"the search fails":            "search",
+		"the fetch fails":             "fetch",
+		"the server stops answering":  "silent",
+	} {
+		t.Run(name, func(t *testing.T) {
+			// The server has no UIDPLUS, so it never reports the UID of the draft.
+			// It reads the message, and the line "Closing words now" is the last
+			// line of it. Then it says that APPEND worked.
+			var fake *fakeIMAP
+			var appendTag string
+			inLiteral := false
+			fake = newFakeIMAP(t, "* OK [CAPABILITY IMAP4rev1] ready\r\n", func(tag, cmd string) (string, fakeThen) {
+				if inLiteral {
+					if cmd == "WORDS" {
+						inLiteral = false
+						return appendTag + " OK APPEND completed\r\n", fakeStay
+					}
+					return "", fakeStay
+				}
+				switch cmd {
+				case "LOGIN":
+					return tag + " OK LOGIN completed\r\n", fakeStay
+				case "CAPABILITY":
+					return "* CAPABILITY IMAP4rev1\r\n" + tag + " OK CAPABILITY completed\r\n", fakeStay
+				case "LIST":
+					return "* LIST (\\Drafts) \"/\" Drafts\r\n" + tag + " OK LIST completed\r\n", fakeStay
+				case "APPEND":
+					appendTag, inLiteral = tag, true
+					return "+ ready for the message\r\n", fakeStay
+				case "EXAMINE":
+					if fail == "examine" {
+						return tag + " NO [NONEXISTENT] no such folder\r\n", fakeStay
+					}
+					return selectReply(tag), fakeStay
+				case "UID":
+					last := lastCommand(fake)
+					switch {
+					case strings.HasPrefix(last, tag+" UID SEARCH") && fail == "search":
+						return tag + " NO [SERVERBUG] search failed\r\n", fakeStay
+					case strings.HasPrefix(last, tag+" UID SEARCH") && fail == "silent":
+						return "", fakeStay
+					case strings.HasPrefix(last, tag+" UID SEARCH"):
+						return "* SEARCH 5\r\n" + tag + " OK SEARCH completed\r\n", fakeStay
+					case strings.HasPrefix(last, tag+" UID FETCH") && fail == "fetch":
+						return tag + " NO [SERVERBUG] fetch failed\r\n", fakeStay
+					}
+				}
+				return tag + " BAD unexpected\r\n", fakeStay
+			})
+			cfg := fake.plainConfig()
+			cfg.TokenScope = testScope
+			cfg.CommandTimeout = time.Second
+			b := New(cfg, testSigner())
+			t.Cleanup(func() { _ = b.Close() })
+			raw := draftMessage("d1", "Plans")
+			raw.Data = append(raw.Data, "Closing words now\r\n"...)
+
+			ref, err := b.SaveDraft(t.Context(), raw)
+
+			require.Error(t, err)
+			require.Empty(t, ref)
+			require.ErrorContains(t, err, "the draft was saved, but its reference is not known")
+			require.Equal(t, 1, strings.Count(fake.Received(), " APPEND "), "APPEND was sent once")
+		})
+	}
 }
 
 // requireNoUIDPlus checks that the test server really lacks UIDPLUS.

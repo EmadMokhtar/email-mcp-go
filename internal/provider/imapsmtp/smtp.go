@@ -37,11 +37,12 @@ const (
 )
 
 // ErrDeliveryUnknown means that Send cannot tell whether the message was
-// delivered. The connection ended, or time ran out, after the data was sent and
-// before the server answered. The server may have taken the message, so the
-// caller must not send it again without asking a person: a retry could send it
-// twice. Check it with errors.Is.
-var ErrDeliveryUnknown = errors.New("smtp: the connection ended before the server confirmed the message, so it may have been delivered")
+// delivered. The data was sent, and then the server did not confirm it: the
+// connection ended, time ran out, or the final reply was garbled or was a code
+// that is neither 250 nor a refusal (4xx or 5xx). The server may have taken the
+// message, so the caller must not send it again without asking a person: a
+// retry could send it twice. Check it with errors.Is.
+var ErrDeliveryUnknown = errors.New("smtp: the server did not confirm the message, so it may have been delivered")
 
 // RecipientRejectedError means the SMTP server refused one recipient, so the
 // message was not sent to anyone. The error names the recipient by its place in
@@ -85,9 +86,11 @@ func (e *RecipientRejectedError) Error() string {
 // again, and the message would be sent a second time.
 //
 // Send returns an error only when the message was not accepted, with one
-// exception. When the connection fails (or ctx ends) after the data was sent
-// and before the server answered, nobody can tell whether the server took the
-// message. The error then wraps ErrDeliveryUnknown.
+// exception. After the data was sent, only a reply code from 400 to 599 is a
+// refusal. When the connection fails (or ctx ends) before the server answers,
+// or the answer is garbled or has another code than 250, nobody can tell
+// whether the server took the message. The error then wraps ErrDeliveryUnknown.
+// The error never holds the text of the server.
 //
 // A new SMTP connection is made for every call. The time limit of the whole
 // conversation is CommandTimeout plus the time that the data needs at
@@ -199,11 +202,16 @@ func sendOn(c *smtp.Client, raw *mail.RawMessage) error {
 		return smtpStepError("DATA", err)
 	}
 	if _, err := w.CloseWithResponse(); err != nil {
+		// Only a reply code from 400 to 599 says for sure that the server did not
+		// take the message. A code such as 251 is a success code that is not the
+		// one that SMTP defines for the end of data, so the server may have
+		// taken the message. The cause goes through smtpStepError, which leaves
+		// out the line that the server sent: it can hold an address.
 		var reply *smtp.SMTPError
-		if errors.As(err, &reply) {
+		if errors.As(err, &reply) && reply.Code >= 400 && reply.Code <= 599 {
 			return fmt.Errorf("smtp: the server did not accept the message (reply code %d)", reply.Code)
 		}
-		return fmt.Errorf("%w: %w", ErrDeliveryUnknown, err)
+		return fmt.Errorf("%w: %w", ErrDeliveryUnknown, smtpStepError("end of data", err))
 	}
 	return nil
 }

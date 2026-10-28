@@ -7,6 +7,7 @@ import (
 	"fmt"
 	netmail "net/mail"
 	"strings"
+	"sync/atomic"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -54,9 +55,13 @@ func appendMessage(c *imapclient.Client, folder string, data []byte, flags []ima
 // SaveDraft searches the Drafts folder for the Message-ID of the message
 // (HEADER Message-ID, with the angle brackets) and checks the Message-ID of the
 // one message it finds. A message without a Message-ID cannot be found that
-// way, so SaveDraft refuses it before it stores anything. When the search finds
-// no message or more than one, the draft is saved but has no ref, and the error
-// wraps mail.ErrUnsupported and says so.
+// way, so SaveDraft refuses it before it stores anything.
+//
+// Once the draft is stored, every error says "the draft was saved, but its
+// reference is not known", so that nobody saves it again. This holds for the
+// search that finds no message or more than one (the error then also wraps
+// mail.ErrUnsupported), for a search, a fetch or a folder that fails, and for
+// a time out. The wording is added in one place, after the pool returns.
 //
 // A missing Drafts folder gives an error that wraps mail.ErrNotFound.
 //
@@ -69,6 +74,10 @@ func (b *Backend) SaveDraft(ctx context.Context, raw *mail.RawMessage) (mail.Ref
 	wantID := headerMessageID(raw.Data)
 
 	var ref mail.Ref
+	// stored is set as soon as the server has the draft. The pool can stop
+	// the call at any time (time out, ctx), and fn runs in its own goroutine, so
+	// the flag is atomic.
+	var stored atomic.Bool
 	err := b.pool.withNoRetry(ctx, func(c *imapclient.Client) error {
 		ref = ""
 		folder, err := resolveOn(c, mail.AliasDrafts)
@@ -82,17 +91,22 @@ func (b *Backend) SaveDraft(ctx context.Context, raw *mail.RawMessage) (mail.Ref
 		if err != nil {
 			return err
 		}
+		stored.Store(true)
 		if appended != nil && appended.UID != 0 && appended.UIDValidity != 0 {
 			ref = encodeRef(imapRef{Mailbox: folder, UIDValidity: appended.UIDValidity, UID: uint32(appended.UID)})
 			return nil
 		}
 		if wantID == "" {
-			return fmt.Errorf("imap: the draft was saved, but the server did not report its UID and the draft has no Message-ID: %w", mail.ErrUnsupported)
+			return fmt.Errorf("%w: the server did not report its UID and the draft has no Message-ID", mail.ErrUnsupported)
 		}
 		ref, err = b.findDraft(c, folder, wantID)
 		return err
 	})
 	if err != nil {
+		if stored.Load() {
+			// The draft is in the folder. Say so, so that nobody saves it again.
+			err = fmt.Errorf("imap: the draft was saved, but its reference is not known: %w", err)
+		}
 		return "", err
 	}
 	return ref, nil
@@ -114,9 +128,6 @@ func headerMessageID(data []byte) string {
 // that the search finds is checked once more, with its envelope, because a
 // ref to a wrong message would later discard the wrong message.
 func (b *Backend) findDraft(c *imapclient.Client, folder, id string) (mail.Ref, error) {
-	notFound := func(err error) error {
-		return fmt.Errorf("imap: the draft was saved, but its reference is not known: %w", err)
-	}
 	sel, err := b.openFolder(c, folder, true)
 	if err != nil {
 		return "", err
@@ -130,14 +141,14 @@ func (b *Backend) findDraft(c *imapclient.Client, folder, id string) (mail.Ref, 
 	}
 	uid, err := pickDraftUID(found.AllUIDs())
 	if err != nil {
-		return "", notFound(err)
+		return "", err
 	}
 	msg, err := fetchOne(c, uid, &imap.FetchOptions{Envelope: true})
 	if err != nil {
 		return "", err
 	}
 	if msg.Envelope == nil || messageID(msg.Envelope.MessageID) != id {
-		return "", notFound(fmt.Errorf("%w: the message that the search found has another Message-ID", mail.ErrUnsupported))
+		return "", fmt.Errorf("%w: the message that the search found has another Message-ID", mail.ErrUnsupported)
 	}
 	return encodeRef(imapRef{Mailbox: folder, UIDValidity: sel.UIDValidity, UID: uint32(uid)}), nil
 }
