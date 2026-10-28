@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -186,7 +187,9 @@ func (d *fakeDNS) LookupMX(_ context.Context, name string) ([]*net.MX, error) {
 func (d *fakeDNS) allQueries() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return strings.Join(d.queries, "\n")
+	// Every query ends with a newline, so that a test can match a whole name
+	// and not only the start of it.
+	return strings.Join(d.queries, "\n") + "\n"
 }
 
 func srvRecord(priority, weight, port uint16, target string) *net.SRV {
@@ -274,9 +277,9 @@ func TestFallsBackToSRV(t *testing.T) {
 		Username: testAddress,
 	}}, got)
 	queries := dns.allQueries()
-	require.Contains(t, queries, "srv imaps tcp example.com")
-	require.Contains(t, queries, "srv submissions tcp example.com")
-	require.Contains(t, queries, "srv submission tcp example.com")
+	require.Contains(t, queries, "srv imaps tcp example.com.\n")
+	require.Contains(t, queries, "srv submissions tcp example.com.\n")
+	require.Contains(t, queries, "srv submission tcp example.com.\n")
 }
 
 func TestMXGuessLast(t *testing.T) {
@@ -592,11 +595,11 @@ func TestRequestsOnlyCarryTheDomain(t *testing.T) {
 	require.Contains(t, log.all(), "GET /v1.1/example.com ")
 	require.Contains(t, log.all(), "GET /autoconfig/example.com/config-v1.1.xml ")
 	require.NotContains(t, strings.ToLower(log.all()), "zebra")
-	require.Contains(t, dns.allQueries(), "mx example.com")
+	require.Contains(t, dns.allQueries(), "mx example.com.\n")
 }
 
 func TestIDNDomainIsSentAsPunycode(t *testing.T) {
-	const punycode = "xn--bcher-kva.example"
+	const punycode = "xn--bcher-kva.de"
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1.1/"+punycode, xmlHandler(goodConfig("imap.example.com", "smtp.example.com")))
 	srv, log := newTLSServer(t, mux)
@@ -607,7 +610,7 @@ func TestIDNDomainIsSentAsPunycode(t *testing.T) {
 		hookDomain = domain
 		return srv.URL + "/autoconfig/" + domain
 	}
-	address := "Jörg@bücher.example"
+	address := "Jörg@bücher.de"
 
 	got, err := finder.Mail(context.Background(), address)
 
@@ -617,8 +620,8 @@ func TestIDNDomainIsSentAsPunycode(t *testing.T) {
 	require.Equal(t, punycode, hookDomain)
 	require.Contains(t, log.all(), "GET /v1.1/"+punycode+" ")
 	require.NotContains(t, log.all(), "ü")
-	require.Contains(t, dns.allQueries(), "mx "+punycode)
-	require.Contains(t, dns.allQueries(), "srv imaps tcp "+punycode)
+	require.Contains(t, dns.allQueries(), "mx "+punycode+".\n")
+	require.Contains(t, dns.allQueries(), "srv imaps tcp "+punycode+".\n")
 }
 
 // --- https only ---
@@ -749,6 +752,19 @@ func TestRejectsBadHostnamesInConfig(t *testing.T) {
 		"::1",
 		"localhost",
 		"mail",
+		// A reserved last label is refused, also with other labels before it
+		// (RFC 6761 says that *.localhost is loopback) and in any case.
+		"imap.localhost",
+		"imap.local",
+		"imap.localdomain",
+		"imap.internal",
+		"imap.invalid",
+		"imap.test",
+		"imap.example",
+		"a.b.localhost",
+		"IMAP.LOCALHOST",
+		"Imap.Internal",
+		"imap.Example",
 		"imap_1.example.com",
 		strings.Repeat("a", 64) + ".example.com",
 		"",
@@ -1124,6 +1140,14 @@ func TestInvalidAddressesAreRejectedBeforeAnyNetworkUse(t *testing.T) {
 		"@example.com",
 		"user@",
 		"user@localhost",
+		"user@mail.localhost",
+		"user@mail.local",
+		"user@mail.localdomain",
+		"user@corp.internal",
+		"user@mail.invalid",
+		"user@mail.test",
+		"user@mail.example",
+		"user@MAIL.LOCALHOST",
 		"user@example",
 		"user@example.com.",
 		"user@.example.com",
@@ -1191,8 +1215,8 @@ func TestValidAddressForms(t *testing.T) {
 		{"  user@example.com \n", "example.com"},
 		{"User.Name+tag@Sub.Example.COM", "sub.example.com"},
 		{"a@b@example.com", "example.com"}, // the part after the last @ is the domain
-		{"user@xn--bcher-kva.example", "xn--bcher-kva.example"},
-		{"user@bücher.example", "xn--bcher-kva.example"},
+		{"user@xn--bcher-kva.de", "xn--bcher-kva.de"},
+		{"user@bücher.de", "xn--bcher-kva.de"},
 		{"user@a-b.example.co.uk", "a-b.example.co.uk"},
 	}
 	for _, tc := range tests {
@@ -1252,4 +1276,179 @@ func mustParseURL(t *testing.T, raw string) *url.URL {
 	u, err := url.Parse(raw)
 	require.NoError(t, err)
 	return u
+}
+
+// --- reserved host names from DNS ---
+
+// The same rule as for the config files applies to the targets of SRV records
+// and to MX hosts: a host whose last label is reserved is never suggested.
+func TestReservedHostsFromDNSAreIgnored(t *testing.T) {
+	srv, _ := newTLSServer(t, http.NewServeMux())
+
+	t.Run("srv", func(t *testing.T) {
+		for _, bad := range []string{"imap.corp.internal.", "imap.mail.localhost.", "IMAP.MAIL.LOCAL."} {
+			dns := &fakeDNS{srv: map[string][]*net.SRV{
+				"imaps":      {srvRecord(0, 0, 993, bad)},
+				"submission": {srvRecord(0, 0, 587, "smtp.example.net.")},
+			}}
+
+			_, err := newFinder(srv, dns).Mail(context.Background(), testAddress)
+
+			require.ErrorIs(t, err, ErrNotFound, bad)
+		}
+	})
+	t.Run("mx", func(t *testing.T) {
+		for _, bad := range []string{"mx.corp.internal.", "mx.mail.localhost.", "MX.MAIL.TEST."} {
+			dns := &fakeDNS{mx: []*net.MX{{Host: bad, Pref: 10}}}
+
+			_, err := newFinder(srv, dns).Mail(context.Background(), testAddress)
+
+			require.ErrorIs(t, err, ErrNotFound, bad)
+		}
+	})
+}
+
+// --- a stable order for equal DNS records ---
+
+// rotatingDNS gives the records of fakeDNS in a different order on each
+// round, as the Go resolver does for records with equal priority and weight
+// (SRV) or equal preference (MX). The test changes shift between calls of Mail.
+type rotatingDNS struct {
+	*fakeDNS
+	shift int
+}
+
+func rotated[T any](records []T, shift int) []T {
+	if len(records) == 0 {
+		return nil
+	}
+	shift %= len(records)
+	return append(slices.Clone(records[shift:]), records[:shift]...)
+}
+
+func (d *rotatingDNS) LookupSRV(ctx context.Context, service, proto, name string) (string, []*net.SRV, error) {
+	cname, records, err := d.fakeDNS.LookupSRV(ctx, service, proto, name)
+	return cname, rotated(records, d.shift), err
+}
+
+func (d *rotatingDNS) LookupMX(ctx context.Context, name string) ([]*net.MX, error) {
+	records, err := d.fakeDNS.LookupMX(ctx, name)
+	return rotated(records, d.shift), err
+}
+
+func TestEqualSRVRecordsGiveAStableOrder(t *testing.T) {
+	srv, _ := newTLSServer(t, http.NewServeMux())
+	// All records have the same priority and weight. The names have mixed case
+	// on purpose: the order must not depend on the case.
+	dns := &rotatingDNS{fakeDNS: &fakeDNS{srv: map[string][]*net.SRV{
+		"imaps": {
+			srvRecord(10, 5, 993, "Imap-b.example.net."),
+			srvRecord(10, 5, 993, "imap-a.example.net."),
+			srvRecord(10, 5, 993, "IMAP-C.example.net."),
+		},
+		"submissions": {
+			srvRecord(10, 5, 465, "smtp-c.example.net."),
+			srvRecord(10, 5, 465, "SMTP-A.example.net."),
+			srvRecord(10, 5, 465, "Smtp-b.example.net."),
+		},
+	}}}
+	want := []account.MailServer{
+		smtpTLS(expected("imap-a.example.net", "smtp-a.example.net", testAddress)),
+		smtpTLS(expected("imap-b.example.net", "smtp-b.example.net", testAddress)),
+		smtpTLS(expected("imap-c.example.net", "smtp-c.example.net", testAddress)),
+	}
+
+	for shift := range 6 {
+		dns.shift = shift
+
+		got, err := newFinder(srv, dns).Mail(context.Background(), testAddress)
+
+		require.NoError(t, err, "shift %d", shift)
+		require.Equal(t, want, got, "shift %d", shift)
+	}
+}
+
+// smtpTLS changes the SMTP side of a suggestion to implicit TLS on port 465.
+func smtpTLS(s account.MailServer) account.MailServer {
+	s.SMTPPort = 465
+	s.SMTPSecurity = account.SecurityTLS
+	return s
+}
+
+func TestEqualPriorityAndWeightKeepsPriorityFirst(t *testing.T) {
+	srv, _ := newTLSServer(t, http.NewServeMux())
+	// The tie-break by name must not beat priority or weight.
+	dns := &rotatingDNS{fakeDNS: &fakeDNS{srv: map[string][]*net.SRV{
+		"imaps": {
+			srvRecord(10, 1, 993, "imap-a.example.net."), // lower weight
+			srvRecord(10, 9, 993, "imap-z.example.net."), // higher weight: first
+			srvRecord(20, 9, 993, "imap-b.example.net."), // higher priority number: last
+		},
+		"submissions": {srvRecord(0, 0, 465, "smtp.example.net.")},
+	}}}
+	want := []account.MailServer{
+		smtpTLS(expected("imap-z.example.net", "smtp.example.net", testAddress)),
+		smtpTLS(expected("imap-a.example.net", "smtp.example.net", testAddress)),
+		smtpTLS(expected("imap-b.example.net", "smtp.example.net", testAddress)),
+	}
+
+	for shift := range 3 {
+		dns.shift = shift
+
+		got, err := newFinder(srv, dns).Mail(context.Background(), testAddress)
+
+		require.NoError(t, err, "shift %d", shift)
+		require.Equal(t, want, got, "shift %d", shift)
+	}
+}
+
+func TestEqualMXRecordsGiveAStableGuess(t *testing.T) {
+	srv, _ := newTLSServer(t, http.NewServeMux())
+	// Three hosts with the same preference. Each has a different base domain,
+	// so the order decides which base domain is guessed. The names have mixed
+	// case on purpose: "MX.Beta..." would sort before "mx.alpha..." if the
+	// order used the raw bytes.
+	dns := &rotatingDNS{fakeDNS: &fakeDNS{mx: []*net.MX{
+		{Host: "mx.zeta-mail.net.", Pref: 10},
+		{Host: "mx.alpha-mail.org.", Pref: 10},
+		{Host: "MX.Beta-mail.io.", Pref: 10},
+		{Host: "mx.omega-mail.com.", Pref: 20}, // a worse preference never wins
+	}}}
+	want := []account.MailServer{expected("imap.alpha-mail.org", "smtp.alpha-mail.org", testAddress)}
+
+	for shift := range 8 {
+		dns.shift = shift
+
+		got, err := newFinder(srv, dns).Mail(context.Background(), testAddress)
+
+		require.NoError(t, err, "shift %d", shift)
+		require.Equal(t, want, got, "shift %d", shift)
+	}
+}
+
+// --- rooted DNS names ---
+
+// A name with a dot at the end is a full name. The system resolver does not
+// add its search domains to it, so a missing record is not looked up under
+// another domain.
+func TestDNSNamesAreRooted(t *testing.T) {
+	srv, _ := newTLSServer(t, http.NewServeMux())
+	dns := &fakeDNS{
+		srv: map[string][]*net.SRV{
+			"imaps":       {srvRecord(0, 0, 993, "imap.example.net.")},
+			"submissions": {srvRecord(0, 0, 465, "smtp.example.net.")},
+			"submission":  {srvRecord(0, 0, 587, "smtp.example.net.")},
+		},
+		mx: []*net.MX{{Host: "mx.mailhost.example.io.", Pref: 10}},
+	}
+
+	_, err := newFinder(srv, dns).Mail(context.Background(), testAddress)
+
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{
+		"srv imaps tcp example.com.",
+		"srv submissions tcp example.com.",
+		"srv submission tcp example.com.",
+		"mx example.com.",
+	}, strings.Split(strings.TrimSpace(dns.allQueries()), "\n"))
 }

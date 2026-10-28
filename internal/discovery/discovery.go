@@ -85,6 +85,9 @@ const (
 )
 
 // Resolver looks up DNS records. *net.Resolver implements it.
+//
+// The Finder always gives a rooted name (with a dot at the end, for example
+// "example.com."), so that the resolver does not add search domains to it.
 type Resolver interface {
 	LookupSRV(ctx context.Context, service, proto, name string) (cname string, addrs []*net.SRV, err error)
 	LookupMX(ctx context.Context, name string) ([]*net.MX, error)
@@ -329,7 +332,8 @@ func (a address) username(template string) string {
 // it. It accepts only a plain DNS name: letters, digits and hyphens in labels
 // that are separated by dots, with at least two labels. It rejects a scheme, a
 // path, a port, a space, a user name, a "%" placeholder, a trailing dot, an IP
-// address and a single name such as "localhost".
+// address, a single name such as "localhost" and a name whose last label is
+// reserved (see reservedLabels).
 //
 // The error text is a fixed phrase. It never contains the input.
 func normalizeHost(name string) (string, error) {
@@ -348,6 +352,14 @@ func normalizeHost(name string) (string, error) {
 	}
 	return ascii, nil
 }
+
+// reservedLabels are the last labels that never name a public mail server.
+// "localhost" is loopback, and RFC 6761 says that this holds for every name
+// below it, such as "imap.localhost". The other labels are for local networks
+// ("local", "localdomain", "internal") or are never delegated ("invalid",
+// "test", "example"). A suggestion with such a host would send the user's
+// login to the local machine or the local network.
+var reservedLabels = []string{"localhost", "local", "localdomain", "internal", "invalid", "test", "example"}
 
 func checkASCIIHost(host string) error {
 	if len(host) > maxHostBytes {
@@ -373,10 +385,14 @@ func checkASCIIHost(host string) error {
 			}
 		}
 	}
+	last := labels[len(labels)-1]
 	// A name that ends in a number is not a DNS name. This also rejects IPv4
 	// addresses.
-	if isDigits(labels[len(labels)-1]) {
+	if isDigits(last) {
 		return errors.New("it looks like an IP address")
+	}
+	if slices.Contains(reservedLabels, strings.ToLower(last)) {
+		return errors.New("it ends in a reserved name")
 	}
 	return nil
 }
@@ -418,6 +434,17 @@ func limitServers(servers []endpoint) []endpoint {
 		return servers[:maxServersPerSide]
 	}
 	return servers
+}
+
+// rooted returns a host name with a dot at the end, which makes it a full DNS
+// name.
+func rooted(host string) string {
+	return host + "."
+}
+
+// compareNames orders two DNS names without regard to case.
+func compareNames(a, b string) int {
+	return cmp.Compare(strings.ToLower(a), strings.ToLower(b))
 }
 
 // pair joins IMAP servers and SMTP servers in order: the first IMAP server
@@ -600,19 +627,27 @@ func (f *Finder) fromSRV(ctx context.Context, addr address) []account.MailServer
 }
 
 // srvEndpoints looks up one SRV service. Records come in order of priority
-// (lowest number first) and, inside a priority, by weight (highest first). A
-// target of "." means that the service is not offered.
+// (lowest number first), inside a priority by weight (highest first), and
+// inside equal weights by target name and then by port. The last two keys make
+// the order stable: the Go resolver shuffles records with equal priority and
+// weight. A target of "." means that the service is not offered.
 func (f *Finder) srvEndpoints(ctx context.Context, service string, security account.Security, addr address) []endpoint {
 	// The standard resolver can return good records together with an error,
 	// when it has dropped bad records. So the error is not needed: no records
 	// means nothing to use.
-	_, records, _ := f.dns().LookupSRV(ctx, service, "tcp", addr.host)
+	//
+	// The name has a dot at the end (a rooted name). Without it, the system
+	// resolver may add its search domains when the name is not found, and
+	// the answer could then come from an unrelated domain.
+	_, records, _ := f.dns().LookupSRV(ctx, service, "tcp", rooted(addr.host))
 	records = slices.DeleteFunc(slices.Clone(records), func(r *net.SRV) bool { return r == nil })
 	slices.SortStableFunc(records, func(a, b *net.SRV) int {
-		if c := cmp.Compare(a.Priority, b.Priority); c != 0 {
-			return c
-		}
-		return cmp.Compare(b.Weight, a.Weight)
+		return cmp.Or(
+			cmp.Compare(a.Priority, b.Priority),
+			cmp.Compare(b.Weight, a.Weight),
+			compareNames(a.Target, b.Target),
+			cmp.Compare(a.Port, b.Port),
+		)
 	})
 
 	var endpoints []endpoint
@@ -640,10 +675,19 @@ func (f *Finder) srvEndpoints(ctx context.Context, service string, security acco
 // imap.<base> on port 993 with TLS and smtp.<base> on port 587 with STARTTLS.
 // It is a guess. A connection test must confirm it.
 func (f *Finder) fromMX(ctx context.Context, addr address) []account.MailServer {
-	// As for SRV, the error is not needed.
-	records, _ := f.dns().LookupMX(ctx, addr.host)
+	// As for SRV, the error is not needed and the name is rooted.
+	//
+	// Equal preferences are ordered by host name, because the Go resolver
+	// shuffles them. Without this, each call could pick another host and so
+	// guess another base domain.
+	records, _ := f.dns().LookupMX(ctx, rooted(addr.host))
 	records = slices.DeleteFunc(slices.Clone(records), func(r *net.MX) bool { return r == nil })
-	slices.SortStableFunc(records, func(a, b *net.MX) int { return cmp.Compare(a.Pref, b.Pref) })
+	slices.SortStableFunc(records, func(a, b *net.MX) int {
+		return cmp.Or(
+			cmp.Compare(a.Pref, b.Pref),
+			compareNames(a.Host, b.Host),
+		)
+	})
 
 	for _, r := range records {
 		// An MX host of "." is a "null MX": the domain does not take mail.

@@ -285,14 +285,26 @@ func New(t testing.TB, opts ...Option) *Server {
 
 	// The tracking listener sits under the TLS listener, so it sees the raw
 	// connection. That is the connection DropConnections closes.
-	var ln net.Listener = &trackingListener{Listener: raw, s: s}
+	tracker := &trackingListener{Listener: raw, s: s, accepting: make(chan struct{})}
+	var ln net.Listener = tracker
 	if o.mode == ModeTLS {
 		ln = tls.NewListener(ln, tlsConfig)
 	}
+	served := make(chan struct{})
 	go func() {
+		defer close(served)
 		// Serve returns after Close. Nothing can use its result.
 		_ = s.srv.Serve(ln)
 	}()
+	// Wait until Serve is ready to accept. Serve registers its listener and
+	// then calls WaitGroup.Add. Server.Close calls WaitGroup.Wait. If Close
+	// ran before the Add call, that would be a data race inside imapserver.
+	// Serve calls Accept after the Add call, so once Accept has been called
+	// it is safe to close the server.
+	select {
+	case <-tracker.accepting:
+	case <-served:
+	}
 
 	t.Cleanup(s.Close)
 	return s
@@ -472,9 +484,14 @@ func (s *Server) untrack(c *trackedConn) {
 type trackingListener struct {
 	net.Listener
 	s *Server
+	// accepting is closed when Accept is called for the first time. It shows
+	// that Serve has started its accept loop.
+	accepting chan struct{}
+	once      sync.Once
 }
 
 func (l *trackingListener) Accept() (net.Conn, error) {
+	l.once.Do(func() { close(l.accepting) })
 	c, err := l.Listener.Accept()
 	if err != nil {
 		return nil, err
