@@ -13,9 +13,11 @@
 // A test can also make mailboxes with special-use attributes (see Create),
 // choose the capabilities that the server advertises (see WithCaps), change
 // the PERMANENTFLAGS answer of SELECT and EXAMINE (see WithPermanentFlags),
-// leave the COPYUID code out of COPY answers (see WithoutCopyUID), add
-// messages with a given date (see AppendAt) and read the server state (see
-// Unseen, SelectCounts, FetchedSections and BytesSent).
+// leave the COPYUID code out of COPY answers (see WithoutCopyUID), leave the
+// APPENDUID code out of APPEND answers (see WithoutAppendUID), make APPEND
+// fail (see WithAppendError and WithAppendLimit), add messages with a given
+// date (see AppendAt) and read the server state (see Unseen, SelectCounts,
+// FetchedSections and BytesSent).
 //
 // This package is for tests only. Do not import it from production code.
 package imaptest
@@ -68,6 +70,9 @@ type options struct {
 	caps           imap.CapSet
 	permanentFlags func(mailbox string, readOnly bool, flags []imap.Flag) []imap.Flag
 	noCopyUID      bool
+	noAppendUID    bool
+	appendErr      func(mailbox string) error
+	appendLimit    uint32
 }
 
 // WithMode sets the server mode. The default is ModeTLS.
@@ -111,6 +116,31 @@ func WithoutCopyUID() Option {
 	return func(o *options) { o.noCopyUID = true }
 }
 
+// WithoutAppendUID makes the server answer APPEND without the APPENDUID
+// response code (RFC 4315), as a server without UIDPLUS does. The message is
+// still stored.
+func WithoutAppendUID() Option {
+	return func(o *options) { o.noAppendUID = true }
+}
+
+// WithAppendError makes APPEND fail. fn gets the mailbox name. When it returns
+// an error, the server reads the message and refuses it with that error, and
+// stores nothing. An *imap.Error gives its own status and response code. Any
+// other error gives NO. When fn returns nil, APPEND works as usual.
+//
+// The server answers after it has read the whole message, so a client that
+// sends the message does not notice anything until the answer.
+func WithAppendError(fn func(mailbox string) error) Option {
+	return func(o *options) { o.appendErr = fn }
+}
+
+// WithAppendLimit sets the largest message that APPEND accepts, in bytes. A
+// larger message is refused with NO [TOOBIG] before the client sends it, which
+// is how a server refuses a message that is too large.
+func WithAppendLimit(n uint32) Option {
+	return func(o *options) { o.appendLimit = n }
+}
+
 // Server is a running test IMAP server.
 //
 // The exported fields are set by New and must not be changed.
@@ -138,6 +168,10 @@ type Server struct {
 	permanentFlags func(mailbox string, readOnly bool, flags []imap.Flag) []imap.Flag
 	// noCopyUID is the option WithoutCopyUID.
 	noCopyUID bool
+	// noAppendUID is the option WithoutAppendUID.
+	noAppendUID bool
+	// appendErr is the option WithAppendError. It is nil by default.
+	appendErr func(mailbox string) error
 
 	closeOnce sync.Once
 
@@ -192,6 +226,8 @@ func New(t testing.TB, opts ...Option) *Server {
 
 		permanentFlags: o.permanentFlags,
 		noCopyUID:      o.noCopyUID,
+		noAppendUID:    o.noAppendUID,
+		appendErr:      o.appendErr,
 	}
 
 	mem := imapmemserver.New()
@@ -215,7 +251,11 @@ func New(t testing.TB, opts ...Option) *Server {
 				t.Errorf("imaptest: the session of imapmemserver lost its IMAP4rev2 methods")
 				return sess, nil, nil
 			}
-			return &session{SessionIMAP4rev2: inner, s: s}, nil, nil
+			base := &session{SessionIMAP4rev2: inner, s: s}
+			if o.appendLimit > 0 {
+				return &limitedSession{session: base, limit: o.appendLimit}, nil, nil
+			}
+			return base, nil, nil
 		},
 		Caps:   caps,
 		Logger: discardLogger{},
@@ -530,6 +570,35 @@ func (ss *session) Copy(numSet imap.NumSet, dest string) (*imap.CopyData, error)
 	}
 	return data, err
 }
+
+// Append stores the message like imapmemserver. A server made WithAppendError
+// may refuse it. A server made WithoutAppendUID does not report the new UID.
+func (ss *session) Append(mailbox string, r imap.LiteralReader, options *imap.AppendOptions) (*imap.AppendData, error) {
+	if fn := ss.s.appendErr; fn != nil {
+		if err := fn(mailbox); err != nil {
+			var imapErr *imap.Error
+			if errors.As(err, &imapErr) {
+				return nil, imapErr
+			}
+			return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Text: err.Error()}
+		}
+	}
+	data, err := ss.SessionIMAP4rev2.Append(mailbox, r, options)
+	if ss.s.noAppendUID {
+		return nil, err
+	}
+	return data, err
+}
+
+// limitedSession is a session that limits the size of APPEND (see
+// WithAppendLimit).
+type limitedSession struct {
+	*session
+	limit uint32
+}
+
+// AppendLimit is the largest message that APPEND accepts.
+func (ls *limitedSession) AppendLimit() uint32 { return ls.limit }
 
 // Fetch records the body sections of the command, then lets imapmemserver
 // answer it.

@@ -34,6 +34,9 @@ import (
 // The name and the time are checked before the chain, on every platform. So
 // an unknown authority means that the name matches and the time is valid.
 type CertificateUnknownError struct {
+	// Protocol says which server showed the certificate: "imap" or "smtp". An
+	// empty value means "imap".
+	Protocol string
 	// Host is the server name the client connected to.
 	Host string
 	// FingerprintSHA256 is the lowercase hex SHA-256 of the DER bytes of the
@@ -53,15 +56,25 @@ func (e *CertificateUnknownError) Unwrap() error { return e.Reason }
 // Error describes the problem. It holds the host name, the fingerprint and
 // the reason from the certificate check only.
 func (e *CertificateUnknownError) Error() string {
+	protocol := e.Protocol
+	if protocol == "" {
+		protocol = protocolIMAP
+	}
 	switch {
 	case e.Pinned:
-		return fmt.Sprintf("imap: the certificate of %s does not match the pin (sha256 %s)", e.Host, e.FingerprintSHA256)
+		return fmt.Sprintf("%s: the certificate of %s does not match the pin (sha256 %s)", protocol, e.Host, e.FingerprintSHA256)
 	case e.Reason != nil:
-		return fmt.Sprintf("imap: the certificate of %s is not trusted (sha256 %s): %v", e.Host, e.FingerprintSHA256, e.Reason)
+		return fmt.Sprintf("%s: the certificate of %s is not trusted (sha256 %s): %v", protocol, e.Host, e.FingerprintSHA256, e.Reason)
 	default:
-		return fmt.Sprintf("imap: the certificate of %s is not trusted (sha256 %s)", e.Host, e.FingerprintSHA256)
+		return fmt.Sprintf("%s: the certificate of %s is not trusted (sha256 %s)", protocol, e.Host, e.FingerprintSHA256)
 	}
 }
+
+// The protocols that CertificateUnknownError names.
+const (
+	protocolIMAP = "imap"
+	protocolSMTP = "smtp"
+)
 
 // dialIMAP connects to the IMAP server, secures the connection as
 // cfg.Server.IMAPSecurity says, and logs in.
@@ -206,7 +219,8 @@ func loginError(err error) error {
 	}
 }
 
-// newTLSConfig returns the TLS settings for a connection to host.
+// newTLSConfig returns the TLS settings for a connection to the IMAP server
+// host. The certificate is checked against PinnedIMAPCert.
 //
 // The standard certificate check is turned off, and verifyCertificate does
 // the check instead. TLS calls it for every connection, also for a resumed
@@ -214,25 +228,36 @@ func loginError(err error) error {
 // leaf certificate, which is needed for the pin and for
 // CertificateUnknownError.
 func newTLSConfig(cfg Config, host string) *tls.Config {
+	return newPinnedTLSConfig(cfg, host, protocolIMAP, cfg.Server.PinnedIMAPCert)
+}
+
+// newSMTPTLSConfig is newTLSConfig for the SMTP server host. The certificate is
+// checked against PinnedSMTPCert, with the same code.
+func newSMTPTLSConfig(cfg Config, host string) *tls.Config {
+	return newPinnedTLSConfig(cfg, host, protocolSMTP, cfg.Server.PinnedSMTPCert)
+}
+
+func newPinnedTLSConfig(cfg Config, host, protocol, pin string) *tls.Config {
 	return &tls.Config{
 		ServerName:         host,
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: true, //nolint:gosec // G402: VerifyConnection checks the certificate
-		VerifyConnection:   verifyCertificate(cfg, host),
+		VerifyConnection:   verifyCertificate(cfg, host, protocol, pin),
 	}
 }
 
 // verifyCertificate returns the function that decides whether to trust the
-// certificates of the server.
+// certificates of the server. protocol is "imap" or "smtp", and it goes into
+// the error.
 //
 // With a pin, the leaf must have exactly that fingerprint, and nothing else
 // is checked. Without a pin, the leaf must be valid for host and chain to the
 // root certificates.
-func verifyCertificate(cfg Config, host string) func(tls.ConnectionState) error {
-	pin := strings.ToLower(strings.TrimSpace(cfg.Server.PinnedIMAPCert))
+func verifyCertificate(cfg Config, host, protocol, pin string) func(tls.ConnectionState) error {
+	pin = strings.ToLower(strings.TrimSpace(pin))
 	return func(state tls.ConnectionState) error {
 		if len(state.PeerCertificates) == 0 {
-			return &CertificateUnknownError{Host: host, Reason: errors.New("the server showed no certificate")}
+			return &CertificateUnknownError{Protocol: protocol, Host: host, Reason: errors.New("the server showed no certificate")}
 		}
 		leaf := state.PeerCertificates[0]
 		sum := sha256.Sum256(leaf.Raw)
@@ -240,7 +265,7 @@ func verifyCertificate(cfg Config, host string) func(tls.ConnectionState) error 
 
 		if pin != "" {
 			if subtle.ConstantTimeCompare([]byte(fingerprint), []byte(pin)) != 1 {
-				return &CertificateUnknownError{Host: host, FingerprintSHA256: fingerprint, Pinned: true}
+				return &CertificateUnknownError{Protocol: protocol, Host: host, FingerprintSHA256: fingerprint, Pinned: true}
 			}
 			return nil
 		}
@@ -250,10 +275,10 @@ func verifyCertificate(cfg Config, host string) func(tls.ConnectionState) error 
 		// certificate, also when the name is wrong or the certificate has
 		// expired. These checks give the same reason on every platform.
 		if err := leaf.VerifyHostname(host); err != nil {
-			return &CertificateUnknownError{Host: host, FingerprintSHA256: fingerprint, Reason: err}
+			return &CertificateUnknownError{Protocol: protocol, Host: host, FingerprintSHA256: fingerprint, Reason: err}
 		}
 		if err := checkValidTime(leaf, time.Now()); err != nil {
-			return &CertificateUnknownError{Host: host, FingerprintSHA256: fingerprint, Reason: err}
+			return &CertificateUnknownError{Protocol: protocol, Host: host, FingerprintSHA256: fingerprint, Reason: err}
 		}
 
 		intermediates := x509.NewCertPool()
@@ -266,7 +291,7 @@ func verifyCertificate(cfg Config, host string) func(tls.ConnectionState) error 
 			Intermediates: intermediates,
 		})
 		if err != nil {
-			return &CertificateUnknownError{Host: host, FingerprintSHA256: fingerprint, Reason: err}
+			return &CertificateUnknownError{Protocol: protocol, Host: host, FingerprintSHA256: fingerprint, Reason: err}
 		}
 		return nil
 	}

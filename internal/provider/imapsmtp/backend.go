@@ -26,6 +26,10 @@ const maxBatch = 500
 // another folder, and only the UID of a message that was copied by the
 // fallback of Move is expunged.
 //
+// Drafts are stored with APPEND, and Send makes its own SMTP connection for
+// every message (see Backend.Send). APPEND and SMTP are never repeated after a
+// failure, because a second try could store or send a message twice.
+//
 // A Backend is safe for use by many goroutines.
 type Backend struct {
 	cfg    Config
@@ -84,19 +88,4 @@ func (b *Backend) Capabilities() mail.Capabilities {
 	defer cancel()
 	supported, err := b.tagsSupported(ctx)
 	return mail.Capabilities{Tags: err == nil && supported, MaxBatch: maxBatch}
-}
-
-// The methods below belong to a later task (drafts and sending). Until then
-// they report that they are not supported.
-
-func (b *Backend) SaveDraft(context.Context, *mail.RawMessage) (mail.Ref, error) {
-	return "", mail.ErrUnsupported
-}
-
-func (b *Backend) DiscardDraft(context.Context, mail.Ref) error {
-	return mail.ErrUnsupported
-}
-
-func (b *Backend) Send(context.Context, *mail.RawMessage) error {
-	return mail.ErrUnsupported
 }

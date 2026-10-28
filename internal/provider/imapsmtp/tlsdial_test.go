@@ -332,3 +332,18 @@ func TestDialCertificateReasonDoesNotDependOnPlatform(t *testing.T) {
 		})
 	}
 }
+
+func TestCertificateUnknownErrorNamesTheProtocol(t *testing.T) {
+	// The IMAP errors keep their text. An error that has no protocol is an
+	// IMAP error.
+	for protocol, want := range map[string]string{"": "imap: ", "imap": "imap: ", "smtp": "smtp: "} {
+		for _, certErr := range []*CertificateUnknownError{
+			{Protocol: protocol, Host: "mail.example.com", FingerprintSHA256: "ab"},
+			{Protocol: protocol, Host: "mail.example.com", FingerprintSHA256: "ab", Pinned: true},
+			{Protocol: protocol, Host: "mail.example.com", FingerprintSHA256: "ab", Reason: errors.New("why")},
+		} {
+			require.True(t, strings.HasPrefix(certErr.Error(), want), "%q: %s", protocol, certErr.Error())
+			require.Contains(t, certErr.Error(), "mail.example.com")
+		}
+	}
+}

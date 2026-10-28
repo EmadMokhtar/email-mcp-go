@@ -6,10 +6,16 @@
 // New, implements mail.Backend on top of the pool. It lists folders, searches,
 // reports new messages, and reads messages and attachments. The folder aliases
 // (@trash and the others) come from the SPECIAL-USE attributes of the folders.
+//
+// It saves and discards drafts in the IMAP account. It sends mail with SMTP
+// over a connection that has the same rules and the same certificate check as
+// IMAP (see Backend.Send), and then saves a copy in the Sent folder if the
+// account says so. Probe tests the settings of an account before it is saved.
 package imapsmtp
 
 import (
 	"crypto/x509"
+	"log/slog"
 	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
@@ -53,6 +59,11 @@ type Config struct {
 	// TokenScope binds page tokens and cursors to one account. The backend
 	// factory sets it to "<tenant>/<account>".
 	TokenScope string
+
+	// Logger receives the few events that the backend logs. It is optional:
+	// nil means that nothing is logged. The backend logs error codes only,
+	// never a subject, an address, a name or text that a server sent.
+	Logger *slog.Logger
 }
 
 // withDefaults replaces every zero or negative limit with its default.
