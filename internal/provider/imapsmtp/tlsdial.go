@@ -13,29 +13,49 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 )
 
 // CertificateUnknownError means the server showed a certificate that is not
-// trusted. The user interface can offer to pin the certificate with
-// FingerprintSHA256.
+// accepted. The user interface can offer to pin the certificate with
+// FingerprintSHA256, but only in one case.
 //
-// A wrong pin gives the same error. Its fingerprint is the certificate the
-// server showed now, not the pin.
+// Callers must offer "trust this certificate" only when Pinned is false and
+// the error chain holds an x509.UnknownAuthorityError (use errors.As). Never
+// offer it for a wrong pin (the certificate changed, which can be an attack),
+// for a host name that does not match (x509.HostnameError), or for an expired
+// or otherwise invalid certificate (x509.CertificateInvalidError).
 type CertificateUnknownError struct {
 	// Host is the server name the client connected to.
 	Host string
 	// FingerprintSHA256 is the lowercase hex SHA-256 of the DER bytes of the
-	// leaf certificate that the server showed.
+	// leaf certificate that the server showed. When Pinned is true, this is
+	// the certificate of the server now, not the pin.
 	FingerprintSHA256 string
+	// Pinned is true when a pin was set and the certificate did not match it.
+	Pinned bool
+	// Reason is the error from the certificate check when no pin was set. It
+	// is nil when Pinned is true.
+	Reason error
 }
 
-// Error describes the problem. It holds the host name and the fingerprint
-// only.
+// Unwrap returns Reason, so errors.As can find the x509 error.
+func (e *CertificateUnknownError) Unwrap() error { return e.Reason }
+
+// Error describes the problem. It holds the host name, the fingerprint and
+// the reason from the certificate check only.
 func (e *CertificateUnknownError) Error() string {
-	return fmt.Sprintf("imap: the certificate of %s is not trusted (sha256 %s)", e.Host, e.FingerprintSHA256)
+	switch {
+	case e.Pinned:
+		return fmt.Sprintf("imap: the certificate of %s does not match the pin (sha256 %s)", e.Host, e.FingerprintSHA256)
+	case e.Reason != nil:
+		return fmt.Sprintf("imap: the certificate of %s is not trusted (sha256 %s): %v", e.Host, e.FingerprintSHA256, e.Reason)
+	default:
+		return fmt.Sprintf("imap: the certificate of %s is not trusted (sha256 %s)", e.Host, e.FingerprintSHA256)
+	}
 }
 
 // dialIMAP connects to the IMAP server, secures the connection as
@@ -59,9 +79,18 @@ func (e *CertificateUnknownError) Error() string {
 // cfg.DialTimeout and ctx limit the whole call: connect, TLS, greeting and
 // login. The caller must close the returned client.
 func dialIMAP(ctx context.Context, cfg Config) (*imapclient.Client, error) {
+	client, _, err := dialWithConn(ctx, cfg)
+	return client, err
+}
+
+// dialWithConn is dialIMAP, and it also returns the network connection under
+// the client. A caller that must close the connection at once, whatever the
+// client is doing, closes that connection and not the client: Client.Close
+// waits for the reader of the client, and the reader can wait for the caller.
+func dialWithConn(ctx context.Context, cfg Config) (*imapclient.Client, net.Conn, error) {
 	cfg.withDefaults()
 	if err := cfg.Server.Validate(cfg.Local); err != nil {
-		return nil, fmt.Errorf("imap: server settings: %w", err)
+		return nil, nil, fmt.Errorf("imap: server settings: %w", err)
 	}
 	host := cfg.Server.IMAPHost
 	addr := net.JoinHostPort(host, strconv.Itoa(cfg.Server.IMAPPort))
@@ -72,7 +101,7 @@ func dialIMAP(ctx context.Context, cfg Config) (*imapclient.Client, error) {
 	dialer := net.Dialer{Timeout: cfg.DialTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("imap: connect: %w", err)
+		return nil, nil, fmt.Errorf("imap: connect: %w", err)
 	}
 	// From here, the end of ctx closes the connection. That also stops any
 	// step that waits for the server. stop runs before cancel (defers run in
@@ -86,20 +115,20 @@ func dialIMAP(ctx context.Context, cfg Config) (*imapclient.Client, error) {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			// The step failed because the connection was closed. The timeout
 			// or the cancel is the real cause.
-			return nil, fmt.Errorf("imap: dial: %w", ctxErr)
+			return nil, nil, fmt.Errorf("imap: dial: %w", ctxErr)
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	if !stop() {
 		// ctx ended after the login and closed the connection.
-		_ = client.Close()
-		return nil, fmt.Errorf("imap: dial: %w", ctx.Err())
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("imap: dial: %w", ctx.Err())
 	}
-	return client, nil
+	return client, conn, nil
 }
 
 // secureAndLogin protects an open connection as the config says and logs in.
-// On an error it leaves closing conn to the caller.
+// On an error it does not close conn. The caller does.
 func secureAndLogin(ctx context.Context, cfg Config, conn net.Conn) (*imapclient.Client, error) {
 	host := cfg.Server.IMAPHost
 	var client *imapclient.Client
@@ -140,25 +169,36 @@ func secureAndLogin(ctx context.Context, cfg Config, conn net.Conn) (*imapclient
 	}
 
 	if err := client.WaitGreeting(); err != nil {
-		_ = client.Close()
 		return nil, fmt.Errorf("imap: greeting: %w", err)
 	}
 	if err := client.Login(cfg.Server.Username, cfg.Password.Reveal()).Wait(); err != nil {
-		// Close the connection at once. A LOGOUT is not needed after a failed
-		// login, and an error from closing must never hide the login error.
-		_ = client.Close()
-		return nil, loginError(err, cfg.Password.Reveal())
+		// The caller closes the connection at once. A LOGOUT is not needed
+		// after a failed login, and no error from closing can hide this one.
+		return nil, loginError(err)
 	}
 	return client, nil
 }
 
-// loginError wraps the error of a failed LOGIN. The text says "login". It
-// never contains the password, even when the server repeats it.
-func loginError(err error, password string) error {
-	if password != "" && strings.Contains(err.Error(), password) {
+// loginError turns the error of a failed LOGIN into the error that callers
+// see. The text is "imap: login failed", with the response code of the server
+// in brackets when it sent one (for example "[AUTHENTICATIONFAILED]").
+//
+// It never repeats the free text of the server. Servers often put the user
+// name or the mail address in that text, and logs must not hold addresses.
+// A network failure keeps its error, because that text has no user data.
+func loginError(err error) error {
+	var serverErr *imap.Error
+	switch {
+	case errors.As(err, &serverErr):
+		if serverErr.Code != "" {
+			return fmt.Errorf("imap: login failed [%s]", serverErr.Code)
+		}
+		return errors.New("imap: login failed")
+	case isNetworkError(err):
+		return fmt.Errorf("imap: login failed: %w", err)
+	default:
 		return errors.New("imap: login failed")
 	}
-	return fmt.Errorf("imap: login failed: %w", err)
 }
 
 // newTLSConfig returns the TLS settings for a connection to host.
@@ -187,15 +227,15 @@ func verifyCertificate(cfg Config, host string) func(tls.ConnectionState) error 
 	pin := strings.ToLower(strings.TrimSpace(cfg.Server.PinnedIMAPCert))
 	return func(state tls.ConnectionState) error {
 		if len(state.PeerCertificates) == 0 {
-			return &CertificateUnknownError{Host: host}
+			return &CertificateUnknownError{Host: host, Reason: errors.New("the server showed no certificate")}
 		}
 		leaf := state.PeerCertificates[0]
 		sum := sha256.Sum256(leaf.Raw)
-		unknown := &CertificateUnknownError{Host: host, FingerprintSHA256: hex.EncodeToString(sum[:])}
+		fingerprint := hex.EncodeToString(sum[:])
 
 		if pin != "" {
-			if subtle.ConstantTimeCompare([]byte(unknown.FingerprintSHA256), []byte(pin)) != 1 {
-				return unknown
+			if subtle.ConstantTimeCompare([]byte(fingerprint), []byte(pin)) != 1 {
+				return &CertificateUnknownError{Host: host, FingerprintSHA256: fingerprint, Pinned: true}
 			}
 			return nil
 		}
@@ -210,7 +250,7 @@ func verifyCertificate(cfg Config, host string) func(tls.ConnectionState) error 
 			Intermediates: intermediates,
 		})
 		if err != nil {
-			return unknown
+			return &CertificateUnknownError{Host: host, FingerprintSHA256: fingerprint, Reason: err}
 		}
 		return nil
 	}

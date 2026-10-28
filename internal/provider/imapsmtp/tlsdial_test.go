@@ -3,6 +3,8 @@ package imapsmtp
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -59,11 +61,11 @@ func TestDialSTARTTLSChecksCertificate(t *testing.T) {
 func TestDialSTARTTLSNeverFallsBackToPlainText(t *testing.T) {
 	const greeting = "* OK [CAPABILITY IMAP4rev1] ready\r\n"
 	for name, reply := range map[string]fakeReply{
-		"server refuses STARTTLS": func(tag, cmd string) (string, bool) {
-			return tag + " BAD STARTTLS not supported\r\n", false
+		"server refuses STARTTLS": func(tag, cmd string) (string, fakeThen) {
+			return tag + " BAD STARTTLS not supported\r\n", fakeStay
 		},
-		"server says OK but stays in plain text": func(tag, cmd string) (string, bool) {
-			return tag + " OK Begin TLS negotiation now\r\n* OK still plain text\r\n", false
+		"server says OK but stays in plain text": func(tag, cmd string) (string, fakeThen) {
+			return tag + " OK Begin TLS negotiation now\r\n* OK still plain text\r\n", fakeStay
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -102,7 +104,7 @@ func TestDialPlainWorksOnlyForLoopbackOnLocalInstall(t *testing.T) {
 }
 
 func TestDialTimesOutWithoutGreeting(t *testing.T) {
-	fake := newFakeIMAP(t, "", func(string, string) (string, bool) { return "", false })
+	fake := newFakeIMAP(t, "", func(string, string) (string, fakeThen) { return "", fakeStay })
 	cfg := fake.plainConfig()
 	cfg.DialTimeout = 150 * time.Millisecond
 
@@ -117,8 +119,8 @@ func TestLoginErrorNeverRepeatsThePassword(t *testing.T) {
 	const password = "hunter2-hunter2"
 	// This server repeats the password in its answer and then drops the
 	// connection, so a LOGOUT after the failure would fail as well.
-	fake := newFakeIMAP(t, "* OK ready\r\n", func(tag, cmd string) (string, bool) {
-		return tag + " NO login failed for " + password + "\r\n", true
+	fake := newFakeIMAP(t, "* OK ready\r\n", func(tag, cmd string) (string, fakeThen) {
+		return tag + " NO login failed for " + password + "\r\n", fakeClose
 	})
 	cfg := fake.plainConfig()
 	cfg.Password = secrets.Secret(password)
@@ -150,4 +152,71 @@ func TestDialRequiresTLS12OrNewer(t *testing.T) {
 	require.True(t, cfg.InsecureSkipVerify)
 	require.NotNil(t, cfg.VerifyConnection)
 	require.Equal(t, "mail.example.com", cfg.ServerName)
+}
+
+func TestDialCertificateErrorSaysWhyItFailed(t *testing.T) {
+	srv := imaptest.New(t)
+
+	t.Run("wrong pin", func(t *testing.T) {
+		cfg := testConfig(srv, account.SecurityTLS)
+		cfg.Server.PinnedIMAPCert = strings.Repeat("0", 64)
+
+		_, err := dialIMAP(t.Context(), cfg)
+
+		var certErr *CertificateUnknownError
+		require.ErrorAs(t, err, &certErr)
+		require.True(t, certErr.Pinned)
+		require.NoError(t, certErr.Reason)
+		require.NoError(t, certErr.Unwrap())
+	})
+
+	t.Run("self-signed certificate", func(t *testing.T) {
+		_, err := dialIMAP(t.Context(), testConfig(srv, account.SecurityTLS))
+
+		var certErr *CertificateUnknownError
+		require.ErrorAs(t, err, &certErr)
+		require.False(t, certErr.Pinned)
+		// This is the only case where the UI may offer "trust this certificate".
+		var unknownAuthority x509.UnknownAuthorityError
+		require.ErrorAs(t, err, &unknownAuthority)
+	})
+
+	t.Run("trusted certificate for another host", func(t *testing.T) {
+		cfg := testConfig(srv, account.SecurityTLS)
+		cfg.RootCAs = srv.CertPool
+		cfg.Server.IMAPHost = "localhost"
+
+		_, err := dialIMAP(t.Context(), cfg)
+
+		var certErr *CertificateUnknownError
+		require.ErrorAs(t, err, &certErr)
+		require.False(t, certErr.Pinned)
+		var hostnameErr x509.HostnameError
+		require.ErrorAs(t, err, &hostnameErr)
+		var unknownAuthority x509.UnknownAuthorityError
+		require.False(t, errors.As(err, &unknownAuthority), "a wrong host must not look like an unknown authority")
+	})
+}
+
+func TestLoginErrorHasNoServerText(t *testing.T) {
+	// Servers often repeat the user name or the mail address in the answer.
+	fake := newFakeIMAP(t, "* OK ready\r\n", func(tag, cmd string) (string, fakeThen) {
+		return tag + " NO [AUTHENTICATIONFAILED] no account for alice@example.com\r\n", fakeStay
+	})
+	cfg := fake.plainConfig()
+	cfg.Server.Username = "alice@example.com"
+
+	_, err := dialIMAP(t.Context(), cfg)
+
+	require.EqualError(t, err, "imap: login failed [AUTHENTICATIONFAILED]")
+}
+
+func TestLoginErrorWithoutResponseCode(t *testing.T) {
+	fake := newFakeIMAP(t, "* OK ready\r\n", func(tag, cmd string) (string, fakeThen) {
+		return tag + " NO sorry bob@example.com\r\n", fakeStay
+	})
+
+	_, err := dialIMAP(t.Context(), fake.plainConfig())
+
+	require.EqualError(t, err, "imap: login failed")
 }
