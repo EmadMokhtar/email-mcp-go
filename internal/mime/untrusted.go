@@ -7,8 +7,8 @@
 //
 // The package also writes mail: Build makes a new message, a reply or a
 // forward, and FromDraft prepares a saved draft for sending. Both keep Bcc
-// recipients out of the headers that are sent, and refuse values that could
-// add a header.
+// recipients out of the headers that are sent, and neither lets a value add a
+// header.
 package mime
 
 import (

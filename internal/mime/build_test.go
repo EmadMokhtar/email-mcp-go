@@ -398,38 +398,195 @@ func TestHeaderInjectionRejectedInEveryHeaderValue(t *testing.T) {
 			require.Nil(t, raw)
 		}
 	})
-	t.Run("original subject of a reply", func(t *testing.T) {
+	t.Run("caller subject in a reply", func(t *testing.T) {
 		bc := newContext()
 		bc.Original = originalMessage()
-		bc.Original.Subject = bad
-		_, err := Build(mail.Compose{ReplyTo: replyTo(false)}, bc)
+		_, err := Build(mail.Compose{ReplyTo: replyTo(false), Subject: bad}, bc)
 		require.ErrorIs(t, err, ErrHeaderInjection)
+	})
+	t.Run("caller subject in a forward", func(t *testing.T) {
+		bc := newContext()
+		bc.Original = originalMessage()
+		_, err := Build(mail.Compose{ForwardOf: forwardOf(), To: []string{"dave@x"}, Subject: bad}, bc)
+		require.ErrorIs(t, err, ErrHeaderInjection)
+	})
+}
 
-		// The caller can still reply with a subject of their own.
-		raw := mustBuild(t, mail.Compose{ReplyTo: replyTo(false), Subject: "Re: safe"}, bc)
-		require.Equal(t, "Re: safe", headerOf(t, raw.Data).Get("Subject"))
-	})
-	t.Run("original message id", func(t *testing.T) {
+// hostile is a value that tries to add a Bcc header.
+const hostile = "\r\nBcc: evil@x"
+
+// builtHeaders are the header names that Build writes, as net/mail spells them.
+var builtHeaders = map[string]bool{
+	"From": true, "To": true, "Cc": true, "Subject": true, "Date": true,
+	"Message-Id": true, "Mime-Version": true, "Content-Type": true,
+	"Content-Transfer-Encoding": true, "In-Reply-To": true, "References": true,
+}
+
+// noInjectedHeader checks that a built message has no Bcc header, no other
+// header that Build does not write, and no header line that starts with
+// "Bcc".
+func noInjectedHeader(t *testing.T, data []byte) {
+	t.Helper()
+	h := headerOf(t, data)
+	require.Empty(t, h.Get("Bcc"))
+	for key := range h {
+		require.True(t, builtHeaders[key], "unexpected header %q", key)
+	}
+	for _, line := range strings.Split(headerBlock(data), "\r\n") {
+		require.False(t, strings.HasPrefix(strings.ToLower(line), "bcc"), "header line %q", line)
+	}
+}
+
+func TestOriginalSubjectWithLineBreakIsCleaned(t *testing.T) {
+	cases := []struct {
+		name           string
+		subject        string
+		reply, forward string
+	}{
+		{"crlf", "Plans" + hostile, "Re: Plans Bcc: evil@x", "Fwd: Plans Bcc: evil@x"},
+		{"lf", "Plans\nBcc: evil@x", "Re: Plans Bcc: evil@x", "Fwd: Plans Bcc: evil@x"},
+		{"cr", "Plans\rBcc: evil@x", "Re: Plans Bcc: evil@x", "Fwd: Plans Bcc: evil@x"},
+		{"nul", "Plans\x00Bcc: evil@x", "Re: Plans Bcc: evil@x", "Fwd: Plans Bcc: evil@x"},
+		{"a run is one space", "Plans\r\n\r\n\x00 Bcc: evil@x", "Re: Plans  Bcc: evil@x", "Fwd: Plans  Bcc: evil@x"},
+		{"re prefix is kept", "Re: Plans" + hostile, "Re: Plans Bcc: evil@x", "Fwd: Re: Plans Bcc: evil@x"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bc := newContext()
+			bc.Original = originalMessage()
+			bc.Original.Subject = tc.subject
+
+			reply := mustBuild(t, mail.Compose{ReplyTo: replyTo(false), Body: "ok"}, bc)
+			noInjectedHeader(t, reply.Data)
+			require.Equal(t, tc.reply, headerOf(t, reply.Data).Get("Subject"))
+
+			forward := mustBuild(t, mail.Compose{ForwardOf: forwardOf(), To: []string{"dave@x"}}, bc)
+			noInjectedHeader(t, forward.Data)
+			require.Equal(t, tc.forward, headerOf(t, forward.Data).Get("Subject"))
+		})
+	}
+}
+
+func TestOriginalNamesWithLineBreaksAreCleaned(t *testing.T) {
+	bc := newContext()
+	bc.Original = originalMessage()
+	bc.Original.From = mail.Address{Name: "Alice" + hostile, Email: "alice@x"}
+	bc.Original.To = []mail.Address{{Name: "Bob\x00" + hostile, Email: "bob@x"}}
+	bc.Original.Cc = []mail.Address{{Name: "Carol\n", Email: "carol@x"}}
+
+	raw := mustBuild(t, mail.Compose{ReplyTo: replyTo(true)}, bc)
+	noInjectedHeader(t, raw.Data)
+	h := headerOf(t, raw.Data)
+	require.Equal(t, []string{"alice@x"}, emails(t, h, "To"))
+	require.Equal(t, []string{"bob@x", "carol@x"}, emails(t, h, "Cc"))
+	require.Equal(t, []string{"alice@x", "bob@x", "carol@x"}, raw.Recipients)
+
+	to, err := h.AddressList("To")
+	require.NoError(t, err)
+	require.Equal(t, "Alice Bcc: evil@x", to[0].Name, "the name keeps its text, with spaces")
+
+	// The Reply-To header is a name source too.
+	bc.Original.ReplyTo = []mail.Address{{Name: "List" + hostile, Email: "list@x"}}
+	raw = mustBuild(t, mail.Compose{ReplyTo: replyTo(false)}, bc)
+	noInjectedHeader(t, raw.Data)
+	require.Equal(t, []string{"list@x"}, emails(t, headerOf(t, raw.Data), "To"))
+}
+
+func TestOriginalAddressWithLineBreakIsStillRefused(t *testing.T) {
+	// A line break inside an address cannot be cleaned. A space would make it
+	// a different address, and the mail would go to the wrong place.
+	bc := newContext()
+	bc.Original = originalMessage()
+	bc.Original.From = mail.Address{Email: "alice@x" + hostile}
+	raw, err := Build(mail.Compose{ReplyTo: replyTo(false)}, bc)
+	require.Error(t, err)
+	require.Nil(t, raw)
+}
+
+func TestForwardPreambleCleansOriginalValues(t *testing.T) {
+	bc := newContext()
+	bc.Original = originalMessage()
+	bc.Original.Subject = "Plans" + hostile
+	bc.Original.From = mail.Address{Name: "Alice\x00" + hostile, Email: "alice@x"}
+	bc.Original.To = []mail.Address{{Name: "Bob" + hostile, Email: "bob@x"}, {Email: "me@x"}}
+	raw := mustBuild(t, mail.Compose{
+		ForwardOf: forwardOf(), To: []string{"dave@x"}, Body: "fyi", HTMLBody: "<p>fyi</p>",
+	}, bc)
+
+	noInjectedHeader(t, raw.Data)
+	p := parsedOf(t, raw.Data)
+	lines := strings.Split(strings.ReplaceAll(p.Text, "\r\n", "\n"), "\n")
+	require.Contains(t, lines, "From: Alice Bcc: evil@x <alice@x>")
+	require.Contains(t, lines, "Subject: Plans Bcc: evil@x")
+	require.Contains(t, lines, "To: Bob Bcc: evil@x <bob@x>, me@x")
+	for _, line := range lines {
+		require.False(t, strings.HasPrefix(line, "Bcc:"), "line %q of the preamble", line)
+	}
+	require.Contains(t, p.HTML, "Subject: Plans Bcc: evil@x<br>")
+}
+
+func TestOriginalMessageIDWithLineBreakIsDropped(t *testing.T) {
+	for _, id := range []string{"<m2@x>" + hostile, "<m2@x>\n", "<m2\r@x>", "<m2@x\x00>"} {
 		bc := newContext()
 		bc.Original = originalMessage()
-		bc.Original.MessageID = "<m2@x>\r\nBcc: evil@x"
-		_, err := Build(mail.Compose{ReplyTo: replyTo(false)}, bc)
-		require.ErrorIs(t, err, ErrHeaderInjection)
-	})
-	t.Run("original reference", func(t *testing.T) {
-		bc := newContext()
-		bc.Original = originalMessage()
-		bc.Original.References = []string{"<m0@x>\nBcc: evil@x"}
-		_, err := Build(mail.Compose{ReplyTo: replyTo(false)}, bc)
-		require.ErrorIs(t, err, ErrHeaderInjection)
-	})
-	t.Run("original sender name", func(t *testing.T) {
-		bc := newContext()
-		bc.Original = originalMessage()
-		bc.Original.From.Name = bad
-		_, err := Build(mail.Compose{ReplyTo: replyTo(false)}, bc)
-		require.ErrorIs(t, err, ErrHeaderInjection)
-	})
+		bc.Original.MessageID = id
+		raw := mustBuild(t, mail.Compose{ReplyTo: replyTo(false)}, bc)
+
+		noInjectedHeader(t, raw.Data)
+		h := headerOf(t, raw.Data)
+		require.Empty(t, h.Get("In-Reply-To"), "Message-ID %q", id)
+		require.Equal(t, "<m0@x> <m1@x>", h.Get("References"), "Message-ID %q", id)
+	}
+}
+
+func TestOriginalReferenceWithLineBreakIsDropped(t *testing.T) {
+	bc := newContext()
+	bc.Original = originalMessage()
+	bc.Original.References = []string{"<m0@x>", "<m1@x>" + hostile, "<m1b@x>\n", "<m1c@x\x00>", "<m1d@x>"}
+	raw := mustBuild(t, mail.Compose{ReplyTo: replyTo(false)}, bc)
+
+	noInjectedHeader(t, raw.Data)
+	h := headerOf(t, raw.Data)
+	require.Equal(t, "<m2@x>", h.Get("In-Reply-To"))
+	require.Equal(t, "<m0@x> <m1d@x> <m2@x>", h.Get("References"))
+}
+
+func TestDraftMayHaveNoRecipients(t *testing.T) {
+	bc := newContext()
+	bc.ForDraft = true
+	draft := mustBuild(t, mail.Compose{Subject: "Not ready", Body: "write more later"}, bc)
+
+	require.Empty(t, draft.Recipients)
+	require.Equal(t, "me@x", draft.From)
+	h := headerOf(t, draft.Data)
+	for _, key := range []string{"To", "Cc", "Bcc"} {
+		require.Empty(t, h.Get(key), key)
+	}
+	require.Equal(t, "Not ready", h.Get("Subject"))
+	require.Equal(t, "write more later", parsedOf(t, draft.Data).Text)
+
+	// Such a draft cannot be sent.
+	sendable, err := FromDraft(draft.Data)
+	require.ErrorIs(t, err, ErrNoRecipients)
+	require.Nil(t, sendable)
+
+	// A message that is not a draft still needs a recipient.
+	bc.ForDraft = false
+	_, err = Build(mail.Compose{Subject: "Not ready", Body: "write more later"}, bc)
+	require.ErrorIs(t, err, ErrNoRecipients)
+}
+
+func TestDraftOfAReplyToSelfMayHaveNoRecipients(t *testing.T) {
+	bc := newContext()
+	bc.ForDraft = true
+	bc.Original = originalMessage()
+	bc.Original.From = mail.Address{Email: "me@x"}
+	bc.Original.To = []mail.Address{{Email: "me@x"}}
+	bc.Original.Cc = nil
+
+	draft := mustBuild(t, mail.Compose{ReplyTo: replyTo(true), Body: "note"}, bc)
+	require.Empty(t, draft.Recipients)
+	require.Equal(t, "<m2@x>", headerOf(t, draft.Data).Get("In-Reply-To"))
 }
 
 func TestBccNotInHeaders(t *testing.T) {
@@ -829,12 +986,30 @@ func FuzzBuildHeaders(f *testing.F) {
 	f.Add("=?utf-8?q?hi=0D=0ABcc:_evil@x?=", "\"Bob\" <bob@x>", "=?utf-8?q?B=0D=0A?=", "a.txt", "text/plain; name=\"x\"", "\r\nBcc: evil@x\r\n")
 	f.Add("hi", "bob@x", "J\U000000FCrgen", "\U00004F60.txt", "application/pdf; x=y", "Bcc: evil@x")
 
-	allowed := map[string]bool{
-		"From": true, "To": true, "Cc": true, "Subject": true, "Date": true,
-		"Message-Id": true, "Mime-Version": true, "Content-Type": true,
-		"Content-Transfer-Encoding": true,
-	}
 	f.Fuzz(func(t *testing.T, subject, to, name, filename, contentType, body string) {
+		// The same text in the original message must never add a header, and
+		// must never stop a reply or a forward.
+		obc := newContext()
+		obc.Original = originalMessage()
+		obc.Original.Subject = subject
+		obc.Original.From.Name = name
+		obc.Original.To = []mail.Address{{Name: filename, Email: "bob@x"}}
+		obc.Original.MessageID = contentType
+		obc.Original.References = []string{body, contentType}
+		for _, c := range []mail.Compose{
+			{ReplyTo: replyTo(true), Bcc: []string{"hidden@x"}},
+			{ForwardOf: forwardOf(), To: []string{"dave@x"}, Bcc: []string{"hidden@x"}},
+		} {
+			built, err := Build(c, obc)
+			require.NoError(t, err)
+			m, err := netmail.ReadMessage(bytes.NewReader(built.Data))
+			require.NoError(t, err)
+			for key := range m.Header {
+				require.True(t, builtHeaders[key], "unexpected header %q", key)
+			}
+			require.NotContains(t, strings.ToLower(headerBlock(built.Data)), "hidden@x")
+		}
+
 		bc := newContext()
 		bc.From.Name = name
 		raw, err := Build(mail.Compose{
@@ -852,7 +1027,7 @@ func FuzzBuildHeaders(f *testing.F) {
 		m, err := netmail.ReadMessage(bytes.NewReader(raw.Data))
 		require.NoError(t, err)
 		for key := range m.Header {
-			require.True(t, allowed[key], "unexpected header %q", key)
+			require.True(t, builtHeaders[key], "unexpected header %q", key)
 		}
 		require.Contains(t, raw.Recipients, "hidden@x")
 		require.NotContains(t, strings.ToLower(headerBlock(raw.Data)), "hidden@x")

@@ -69,7 +69,7 @@ func writeTextPart(create func(gomail.InlineHeader) (io.WriteCloser, error), med
 }
 
 // forwarded is the original message as a forward shows it. Its values come
-// from a third party, so each one is a single line.
+// from a third party, so each one is a single line (see cleanOriginal).
 type forwarded struct {
 	from, date, subject, to string
 	text                    string
@@ -87,9 +87,9 @@ func newForwarded(o *mail.Message) forwarded {
 		to[i] = displayAddress(a)
 	}
 	f := forwarded{
-		from:    oneLine(displayAddress(o.From)),
-		subject: oneLine(o.Subject),
-		to:      oneLine(strings.Join(to, ", ")),
+		from:    cleanOriginal(displayAddress(o.From)),
+		subject: cleanOriginal(o.Subject),
+		to:      cleanOriginal(strings.Join(to, ", ")),
 		text:    text,
 	}
 	if !o.Date.IsZero() {
@@ -104,11 +104,6 @@ func displayAddress(a mail.Address) string {
 		return a.Email
 	}
 	return a.Name + " <" + a.Email + ">"
-}
-
-// oneLine replaces line breaks with spaces.
-func oneLine(s string) string {
-	return strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(s)
 }
 
 const forwardedMarker = "---------- Forwarded message ----------"

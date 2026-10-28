@@ -94,7 +94,7 @@ func resolveRecipients(c mail.Compose, bc BuildContext) (recipients, error) {
 		r.to, r.cc = without(r.to, self), without(r.cc, self)
 	}
 	r.dedupe()
-	if r.empty() {
+	if r.empty() && !bc.ForDraft {
 		return recipients{}, ErrNoRecipients
 	}
 	return r, nil
@@ -103,24 +103,35 @@ func resolveRecipients(c mail.Compose, bc BuildContext) (recipients, error) {
 // replyRecipients returns the To and Cc addresses that a reply to the original
 // starts with. A plain reply goes to the Reply-To addresses of the original,
 // or else to its sender. A reply to all also puts the To and Cc addresses of
-// the original in Cc.
+// the original in Cc. The display names come from a third party, so they are
+// cleaned (see cleanOriginal).
 func replyRecipients(original *mail.Message, all bool) (to, cc []*netmail.Address, err error) {
 	direct, field := original.ReplyTo, "original reply-to"
 	if len(direct) == 0 {
 		direct, field = []mail.Address{original.From}, "original from"
 	}
-	if to, err = plainAddresses(field, direct); err != nil || !all {
+	if to, err = originalAddresses(field, direct); err != nil || !all {
 		return to, nil, err
 	}
-	copied, err := plainAddresses("original to", original.To)
+	copied, err := originalAddresses("original to", original.To)
 	if err != nil {
 		return nil, nil, err
 	}
-	more, err := plainAddresses("original cc", original.Cc)
+	more, err := originalAddresses("original cc", original.Cc)
 	if err != nil {
 		return nil, nil, err
 	}
 	return to, append(copied, more...), nil
+}
+
+// originalAddresses is plainAddresses for addresses of the original message.
+// It cleans the display names first.
+func originalAddresses(field string, list []mail.Address) ([]*netmail.Address, error) {
+	cleaned := make([]mail.Address, len(list))
+	for i, a := range list {
+		cleaned[i] = mail.Address{Name: cleanOriginal(a.Name), Email: a.Email}
+	}
+	return plainAddresses(field, cleaned)
 }
 
 // parseRecipients parses the address strings of one Compose field. Each

@@ -24,7 +24,8 @@ import (
 var (
 	// ErrInvalidAddress means an address is missing or cannot be parsed.
 	ErrInvalidAddress = errors.New("mime: invalid address")
-	// ErrNoRecipients means the message would go to nobody.
+	// ErrNoRecipients means the message would go to nobody. A draft built with
+	// BuildContext.ForDraft is the one message that may have none.
 	ErrNoRecipients = errors.New("mime: message has no recipients")
 	// ErrHeaderInjection means a value that goes into a header has a line
 	// break (CR or LF) or a NUL. A line break would let the value add headers
@@ -59,21 +60,31 @@ type BuildContext struct {
 	MessageIDDomain string
 	// ForDraft keeps the Bcc header in the message. Use it when the message
 	// is saved as a draft. FromDraft removes the header again before sending.
+	// A draft may have no recipients yet, so Build does not return
+	// ErrNoRecipients for it. FromDraft does, so such a draft cannot be sent.
 	ForDraft bool
 }
 
 // Build writes a new message, a reply, a reply to all, or a forward, as an
 // RFC 5322 message (the internet message format).
 //
-// Every address goes through net/mail.ParseAddress. Every value that reaches
-// a header is checked for a line break, and Build returns ErrHeaderInjection
-// for one. This includes values taken from the original message, because a
-// third party wrote them.
+// Every address goes through net/mail.ParseAddress. Every value that the
+// caller gives and that reaches a header is checked, and Build returns
+// ErrHeaderInjection when it has a CR, an LF or a NUL.
+//
+// Values that come from the original message are not checked but cleaned,
+// because a third party wrote them and they must not stop a reply. Each run
+// of CR, LF and NUL in the subject and in the display names is replaced with
+// one space. A Message-ID or a References entry with such a character is not
+// used. An address of the original with such a character cannot be cleaned,
+// because that would change the address, so Build refuses it.
 //
 // The recipients are the To, Cc and Bcc addresses, with each address once. The
 // first one is kept, and the order is To, Cc, Bcc. They are all in
 // RawMessage.Recipients. The message has no Bcc header unless
-// BuildContext.ForDraft is set, so nobody learns who else got a copy.
+// BuildContext.ForDraft is set, so nobody learns who else got a copy. Build
+// returns ErrNoRecipients when there are none, except for a draft (see
+// BuildContext.ForDraft).
 //
 // A reply goes to the Reply-To addresses of the original, or else to its
 // sender. A reply to all also copies the To and Cc addresses of the original
@@ -107,10 +118,7 @@ func Build(c mail.Compose, bc BuildContext) (*mail.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	thread, err := resolveThreading(c, bc.Original)
-	if err != nil {
-		return nil, err
-	}
+	thread := resolveThreading(c, bc.Original)
 	atts, err := collectAttachments(c, bc)
 	if err != nil {
 		return nil, err
@@ -142,31 +150,60 @@ func Build(c mail.Compose, bc BuildContext) (*mail.RawMessage, error) {
 	return &mail.RawMessage{From: from.Address, Recipients: rcpt.envelope(), Data: buf.Bytes()}, nil
 }
 
+// lineBreaks are the characters that a header value must not have: CR, LF
+// and NUL.
+const lineBreaks = "\r\n\x00"
+
 // checkValue returns ErrHeaderInjection when v has a CR, an LF or a NUL.
-// field names the value in the error.
+// field names the value in the error. Use it for values that the caller of
+// Build gives. For values from the original message, use cleanOriginal.
 func checkValue(field, v string) error {
-	if strings.ContainsAny(v, "\r\n\x00") {
+	if strings.ContainsAny(v, lineBreaks) {
 		return fmt.Errorf("%w: %s", ErrHeaderInjection, field)
 	}
 	return nil
 }
 
-// resolveSubject returns the subject: the one in Compose, or else one made
-// from the subject of the original.
-func resolveSubject(c mail.Compose, original *mail.Message) (string, error) {
-	subject := c.Subject
-	if subject == "" {
-		switch {
-		case c.ReplyTo != nil:
-			subject = replySubject(original.Subject)
-		case c.ForwardOf != nil:
-			subject = "Fwd: " + original.Subject
+// cleanOriginal replaces each run of CR, LF and NUL in s with one space. Use
+// it for a value that comes from the original message. A third party wrote
+// that value, so it must not stop a reply, but it also must not add a header.
+func cleanOriginal(s string) string {
+	if !strings.ContainsAny(s, lineBreaks) {
+		return s
+	}
+	var b strings.Builder
+	inRun := false
+	for i := 0; i < len(s); i++ {
+		if strings.IndexByte(lineBreaks, s[i]) >= 0 {
+			if !inRun {
+				b.WriteByte(' ')
+			}
+			inRun = true
+			continue
 		}
+		b.WriteByte(s[i])
+		inRun = false
 	}
-	if err := checkValue("subject", subject); err != nil {
-		return "", err
+	return b.String()
+}
+
+// resolveSubject returns the subject: the one in Compose, or else one made
+// from the subject of the original. The subject in Compose is checked. The
+// subject of the original is cleaned.
+func resolveSubject(c mail.Compose, original *mail.Message) (string, error) {
+	if c.Subject != "" {
+		if err := checkValue("subject", c.Subject); err != nil {
+			return "", err
+		}
+		return c.Subject, nil
 	}
-	return subject, nil
+	switch {
+	case c.ReplyTo != nil:
+		return replySubject(cleanOriginal(original.Subject)), nil
+	case c.ForwardOf != nil:
+		return "Fwd: " + cleanOriginal(original.Subject), nil
+	}
+	return "", nil
 }
 
 // replySubject adds "Re: " unless the subject already has it. The check
@@ -188,29 +225,33 @@ type threading struct {
 
 // resolveThreading makes the threading headers of a reply. Other messages
 // have none. The References are those of the original, then its Message-ID.
-func resolveThreading(c mail.Compose, original *mail.Message) (threading, error) {
+// An ID of the original that has a line break or a NUL is not used: it comes
+// from a third party, and a changed ID would point at another message.
+func resolveThreading(c mail.Compose, original *mail.Message) threading {
 	var t threading
 	if c.ReplyTo == nil {
-		return t, nil
+		return t
 	}
 	for _, ref := range original.References {
-		id := bareID(ref)
-		if id == "" {
-			continue
+		if id := usableID(ref); id != "" {
+			t.references = append(t.references, id)
 		}
-		if err := checkValue("references", id); err != nil {
-			return threading{}, err
-		}
-		t.references = append(t.references, id)
 	}
-	if id := bareID(original.MessageID); id != "" {
-		if err := checkValue("message-id of the original", id); err != nil {
-			return threading{}, err
-		}
+	if id := usableID(original.MessageID); id != "" {
 		t.inReplyTo = id
 		t.references = append(t.references, id)
 	}
-	return t, nil
+	return t
+}
+
+// usableID returns the ID of a message ID header value of the original, or an
+// empty string when the value has a CR, an LF or a NUL anywhere, even at the
+// end, where bareID would cut it off.
+func usableID(value string) string {
+	if strings.ContainsAny(value, lineBreaks) {
+		return ""
+	}
+	return bareID(value)
 }
 
 // bareID removes the spaces and the angle brackets around a message ID.
