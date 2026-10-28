@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/EmadMokhtar/email-mcp-go/internal/thirdparty/xhtml"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/net/html"
 )
 
 // htmlText returns HTMLToText of markup. The test fails if there is an error.
@@ -513,13 +513,13 @@ func TestHTMLToTextBrokenMarkup(t *testing.T) {
 // --- SanitizeHTML ---
 
 // walkHTML calls fn for every element in the parsed markup.
-func walkHTML(t *testing.T, markup string, fn func(n *html.Node)) {
+func walkHTML(t *testing.T, markup string, fn func(n *xhtml.Node)) {
 	t.Helper()
-	doc, err := html.Parse(strings.NewReader(markup))
+	doc, err := xhtml.Parse(strings.NewReader(markup))
 	require.NoError(t, err)
-	var visit func(n *html.Node)
-	visit = func(n *html.Node) {
-		if n.Type == html.ElementNode {
+	var visit func(n *xhtml.Node)
+	visit = func(n *xhtml.Node) {
+		if n.Type == xhtml.ElementNode {
 			fn(n)
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -555,7 +555,7 @@ func TestSanitizeHTMLRemovesDangerousParts(t *testing.T) {
 	// The four required properties, checked on the parsed output.
 	allowed := map[string]bool{"http": true, "https": true, "mailto": true}
 	linkCount := 0
-	walkHTML(t, out, func(n *html.Node) {
+	walkHTML(t, out, func(n *xhtml.Node) {
 		require.NotEqual(t, "img", n.Data, "no img element")
 		require.NotEqual(t, "image", n.Data, "no image element")
 		require.NotEqual(t, "script", n.Data, "no script element")

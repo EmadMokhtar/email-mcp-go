@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"golang.org/x/net/html"
+	"github.com/EmadMokhtar/email-mcp-go/internal/thirdparty/xhtml"
 	"golang.org/x/net/html/atom"
 )
 
@@ -46,7 +46,7 @@ func VisibleHTML(markup string) (string, error) {
 	v.prune(doc)
 
 	var buf bytes.Buffer
-	if err := html.Render(&buf, doc); err != nil {
+	if err := xhtml.Render(&buf, doc); err != nil {
 		// A buffer cannot fail to write. Return nothing to be safe.
 		return "", fmt.Errorf("mime: render html: %w", err)
 	}
@@ -58,15 +58,15 @@ func VisibleHTML(markup string) (string, error) {
 //
 // It calls itself for each open element. The parser refuses a document that is
 // nested more than 512 elements deep, so the depth is small.
-func (v *visibility) prune(parent *html.Node) {
+func (v *visibility) prune(parent *xhtml.Node) {
 	for c := parent.FirstChild; c != nil; {
 		next := c.NextSibling // c may leave the tree
 		switch c.Type {
-		case html.TextNode:
+		case xhtml.TextNode:
 			if v.state().textHidden() {
 				parent.RemoveChild(c)
 			}
-		case html.ElementNode:
+		case xhtml.ElementNode:
 			v.pruneElement(parent, c)
 		default:
 			// Comments, a doctype and the like are not content.
@@ -76,7 +76,7 @@ func (v *visibility) prune(parent *html.Node) {
 	}
 }
 
-func (v *visibility) pruneElement(parent, n *html.Node) {
+func (v *visibility) pruneElement(parent, n *xhtml.Node) {
 	effect, shown := v.classify(n)
 	if !shown || (n.Data == "textarea" && n.Namespace != "") {
 		parent.RemoveChild(n)
@@ -93,7 +93,7 @@ func (v *visibility) pruneElement(parent, n *html.Node) {
 			removeAttribute(n, "href")
 		}
 	case "noscript", "xmp", "plaintext":
-		// html.Render writes the text of these elements as it is, without
+		// xhtml.Render writes the text of these elements as it is, without
 		// escaping, because a browser reads them as raw text. Here it would turn
 		// escaped text into markup. For a reader they are blocks, so they become
 		// a div, or a pre for xmp and plaintext, which keep their line breaks.
@@ -111,7 +111,7 @@ func (v *visibility) pruneElement(parent, n *html.Node) {
 
 // keepOnly removes every attribute of the element except the one with the given
 // key.
-func keepOnly(n *html.Node, key string) {
+func keepOnly(n *xhtml.Node, key string) {
 	kept := n.Attr[:0]
 	for _, a := range n.Attr {
 		if a.Key == key && a.Namespace == "" {
@@ -122,7 +122,7 @@ func keepOnly(n *html.Node, key string) {
 }
 
 // removeAttribute removes the attributes with the given key.
-func removeAttribute(n *html.Node, key string) {
+func removeAttribute(n *xhtml.Node, key string) {
 	kept := n.Attr[:0]
 	for _, a := range n.Attr {
 		if a.Key != key {

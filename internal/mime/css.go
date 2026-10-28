@@ -7,7 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"golang.org/x/net/html"
+	"github.com/EmadMokhtar/email-mcp-go/internal/thirdparty/xhtml"
 )
 
 // This file reads just enough CSS to find elements that a mail client hides.
@@ -432,19 +432,19 @@ type styleRules struct {
 }
 
 // collectStyleRules reads every style element of the document.
-func collectStyleRules(doc *html.Node) *styleRules {
+func collectStyleRules(doc *xhtml.Node) *styleRules {
 	h := &styleRules{
 		classes:  map[string]styleEffect{},
 		ids:      map[string]styleEffect{},
 		elements: map[string]styleEffect{},
 	}
 	for n := doc; n != nil; n = nextNode(n) {
-		if n.Type != html.ElementNode || n.Data != "style" {
+		if n.Type != xhtml.ElementNode || n.Data != "style" {
 			continue
 		}
 		var sheet strings.Builder
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			if c.Type == html.TextNode {
+			if c.Type == xhtml.TextNode {
 				sheet.WriteString(c.Data)
 			}
 		}
@@ -455,7 +455,7 @@ func collectStyleRules(doc *html.Node) *styleRules {
 
 // nextNode returns the node after n in document order, or nil at the end. It
 // does not call itself, so a deep document cannot exhaust the stack.
-func nextNode(n *html.Node) *html.Node {
+func nextNode(n *xhtml.Node) *xhtml.Node {
 	if n.FirstChild != nil {
 		return n.FirstChild
 	}
@@ -471,7 +471,7 @@ func nextNode(n *html.Node) *html.Node {
 // for each of its classes and for its id, all put together. Names are compared
 // ignoring case, because a page without a doctype matches classes and ids that
 // way.
-func (h *styleRules) effectFor(n *html.Node) styleEffect {
+func (h *styleRules) effectFor(n *xhtml.Node) styleEffect {
 	e := h.elements[n.Data]
 	var class, id string
 	for _, a := range n.Attr {

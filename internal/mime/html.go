@@ -2,14 +2,15 @@ package mime
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/EmadMokhtar/email-mcp-go/internal/thirdparty/xhtml"
 	"github.com/microcosm-cc/bluemonday"
-	"golang.org/x/net/html"
 )
 
 // HTMLToText turns HTML mail into plain text for an agent to read.
@@ -82,28 +83,39 @@ func HTMLToText(markup string) (string, error) {
 	return CleanUntrusted(tidyLines(string(r.buf))), nil
 }
 
-// parseHTML checks that markup is not too complex (see checkHTMLComplexity) and
-// parses it. The error wraps ErrHTMLTooComplex. HTMLToText and VisibleHTML parse
-// in the same way, so they see the same document.
-func parseHTML(markup string) (*html.Node, error) {
-	if err := checkHTMLComplexity(markup); err != nil {
-		return nil, err
-	}
-	doc, err := parseHTMLUnchecked(markup)
+// ErrHTMLTooComplex means that HTML would make the parser build too many nodes,
+// so it was not parsed. HTMLToText and VisibleHTML return it, also for a
+// document that is nested too deep for the parser.
+//
+// The size of the input does not bound the work of the parser. The tree
+// builder keeps a list of the formatting elements (a, b, i, font and so on)
+// that it has not closed. For each piece of text it copies every element of
+// that list into the tree again ("reconstruct the active formatting
+// elements"). A few tens of kilobytes of input that opens hundreds of
+// formatting elements with different attributes, and then has many paragraphs,
+// make millions of nodes and gigabytes of memory. The parser that is used here
+// (internal/thirdparty/xhtml) counts the nodes that it makes and stops at the
+// limit, so the memory is bounded whatever the markup is.
+var ErrHTMLTooComplex = errors.New("mime: html too complex to convert")
+
+// maxHTMLNodes is the most nodes that the parser may make for one document. A
+// real mail has far fewer: a marketing mail of 4 MiB with tables, links and
+// inline styles has about 230,000. At this limit the parser uses about 75 MiB.
+const maxHTMLNodes = 1_000_000
+
+// parseHTML parses HTML mail with a limit on the nodes. The error wraps
+// ErrHTMLTooComplex, for a document with too many nodes and for one that is
+// nested more than 512 elements deep. HTMLToText and VisibleHTML parse in the
+// same way, so they see the same document.
+//
+// Scripting is off because a mail client does not run scripts. With it on, the
+// parser would treat the content of noscript as raw text.
+func parseHTML(markup string) (*xhtml.Node, error) {
+	doc, err := xhtml.ParseWithLimit(strings.NewReader(markup), maxHTMLNodes, xhtml.ParseOptionEnableScripting(false))
 	if err != nil {
-		// The parser refuses a document that is nested more than 512 elements
-		// deep. A string reader cannot fail.
 		return nil, fmt.Errorf("%w: %w", ErrHTMLTooComplex, err)
 	}
 	return doc, nil
-}
-
-// parseHTMLUnchecked parses HTML mail. Scripting is off because a mail client
-// does not run scripts. With it on, the parser would treat the content of
-// noscript as raw text. Use parseHTML, which also checks the markup. Tests of
-// the check use this function to see what the parser does.
-func parseHTMLUnchecked(markup string) (*html.Node, error) {
-	return html.ParseWithOptions(strings.NewReader(markup), html.ParseOptionEnableScripting(false))
 }
 
 // dropTags are removed together with everything inside them.
@@ -148,7 +160,7 @@ type visibility struct {
 
 // newVisibility reads the style rules of the document and returns the state
 // for the start of a walk.
-func newVisibility(doc *html.Node) visibility {
+func newVisibility(doc *xhtml.Node) visibility {
 	return visibility{
 		rules:  collectStyleRules(doc),
 		root:   initialFontSize,
@@ -185,7 +197,7 @@ func (v *visibility) state() inherited {
 // element is skipped with everything inside it: it is a dropped tag (see
 // dropTags), it has a hiding attribute, or a style hides it as a whole. When it
 // is shown, the effect of its styles is returned, for push.
-func (v *visibility) classify(n *html.Node) (effect styleEffect, shown bool) {
+func (v *visibility) classify(n *xhtml.Node) (effect styleEffect, shown bool) {
 	if dropTags[n.Data] || hasHiddenAttribute(n) {
 		return styleEffect{}, false
 	}
@@ -197,12 +209,12 @@ func (v *visibility) classify(n *html.Node) (effect styleEffect, shown bool) {
 }
 
 // push opens an element with the given effect and works out its properties.
-func (v *visibility) push(n *html.Node, e styleEffect) {
+func (v *visibility) push(n *xhtml.Node, e styleEffect) {
 	s := v.state()
 	s.invisible = e.invisible(s.invisible)
 	s.fontSize = e.size(s.fontSize, v.root)
 	// rem is relative to the html element. Its own size uses the default.
-	if n.Data == "html" && n.Parent != nil && n.Parent.Type == html.DocumentNode {
+	if n.Data == "html" && n.Parent != nil && n.Parent.Type == xhtml.DocumentNode {
 		v.root = s.fontSize
 	}
 	v.states = append(v.states, s)
@@ -213,7 +225,7 @@ func (v *visibility) pop() { v.states = v.states[:len(v.states)-1] }
 
 // linkMark remembers where the text of an open link starts.
 type linkMark struct {
-	node  *html.Node
+	node  *xhtml.Node
 	start int    // position in buf where the link text starts
 	url   string // the url to show after the link text
 }
@@ -221,7 +233,7 @@ type linkMark struct {
 // walk visits every node below root, in document order. It does not call
 // itself, so the depth of the document cannot exhaust the stack. (The parser
 // also refuses documents that are nested more than 512 elements deep.)
-func (r *textRenderer) walk(root *html.Node) {
+func (r *textRenderer) walk(root *xhtml.Node) {
 	n := root
 	for {
 		entered := r.enter(n)
@@ -246,16 +258,16 @@ func (r *textRenderer) walk(root *html.Node) {
 
 // enter starts a node. It returns false when the node must be skipped with
 // everything inside it. Then exit is not called for the node.
-func (r *textRenderer) enter(n *html.Node) bool {
+func (r *textRenderer) enter(n *xhtml.Node) bool {
 	switch n.Type {
-	case html.DocumentNode:
+	case xhtml.DocumentNode:
 		return true
-	case html.TextNode:
+	case xhtml.TextNode:
 		if !r.state().textHidden() {
 			r.text(CleanUntrusted(n.Data))
 		}
 		return false
-	case html.ElementNode:
+	case xhtml.ElementNode:
 		// Handled below.
 	default:
 		return false // comments, doctype and so on
@@ -299,8 +311,8 @@ func (r *textRenderer) enter(n *html.Node) bool {
 }
 
 // exit ends an element that enter returned true for.
-func (r *textRenderer) exit(n *html.Node) {
-	if n.Type != html.ElementNode {
+func (r *textRenderer) exit(n *xhtml.Node) {
+	if n.Type != xhtml.ElementNode {
 		return
 	}
 	tag := n.Data
@@ -324,7 +336,7 @@ func (r *textRenderer) exit(n *html.Node) {
 }
 
 // endLink writes the url after the text of a link.
-func (r *textRenderer) endLink(n *html.Node) {
+func (r *textRenderer) endLink(n *xhtml.Node) {
 	last := len(r.links) - 1
 	if last < 0 || r.links[last].node != n {
 		return // this link has no url to show
@@ -449,7 +461,7 @@ const maxShownURL = 2048
 // That includes spaces and round brackets. Without this, a sender could write
 // an href that ends the url early and goes on with a sentence that looks like
 // text of the mail. A url that is longer than maxShownURL is not shown.
-func linkURL(n *html.Node) string {
+func linkURL(n *xhtml.Node) string {
 	href, ok := attributeValue(n, "href")
 	if !ok {
 		return ""
@@ -508,7 +520,7 @@ func escapeURL(s string) string {
 }
 
 // attributeValue returns the value of an attribute of the element.
-func attributeValue(n *html.Node, key string) (string, bool) {
+func attributeValue(n *xhtml.Node, key string) (string, bool) {
 	for _, a := range n.Attr {
 		if a.Key == key {
 			return a.Val, true
@@ -522,7 +534,7 @@ func attributeValue(n *html.Node, key string) (string, bool) {
 // hasHiddenAttribute reports whether an attribute of the element hides it, with
 // everything inside: the hidden attribute, aria-hidden="true", and a dialog
 // that is not open. (A hiding style is read separately, see parseStyle.)
-func hasHiddenAttribute(n *html.Node) bool {
+func hasHiddenAttribute(n *xhtml.Node) bool {
 	hasOpen := false
 	for _, a := range n.Attr {
 		switch a.Key {

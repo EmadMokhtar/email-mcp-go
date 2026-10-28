@@ -2033,6 +2033,43 @@ func TestGetMessageHTMLThatMakesTheParserExplodeIsRefused(t *testing.T) {
 	require.Equal(t, "test", msg.Subject)
 }
 
+// tableAmplifyingHTML opens k formatting elements in a table. The HTML parser
+// puts them out of the table and keeps them in its list, so it copies them for
+// each of the m paragraphs after the table.
+func tableAmplifyingHTML(k, m int) string {
+	var b strings.Builder
+	b.WriteString("<table>")
+	for i := 0; i < k; i++ {
+		fmt.Fprintf(&b, "<b x=%d>", i)
+	}
+	b.WriteString("</table>")
+	for i := 0; i < m; i++ {
+		b.WriteString("<p>y")
+	}
+	return b.String()
+}
+
+func TestGetMessageHTMLThatTheParserCopiesFromATableIsRefused(t *testing.T) {
+	// 41 KB make 2 million nodes, and 1.1 MiB make 138 million, if the parser has
+	// no limit.
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	refs := appendRefs(t, srv, b, "INBOX",
+		textMail("html", "utf-8", "", tableAmplifyingHTML(200, 10_000)),
+		textMail("html", "utf-8", "", tableAmplifyingHTML(500, 276_001)))
+
+	started := time.Now()
+	for _, ref := range refs {
+		for _, format := range []mail.BodyFormat{mail.BodyText, mail.BodyHTML} {
+			msg, err := b.GetMessage(t.Context(), ref, mail.BodyOptions{Format: format})
+			require.ErrorIs(t, err, mail.ErrTooLarge, format)
+			require.ErrorIs(t, err, mime.ErrHTMLTooComplex, format)
+			require.Nil(t, msg)
+		}
+	}
+	require.Less(t, time.Since(started), 5*time.Second)
+}
+
 func TestGetMessageComplexHTMLWithAPlainAlternative(t *testing.T) {
 	srv := imaptest.New(t)
 	b := newTestBackend(t, srv)

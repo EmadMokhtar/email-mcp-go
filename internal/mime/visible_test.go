@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/EmadMokhtar/email-mcp-go/internal/thirdparty/xhtml"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/net/html"
 )
 
 // markupTags matches a tag. Tests use it to get the text out of the markup.
@@ -140,9 +140,9 @@ func TestVisibleHTMLIsSanitized(t *testing.T) {
 // markup.
 func keysOfAttributes(markup string) []string {
 	var keys []string
-	z := html.NewTokenizer(strings.NewReader(markup))
-	for tt := z.Next(); tt != html.ErrorToken; tt = z.Next() {
-		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
+	z := xhtml.NewTokenizer(strings.NewReader(markup))
+	for tt := z.Next(); tt != xhtml.ErrorToken; tt = z.Next() {
+		if tt != xhtml.StartTagToken && tt != xhtml.SelfClosingTagToken {
 			continue
 		}
 		for {
@@ -182,7 +182,7 @@ func TestVisibleHTMLRemovesEveryAttributeButHref(t *testing.T) {
 	}
 }
 
-// html.Render writes the text of a textarea in the MathML namespace as markup,
+// xhtml.Render writes the text of a textarea in the MathML namespace as markup,
 // and the sanitizer reads it as text. The attributes of the elements inside
 // would then come out as text that a reader sees.
 func TestVisibleHTMLRemovesTextareaInForeignContent(t *testing.T) {
@@ -201,7 +201,7 @@ func TestVisibleHTMLRemovesTextareaInForeignContent(t *testing.T) {
 	require.NotContains(t, out, "TITLE")
 }
 
-// html.Render writes the text of noscript, xmp and plaintext as it is. A text
+// xhtml.Render writes the text of noscript, xmp and plaintext as it is. A text
 // that holds escaped markup must not come out as markup.
 func TestVisibleHTMLRawTextElementsDoNotTurnTextIntoMarkup(t *testing.T) {
 	inputs := []string{
