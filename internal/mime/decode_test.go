@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
@@ -999,4 +1000,132 @@ func TestParseRecoversDamagedFilenames(t *testing.T) {
 			require.Equal(t, tc.want, p.Attachments[0].Filename)
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix round 2
+
+// A part header that runs into a boundary line ends there. The next part must
+// not be read as a part of this header.
+func TestParsePartHeaderStopsAtABoundary(t *testing.T) {
+	t.Run("text header then html part", func(t *testing.T) {
+		raw := msg("Content-Type: multipart/alternative; boundary=b", "",
+			"--b", "Content-Type: text/plain",
+			"--b", "Content-Type: text/html", "", "<p>real html</p>",
+			"--b--")
+		p, err := ParseMessage(strings.NewReader(raw), 0)
+		require.NoError(t, err)
+		require.Equal(t, "<p>real html</p>", p.HTML)
+		require.Empty(t, p.Text)
+		require.Empty(t, p.Attachments)
+	})
+	t.Run("attachment header then text part", func(t *testing.T) {
+		raw := msg("Content-Type: multipart/mixed; boundary=b", "",
+			"--b", "Content-Type: image/png", "Content-Disposition: attachment; filename=x.png",
+			"--b", "Content-Type: text/plain", "", "real text",
+			"--b--")
+		p, err := ParseMessage(strings.NewReader(raw), 0)
+		require.NoError(t, err)
+		require.Equal(t, "real text", p.Text)
+		require.Equal(t, []mail.AttachmentInfo{
+			{ID: "1", Filename: "x.png", ContentType: "image/png", Size: 0},
+		}, p.Attachments)
+	})
+	t.Run("base64 header then plain part", func(t *testing.T) {
+		// The next part is not base64. Its text must stay as it is.
+		raw := msg("Content-Type: multipart/mixed; boundary=b", "",
+			"--b", "Content-Type: text/plain", "Content-Transfer-Encoding: base64",
+			"--b", "Content-Type: text/plain", "", "aGlkZGVu",
+			"--b--")
+		p, err := ParseMessage(strings.NewReader(raw), 0)
+		require.NoError(t, err)
+		require.Equal(t, "aGlkZGVu", p.Text)
+	})
+	t.Run("boundary right after a boundary keeps the numbers", func(t *testing.T) {
+		raw := msg("Content-Type: multipart/mixed; boundary=b", "",
+			"--b",
+			"--b", "Content-Type: image/png", "", "xyz",
+			"--b", "Content-Type: image/gif", "", "abcd",
+			"--b--")
+		p, err := ParseMessage(strings.NewReader(raw), 0)
+		require.NoError(t, err)
+		require.Equal(t, []mail.AttachmentInfo{
+			{ID: "2", ContentType: "image/png", Size: 3},
+			{ID: "3", ContentType: "image/gif", Size: 4},
+		}, p.Attachments)
+	})
+	t.Run("header ends at the closing boundary", func(t *testing.T) {
+		raw := msg("Content-Type: multipart/mixed; boundary=b", "",
+			"--b", "Content-Type: text/plain", "", "text",
+			"--b", "Content-Type: image/png",
+			"--b--",
+			"--b", "Content-Type: image/gif", "", "not a part")
+		p, err := ParseMessage(strings.NewReader(raw), 0)
+		require.NoError(t, err)
+		require.Equal(t, "text", p.Text)
+		require.Equal(t, []mail.AttachmentInfo{
+			{ID: "2", ContentType: "image/png", Size: 0},
+		}, p.Attachments)
+	})
+	t.Run("nested multipart", func(t *testing.T) {
+		raw := msg("Content-Type: multipart/mixed; boundary=a", "",
+			"--a", "Content-Type: multipart/alternative; boundary=b", "",
+			"--b", "Content-Type: text/plain",
+			"--b", "Content-Type: text/html", "", "<p>x</p>",
+			"--b--",
+			"--a", "Content-Type: image/png", "", "xyz",
+			"--a--")
+		p, err := ParseMessage(strings.NewReader(raw), 0)
+		require.NoError(t, err)
+		require.Equal(t, "<p>x</p>", p.HTML)
+		require.Equal(t, []mail.AttachmentInfo{{ID: "2", ContentType: "image/png", Size: 3}}, p.Attachments)
+	})
+}
+
+// A part that has no text is not the text of the message: a later part can be.
+func TestParseEmptyTextPartDoesNotTakeThePlace(t *testing.T) {
+	raw := msg("Content-Type: multipart/alternative; boundary=b", "",
+		"--b", "Content-Type: text/plain", "",
+		"--b", "Content-Type: text/plain", "", "the text",
+		"--b", "Content-Type: text/html", "",
+		"--b", "Content-Type: text/html", "", "<p>the html</p>",
+		"--b--")
+	p, err := ParseMessage(strings.NewReader(raw), 0)
+	require.NoError(t, err)
+	require.Equal(t, "the text", p.Text)
+	require.Equal(t, "<p>the html</p>", p.HTML)
+	require.Empty(t, p.Attachments)
+}
+
+// nestedBoundaries builds a message with depth multipart levels. The body of
+// the innermost part is inner.
+func nestedBoundaries(depth int, inner string) string {
+	var b strings.Builder
+	b.WriteString("Content-Type: multipart/mixed; boundary=b0\r\n\r\n")
+	for i := 0; i < depth; i++ {
+		fmt.Fprintf(&b, "--b%d\r\nContent-Type: multipart/mixed; boundary=b%d\r\n\r\n", i, i+1)
+	}
+	fmt.Fprintf(&b, "--b%d\r\nContent-Type: application/octet-stream\r\n\r\n", depth)
+	b.WriteString(inner)
+	return b.String()
+}
+
+// Every level of nesting passes the body up. The time must grow with the size
+// of the body and the depth, not with the number of lines. This is a time
+// test, so it is skipped with -short and with the race detector.
+// TestMultipartReaderMovesBodiesInLargeChunks tests the same without a clock.
+func TestParseDeeplyNestedBodyOfLineEndingsIsFast(t *testing.T) {
+	if testing.Short() || raceEnabled {
+		t.Skip("time test")
+	}
+	raw := nestedBoundaries(maxDepth-1, strings.Repeat("\n", 25<<20))
+	start := time.Now()
+	p, recovered, err := parseMessage(strings.NewReader(raw), 0)
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	require.Nil(t, recovered)
+	require.Len(t, p.Attachments, 1)
+	require.Equal(t, int64(25<<20), p.Attachments[0].Size)
+	// About 0.3 s on a laptop. Before the fix, this took 38 s.
+	require.Less(t, elapsed, 3*time.Second)
 }

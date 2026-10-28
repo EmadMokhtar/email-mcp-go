@@ -132,6 +132,8 @@ func FuzzDecodeMessage(f *testing.F) {
 		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: image/png; name*=iso-8859-1''caf%E9; name*0=\"a;\r\n\r\nx\r\n--b--",
 		"Content-Type: text/plain\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" + strings.Repeat("a=3D", 3000) + "=\r\n=zz=",
 		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n" + strings.Repeat("X: y\r\n", 12000) + "\r\nx\r\n--b--",
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n--b\r\n--b\r\nContent-Type: text/html\r\n\r\n<p>x</p>\r\n--b--\r\n--b\r\n",
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n\r\n" + strings.Repeat("\n", 40000) + "\r\n--b\r\n\r\nx",
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s), 0)
@@ -178,5 +180,30 @@ func FuzzDecodeText(f *testing.F) {
 
 		hdr := DecodeHeaderValue(string(body))
 		require.True(t, utf8.ValidString(hdr), "DecodeHeaderValue must return valid UTF-8")
+	})
+}
+
+// FuzzMultipartReader checks the multipart reader against the slow, simple
+// version in the tests, with the input delivered in different ways.
+func FuzzMultipartReader(f *testing.F) {
+	seeds := []string{
+		"--b\r\n\r\none\r\n--b\r\n\r\ntwo\r\n--b--\r\n",
+		"--b\n\none\n--b\n\ntwo\n--b--",
+		"x\r\n--b \t\r\n\r\n--bx\r\n--b-\r\n--b--x\r\n x--b\r\n--b\r\n--b\r\n\r\n\r\n--b--",
+		"--b\r\nX: y\r\n--b\r\n\r\none\r",
+		"--b\r\n\r\n" + strings.Repeat("a", multipartBufSize-2) + "\r\n--b--",
+		"--b\r\n\r\n" + strings.Repeat("a", multipartBufSize-1) + "\r\n--b\r\n",
+	}
+	for _, s := range seeds {
+		for mode := byte(0); mode < 4; mode++ {
+			f.Add([]byte(s), mode)
+		}
+	}
+	names := []string{"whole", "one byte", "half", "data and eof"}
+	f.Fuzz(func(t *testing.T, in []byte, mode byte) {
+		raw := string(in)
+		got := splitPartsFrom(t, readers[names[int(mode)%len(names)]](raw), "b")
+		want := referenceSplit(raw, "b")
+		require.Equal(t, want, got)
 	})
 }

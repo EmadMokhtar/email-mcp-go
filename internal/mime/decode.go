@@ -41,6 +41,9 @@ const (
 	maxHeaderBytes = 1 << 20
 	// maxHeaderFields is the most fields in one header block.
 	maxHeaderFields = 10000
+	// maxBoundary is the longest multipart boundary that is used. RFC 2046
+	// allows 70 characters.
+	maxBoundary = 200
 	// qpBufSize is the longest line of quoted-printable text that is decoded.
 	// The text is cut at a longer line.
 	qpBufSize = 256 << 10
@@ -278,7 +281,7 @@ func (w *walker) run(src io.Reader) {
 	br := bufio.NewReader(src)
 	// If the header is too big, the fields read so far are used and the rest
 	// is taken as the body.
-	h, _ := readHeader(newLineReader(br))
+	h, _ := readHeader(newLineReader(br), nil)
 	w.part(h, br, "", 0)
 }
 
@@ -298,7 +301,7 @@ func (w *walker) part(h textproto.Header, body io.Reader, id string, depth int) 
 }
 
 func (w *walker) multipart(boundary string, body io.Reader, id string, depth int) bool {
-	if depth >= maxDepth || boundary == "" {
+	if depth >= maxDepth || boundary == "" || len(boundary) > maxBoundary {
 		return true
 	}
 	mr := newMultipartReader(body, boundary)
@@ -337,12 +340,10 @@ func (w *walker) leaf(h textproto.Header, mediaType string, params map[string]st
 	if disposition != "attachment" {
 		switch {
 		case mediaType == "text/plain" && !w.hasText:
-			w.hasText = true
-			w.out.Text, _ = decodeText(mediaType, params, encoding, body, w.maxText)
+			w.out.Text, w.hasText = w.bodyText(mediaType, params, encoding, body)
 			return
 		case mediaType == "text/html" && !w.hasHTML:
-			w.hasHTML = true
-			w.out.HTML, _ = decodeText(mediaType, params, encoding, body, w.maxText)
+			w.out.HTML, w.hasHTML = w.bodyText(mediaType, params, encoding, body)
 			return
 		}
 	}
@@ -359,6 +360,13 @@ func (w *walker) leaf(h textproto.Header, mediaType string, params map[string]st
 	}
 	// Any other part is a second text or HTML alternative, or a text part
 	// without a name. It is not used.
+}
+
+// bodyText decodes a part that may be the text or the HTML of the message.
+// A part with no text does not take that place, so ok is false for it.
+func (w *walker) bodyText(mediaType string, params map[string]string, encoding string, body io.Reader) (text string, ok bool) {
+	text, _ = decodeText(mediaType, params, encoding, body, w.maxText)
+	return text, text != ""
 }
 
 // filenameOf returns the decoded file name of a part, or an empty string.
