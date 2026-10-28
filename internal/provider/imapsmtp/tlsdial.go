@@ -12,6 +12,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -26,8 +27,12 @@ import (
 // Callers must offer "trust this certificate" only when Pinned is false and
 // the error chain holds an x509.UnknownAuthorityError (use errors.As). Never
 // offer it for a wrong pin (the certificate changed, which can be an attack),
-// for a host name that does not match (x509.HostnameError), or for an expired
-// or otherwise invalid certificate (x509.CertificateInvalidError).
+// for a host name that does not match (x509.HostnameError), or for a
+// certificate that has expired or is not valid yet (x509.CertificateInvalidError
+// with the reason x509.Expired).
+//
+// The name and the time are checked before the chain, on every platform. So
+// an unknown authority means that the name matches and the time is valid.
 type CertificateUnknownError struct {
 	// Host is the server name the client connected to.
 	Host string
@@ -240,6 +245,17 @@ func verifyCertificate(cfg Config, host string) func(tls.ConnectionState) error 
 			return nil
 		}
 
+		// Check the name and the time before the chain. The system verifier of
+		// macOS and Windows reports "unknown authority" for every self-signed
+		// certificate, also when the name is wrong or the certificate has
+		// expired. These checks give the same reason on every platform.
+		if err := leaf.VerifyHostname(host); err != nil {
+			return &CertificateUnknownError{Host: host, FingerprintSHA256: fingerprint, Reason: err}
+		}
+		if err := checkValidTime(leaf, time.Now()); err != nil {
+			return &CertificateUnknownError{Host: host, FingerprintSHA256: fingerprint, Reason: err}
+		}
+
 		intermediates := x509.NewCertPool()
 		for _, cert := range state.PeerCertificates[1:] {
 			intermediates.AddCert(cert)
@@ -254,6 +270,27 @@ func verifyCertificate(cfg Config, host string) func(tls.ConnectionState) error 
 		}
 		return nil
 	}
+}
+
+// checkValidTime returns an x509.CertificateInvalidError with the reason
+// x509.Expired when now is outside the validity time of cert. That reason
+// covers a certificate that has expired and one that is not valid yet.
+func checkValidTime(cert *x509.Certificate, now time.Time) error {
+	switch {
+	case now.Before(cert.NotBefore):
+		return x509.CertificateInvalidError{
+			Cert:   cert,
+			Reason: x509.Expired,
+			Detail: fmt.Sprintf("current time %s is before %s", now.Format(time.RFC3339), cert.NotBefore.Format(time.RFC3339)),
+		}
+	case now.After(cert.NotAfter):
+		return x509.CertificateInvalidError{
+			Cert:   cert,
+			Reason: x509.Expired,
+			Detail: fmt.Sprintf("current time %s is after %s", now.Format(time.RFC3339), cert.NotAfter.Format(time.RFC3339)),
+		}
+	}
+	return nil
 }
 
 // isLoopbackAddr reports whether a is a TCP address on the loopback network.

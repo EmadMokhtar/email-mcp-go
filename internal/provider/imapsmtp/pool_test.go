@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -594,4 +595,51 @@ func TestPoolRepeatsPanicOfCall(t *testing.T) {
 	// The slot and the connection are not lost.
 	require.NoError(t, p.with(t.Context(), noop))
 	require.NoError(t, p.with(t.Context(), noop))
+}
+
+// failRecorder stands in for *testing.T in a require call. It works like
+// T.FailNow: it records the failure and ends the goroutine with Goexit. The
+// real T would fail the parent test, and this test needs to see the effect
+// without that.
+type failRecorder struct{ failed atomic.Bool }
+
+func (r *failRecorder) Errorf(string, ...interface{}) { r.failed.Store(true) }
+func (r *failRecorder) FailNow()                      { r.failed.Store(true); runtime.Goexit() }
+
+// A failing require inside fn ends the goroutine of fn with runtime.Goexit.
+// The call of with must then end the same way, at once: the test behaves as
+// if fn had run in the goroutine of the test. It must not wait for the
+// command timeout.
+func TestPoolRepeatsGoexitOfCall(t *testing.T) {
+	srv := imaptest.New(t)
+	cfg := pinnedConfig(srv, account.SecurityTLS)
+	cfg.PoolSize = 1
+	cfg.CommandTimeout = 5 * time.Second
+	p := newTestPool(t, cfg)
+	rec := &failRecorder{}
+
+	var returned atomic.Bool
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		_ = p.with(t.Context(), func(*imapclient.Client) error {
+			require.True(rec, false, "an assertion that fails inside fn")
+			return nil
+		})
+		returned.Store(true) // not reached after Goexit
+	}()
+
+	select {
+	case <-exited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("with waited for the command timeout after a Goexit in fn")
+	}
+	require.True(t, rec.failed.Load())
+	require.False(t, returned.Load(), "with must end the goroutine of its caller, as fn would have")
+
+	// The slot is free again (the pool size is 1), on a new connection, and the
+	// connection of the call that ended is closed.
+	require.NoError(t, p.with(t.Context(), noop))
+	require.Equal(t, 2, srv.TotalConns())
+	require.Eventually(t, func() bool { return srv.OpenConns() == 1 }, 5*time.Second, 10*time.Millisecond)
 }

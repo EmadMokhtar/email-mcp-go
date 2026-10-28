@@ -2,10 +2,16 @@ package imapsmtp
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
+	"math/big"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -219,4 +225,110 @@ func TestLoginErrorWithoutResponseCode(t *testing.T) {
 	_, err := dialIMAP(t.Context(), fake.plainConfig())
 
 	require.EqualError(t, err, "imap: login failed")
+}
+
+// startHandshakeServer starts a TLS server that shows a self-signed
+// certificate valid between notBefore and notAfter for 127.0.0.1, and only
+// does the TLS handshake. A dial fails at the handshake, so no IMAP is
+// needed. It returns the server address.
+func startHandshakeServer(t *testing.T, notBefore, notAfter time.Time) (host string, port int) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(7),
+		Subject:               pkix.Name{CommonName: "127.0.0.1"},
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IPAddresses:           []net.IP{net.IPv4(127, 0, 0, 1)},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}},
+		MinVersion:   tls.VersionTLS12,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				// The client stops the handshake, so an error is expected.
+				_ = conn.(*tls.Conn).Handshake()
+				_ = conn.Close()
+			}()
+		}
+	}()
+
+	host, portText, err := net.SplitHostPort(ln.Addr().String())
+	require.NoError(t, err)
+	port, err = strconv.Atoi(portText)
+	require.NoError(t, err)
+	return host, port
+}
+
+// With no RootCAs, the system verifier runs. On macOS and Windows it reports
+// "unknown authority" for any self-signed certificate, also when the name is
+// wrong or the certificate is expired. The reason must not depend on the
+// platform: only a certificate with the right name and a valid time may look
+// like an unknown authority, because only then may the UI offer to trust it.
+func TestDialCertificateReasonDoesNotDependOnPlatform(t *testing.T) {
+	now := time.Now()
+
+	t.Run("right name, valid time", func(t *testing.T) {
+		host, port := startHandshakeServer(t, now.Add(-time.Hour), now.Add(time.Hour))
+		cfg := baseConfig()
+		cfg.Server.IMAPHost, cfg.Server.IMAPPort, cfg.Server.IMAPSecurity = host, port, account.SecurityTLS
+
+		_, err := dialIMAP(t.Context(), cfg)
+
+		var certErr *CertificateUnknownError
+		require.ErrorAs(t, err, &certErr)
+		require.False(t, certErr.Pinned)
+		var unknownAuthority x509.UnknownAuthorityError
+		require.ErrorAs(t, err, &unknownAuthority, "the one case where the UI may offer trust")
+	})
+
+	t.Run("wrong name", func(t *testing.T) {
+		srv := imaptest.New(t)
+		cfg := testConfig(srv, account.SecurityTLS)
+		cfg.Server.IMAPHost = "localhost" // the certificate is for 127.0.0.1 only
+
+		_, err := dialIMAP(t.Context(), cfg)
+
+		var hostnameErr x509.HostnameError
+		require.ErrorAs(t, err, &hostnameErr)
+		var unknownAuthority x509.UnknownAuthorityError
+		require.False(t, errors.As(err, &unknownAuthority), "a wrong name must not look like an unknown authority")
+	})
+
+	for name, window := range map[string][2]time.Time{
+		"expired":       {now.Add(-48 * time.Hour), now.Add(-time.Hour)},
+		"not valid yet": {now.Add(time.Hour), now.Add(48 * time.Hour)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			host, port := startHandshakeServer(t, window[0], window[1])
+			cfg := baseConfig()
+			cfg.Server.IMAPHost, cfg.Server.IMAPPort, cfg.Server.IMAPSecurity = host, port, account.SecurityTLS
+
+			_, err := dialIMAP(t.Context(), cfg)
+
+			var certErr *CertificateUnknownError
+			require.ErrorAs(t, err, &certErr)
+			require.False(t, certErr.Pinned)
+			var invalid x509.CertificateInvalidError
+			require.ErrorAs(t, err, &invalid)
+			require.Equal(t, x509.Expired, invalid.Reason)
+			var unknownAuthority x509.UnknownAuthorityError
+			require.False(t, errors.As(err, &unknownAuthority), "an invalid time must not look like an unknown authority")
+		})
+	}
 }

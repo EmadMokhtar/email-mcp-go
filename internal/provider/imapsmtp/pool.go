@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"runtime"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -95,19 +96,24 @@ func newPool(cfg Config) *pool {
 //
 // fn must Wait or Close every command it starts before it returns (for
 // example, defer cmd.Close() for a FETCH). imapclient stops reading the
-// connection while a FETCH body is unread, so a command that is left open
-// blocks every later command on that connection. with does not hang on such a
-// connection: it closes it when the command timeout passes. But the call that
-// forgot to close the command is the one that loses its connection.
+// connection while a FETCH body is unread. If fn returns with such a command
+// still open, that call returns normally, and its connection goes back to the
+// idle list. The NEXT call that takes this connection then waits for
+// CommandTimeout (and a short grace time), fails with
+// context.DeadlineExceeded, and the pool closes the connection. So a mistake in
+// one call shows up as the failure of a different call, and with cannot see
+// it earlier.
 //
 // fn must not keep the client after it returns. The mailbox that fn selected
 // can still be selected on the next call, so every fn must select what it
 // needs.
 //
-// fn runs in its own goroutine, and with returns the panic of fn to its
-// caller. with ends the call when ctx ends, or when fn runs longer than
-// CommandTimeout. In both cases it closes the connection so that fn stops,
-// and it does not retry. The error then wraps ctx's error, or
+// fn runs in its own goroutine. When fn panics, or ends its goroutine with
+// runtime.Goexit (a failing require in a test does this), with closes the
+// connection, releases the slot, and does the same in the goroutine of its
+// caller, as if fn had run there. with ends the call when ctx ends, or when fn
+// runs longer than CommandTimeout. In both cases it closes the connection so
+// that fn stops, and it does not retry. The error then wraps ctx's error, or
 // context.DeadlineExceeded for the timeout.
 func (p *pool) with(ctx context.Context, fn func(c *imapclient.Client) error) error {
 	return p.do(ctx, fn, true)
@@ -163,6 +169,24 @@ type callOutcome struct {
 	err      error
 	panicked bool
 	panicVal any
+	// goexit is true when fn ended its goroutine with runtime.Goexit.
+	goexit bool
+}
+
+// repeatAbnormalEnd does, in the goroutine of the caller of with, what ended
+// fn when it did not return: a panic or runtime.Goexit. The connection is
+// closed first, because nobody knows what state fn left it in. The deferred
+// calls of with and run still run, so the slot is released. It does nothing
+// when fn returned.
+func (pc *pooledConn) repeatAbnormalEnd(out callOutcome) {
+	switch {
+	case out.panicked:
+		pc.forceClose()
+		panic(out.panicVal)
+	case out.goexit:
+		pc.forceClose()
+		runtime.Goexit()
+	}
 }
 
 // run calls fn on pc, in its own goroutine, and waits for it. When ctx ends or
@@ -179,12 +203,18 @@ func (p *pool) run(ctx context.Context, pc *pooledConn, fn func(c *imapclient.Cl
 	// stopped waiting does not block forever.
 	done := make(chan callOutcome, 1)
 	go func() {
+		returned := false
 		defer func() {
 			if v := recover(); v != nil {
 				done <- callOutcome{panicked: true, panicVal: fmt.Sprintf("%v\n%s", v, debug.Stack())}
+			} else if !returned {
+				// No panic and no return: fn called runtime.Goexit.
+				done <- callOutcome{goexit: true}
 			}
 		}()
-		done <- callOutcome{err: fn(pc.client)}
+		err := fn(pc.client)
+		returned = true
+		done <- callOutcome{err: err}
 	}()
 
 	select {
@@ -200,9 +230,7 @@ func (p *pool) run(ctx context.Context, pc *pooledConn, fn func(c *imapclient.Cl
 	defer timer.Stop()
 	select {
 	case out := <-done:
-		if out.panicked {
-			panic(out.panicVal)
-		}
+		pc.repeatAbnormalEnd(out)
 		if out.err == nil {
 			// The call finished just as time ran out. Its result is valid.
 			return runResult{}
@@ -217,11 +245,9 @@ func (p *pool) run(ctx context.Context, pc *pooledConn, fn func(c *imapclient.Cl
 
 // classify turns the outcome of a call that ended by itself into a result.
 func (p *pool) classify(pc *pooledConn, out callOutcome) runResult {
-	if out.panicked {
-		pc.forceClose()
-		// A panic of fn goes on to the caller of with, as in a normal call.
-		panic(out.panicVal)
-	}
+	// A panic or a Goexit of fn goes on to the caller of with, as in a normal
+	// call.
+	pc.repeatAbnormalEnd(out)
 	failed := connectionFailed(pc, out.err)
 	return runResult{
 		err:              out.err,
