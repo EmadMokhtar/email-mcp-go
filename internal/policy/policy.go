@@ -112,11 +112,14 @@ type Decision struct {
 // highest level that the token scopes allow. The action is allowed when that
 // level is at least the level that the action needs.
 //
+// An account mail level outside 0 to 5 (for example a damaged stored value of 9
+// or -1) counts as Off. It must never act as a higher level, so it fails closed.
+//
 // For an allowed send, NeedsConfirmation is the account's ConfirmSends. For an
 // allowed move to Trash, it is the account's ConfirmDeletes. No other action
 // needs confirmation here.
 func Decide(a *account.Account, act Action, scopes Scopes) Decision {
-	current := min(a.Level(account.AreaMail), maxScopeLevel(scopes))
+	current := min(validMailLevel(a.Level(account.AreaMail)), maxScopeLevel(scopes))
 	required := RequiredMailLevel(act)
 	info, known := actions[act]
 
@@ -144,6 +147,15 @@ func Decide(a *account.Account, act Action, scopes Scopes) Decision {
 		d.NeedsConfirmation = a.ConfirmDeletes
 	}
 	return d
+}
+
+// validMailLevel returns level if it is one of the mail levels 0 to 5. Any other
+// value is not a level that policy knows, so it returns Off.
+func validMailLevel(level account.Level) account.Level {
+	if level < account.MailOff || level > account.MailDelete {
+		return account.MailOff
+	}
+	return level
 }
 
 // accountLabel returns the name that the agent sees for an account: the display

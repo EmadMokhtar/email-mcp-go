@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
@@ -39,15 +40,16 @@ type CounterCheck struct {
 // that have a window start before pruneBefore. A zero pruneBefore deletes
 // nothing. The deletion also happens when the reserve is refused.
 //
-// n must be at least 1, so a counter never goes down. checks must not be empty,
-// and it must not name the same counter twice. It fails if the tenant has no
-// account with this id.
+// n must be at least 1, so a counter never goes down, and at most
+// math.MaxInt32, so a sum can never wrap around. checks must not be empty, and
+// it must not name the same counter twice. It fails if the tenant has no account
+// with this id.
 func (s *Store) ReserveCounters(ctx context.Context, tenant account.TenantID, acct account.AccountID, checks []CounterCheck, n int, pruneBefore time.Time) ([]int, error) {
 	if err := validateAccountIDs(tenant, acct); err != nil {
 		return nil, err
 	}
-	if n < 1 {
-		return nil, errors.New("store: reserve counters: count must be at least 1")
+	if n < 1 || n > math.MaxInt32 {
+		return nil, errors.New("store: reserve counters: count must be from 1 to 2147483647")
 	}
 	if err := validateChecks(checks); err != nil {
 		return nil, err
@@ -78,7 +80,7 @@ func (s *Store) ReserveCounters(ctx context.Context, tenant account.TenantID, ac
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("store: reserve counters: %w", err)
 		}
-		if current+n > c.Limit {
+		if exceedsLimit(current, n, c.Limit) {
 			full = append(full, i)
 		}
 	}
@@ -99,6 +101,18 @@ func (s *Store) ReserveCounters(ctx context.Context, tenant account.TenantID, ac
 		return nil, fmt.Errorf("store: reserve counters: %w", err)
 	}
 	return full, nil
+}
+
+// exceedsLimit reports whether current+n is more than limit. It does not add the
+// two numbers, because the sum can wrap around in int. n is at least 1.
+//
+// A current total above the limit (for example after the limit was lowered) is
+// over the limit for any n.
+func exceedsLimit(current, n, limit int) bool {
+	if current > limit {
+		return true
+	}
+	return n > limit-current
 }
 
 // validateChecks rejects an empty list and a list that names one counter twice.

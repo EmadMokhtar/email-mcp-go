@@ -12,6 +12,11 @@
 -- request, for example the whole message. The preview holds recipients, a
 -- subject and the start of the body, so it is secret too.
 --
+-- An action that has ended (state "done", "rejected" or "expired") does not
+-- need its payload or preview any more, and they must not stay on disk. The
+-- statement that ends the action sets both to NULL. This is why both columns
+-- can be NULL. A waiting or approved action always has both.
+--
 -- state is "pending", "approved", "rejected", "expired" or "done". The confirm
 -- package owns these names. result_id is empty until the action has a result.
 -- Deleting an account deletes its pending actions.
@@ -25,9 +30,9 @@ CREATE TABLE pending_actions (
     created_at          INTEGER NOT NULL,
     expires_at          INTEGER NOT NULL,
     result_id           TEXT    NOT NULL DEFAULT '',
-    payload             BLOB    NOT NULL,
+    payload             BLOB,
     payload_key_version INTEGER NOT NULL,
-    preview             BLOB    NOT NULL,
+    preview             BLOB,
     preview_key_version INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, id),
     FOREIGN KEY (tenant_id, account_id) REFERENCES accounts (tenant_id, id) ON DELETE CASCADE

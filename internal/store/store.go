@@ -22,7 +22,7 @@ import (
 	"time"
 
 	// The driver is pure Go, so the program builds with CGO_ENABLED=0.
-	"modernc.org/sqlite"
+	_ "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
@@ -103,7 +103,7 @@ const (
 func connect(ctx context.Context, db *sql.DB) error {
 	var err error
 	for attempt := 0; attempt < connectAttempts; attempt++ {
-		if err = db.PingContext(ctx); err == nil || !isBusy(err) {
+		if err = db.PingContext(ctx); err == nil || !IsBusy(err) {
 			return err
 		}
 		select {
@@ -115,11 +115,21 @@ func connect(ctx context.Context, db *sql.DB) error {
 	return err
 }
 
-// isBusy reports whether err is the SQLite "database is locked" error. SQLite
-// has several extended codes for it. The low 8 bits are the main code.
-func isBusy(err error) bool {
-	var sqliteErr *sqlite.Error
-	return errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqlite3.SQLITE_BUSY
+// IsBusy reports whether err says that SQLite could not get a lock: "database is
+// locked" (SQLITE_BUSY, with its extended codes) or "database table is locked"
+// (SQLITE_LOCKED). The statement did not run, so a caller may try it again after
+// a short wait. SQLite has several extended codes for each. The low 8 bits are
+// the main code.
+//
+// It looks for any error in the chain that has a Code method, as the error of the
+// SQLite driver has. Every database error of this package wraps that error.
+func IsBusy(err error) bool {
+	var coded interface{ Code() int }
+	if !errors.As(err, &coded) {
+		return false
+	}
+	code := coded.Code() & 0xff
+	return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED
 }
 
 // Close closes the database.
@@ -169,6 +179,11 @@ func createPrivateFile(path string) error {
 //   - journal_mode(WAL): readers do not block the writer.
 //   - busy_timeout(5000): wait up to 5 seconds for a lock, then fail.
 //   - foreign_keys(1): SQLite does not check foreign keys unless this is set.
+//   - secure_delete(1): SQLite overwrites deleted content with zeros. A cleared
+//     message body then does not stay in a free page of the file.
+//   - synchronous(FULL): SQLite flushes the write-ahead log to disk at every
+//     commit. This is the default, and it is set here on purpose: sending a
+//     message exactly once, also after a power loss, depends on it.
 //   - _txlock=immediate: a transaction takes the write lock when it starts. A
 //     transaction that reads first and writes later could fail at once with
 //     "database is locked", and the busy timeout would not help.
@@ -184,7 +199,10 @@ func newDB(path string) (*sql.DB, error) {
 		uriPath = "/" + uriPath
 	}
 	query := url.Values{
-		"_pragma": {"journal_mode(WAL)", "busy_timeout(5000)", "foreign_keys(1)"},
+		"_pragma": {
+			"journal_mode(WAL)", "busy_timeout(5000)", "foreign_keys(1)",
+			"secure_delete(1)", "synchronous(FULL)",
+		},
 		"_txlock": {"immediate"},
 	}
 	dsn := url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}

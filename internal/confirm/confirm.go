@@ -16,6 +16,10 @@
 //     action to "approved", once. The server acts on the payload and then moves
 //     the action to "done".
 //
+// An action that has ended (done, rejected or expired) keeps no secret. The
+// statement that ends it deletes the encrypted payload and the encrypted
+// preview. Prune deletes old rows that have ended.
+//
 // Claim proves four things: the payload is exactly the payload that was stored
 // (a change of one byte changes the hash), the request is for this tenant, it is
 // in time, and it happens once (two callers cannot both use one confirmation).
@@ -107,8 +111,10 @@ var (
 	ErrNotFound = errors.New("confirm: pending action not found")
 
 	// ErrCorrupted means that the stored data of an action does not match the
-	// hash of the action. Someone changed the stored kind, hash or payload, or
-	// the storage is damaged. Get returns it and does not return the payload.
+	// hash of the action, or that a waiting or approved action has lost its
+	// payload or its preview. Someone changed the stored data, or the storage is
+	// damaged. The calls that read the action return it and do not return the
+	// payload.
 	ErrCorrupted = errors.New("confirm: the stored action does not match its hash")
 )
 
@@ -129,6 +135,10 @@ type Preview struct {
 
 // Pending is an action that needs the user's confirmation. It does not hold the
 // payload. Get returns the payload.
+//
+// After the action has ended (State is done, rejected or expired, and the
+// expiry has been recorded), the payload and the preview are deleted. Preview is
+// then the zero value.
 type Pending struct {
 	ID      string
 	Tenant  account.TenantID
@@ -165,8 +175,10 @@ func HashPayload(kind Kind, payload []byte) [32]byte {
 // implements it.
 //
 // The store compares times in whole milliseconds and does not know what the
-// states and kinds mean. TransitionPending and ClaimPending are compare-and-set
+// states and kinds mean, except that an action which has ended keeps no payload
+// and no preview. TransitionPending and ClaimPending are compare-and-set
 // statements that return store.ErrNotFound when they change nothing.
+// PrunePending works on the actions of all tenants.
 type PendingStore interface {
 	CreatePending(ctx context.Context, row *store.PendingRow, payload []byte, payloadKeyVersion int) error
 	GetPending(ctx context.Context, tenant account.TenantID, id string) (*store.PendingRow, error)
@@ -174,6 +186,8 @@ type PendingStore interface {
 	ListPending(ctx context.Context, tenant account.TenantID, now time.Time) ([]*store.PendingRow, error)
 	TransitionPending(ctx context.Context, tenant account.TenantID, id, from, to, resultID string, now time.Time) error
 	ClaimPending(ctx context.Context, tenant account.TenantID, id string, hash []byte, now time.Time) error
+	ExpirePending(ctx context.Context, tenant account.TenantID, id string, now time.Time) error
+	PrunePending(ctx context.Context, createdBefore, now time.Time) (int, error)
 }
 
 var _ PendingStore = (*store.Store)(nil)
@@ -323,13 +337,22 @@ func (m *Manager) Resume(ctx context.Context, tenant account.TenantID, state str
 // elicitation or the Approve button of the web page.
 //
 // A claim that fails leaves the action as it was. In particular, a payload that
-// has changed does not use up the confirmation.
+// has changed does not use up the confirmation. There is one exception: if the
+// action waits and its time has passed, the claim fails with ErrNotPending, and
+// Claim records the expiry and deletes the payload and the preview.
 func (m *Manager) Claim(ctx context.Context, tenant account.TenantID, state string, payload []byte) (*Pending, error) {
 	now := m.now()
 	// The read in verify chooses the error for the caller. It does not decide
 	// the claim, because the row can change after the read.
 	row, sum, err := m.verify(ctx, now, tenant, state, payload)
 	if err != nil {
+		if errors.Is(err, ErrNotPending) && row != nil && State(row.State) == StatePending {
+			// The action waits in the store, but its time has passed. Record the
+			// expiry and delete the secrets. The claim has failed in any case, so
+			// an error here is not worth another answer. The next attempt, or
+			// Prune, does it again.
+			_ = m.st.ExpirePending(ctx, tenant, row.ID, now)
+		}
 		return nil, err
 	}
 	// Open the preview before the move. If this fails, the action still waits.
@@ -361,7 +384,8 @@ func (m *Manager) Claim(ctx context.Context, tenant account.TenantID, state stri
 // ErrStateInvalid, except for an expired state.
 //
 // verify also returns the hash of the payload, so that Claim can put it into
-// the claim statement.
+// the claim statement. When it returns ErrNotPending, it also returns the row,
+// so that Claim can see whether the action only waited too long.
 func (m *Manager) verify(ctx context.Context, now time.Time, tenant account.TenantID, state string, payload []byte) (*store.PendingRow, [32]byte, error) {
 	var none [32]byte
 	var token requestState
@@ -395,7 +419,7 @@ func (m *Manager) verify(ctx context.Context, now time.Time, tenant account.Tena
 	}
 
 	if stateOf(row, now) != StatePending {
-		return nil, none, ErrNotPending
+		return row, none, ErrNotPending
 	}
 	// The kind of the stored action is part of the hash.
 	sum := HashPayload(Kind(row.Kind), payload)
@@ -409,8 +433,16 @@ func (m *Manager) verify(ctx context.Context, now time.Time, tenant account.Tena
 // the tenant has no action with this id. An action that has expired is still
 // returned, with the state "expired".
 //
+// An action that has ended has no payload any more (see Transition). For it, Get
+// returns the action with a nil payload and no error. The state and the result
+// id say what happened. A caller that acts on the payload must check the state,
+// or check that the payload is not nil. A waiting action that is past its time
+// but whose expiry nobody recorded yet still has its payload.
+//
 // Get hashes the decrypted payload with the stored kind and compares the result
 // with the stored hash. If they differ, it returns ErrCorrupted and no payload.
+// It returns ErrCorrupted too if a waiting or approved action has lost its
+// payload or its preview.
 func (m *Manager) Get(ctx context.Context, tenant account.TenantID, id string) (*Pending, []byte, error) {
 	row, err := m.st.GetPending(ctx, tenant, id)
 	if errors.Is(err, store.ErrNotFound) {
@@ -423,10 +455,18 @@ func (m *Manager) Get(ctx context.Context, tenant account.TenantID, id string) (
 	if err != nil {
 		return nil, nil, err
 	}
+	if hasEnded(State(row.State)) {
+		return pending, nil, nil
+	}
 
 	version, sealed, err := m.st.GetPendingPayload(ctx, tenant, id)
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, nil, ErrNotFound
+		// The row has no payload. Either Prune deleted the row after the read
+		// above, or the row lost its payload.
+		if _, readErr := m.st.GetPending(ctx, tenant, id); errors.Is(readErr, store.ErrNotFound) {
+			return nil, nil, ErrNotFound
+		}
+		return nil, nil, ErrCorrupted
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("confirm: load payload: %w", err)
@@ -451,6 +491,12 @@ func (m *Manager) Get(ctx context.Context, tenant account.TenantID, id string) (
 // The target must be "approved", "rejected", "expired" or "done". The old state
 // must be "pending" or "approved", because the other states are final. The
 // result id is saved when it is not empty.
+//
+// A move to "rejected", "expired" or "done" ends the action. The same statement
+// deletes the encrypted payload and the encrypted preview.
+//
+// If the action waits and its time has passed, the move fails with ErrNotPending,
+// and Transition records the expiry and deletes the payload and the preview.
 func (m *Manager) Transition(ctx context.Context, tenant account.TenantID, id string, from, to State, resultID string) error {
 	switch {
 	case !isState(from):
@@ -497,10 +543,6 @@ func (m *Manager) pendingFromRow(ctx context.Context, row *store.PendingRow, now
 	if len(row.Hash) != sha256.Size {
 		return nil, errors.New("confirm: the stored hash has the wrong size")
 	}
-	previewJSON, err := m.vault.Decrypt(ctx, row.Tenant, row.PreviewKeyVersion, fieldAAD(row.Tenant, row.Account, previewField(row.ID)), row.Preview)
-	if err != nil {
-		return nil, fmt.Errorf("confirm: decrypt preview: %w", err)
-	}
 	pending := &Pending{
 		ID:        row.ID,
 		Tenant:    row.Tenant,
@@ -512,10 +554,55 @@ func (m *Manager) pendingFromRow(ctx context.Context, row *store.PendingRow, now
 		ResultID:  row.ResultID,
 	}
 	copy(pending.Hash[:], row.Hash)
+
+	if len(row.Preview) == 0 {
+		// An action that has ended has no preview. For any other action, a missing
+		// preview means that the storage is damaged.
+		if hasEnded(State(row.State)) {
+			return pending, nil
+		}
+		return nil, ErrCorrupted
+	}
+	previewJSON, err := m.vault.Decrypt(ctx, row.Tenant, row.PreviewKeyVersion, fieldAAD(row.Tenant, row.Account, previewField(row.ID)), row.Preview)
+	if err != nil {
+		return nil, fmt.Errorf("confirm: decrypt preview: %w", err)
+	}
 	if err := json.Unmarshal(previewJSON, &pending.Preview); err != nil {
 		return nil, fmt.Errorf("confirm: decode preview: %w", err)
 	}
 	return pending, nil
+}
+
+// Prune deletes the old actions that have ended, and returns how many it
+// deleted. An action is deleted when it was created more than olderThan ago and
+// either its state is "done", "rejected" or "expired", or it waits and its time
+// has passed.
+//
+// It keeps an action that is "approved": the server took it and has not
+// finished, so the outcome is not known. It keeps a waiting action that still
+// has time, because the user can still confirm it. An action whose state is final
+// has lost its payload and preview already. Prune removes the rest of the row,
+// and the rows of waiting actions that nobody answered.
+//
+// Prune works on the actions of ALL tenants, on purpose. It is housekeeping for
+// the whole program, and no call that is made for one user may use it.
+// olderThan must not be negative.
+func (m *Manager) Prune(ctx context.Context, olderThan time.Duration) (int, error) {
+	if olderThan < 0 {
+		return 0, errors.New("confirm: the age for Prune must not be negative")
+	}
+	now := m.now()
+	n, err := m.st.PrunePending(ctx, now.Add(-olderThan), now)
+	if err != nil {
+		return 0, fmt.Errorf("confirm: prune pending actions: %w", err)
+	}
+	return n, nil
+}
+
+// hasEnded reports whether s is a state in which an action has ended: done,
+// rejected or expired. Such an action keeps no payload and no preview.
+func hasEnded(s State) bool {
+	return s == StateDone || s == StateRejected || s == StateExpired
 }
 
 // stateOf returns the state of a row at now. A waiting action is expired when

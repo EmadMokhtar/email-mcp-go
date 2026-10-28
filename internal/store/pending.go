@@ -19,6 +19,24 @@ const pendingStateWaiting = "pending"
 // "approved" of the confirm package.
 const pendingStateClaimed = "approved"
 
+// The final states of an action. The confirm package owns the names. The store
+// needs them, because an action that has ended keeps no payload and no preview.
+const (
+	pendingStateDone     = "done"
+	pendingStateRejected = "rejected"
+	pendingStateExpired  = "expired"
+)
+
+// isFinalPendingState reports whether state is a state from which an action
+// never moves again.
+func isFinalPendingState(state string) bool {
+	switch state {
+	case pendingStateDone, pendingStateRejected, pendingStateExpired:
+		return true
+	}
+	return false
+}
+
 // PendingRow is one action that waits for the user to confirm it. The store
 // does not look inside the sealed values or know what the states and kinds
 // mean. The confirm package does.
@@ -36,7 +54,8 @@ type PendingRow struct {
 	// CreatedAt and ExpiresAt are kept as whole milliseconds.
 	CreatedAt, ExpiresAt time.Time
 	ResultID             string
-	// Preview is sealed. PreviewKeyVersion says which tenant key sealed it.
+	// Preview is sealed. PreviewKeyVersion says which tenant key sealed it. The
+	// preview is nil when the action has ended: it is deleted then.
 	Preview           []byte
 	PreviewKeyVersion int
 }
@@ -91,10 +110,12 @@ func (s *Store) GetPending(ctx context.Context, tenant account.TenantID, id stri
 
 // GetPendingPayload returns the sealed payload of a pending action and the
 // version of the tenant key that sealed it. It returns ErrNotFound if the
-// tenant has no action with this id.
+// tenant has no action with this id, or if the action has ended and its payload
+// is deleted.
 func (s *Store) GetPendingPayload(ctx context.Context, tenant account.TenantID, id string) (keyVersion int, sealed []byte, err error) {
 	err = s.db.QueryRowContext(ctx,
-		`SELECT payload_key_version, payload FROM pending_actions WHERE tenant_id = ? AND id = ?`,
+		`SELECT payload_key_version, payload FROM pending_actions
+		WHERE tenant_id = ? AND id = ? AND payload IS NOT NULL`,
 		string(tenant), id).Scan(&keyVersion, &sealed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil, ErrNotFound
@@ -148,6 +169,13 @@ func (s *Store) ListPending(ctx context.Context, tenant account.TenantID, now ti
 //
 // The result id is saved when it is not empty. An empty one keeps the value that
 // is stored.
+//
+// A move to "done", "rejected" or "expired" ends the action. The same statement
+// sets the sealed payload and the sealed preview to NULL, so an ended action
+// keeps no secret.
+//
+// A call that changes nothing records the expiry of a waiting action that is
+// past its time. See ExpirePending.
 func (s *Store) TransitionPending(ctx context.Context, tenant account.TenantID, id, from, to, resultID string, now time.Time) error {
 	if err := validateID("tenant", string(tenant)); err != nil {
 		return err
@@ -155,15 +183,18 @@ func (s *Store) TransitionPending(ctx context.Context, tenant account.TenantID, 
 	if err := validateID("pending action", id); err != nil {
 		return err
 	}
+	ends := isFinalPendingState(to)
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE pending_actions
-		SET state = ?, result_id = COALESCE(NULLIF(?, ''), result_id)
+		SET state = ?, result_id = COALESCE(NULLIF(?, ''), result_id),
+			payload = CASE WHEN ? THEN NULL ELSE payload END,
+			preview = CASE WHEN ? THEN NULL ELSE preview END
 		WHERE tenant_id = ? AND id = ? AND state = ? AND (state <> ? OR expires_at >= ?)`,
-		to, resultID, string(tenant), id, from, pendingStateWaiting, now.UnixMilli())
+		to, resultID, ends, ends, string(tenant), id, from, pendingStateWaiting, now.UnixMilli())
 	if err != nil {
 		return fmt.Errorf("store: transition pending action: %w", err)
 	}
-	return requireOneRow(result, "transition pending action")
+	return s.requireOneRowOrExpire(ctx, result, "transition pending action", tenant, id, now)
 }
 
 // ClaimPending moves a waiting action to the state "approved", but only if the
@@ -193,7 +224,77 @@ func (s *Store) ClaimPending(ctx context.Context, tenant account.TenantID, id st
 	if err != nil {
 		return fmt.Errorf("store: claim pending action: %w", err)
 	}
-	return requireOneRow(result, "claim pending action")
+	return s.requireOneRowOrExpire(ctx, result, "claim pending action", tenant, id, now)
+}
+
+// requireOneRowOrExpire is requireOneRow for the statements of TransitionPending
+// and ClaimPending. If the statement changed no row, it first records the expiry
+// of the action (see ExpirePending), and then returns ErrNotFound.
+func (s *Store) requireOneRowOrExpire(ctx context.Context, result sql.Result, what string, tenant account.TenantID, id string, now time.Time) error {
+	err := requireOneRow(result, what)
+	if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if expireErr := s.ExpirePending(ctx, tenant, id, now); expireErr != nil {
+		return fmt.Errorf("store: %s: %w", what, expireErr)
+	}
+	return ErrNotFound
+}
+
+// ExpirePending moves one action from "pending" to "expired" and sets its sealed
+// payload and preview to NULL, but only if the action waits and its time has
+// passed at now. In every other case it changes nothing and returns nil, so it is
+// safe to call after any failed change.
+//
+// A waiting action never expires by itself in the database. The code that reads
+// it compares ExpiresAt with the time. When a caller tries to change an action
+// and finds that its time has passed, this is the moment to record the expiry,
+// and to delete the secrets that nobody can use any more. TransitionPending and
+// ClaimPending do it when their change fails.
+func (s *Store) ExpirePending(ctx context.Context, tenant account.TenantID, id string, now time.Time) error {
+	if err := validateID("tenant", string(tenant)); err != nil {
+		return err
+	}
+	if err := validateID("pending action", id); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE pending_actions SET state = ?, payload = NULL, preview = NULL
+		WHERE tenant_id = ? AND id = ? AND state = ? AND expires_at < ?`,
+		pendingStateExpired, string(tenant), id, pendingStateWaiting, now.UnixMilli())
+	if err != nil {
+		return fmt.Errorf("store: expire pending action: %w", err)
+	}
+	return nil
+}
+
+// PrunePending deletes the actions that have ended and are old, and returns how
+// many it deleted. An action is deleted when it was created before createdBefore
+// (strictly earlier) and one of these is true: its state is "done", "rejected" or
+// "expired", or it waits ("pending") and its time has passed at now.
+//
+// An action that is "approved" is never deleted. The server took it and has not
+// finished, so nobody knows the outcome. A waiting action whose time has not
+// passed is never deleted either.
+//
+// It deletes the actions of ALL tenants, on purpose: it is housekeeping for the
+// whole program. No call that is made for one user may use it.
+func (s *Store) PrunePending(ctx context.Context, createdBefore, now time.Time) (int, error) {
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM pending_actions
+		WHERE created_at < ?
+			AND (state IN (?, ?, ?) OR (state = ? AND expires_at < ?))`,
+		createdBefore.UnixMilli(),
+		pendingStateDone, pendingStateRejected, pendingStateExpired,
+		pendingStateWaiting, now.UnixMilli())
+	if err != nil {
+		return 0, fmt.Errorf("store: prune pending actions: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: prune pending actions: %w", err)
+	}
+	return int(n), nil
 }
 
 // scanPending reads one row with the columns of pendingColumns. Times are

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1089,20 +1090,19 @@ func TestResultIsRecordedAfterTheContextIsCancelled(t *testing.T) {
 	require.True(t, f.raw(item.ID).messageNull)
 }
 
-// If the context ends while a send runs and the send fails, the server may or
-// may not have the message. The item is not retried.
-func TestSendStoppedByTheContextIsNotRetried(t *testing.T) {
+// If a send runs into its own deadline and fails, the server may or may not
+// have the message. The item is not retried.
+func TestSendThatRunsIntoItsDeadlineIsNotRetried(t *testing.T) {
 	f := newFixture(t)
-	item := f.enqueue("stopped", 10*time.Second)
+	f.ob.sendTimeout = 20 * time.Millisecond
+	item := f.enqueue("too slow", 10*time.Second)
 	f.clock.Advance(10 * time.Second)
 
-	ctx, cancel := context.WithCancel(context.Background())
 	f.sender.setFn(func(ctx context.Context, _ int) error {
-		cancel()
+		<-ctx.Done()
 		return ctx.Err()
 	})
-	err := f.ob.Drain(ctx, time.Minute)
-	require.ErrorIs(t, err, context.Canceled)
+	f.pass()
 
 	got, err := f.ob.Get(context.Background(), f.tenant, item.ID)
 	require.NoError(t, err)
@@ -1355,4 +1355,475 @@ func bodiesAfterHeaders(messages []string) []string {
 func (f *fixture) poll(ob *Outbox, d time.Duration) {
 	f.t.Helper()
 	ob.poll = d
+}
+
+// ---- Hardening: claim, shutdown, result writes, window 0 ----
+
+// claimThenCancelStore commits a claim and then ends the context of the worker,
+// before the claim returns. This is what happens when the context ends after the
+// database ran the UPDATE and before the driver read the row: the claim is
+// committed, and the call returns the error of the context.
+type claimThenCancelStore struct {
+	*store.Store
+	cancel context.CancelFunc
+}
+
+func (s *claimThenCancelStore) ClaimOutbox(ctx context.Context, tenant account.TenantID, id string, now time.Time) (*store.OutboxRow, error) {
+	// The UPDATE itself runs and commits.
+	row, err := s.Store.ClaimOutbox(context.WithoutCancel(ctx), tenant, id, now)
+	s.cancel()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	return row, err
+}
+
+// If the context of the worker ends while a claim runs, a committed claim must
+// not be lost. The worker claims on a context that its caller cannot cancel, then
+// sees that it must stop, and releases the item. The item ends "queued", not
+// stuck in "sending" until the recovery fails it.
+func TestClaimIsNotLostWhenTheContextEndsDuringIt(t *testing.T) {
+	for name, run := range map[string]func(ob *Outbox, ctx context.Context) error{
+		"Drain": func(ob *Outbox, ctx context.Context) error { return ob.Drain(ctx, time.Minute) },
+		"Run":   func(ob *Outbox, ctx context.Context) error { return ob.Run(ctx, time.Millisecond) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			item := f.enqueue("claimed while stopping", 10*time.Second)
+			f.clock.Advance(10 * time.Second)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ob := New(&claimThenCancelStore{Store: f.store, cancel: cancel}, f.vault, f.sender.send, f.clock.Now)
+			require.ErrorIs(t, run(ob, ctx), context.Canceled)
+
+			require.Zero(t, f.sender.count(), "nothing was sent")
+			r := f.raw(item.ID)
+			require.Equal(t, "queued", r.status, "the claim must not stay in the state sending")
+			require.Equal(t, 0, r.attempts, "a release is not a failed try")
+			require.False(t, r.messageNull)
+
+			f.pass()
+			require.Equal(t, 1, f.sender.count())
+			require.Equal(t, StatusSent, f.status(item.ID))
+		})
+	}
+}
+
+// slowSend makes the fake sender wait until release is closed. It sends a signal
+// on entered when a call starts. The call returns the error of its own context,
+// which is nil unless something cancelled the context of the send.
+func slowSend(f *fixture) (entered chan struct{}, release chan struct{}, sawCancel *atomic.Bool) {
+	entered = make(chan struct{}, 8)
+	release = make(chan struct{})
+	sawCancel = &atomic.Bool{}
+	f.sender.setFn(func(ctx context.Context, _ int) error {
+		entered <- struct{}{}
+		<-release
+		if ctx.Err() != nil {
+			sawCancel.Store(true)
+		}
+		return ctx.Err()
+	})
+	return entered, release, sawCancel
+}
+
+// The context of Run (and of Drain) stops new claims. It does not abort a send
+// that is running. The send finishes, its result is written, and only then Run
+// returns. No other item is claimed after the context ends.
+func TestShutdownLetsTheSendInFlightFinish(t *testing.T) {
+	for name, start := range map[string]func(ob *Outbox, ctx context.Context) error{
+		"Run":   func(ob *Outbox, ctx context.Context) error { return ob.Run(ctx, time.Millisecond) },
+		"Drain": func(ob *Outbox, ctx context.Context) error { return ob.Drain(ctx, time.Minute) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			first := f.enqueue("first", 10*time.Second)
+			second := f.enqueue("second", 10*time.Second)
+			f.clock.Advance(10 * time.Second)
+			entered, release, sawCancel := slowSend(f)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- start(f.ob, ctx) }()
+
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the send did not start")
+			}
+			cancel() // the program is told to stop while the send runs
+
+			select {
+			case err := <-done:
+				t.Fatalf("returned before the send finished: %v", err)
+			case <-time.After(100 * time.Millisecond):
+			}
+			close(release)
+			select {
+			case err := <-done:
+				require.ErrorIs(t, err, context.Canceled)
+			case <-time.After(10 * time.Second):
+				t.Fatal("did not return after the send finished")
+			}
+
+			require.False(t, sawCancel.Load(), "the sender must not see the cancel of the worker")
+			// One of the two items was in flight. It is sent. The other is not claimed.
+			require.Equal(t, 1, f.sender.count(), "no new item is claimed after the cancel")
+			statuses := []Status{f.status(first.ID), f.status(second.ID)}
+			require.ElementsMatch(t, []Status{StatusSent, StatusQueued}, statuses)
+		})
+	}
+}
+
+// The sender gets a deadline of its own that is shorter than the age at which
+// another program may fail a "sending" item.
+func TestSenderGetsADeadlineShorterThanTheRecoveryAge(t *testing.T) {
+	require.Less(t, sendDeadline, recoverAfter)
+
+	f := newFixture(t)
+	var deadline time.Time
+	var hasDeadline bool
+	f.sender.setFn(func(ctx context.Context, _ int) error {
+		deadline, hasDeadline = ctx.Deadline()
+		return nil
+	})
+	f.enqueue("with a deadline", 0)
+
+	require.True(t, hasDeadline)
+	left := time.Until(deadline)
+	require.Greater(t, left, sendDeadline-time.Minute)
+	require.LessOrEqual(t, left, sendDeadline)
+}
+
+// With window 0 the caller waits for the send. If its context ends during the
+// send, the send still finishes and the result is written.
+func TestWindowZeroSendIsNotAbortedByTheContext(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var sawCancel atomic.Bool
+	f.sender.setFn(func(sendCtx context.Context, _ int) error {
+		cancel()
+		if sendCtx.Err() != nil {
+			sawCancel.Store(true)
+		}
+		return sendCtx.Err()
+	})
+
+	item, err := f.ob.Enqueue(ctx, f.tenant, f.acct, testMessage("inline"), 0, "")
+	require.NoError(t, err)
+
+	require.False(t, sawCancel.Load())
+	require.Equal(t, StatusSent, item.Status)
+}
+
+// A context that has ended before Enqueue stores anything stops it. Nothing is
+// stored and nothing is sent, also with window 0.
+func TestEnqueueWithAnEndedContextStoresNothing(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for _, window := range []time.Duration{0, time.Minute} {
+		_, err := f.ob.Enqueue(ctx, f.tenant, f.acct, testMessage("x"), window, "")
+		require.ErrorIs(t, err, context.Canceled, "window %v", window)
+	}
+
+	require.Zero(t, f.sender.count())
+	db := f.openDB()
+	defer func() { require.NoError(t, db.Close()) }()
+	var rows int
+	require.NoError(t, db.QueryRowContext(context.Background(), `SELECT count(*) FROM outbox`).Scan(&rows))
+	require.Zero(t, rows)
+}
+
+// busyCode is an error with the Code method of a SQLite error. Code 5 is
+// SQLITE_BUSY and code 6 is SQLITE_LOCKED.
+type busyCode struct{ code int }
+
+func (e busyCode) Error() string { return "database is locked" }
+func (e busyCode) Code() int     { return e.code }
+
+// resultFaultStore makes the first calls of each result method fail with err. It
+// counts the calls of each method.
+type resultFaultStore struct {
+	OutboxStore
+	err      error
+	failures int // how many calls of each method fail
+
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+func newResultFaultStore(inner OutboxStore, err error, failures int) *resultFaultStore {
+	return &resultFaultStore{OutboxStore: inner, err: err, failures: failures, calls: make(map[string]int)}
+}
+
+// fault counts a call of method and returns the injected error while there are
+// failures left.
+func (s *resultFaultStore) fault(method string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls[method]++
+	if s.calls[method] <= s.failures {
+		return fmt.Errorf("store: %s: %w", method, s.err)
+	}
+	return nil
+}
+
+func (s *resultFaultStore) count(method string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls[method]
+}
+
+func (s *resultFaultStore) FinishOutboxSent(ctx context.Context, tenant account.TenantID, id string, now time.Time) error {
+	if err := s.fault("finish"); err != nil {
+		return err
+	}
+	return s.OutboxStore.FinishOutboxSent(ctx, tenant, id, now)
+}
+
+func (s *resultFaultStore) FailOutbox(ctx context.Context, tenant account.TenantID, id, errText string) error {
+	if err := s.fault("fail"); err != nil {
+		return err
+	}
+	return s.OutboxStore.FailOutbox(ctx, tenant, id, errText)
+}
+
+func (s *resultFaultStore) RetryOutbox(ctx context.Context, tenant account.TenantID, id string, next time.Time, errText string) error {
+	if err := s.fault("retry"); err != nil {
+		return err
+	}
+	return s.OutboxStore.RetryOutbox(ctx, tenant, id, next, errText)
+}
+
+func (s *resultFaultStore) ReleaseOutbox(ctx context.Context, tenant account.TenantID, id string) error {
+	if err := s.fault("release"); err != nil {
+		return err
+	}
+	return s.OutboxStore.ReleaseOutbox(ctx, tenant, id)
+}
+
+// resultCase is one way for a claimed item to end, and the store method that
+// writes it.
+type resultCase struct {
+	method string
+	// sendFn is the result of the sender.
+	sendFn func(ctx context.Context, n int) error
+	// stop is true for the case where the worker stops between claim and send.
+	stop   bool
+	status string // the state of the item when the write works
+}
+
+func resultCases() map[string]resultCase {
+	return map[string]resultCase{
+		"sent": {method: "finish", status: "sent"},
+		"failed for good": {
+			method: "fail", status: "failed",
+			sendFn: func(context.Context, int) error { return Permanent(errors.New("550 refused")) },
+		},
+		"failed, try again later": {
+			method: "retry", status: "queued",
+			sendFn: func(context.Context, int) error { return errors.New("connection refused") },
+		},
+		"released": {method: "release", status: "queued", stop: true},
+	}
+}
+
+// runResultCase makes the item of the case end, with a store that fails some
+// result calls. It returns the fault store and the id of the item.
+func (f *fixture) runResultCase(c resultCase, err error, failures int) (*resultFaultStore, string) {
+	f.t.Helper()
+	item := f.enqueue("result write", 10*time.Second)
+	f.clock.Advance(10 * time.Second)
+	f.sender.setFn(c.sendFn)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var inner OutboxStore = f.store
+	if c.stop {
+		inner = &releasingStore{Store: f.store, cancel: cancel}
+	}
+	faults := newResultFaultStore(inner, err, failures)
+	ob := New(faults, f.vault, f.sender.send, f.clock.Now)
+	ob.resultBackoff = time.Millisecond
+	_ = ob.Drain(ctx, 0)
+	return faults, item.ID
+}
+
+// A result write that finds the database busy is tried again a few times. The
+// outcome of the send is known, so the item must not stay in "sending".
+func TestResultWriteIsTriedAgainWhenTheDatabaseIsBusy(t *testing.T) {
+	for name, c := range resultCases() {
+		for _, code := range []int{5, 6, 261, 517} { // BUSY, LOCKED, BUSY_RECOVERY, BUSY_SNAPSHOT
+			t.Run(fmt.Sprintf("%s/code %d", name, code), func(t *testing.T) {
+				f := newFixture(t)
+
+				faults, id := f.runResultCase(c, busyCode{code}, 2)
+
+				require.Equal(t, 3, faults.count(c.method), "two busy answers, then it works")
+				require.Equal(t, c.status, f.raw(id).status)
+			})
+		}
+	}
+}
+
+// The tries end after a few attempts. The item then stays "sending", and the
+// recovery fails it later. It is never sent again.
+func TestResultWriteGivesUpWhenTheDatabaseStaysBusy(t *testing.T) {
+	f := newFixture(t)
+
+	faults, id := f.runResultCase(resultCases()["sent"], busyCode{5}, 1000)
+
+	require.Equal(t, resultAttempts, faults.count("finish"))
+	require.Equal(t, "sending", f.raw(id).status)
+	require.Equal(t, 1, f.sender.count())
+}
+
+// Only a busy database is tried again. A write that finds the item in another
+// state (a miss of the compare-and-set) or that fails for another reason is
+// tried once.
+func TestResultWriteIsNotTriedAgainForOtherErrors(t *testing.T) {
+	for name, err := range map[string]error{
+		"a miss of the compare-and-set":   store.ErrNotFound,
+		"another database error":          errors.New("disk I/O error"),
+		"a SQLite error that is not busy": busyCode{1},
+		"the context":                     context.Canceled,
+	} {
+		for caseName, c := range resultCases() {
+			t.Run(name+"/"+caseName, func(t *testing.T) {
+				f := newFixture(t)
+
+				faults, id := f.runResultCase(c, err, 1000)
+
+				require.Equal(t, 1, faults.count(c.method))
+				require.Equal(t, "sending", f.raw(id).status, "nothing changed the item")
+			})
+		}
+	}
+}
+
+// otherWorkerStore claims every new queued item at once, as a running worker
+// could do between the insert and the claim of the caller. It leaves the item
+// "sending", as a worker in the middle of a send does.
+type otherWorkerStore struct {
+	*store.Store
+	now func() time.Time
+}
+
+func (s *otherWorkerStore) CreateOutbox(ctx context.Context, row *store.OutboxRow, sealed []byte, keyVersion int) error {
+	if err := s.Store.CreateOutbox(ctx, row, sealed, keyVersion); err != nil {
+		return err
+	}
+	_, err := s.ClaimOutbox(ctx, row.Tenant, row.ID, s.now())
+	return err
+}
+
+// A window-0 item is never "queued": no worker can take it before the caller
+// sends it. Enqueue returns "sent", not "sending".
+func TestWindowZeroItemCannotBeClaimedByAWorker(t *testing.T) {
+	f := newFixture(t)
+	ob := New(&otherWorkerStore{Store: f.store, now: f.clock.Now}, f.vault, f.sender.send, f.clock.Now)
+
+	item, err := ob.Enqueue(context.Background(), f.tenant, f.acct, testMessage("window zero"), 0, "")
+	require.NoError(t, err)
+
+	require.Equal(t, StatusSent, item.Status)
+	require.Equal(t, 1, f.sender.count())
+}
+
+// countingStore counts the calls that create or claim an item.
+type countingStore struct {
+	*store.Store
+	creates, claims atomic.Int32
+}
+
+func (s *countingStore) CreateOutbox(ctx context.Context, row *store.OutboxRow, sealed []byte, keyVersion int) error {
+	s.creates.Add(1)
+	return s.Store.CreateOutbox(ctx, row, sealed, keyVersion)
+}
+
+func (s *countingStore) ClaimOutbox(ctx context.Context, tenant account.TenantID, id string, now time.Time) (*store.OutboxRow, error) {
+	s.claims.Add(1)
+	return s.Store.ClaimOutbox(ctx, tenant, id, now)
+}
+
+// The row of a window-0 item is stored as "sending", with the claim time, in one
+// insert. There is no claim afterwards, and while the sender runs a worker does
+// not see the item as due.
+func TestWindowZeroRowIsInsertedAsSending(t *testing.T) {
+	f := newFixture(t)
+	counting := &countingStore{Store: f.store}
+	ob := New(counting, f.vault, f.sender.send, f.clock.Now)
+	var (
+		status    string
+		claimedAt sql.NullInt64
+		due       []*store.OutboxRow
+	)
+	f.sender.setFn(func(ctx context.Context, _ int) error {
+		db := f.openDB()
+		defer func() { _ = db.Close() }()
+		if err := db.QueryRowContext(ctx, `SELECT status, claimed_at FROM outbox`).Scan(&status, &claimedAt); err != nil {
+			return err
+		}
+		var err error
+		due, err = f.store.DueOutbox(ctx, f.clock.Now(), 10)
+		return err
+	})
+
+	item, err := ob.Enqueue(context.Background(), f.tenant, f.acct, testMessage("window zero"), 0, "")
+	require.NoError(t, err)
+
+	require.Equal(t, StatusSent, item.Status)
+	require.Equal(t, "sending", status)
+	require.True(t, claimedAt.Valid)
+	require.Equal(t, testStart.UnixMilli(), claimedAt.Int64)
+	require.Empty(t, due, "a worker must not see the item as due")
+	require.Zero(t, counting.creates.Load(), "the row is not first stored as queued")
+	require.Zero(t, counting.claims.Load(), "there is no separate claim")
+
+	// A window above 0 still goes through the queue.
+	_, err = ob.Enqueue(context.Background(), f.tenant, f.acct, testMessage("window"), time.Minute, "")
+	require.NoError(t, err)
+	require.Equal(t, int32(1), counting.creates.Load())
+}
+
+// Many window-0 sends run while workers run. Each Enqueue returns "sent" (never
+// "sending" or "queued"), and each message is sent exactly once.
+func TestWindowZeroEnqueuesWithRunningWorkersSendEachMessageOnce(t *testing.T) {
+	f := newFixture(t)
+	f.run(f.newOutbox(), 100*time.Microsecond)
+	f.run(f.newOutbox(), 100*time.Microsecond)
+
+	const messages = 60
+	statuses := make([]Status, messages)
+	var wg sync.WaitGroup
+	for i := range messages {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			item, err := f.ob.Enqueue(context.Background(), f.tenant, f.acct, testMessage(fmt.Sprintf("body-%02d", i)), 0, "")
+			if err == nil {
+				statuses[i] = item.Status
+			}
+		}()
+	}
+	wg.Wait()
+
+	for i, status := range statuses {
+		require.Equal(t, StatusSent, status, "message %d", i)
+	}
+	// Let a late duplicate show itself before we count.
+	time.Sleep(50 * time.Millisecond)
+	seen := make(map[string]int)
+	for _, body := range f.sender.bodies() {
+		seen[body]++
+	}
+	require.Len(t, seen, messages)
+	for body, n := range seen {
+		require.Equal(t, 1, n, "%q was sent %d times", body, n)
+	}
 }

@@ -145,6 +145,18 @@ func TestOpenSetsPragmasOnEveryConnection(t *testing.T) {
 		var busyTimeout int
 		require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busyTimeout))
 		require.Equal(t, 5000, busyTimeout)
+
+		// secure_delete 1 means ON: deleted content is overwritten with zeros, so
+		// a cleared message body does not stay in a free page.
+		var secureDelete int
+		require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA secure_delete").Scan(&secureDelete))
+		require.Equal(t, 1, secureDelete)
+
+		// synchronous 2 means FULL: SQLite flushes the log to disk at every commit.
+		// Exactly-once sending after a power loss depends on it.
+		var synchronous int
+		require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA synchronous").Scan(&synchronous))
+		require.Equal(t, 2, synchronous)
 	}
 }
 

@@ -869,3 +869,361 @@ func TestCreateKeepsAtMost500CharactersOfTheBody(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, p, got)
 }
+
+// sealedColumns reads the sealed payload and the sealed preview of an action
+// straight from the table. A column that is NULL is returned as nil.
+func (f *fixture) sealedColumns(id string) (payload, preview []byte) {
+	f.t.Helper()
+	db := f.openDB()
+	defer func() { require.NoError(f.t, db.Close()) }()
+	err := db.QueryRowContext(context.Background(),
+		`SELECT payload, preview FROM pending_actions WHERE id = ?`, id).Scan(&payload, &preview)
+	require.NoError(f.t, err)
+	return payload, preview
+}
+
+// storedState reads the state column straight from the table.
+func (f *fixture) storedState(id string) string {
+	f.t.Helper()
+	db := f.openDB()
+	defer func() { require.NoError(f.t, db.Close()) }()
+	var state string
+	require.NoError(f.t, db.QueryRowContext(context.Background(),
+		`SELECT state FROM pending_actions WHERE id = ?`, id).Scan(&state))
+	return state
+}
+
+// checkpoint moves the write-ahead log into the database file and empties the
+// log. After it, a scan of the data directory sees the same data as the database
+// file holds, and no older copy in the log.
+func (f *fixture) checkpoint() {
+	f.t.Helper()
+	f.exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+}
+
+// approve claims an action the way the server does, after the user accepted.
+func (f *fixture) approve(p *Pending, payload string) {
+	f.t.Helper()
+	_, err := f.mgr.Claim(context.Background(), f.tenant, f.state(p), []byte(payload))
+	require.NoError(f.t, err)
+}
+
+// An action that has ended keeps no secret. Each way to end an action sets the
+// sealed payload and the sealed preview to NULL, and the bytes are gone from the
+// data files too (not only unreachable through a query).
+func TestEndedActionsKeepNoSecret(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+
+	// This action stays live. The scan must still see its sealed values after
+	// the others are gone. Without this, "not found" would prove nothing.
+	live := f.create("payload of the live action")
+	livePayload, livePreview := f.sealedColumns(live.ID)
+	require.NotEmpty(t, livePayload)
+	require.NotEmpty(t, livePreview)
+
+	ends := map[string]func(p *Pending, payload string){
+		"rejected": func(p *Pending, _ string) {
+			require.NoError(t, f.mgr.Transition(ctx, f.tenant, p.ID, StatePending, StateRejected, ""))
+		},
+		"expired": func(p *Pending, _ string) {
+			require.NoError(t, f.mgr.Transition(ctx, f.tenant, p.ID, StatePending, StateExpired, ""))
+		},
+		"done": func(p *Pending, payload string) {
+			f.approve(p, payload)
+			require.NoError(t, f.mgr.Transition(ctx, f.tenant, p.ID, StateApproved, StateDone, "msg-1"))
+		},
+		"rejected after approval": func(p *Pending, payload string) {
+			f.approve(p, payload)
+			require.NoError(t, f.mgr.Transition(ctx, f.tenant, p.ID, StateApproved, StateRejected, ""))
+		},
+		"expired after approval": func(p *Pending, payload string) {
+			f.approve(p, payload)
+			require.NoError(t, f.mgr.Transition(ctx, f.tenant, p.ID, StateApproved, StateExpired, ""))
+		},
+	}
+	for name, end := range ends {
+		t.Run(name, func(t *testing.T) {
+			payload := "payload that ends as " + name
+			p := f.create(payload)
+			sealedPayload, sealedPreview := f.sealedColumns(p.ID)
+			require.NotEmpty(t, sealedPayload)
+			require.NotEmpty(t, sealedPreview)
+
+			// While the action lives, the scan sees both sealed values.
+			f.checkpoint()
+			files := f.dataFiles()
+			require.True(t, bytes.Contains(files, sealedPayload), "the scan does not see the sealed payload")
+			require.True(t, bytes.Contains(files, sealedPreview), "the scan does not see the sealed preview")
+
+			end(p, payload)
+
+			gotPayload, gotPreview := f.sealedColumns(p.ID)
+			require.Nil(t, gotPayload, "payload column")
+			require.Nil(t, gotPreview, "preview column")
+			f.checkpoint()
+			files = f.dataFiles()
+			require.False(t, bytes.Contains(files, sealedPayload), "the sealed payload is still in the data files")
+			require.False(t, bytes.Contains(files, sealedPreview), "the sealed preview is still in the data files")
+			require.True(t, bytes.Contains(files, livePayload), "the live action lost its payload")
+			require.True(t, bytes.Contains(files, livePreview), "the live action lost its preview")
+		})
+	}
+
+	// The live action is not touched.
+	_, payload, err := f.mgr.Get(ctx, f.tenant, live.ID)
+	require.NoError(t, err)
+	require.Equal(t, []byte("payload of the live action"), payload)
+}
+
+// An action that is only approved is not at its end. The server still needs its
+// payload.
+func TestApprovedActionStillHasItsSecrets(t *testing.T) {
+	f := newFixture(t)
+	p := f.create("payload")
+	f.approve(p, "payload")
+
+	payload, preview := f.sealedColumns(p.ID)
+	require.NotEmpty(t, payload)
+	require.NotEmpty(t, preview)
+}
+
+// A waiting action that is past its time is recorded as expired, and its
+// secrets are deleted, when a Claim or a Transition meets it. A read does not
+// change it.
+func TestClaimAndTransitionRecordTheExpiryAndClearTheSecrets(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	payload := []byte("payload")
+
+	attempts := map[string]func(p *Pending, state string) error{
+		"claim": func(_ *Pending, state string) error {
+			_, err := f.mgr.Claim(ctx, f.tenant, state, payload)
+			return err
+		},
+		"transition to approved": func(p *Pending, _ string) error {
+			return f.mgr.Transition(ctx, f.tenant, p.ID, StatePending, StateApproved, "")
+		},
+		"transition to rejected": func(p *Pending, _ string) error {
+			return f.mgr.Transition(ctx, f.tenant, p.ID, StatePending, StateRejected, "")
+		},
+	}
+	for name, attempt := range attempts {
+		t.Run(name, func(t *testing.T) {
+			f.clock.Set(testStart)
+			p := f.create(string(payload))
+			// A state made 5 minutes before the end is a good token after the end.
+			f.clock.Set(testStart.Add(24*time.Hour - 5*time.Minute))
+			state := f.state(p)
+			f.clock.Set(testStart.Add(24*time.Hour + time.Second))
+
+			// Reading changes nothing.
+			_, err := f.mgr.Resume(ctx, f.tenant, state, payload)
+			require.ErrorIs(t, err, ErrNotPending)
+			got, _, err := f.mgr.Get(ctx, f.tenant, p.ID)
+			require.NoError(t, err)
+			require.Equal(t, StateExpired, got.State)
+			_, err = f.mgr.ListPending(ctx, f.tenant)
+			require.NoError(t, err)
+			require.Equal(t, "pending", f.storedState(p.ID))
+			storedPayload, storedPreview := f.sealedColumns(p.ID)
+			require.NotEmpty(t, storedPayload)
+			require.NotEmpty(t, storedPreview)
+
+			// The attempt fails, and records the expiry.
+			require.ErrorIs(t, attempt(p, state), ErrNotPending)
+			require.Equal(t, "expired", f.storedState(p.ID))
+			storedPayload, storedPreview = f.sealedColumns(p.ID)
+			require.Nil(t, storedPayload)
+			require.Nil(t, storedPreview)
+
+			// The action reads back as expired, without a payload.
+			got, gotPayload, err := f.mgr.Get(ctx, f.tenant, p.ID)
+			require.NoError(t, err)
+			require.Equal(t, StateExpired, got.State)
+			require.Nil(t, gotPayload)
+		})
+	}
+}
+
+// A refused claim of a live action must not look like an expiry.
+func TestAClaimThatFailsOnALiveActionKeepsIt(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	p := f.create("payload")
+
+	_, err := f.mgr.Claim(ctx, f.tenant, f.state(p), []byte("another payload"))
+	require.ErrorIs(t, err, ErrPayloadChanged)
+
+	require.Equal(t, "pending", f.storedState(p.ID))
+	payload, preview := f.sealedColumns(p.ID)
+	require.NotEmpty(t, payload)
+	require.NotEmpty(t, preview)
+}
+
+// Get of an action that has ended returns the action and no payload. It is not
+// an error: the caller asks what happened to the action, and the answer is in
+// State and ResultID. A caller that wants to act on the payload must check that
+// the payload is not nil.
+func TestGetOfAnEndedActionReturnsItWithoutAPayload(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	p := f.create("payload")
+	state := f.state(p)
+	f.approve(p, "payload")
+	require.NoError(t, f.mgr.Transition(ctx, f.tenant, p.ID, StateApproved, StateDone, "msg-1"))
+
+	got, payload, err := f.mgr.Get(ctx, f.tenant, p.ID)
+	require.NoError(t, err)
+	require.Nil(t, payload)
+	require.Equal(t, StateDone, got.State)
+	require.Equal(t, "msg-1", got.ResultID)
+	require.Equal(t, p.ID, got.ID)
+	require.Equal(t, f.tenant, got.Tenant)
+	require.Equal(t, f.acct, got.Account)
+	require.Equal(t, KindSend, got.Kind)
+	require.Equal(t, p.Hash, got.Hash)
+	require.Equal(t, p.CreatedAt, got.CreatedAt)
+	require.Equal(t, p.ExpiresAt, got.ExpiresAt)
+	require.Equal(t, Preview{}, got.Preview, "the preview is deleted")
+
+	// The other calls work on an ended action too, and refuse it.
+	listed, err := f.mgr.ListPending(ctx, f.tenant)
+	require.NoError(t, err)
+	require.Empty(t, listed)
+	_, err = f.mgr.Resume(ctx, f.tenant, state, []byte("payload"))
+	require.ErrorIs(t, err, ErrNotPending)
+	_, err = f.mgr.Claim(ctx, f.tenant, state, []byte("payload"))
+	require.ErrorIs(t, err, ErrNotPending)
+}
+
+// A waiting or approved action must have its payload and its preview. If one is
+// gone, the storage is damaged. The calls say so with an error, and do not
+// panic.
+func TestAWaitingActionThatLostASecretIsCorrupted(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+
+	t.Run("preview", func(t *testing.T) {
+		p := f.create("payload")
+		f.exec(`UPDATE pending_actions SET preview = NULL WHERE id = ?`, p.ID)
+
+		_, _, err := f.mgr.Get(ctx, f.tenant, p.ID)
+		require.ErrorIs(t, err, ErrCorrupted)
+		_, err = f.mgr.ListPending(ctx, f.tenant)
+		require.ErrorIs(t, err, ErrCorrupted)
+		_, err = f.mgr.Resume(ctx, f.tenant, f.state(p), []byte("payload"))
+		require.ErrorIs(t, err, ErrCorrupted)
+		_, err = f.mgr.Claim(ctx, f.tenant, f.state(p), []byte("payload"))
+		require.ErrorIs(t, err, ErrCorrupted)
+		require.Equal(t, "pending", f.storedState(p.ID), "a failed claim leaves the action")
+	})
+	t.Run("payload", func(t *testing.T) {
+		p := f.create("payload two")
+		f.exec(`UPDATE pending_actions SET payload = NULL WHERE id = ?`, p.ID)
+
+		_, payload, err := f.mgr.Get(ctx, f.tenant, p.ID)
+		require.ErrorIs(t, err, ErrCorrupted)
+		require.Nil(t, payload)
+	})
+}
+
+// Prune deletes the ended actions that are older than the given age, and the
+// waiting actions that are past their time and older than the age. It keeps the
+// rest.
+func TestPruneDeletesOnlyOldEndedActions(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	other := account.TenantID("tenant-b")
+	otherAcct := f.addTenant(other)
+
+	// Old actions: made at testStart.
+	f.clock.Set(testStart)
+	oldDone := f.create("old done")
+	f.approve(oldDone, "old done")
+	require.NoError(t, f.mgr.Transition(ctx, f.tenant, oldDone.ID, StateApproved, StateDone, "m"))
+	oldRejected := f.create("old rejected")
+	require.NoError(t, f.mgr.Transition(ctx, f.tenant, oldRejected.ID, StatePending, StateRejected, ""))
+	oldExpired := f.create("old expired")
+	require.NoError(t, f.mgr.Transition(ctx, f.tenant, oldExpired.ID, StatePending, StateExpired, ""))
+	oldWaiting := f.create("old waiting") // nobody answers: it is past its time later
+	oldApproved := f.create("old approved")
+	f.approve(oldApproved, "old approved")
+	otherOld, err := f.mgr.Create(ctx, other, otherAcct, KindSend, []byte("other tenant"), testPreview())
+	require.NoError(t, err)
+	require.NoError(t, f.mgr.Transition(ctx, other, otherOld.ID, StatePending, StateRejected, ""))
+
+	// Recent actions: made 72 hours later.
+	f.clock.Set(testStart.Add(72 * time.Hour))
+	newDone := f.create("new done")
+	require.NoError(t, f.mgr.Transition(ctx, f.tenant, newDone.ID, StatePending, StateDone, ""))
+	newWaiting := f.create("new waiting")
+
+	// One hour later, delete what is older than 48 hours.
+	f.clock.Set(testStart.Add(73 * time.Hour))
+	n, err := f.mgr.Prune(ctx, 48*time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, 5, n, "old done, rejected, expired, waiting past its time, and the other tenant's")
+
+	for _, gone := range []*Pending{oldDone, oldRejected, oldExpired, oldWaiting} {
+		_, _, err := f.mgr.Get(ctx, f.tenant, gone.ID)
+		require.ErrorIs(t, err, ErrNotFound, gone.ID)
+	}
+	_, _, err = f.mgr.Get(ctx, other, otherOld.ID)
+	require.ErrorIs(t, err, ErrNotFound, "Prune works across tenants")
+	for _, kept := range []*Pending{oldApproved, newDone, newWaiting} {
+		_, _, err := f.mgr.Get(ctx, f.tenant, kept.ID)
+		require.NoError(t, err, kept.ID)
+	}
+
+	n, err = f.mgr.Prune(ctx, 48*time.Hour)
+	require.NoError(t, err)
+	require.Zero(t, n)
+}
+
+// A waiting action that is old but still has time is not deleted: the user can
+// still confirm it.
+func TestPruneKeepsAWaitingActionThatStillHasTime(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	waiting := f.create("waiting")
+	ended := f.create("ended")
+	require.NoError(t, f.mgr.Transition(ctx, f.tenant, ended.ID, StatePending, StateRejected, ""))
+
+	f.clock.Set(testStart.Add(2 * time.Hour))
+	n, err := f.mgr.Prune(ctx, time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	_, _, err = f.mgr.Get(ctx, f.tenant, waiting.ID)
+	require.NoError(t, err)
+	_, _, err = f.mgr.Get(ctx, f.tenant, ended.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestPruneRefusesANegativeAge(t *testing.T) {
+	f := newFixture(t)
+	f.create("payload")
+
+	_, err := f.mgr.Prune(context.Background(), -time.Second)
+	require.Error(t, err)
+	require.Equal(t, 1, len(f.rowIDs()))
+}
+
+// rowIDs returns the ids of all rows in the table.
+func (f *fixture) rowIDs() []string {
+	f.t.Helper()
+	db := f.openDB()
+	defer func() { require.NoError(f.t, db.Close()) }()
+	rows, err := db.QueryContext(context.Background(), `SELECT id FROM pending_actions`)
+	require.NoError(f.t, err)
+	defer func() { require.NoError(f.t, rows.Close()) }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		require.NoError(f.t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(f.t, rows.Err())
+	return ids
+}

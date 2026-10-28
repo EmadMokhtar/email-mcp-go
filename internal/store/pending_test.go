@@ -164,20 +164,22 @@ func TestTransitionPendingRefusesAnExpiredPendingRow(t *testing.T) {
 	tenant, acct := newPendingAccount(t, s, "a1")
 	row := testPendingRow(tenant, acct, "p1", testNow)
 	putPending(t, s, row)
-
-	// The row is still live at its expiry time, to the millisecond.
+	putPending(t, s, testPendingRow(tenant, acct, "p2", testNow))
 	atExpiry := row.ExpiresAt
-	// One millisecond later it has expired.
+
+	// One millisecond after its time the row has expired. Nothing moves it to
+	// "approved". (The attempt records the expiry. See the test about that.)
 	err := s.TransitionPending(ctx, tenant, "p1", "pending", "approved", "", atExpiry.Add(time.Millisecond))
 	require.ErrorIs(t, err, ErrNotFound)
-	require.Equal(t, "pending", pendingState(t, s, tenant, "p1"))
+	require.Equal(t, "expired", pendingState(t, s, tenant, "p1"))
 
-	require.NoError(t, s.TransitionPending(ctx, tenant, "p1", "pending", "approved", "", atExpiry))
+	// Another row is still live at its expiry time, to the millisecond.
+	require.NoError(t, s.TransitionPending(ctx, tenant, "p2", "pending", "approved", "", atExpiry))
 
 	// Expiry applies to "pending" only. An approved row must still be able to
 	// finish after the pending time has passed.
 	late := atExpiry.Add(time.Hour)
-	require.NoError(t, s.TransitionPending(ctx, tenant, "p1", "approved", "done", "m", late))
+	require.NoError(t, s.TransitionPending(ctx, tenant, "p2", "approved", "done", "m", late))
 }
 
 func TestClaimPendingChecksTheHashInTheSameStatement(t *testing.T) {
@@ -226,9 +228,11 @@ func TestClaimPendingOnlyClaimsALivePendingRowOfTheTenant(t *testing.T) {
 	// Another tenant has no such row.
 	require.ErrorIs(t, s.ClaimPending(ctx, "other", "p1", row.Hash, testNow), ErrNotFound)
 	// The row is live up to its expiry time, to the millisecond.
-	require.ErrorIs(t, s.ClaimPending(ctx, tenant, "p1", row.Hash, row.ExpiresAt.Add(time.Millisecond)), ErrNotFound)
-	require.Equal(t, "pending", pendingState(t, s, tenant, "p1"))
 	require.NoError(t, s.ClaimPending(ctx, tenant, "p1", row.Hash, row.ExpiresAt))
+	late := testPendingRow(tenant, acct, "p-late", testNow)
+	putPending(t, s, late)
+	require.ErrorIs(t, s.ClaimPending(ctx, tenant, "p-late", late.Hash, late.ExpiresAt.Add(time.Millisecond)), ErrNotFound)
+	require.Equal(t, "expired", pendingState(t, s, tenant, "p-late"), "the attempt records the expiry")
 
 	// A row in another state is not claimed, even with the right hash.
 	done := testPendingRow(tenant, acct, "p2", testNow)
@@ -318,4 +322,275 @@ func TestCreatePendingRefusesBadRows(t *testing.T) {
 		err = s.TransitionPending(ctx, "", "p1", "pending", "done", "", testNow)
 		require.ErrorIs(t, err, ErrInvalidID)
 	})
+}
+
+// pendingSecretsAreNull reads the two sealed columns straight from the table.
+func pendingSecretsAreNull(t *testing.T, s *Store, tenant account.TenantID, id string) (payload, preview bool) {
+	t.Helper()
+	require.NoError(t, s.db.QueryRowContext(context.Background(),
+		`SELECT payload IS NULL, preview IS NULL FROM pending_actions WHERE tenant_id = ? AND id = ?`,
+		string(tenant), id).Scan(&payload, &preview))
+	return payload, preview
+}
+
+// A finished action keeps no secret. The statement that moves it to a final
+// state also sets the sealed payload and the sealed preview to NULL.
+func TestTransitionPendingClearsTheSecretsOfFinalStates(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	now := testNow.Add(time.Minute)
+
+	for _, from := range []string{"pending", "approved"} {
+		for _, to := range []string{"done", "rejected", "expired"} {
+			id := from + "-to-" + to
+			putPending(t, s, testPendingRow(tenant, acct, id, testNow))
+			if from == "approved" {
+				require.NoError(t, s.TransitionPending(ctx, tenant, id, "pending", "approved", "", now))
+			}
+			payloadNull, previewNull := pendingSecretsAreNull(t, s, tenant, id)
+			require.False(t, payloadNull, "%s: payload before", id)
+			require.False(t, previewNull, "%s: preview before", id)
+
+			require.NoError(t, s.TransitionPending(ctx, tenant, id, from, to, "r-"+id, now))
+
+			payloadNull, previewNull = pendingSecretsAreNull(t, s, tenant, id)
+			require.True(t, payloadNull, "%s: payload after", id)
+			require.True(t, previewNull, "%s: preview after", id)
+
+			// The row itself stays, with the rest of its data.
+			got, err := s.GetPending(ctx, tenant, id)
+			require.NoError(t, err)
+			require.Equal(t, to, got.State)
+			require.Equal(t, "r-"+id, got.ResultID)
+			require.Empty(t, got.Preview, "the preview is gone")
+			require.Equal(t, bytes.Repeat([]byte{0xab}, 32), got.Hash)
+
+			// The payload is gone too: this is "not found", not an empty value.
+			_, _, err = s.GetPendingPayload(ctx, tenant, id)
+			require.ErrorIs(t, err, ErrNotFound, id)
+		}
+	}
+}
+
+// A move to "approved" is not the end. The user acted, and the server still
+// needs the payload until it has finished.
+func TestTransitionPendingKeepsTheSecretsOfApprovedRows(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	putPending(t, s, testPendingRow(tenant, acct, "p1", testNow))
+
+	require.NoError(t, s.TransitionPending(ctx, tenant, "p1", "pending", "approved", "", testNow))
+
+	payloadNull, previewNull := pendingSecretsAreNull(t, s, tenant, "p1")
+	require.False(t, payloadNull)
+	require.False(t, previewNull)
+	_, sealed, err := s.GetPendingPayload(ctx, tenant, "p1")
+	require.NoError(t, err)
+	require.Equal(t, []byte("sealed payload p1"), sealed)
+}
+
+// A failed move changes nothing, also not the secrets.
+func TestTransitionPendingThatChangesNothingKeepsTheSecrets(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	ensureTestTenant(t, s, "other")
+	putPending(t, s, testPendingRow(tenant, acct, "p1", testNow))
+
+	// A wrong "from", and another tenant.
+	require.ErrorIs(t, s.TransitionPending(ctx, tenant, "p1", "approved", "done", "", testNow), ErrNotFound)
+	require.ErrorIs(t, s.TransitionPending(ctx, "other", "p1", "pending", "done", "", testNow), ErrNotFound)
+	// A wrong hash on a live row is not an expiry.
+	require.ErrorIs(t, s.ClaimPending(ctx, tenant, "p1", bytes.Repeat([]byte{1}, 32), testNow), ErrNotFound)
+
+	require.Equal(t, "pending", pendingState(t, s, tenant, "p1"))
+	payloadNull, previewNull := pendingSecretsAreNull(t, s, tenant, "p1")
+	require.False(t, payloadNull)
+	require.False(t, previewNull)
+}
+
+// An attempt to move or claim a waiting row that is past its time records the
+// expiry and clears the secrets. The attempt itself still fails.
+func TestAnAttemptOnAnExpiredWaitingRowRecordsTheExpiry(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	late := testNow.Add(pendingLife + time.Millisecond)
+
+	for name, attempt := range map[string]func(row *PendingRow) error{
+		"transition": func(row *PendingRow) error {
+			return s.TransitionPending(ctx, tenant, row.ID, "pending", "approved", "", late)
+		},
+		"transition to rejected": func(row *PendingRow) error {
+			return s.TransitionPending(ctx, tenant, row.ID, "pending", "rejected", "", late)
+		},
+		"transition from approved": func(row *PendingRow) error {
+			return s.TransitionPending(ctx, tenant, row.ID, "approved", "done", "", late)
+		},
+		"claim": func(row *PendingRow) error {
+			return s.ClaimPending(ctx, tenant, row.ID, row.Hash, late)
+		},
+	} {
+		row := testPendingRow(tenant, acct, "p-"+name, testNow)
+		putPending(t, s, row)
+
+		require.ErrorIs(t, attempt(row), ErrNotFound, name)
+
+		require.Equal(t, "expired", pendingState(t, s, tenant, row.ID), name)
+		payloadNull, previewNull := pendingSecretsAreNull(t, s, tenant, row.ID)
+		require.True(t, payloadNull, name)
+		require.True(t, previewNull, name)
+	}
+}
+
+// Reading never changes a row. Only an attempt to change it does.
+func TestReadingAnExpiredWaitingRowDoesNotChangeIt(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	putPending(t, s, testPendingRow(tenant, acct, "p1", testNow))
+	late := testNow.Add(2 * pendingLife)
+
+	_, err := s.GetPending(ctx, tenant, "p1")
+	require.NoError(t, err)
+	_, err = s.ListPending(ctx, tenant, late)
+	require.NoError(t, err)
+	_, _, err = s.GetPendingPayload(ctx, tenant, "p1")
+	require.NoError(t, err)
+
+	require.Equal(t, "pending", pendingState(t, s, tenant, "p1"))
+	payloadNull, previewNull := pendingSecretsAreNull(t, s, tenant, "p1")
+	require.False(t, payloadNull)
+	require.False(t, previewNull)
+}
+
+// pendingIDs returns the ids of all pending actions in the table, in order.
+func pendingIDs(t *testing.T, s *Store) []string {
+	t.Helper()
+	rows, err := s.db.QueryContext(context.Background(), `SELECT id FROM pending_actions ORDER BY id`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		require.NoError(t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(t, rows.Err())
+	return ids
+}
+
+func TestPrunePendingDeletesOnlyOldFinalRowsAcrossTenants(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	ensureTestTenant(t, s, "other")
+	require.NoError(t, s.CreateAccount(ctx, testAccount("other", "a1", testNow)))
+
+	old := testNow
+	recent := testNow.Add(72 * time.Hour)
+	now := recent.Add(time.Hour)
+	// Rows older than 48 hours are old.
+	createdBefore := now.Add(-48 * time.Hour)
+
+	put := func(tenantID account.TenantID, id string, created time.Time, finalState string) {
+		putPending(t, s, testPendingRow(tenantID, acct, id, created))
+		switch finalState {
+		case "approved":
+			require.NoError(t, s.TransitionPending(ctx, tenantID, id, "pending", "approved", "", created))
+		case "done", "rejected", "expired":
+			require.NoError(t, s.TransitionPending(ctx, tenantID, id, "pending", finalState, "", created))
+		}
+	}
+	put(tenant, "old-done", old, "done")
+	put(tenant, "old-rejected", old, "rejected")
+	put(tenant, "old-expired", old, "expired")
+	put(tenant, "old-waiting-past-time", old, "") // "pending" for 72 hours: expired by the clock
+	put("other", "old-other-tenant", old, "done")
+	put(tenant, "old-approved", old, "approved") // the outcome is not known: kept
+	put(tenant, "new-done", recent, "done")
+	put(tenant, "new-rejected", recent, "rejected")
+	put(tenant, "new-waiting", recent, "") // live
+
+	n, err := s.PrunePending(ctx, createdBefore, now)
+	require.NoError(t, err)
+	require.Equal(t, 5, n)
+	require.Equal(t, []string{"new-done", "new-rejected", "new-waiting", "old-approved"}, pendingIDs(t, s))
+
+	// A second call has nothing left to do.
+	n, err = s.PrunePending(ctx, createdBefore, now)
+	require.NoError(t, err)
+	require.Zero(t, n)
+}
+
+// A waiting row that is old but still live is not deleted: its user can still
+// confirm it.
+func TestPrunePendingKeepsALiveWaitingRowThatIsOld(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	putPending(t, s, testPendingRow(tenant, acct, "live", testNow))
+	putPending(t, s, testPendingRow(tenant, acct, "done", testNow))
+	require.NoError(t, s.TransitionPending(ctx, tenant, "done", "pending", "done", "", testNow))
+
+	now := testNow.Add(2 * time.Hour)
+	n, err := s.PrunePending(ctx, now.Add(-time.Hour), now)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	require.Equal(t, []string{"live"}, pendingIDs(t, s))
+}
+
+// "Older than" is strict, to the millisecond.
+func TestPrunePendingBoundary(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	putPending(t, s, testPendingRow(tenant, acct, "at-limit", testNow))
+	putPending(t, s, testPendingRow(tenant, acct, "just-older", testNow.Add(-time.Millisecond)))
+	for _, id := range []string{"at-limit", "just-older"} {
+		require.NoError(t, s.TransitionPending(ctx, tenant, id, "pending", "done", "", testNow))
+	}
+
+	n, err := s.PrunePending(ctx, testNow, testNow.Add(time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	require.Equal(t, []string{"at-limit"}, pendingIDs(t, s))
+}
+
+func TestExpirePending(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	ensureTestTenant(t, s, "other")
+	row := testPendingRow(tenant, acct, "p1", testNow)
+	putPending(t, s, row)
+
+	// Not past its time yet, to the millisecond: nothing changes.
+	require.NoError(t, s.ExpirePending(ctx, tenant, "p1", row.ExpiresAt))
+	require.Equal(t, "pending", pendingState(t, s, tenant, "p1"))
+	// Another tenant has no such row.
+	require.NoError(t, s.ExpirePending(ctx, "other", "p1", row.ExpiresAt.Add(time.Hour)))
+	require.Equal(t, "pending", pendingState(t, s, tenant, "p1"))
+	// An action that does not exist is not an error.
+	require.NoError(t, s.ExpirePending(ctx, tenant, "missing", row.ExpiresAt.Add(time.Hour)))
+	require.ErrorIs(t, s.ExpirePending(ctx, tenant, "p|1", testNow), ErrInvalidID)
+	require.ErrorIs(t, s.ExpirePending(ctx, "", "p1", testNow), ErrInvalidID)
+
+	// One millisecond later it has expired.
+	require.NoError(t, s.ExpirePending(ctx, tenant, "p1", row.ExpiresAt.Add(time.Millisecond)))
+	require.Equal(t, "expired", pendingState(t, s, tenant, "p1"))
+	payloadNull, previewNull := pendingSecretsAreNull(t, s, tenant, "p1")
+	require.True(t, payloadNull)
+	require.True(t, previewNull)
+
+	// An approved action is not waiting. It does not expire, however late it is.
+	approved := testPendingRow(tenant, acct, "p2", testNow)
+	putPending(t, s, approved)
+	require.NoError(t, s.TransitionPending(ctx, tenant, "p2", "pending", "approved", "", testNow))
+	require.NoError(t, s.ExpirePending(ctx, tenant, "p2", approved.ExpiresAt.Add(time.Hour)))
+	require.Equal(t, "approved", pendingState(t, s, tenant, "p2"))
+	payloadNull, _ = pendingSecretsAreNull(t, s, tenant, "p2")
+	require.False(t, payloadNull)
 }

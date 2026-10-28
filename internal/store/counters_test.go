@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -254,6 +255,55 @@ func TestReserveCountersChecksIDsAndCount(t *testing.T) {
 	_, err = s.ReserveCounters(ctx, tenant, acct, []CounterCheck{checks[0], checks[0]}, 1, time.Time{})
 	require.Error(t, err, "the same counter twice")
 	require.Equal(t, 0, rowCount(t, s, tenant, acct))
+}
+
+// A huge count is refused before it can reach the arithmetic. The largest count
+// that is allowed is math.MaxInt32.
+func TestReserveCountersRefusesAHugeCount(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newCounterAccount(t, s, "a1")
+	checks := []CounterCheck{{Kind: "send_hour", WindowStart: counterStart, Limit: math.MaxInt}}
+
+	for _, n := range []int{math.MaxInt, math.MaxInt - 1, math.MaxInt32 + 1} {
+		_, err := s.ReserveCounters(ctx, tenant, acct, checks, n, time.Time{})
+		require.Error(t, err, "n=%d", n)
+	}
+	require.Equal(t, 0, rowCount(t, s, tenant, acct), "a refused count changes nothing")
+
+	// The largest allowed count still works.
+	full, err := s.ReserveCounters(ctx, tenant, acct, checks, math.MaxInt32, time.Time{})
+	require.NoError(t, err)
+	require.Empty(t, full)
+	require.Equal(t, math.MaxInt32, counterValue(t, s, tenant, acct, "send_hour", counterStart))
+}
+
+// current + n can wrap around in int. A counter near the top of int must still
+// be reported as full, and must not change.
+func TestReserveCountersDoesNotWrapAroundNearTheTopOfInt(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newCounterAccount(t, s, "a1")
+	checks := []CounterCheck{{Kind: "send_hour", WindowStart: counterStart, Limit: math.MaxInt}}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO rate_counters (tenant_id, account_id, kind, window_start, count) VALUES (?, ?, ?, ?, ?)`,
+		string(tenant), string(acct), "send_hour", counterStart.Unix(), math.MaxInt-1)
+	require.NoError(t, err)
+
+	// MaxInt-1 + 2 wraps to a negative number in int. It must count as over the limit.
+	full, err := s.ReserveCounters(ctx, tenant, acct, checks, 2, time.Time{})
+	require.NoError(t, err)
+	require.Equal(t, []int{0}, full)
+	require.Equal(t, math.MaxInt-1, counterValue(t, s, tenant, acct, "send_hour", counterStart))
+
+	// Exactly the limit is allowed. Then the counter is full.
+	full, err = s.ReserveCounters(ctx, tenant, acct, checks, 1, time.Time{})
+	require.NoError(t, err)
+	require.Empty(t, full)
+	require.Equal(t, math.MaxInt, counterValue(t, s, tenant, acct, "send_hour", counterStart))
+	full, err = s.ReserveCounters(ctx, tenant, acct, checks, 1, time.Time{})
+	require.NoError(t, err)
+	require.Equal(t, []int{0}, full)
 }
 
 func TestDeleteAccountDeletesItsCounters(t *testing.T) {

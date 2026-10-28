@@ -63,6 +63,28 @@ const outboxColumns = `tenant_id, id, account_id, status, send_after, next_attem
 // It fails if the tenant has no account with this id, if the tenant already has
 // an item with the same id, or if the message is empty.
 func (s *Store) CreateOutbox(ctx context.Context, row *OutboxRow, sealed []byte, keyVersion int) error {
+	return s.createOutbox(ctx, row, sealed, keyVersion, outboxQueued, sql.NullInt64{})
+}
+
+// CreateOutboxSending adds an item that is already claimed: it is in the state
+// "sending", and claimedAt is the time of the claim. It is one insert. The
+// caller sends the message at once, without ClaimOutbox, and no worker can take
+// the item in between, because a worker takes only queued items.
+//
+// It is for a message that must be sent before the caller returns, with no undo
+// window. If the program stops before the result is written, the item stays in
+// "sending", and FailSendingOutbox marks it failed later. It is never sent again.
+//
+// The rules and the errors are those of CreateOutbox. The status and the sent
+// time of the row are ignored.
+func (s *Store) CreateOutboxSending(ctx context.Context, row *OutboxRow, sealed []byte, keyVersion int, claimedAt time.Time) error {
+	return s.createOutbox(ctx, row, sealed, keyVersion, outboxSending,
+		sql.NullInt64{Int64: claimedAt.UnixMilli(), Valid: true})
+}
+
+// createOutbox inserts an item in the given state. claimedAt must be valid when
+// the state is "sending".
+func (s *Store) createOutbox(ctx context.Context, row *OutboxRow, sealed []byte, keyVersion int, status string, claimedAt sql.NullInt64) error {
 	if err := validateAccountIDs(row.Tenant, row.Account); err != nil {
 		return err
 	}
@@ -74,11 +96,11 @@ func (s *Store) CreateOutbox(ctx context.Context, row *OutboxRow, sealed []byte,
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO outbox (tenant_id, id, account_id, status, send_after, next_attempt_at, attempts,
-			error_text, message, key_version, draft_ref, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, 0, '', ?, ?, NULLIF(?, ''), ?)`,
-		string(row.Tenant), row.ID, string(row.Account), outboxQueued,
+			error_text, message, key_version, draft_ref, created_at, claimed_at)
+		VALUES (?, ?, ?, ?, ?, ?, 0, '', ?, ?, NULLIF(?, ''), ?, ?)`,
+		string(row.Tenant), row.ID, string(row.Account), status,
 		row.SendAfter.UnixMilli(), row.NextAttemptAt.UnixMilli(),
-		sealed, keyVersion, row.DraftRef, row.CreatedAt.UnixMilli())
+		sealed, keyVersion, row.DraftRef, row.CreatedAt.UnixMilli(), claimedAt)
 	if err != nil {
 		return fmt.Errorf("store: create outbox item: %w", err)
 	}

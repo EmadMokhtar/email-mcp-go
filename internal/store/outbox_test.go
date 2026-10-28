@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -549,4 +551,81 @@ func TestOutboxTableRules(t *testing.T) {
 	require.Error(t, err)
 	_, err = s.db.ExecContext(ctx, `UPDATE outbox SET status = 'sending' WHERE id = 'item1'`)
 	require.Error(t, err, "an item in sending must have its claim time, or nobody could find it when it is stale")
+}
+
+func TestCreateOutboxSendingStoresAClaimedItemInOneInsert(t *testing.T) {
+	s, acct := newOutboxStore(t)
+	ctx := context.Background()
+	row := outboxItem("item1", acct, outboxStart)
+	row.DraftRef = "drafts:9"
+	row.Status = "queued" // ignored
+	claimedAt := outboxStart.Add(5 * time.Millisecond)
+
+	require.NoError(t, s.CreateOutboxSending(ctx, row, []byte("sealed message"), 3, claimedAt))
+
+	got, err := s.GetOutbox(ctx, LocalTenantID, "item1")
+	require.NoError(t, err)
+	require.Equal(t, "sending", got.Status)
+	require.Equal(t, claimedAt, got.ClaimedAt)
+	require.Equal(t, outboxStart, got.SendAfter)
+	require.Equal(t, outboxStart, got.CreatedAt)
+	require.Equal(t, "drafts:9", got.DraftRef)
+	require.Zero(t, got.Attempts)
+	version, sealed, err := s.GetOutboxMessage(ctx, LocalTenantID, "item1")
+	require.NoError(t, err)
+	require.Equal(t, 3, version)
+	require.Equal(t, []byte("sealed message"), sealed)
+
+	// A worker does not see it, and nobody can claim it.
+	due, err := s.DueOutbox(ctx, outboxStart.Add(time.Hour), 10)
+	require.NoError(t, err)
+	require.Empty(t, due)
+	_, err = s.ClaimOutbox(ctx, LocalTenantID, "item1", outboxStart.Add(time.Hour))
+	require.ErrorIs(t, err, ErrNotFound)
+
+	// The result calls work from "sending", as for a claimed item. A stale
+	// item is found by the claim time.
+	n, err := s.FailSendingOutbox(ctx, "delivery unknown", claimedAt)
+	require.NoError(t, err)
+	require.Zero(t, n, "the claim time is not before itself")
+	require.NoError(t, s.FinishOutboxSent(ctx, LocalTenantID, "item1", outboxStart.Add(time.Second)))
+}
+
+func TestCreateOutboxSendingRefusesBadInput(t *testing.T) {
+	s, acct := newOutboxStore(t)
+	ctx := context.Background()
+
+	err := s.CreateOutboxSending(ctx, outboxItem("item1", acct, outboxStart), nil, 1, outboxStart)
+	require.Error(t, err, "an empty message")
+	err = s.CreateOutboxSending(ctx, outboxItem("a|b", acct, outboxStart), []byte("x"), 1, outboxStart)
+	require.ErrorIs(t, err, ErrInvalidID)
+	err = s.CreateOutboxSending(ctx, outboxItem("item2", "nobody", outboxStart), []byte("x"), 1, outboxStart)
+	require.Error(t, err, "an account that does not exist")
+	createOutbox(t, s, outboxItem("item3", acct, outboxStart))
+	err = s.CreateOutboxSending(ctx, outboxItem("item3", acct, outboxStart), []byte("x"), 1, outboxStart)
+	require.Error(t, err, "a duplicate id")
+}
+
+// codedError is an error with the Code method of a SQLite error.
+type codedError int
+
+func (e codedError) Error() string { return "coded error" }
+func (e codedError) Code() int     { return int(e) }
+
+func TestIsBusy(t *testing.T) {
+	// 5 is SQLITE_BUSY and 6 is SQLITE_LOCKED. The others are extended codes,
+	// whose low 8 bits are the main code: 261 BUSY_RECOVERY, 517 BUSY_SNAPSHOT,
+	// 262 LOCKED_SHAREDCACHE.
+	for _, code := range []int{5, 6, 261, 517, 262} {
+		require.True(t, IsBusy(codedError(code)), "code %d", code)
+		require.True(t, IsBusy(fmt.Errorf("store: finish outbox item: %w", codedError(code))), "wrapped, code %d", code)
+	}
+	// 1 is SQLITE_ERROR, 19 SQLITE_CONSTRAINT, 787 SQLITE_CONSTRAINT_FOREIGNKEY.
+	for _, code := range []int{0, 1, 19, 787} {
+		require.False(t, IsBusy(codedError(code)), "code %d", code)
+	}
+	require.False(t, IsBusy(nil))
+	require.False(t, IsBusy(errors.New("database is locked")), "text alone is not enough")
+	require.False(t, IsBusy(ErrNotFound))
+	require.False(t, IsBusy(context.Canceled))
 }
