@@ -67,22 +67,24 @@ import (
 // become line breaks. The result is passed through CleanUntrusted, so it is
 // always valid UTF-8 with no invisible characters.
 func HTMLToText(markup string) string {
-	// Scripting is off because a mail client does not run scripts. With it on,
-	// the parser would treat the content of noscript as raw text.
-	doc, err := html.ParseWithOptions(strings.NewReader(markup), html.ParseOptionEnableScripting(false))
+	doc, err := parseHTML(markup)
 	if err != nil {
 		// The parser refuses a document that is nested more than 512 elements
 		// deep. A string reader cannot fail. Return nothing, instead of text
 		// that was not checked.
 		return ""
 	}
-	r := textRenderer{
-		rules:  collectStyleRules(doc),
-		root:   initialFontSize,
-		states: []inherited{{fontSize: initialFontSize}},
-	}
+	r := textRenderer{visibility: newVisibility(doc)}
 	r.walk(doc)
 	return CleanUntrusted(tidyLines(string(r.buf)))
+}
+
+// parseHTML parses HTML mail. Scripting is off because a mail client does not
+// run scripts. With it on, the parser would treat the content of noscript as
+// raw text. HTMLToText and VisibleHTML parse in the same way, so they see the
+// same document.
+func parseHTML(markup string) (*html.Node, error) {
+	return html.ParseWithOptions(strings.NewReader(markup), html.ParseOptionEnableScripting(false))
 }
 
 // dropTags are removed together with everything inside them.
@@ -114,15 +116,34 @@ func tagSet(names ...string) map[string]bool {
 	return set
 }
 
-// textRenderer collects the text of a parsed document.
-type textRenderer struct {
-	buf    []byte
+// visibility decides what a reader cannot see in a parsed document. It is the
+// analysis behind HTMLToText and VisibleHTML, so both leave out the same parts.
+// A walk over the document calls classify for each element and push when it
+// opens an element that classify kept, and it takes the state off the stack
+// (pop) when it closes that element.
+type visibility struct {
 	rules  *styleRules // rules in style elements
 	states []inherited // inherited properties of the open elements, innermost last
 	root   float64     // font size of the html element, in pixels (for rem)
-	pre    int         // how many pre elements we are inside
-	bullet bool        // a list item started and its "- " is not written yet
-	links  []linkMark  // links that are open, innermost last
+}
+
+// newVisibility reads the style rules of the document and returns the state
+// for the start of a walk.
+func newVisibility(doc *html.Node) visibility {
+	return visibility{
+		rules:  collectStyleRules(doc),
+		root:   initialFontSize,
+		states: []inherited{{fontSize: initialFontSize}},
+	}
+}
+
+// textRenderer collects the text of a parsed document.
+type textRenderer struct {
+	visibility
+	buf    []byte
+	pre    int        // how many pre elements we are inside
+	bullet bool       // a list item started and its "- " is not written yet
+	links  []linkMark // links that are open, innermost last
 }
 
 // inherited holds the properties that an element gets from its parent.
@@ -137,21 +158,39 @@ func (s inherited) textHidden() bool {
 }
 
 // state returns the properties of the element that is open now.
-func (r *textRenderer) state() inherited {
-	return r.states[len(r.states)-1]
+func (v *visibility) state() inherited {
+	return v.states[len(v.states)-1]
+}
+
+// classify says whether an element is shown at all. When it is not, the
+// element is skipped with everything inside it: it is a dropped tag (see
+// dropTags), it has a hiding attribute, or a style hides it as a whole. When it
+// is shown, the effect of its styles is returned, for push.
+func (v *visibility) classify(n *html.Node) (effect styleEffect, shown bool) {
+	if dropTags[n.Data] || hasHiddenAttribute(n) {
+		return styleEffect{}, false
+	}
+	effect = v.rules.effectFor(n)
+	if style, ok := attributeValue(n, "style"); ok {
+		effect = effect.merge(parseStyle(style))
+	}
+	return effect, !effect.drop
 }
 
 // push opens an element with the given effect and works out its properties.
-func (r *textRenderer) push(n *html.Node, e styleEffect) {
-	s := r.state()
+func (v *visibility) push(n *html.Node, e styleEffect) {
+	s := v.state()
 	s.invisible = e.invisible(s.invisible)
-	s.fontSize = e.size(s.fontSize, r.root)
+	s.fontSize = e.size(s.fontSize, v.root)
 	// rem is relative to the html element. Its own size uses the default.
 	if n.Data == "html" && n.Parent != nil && n.Parent.Type == html.DocumentNode {
-		r.root = s.fontSize
+		v.root = s.fontSize
 	}
-	r.states = append(r.states, s)
+	v.states = append(v.states, s)
 }
+
+// pop closes the element that push opened last.
+func (v *visibility) pop() { v.states = v.states[:len(v.states)-1] }
 
 // linkMark remembers where the text of an open link starts.
 type linkMark struct {
@@ -204,14 +243,8 @@ func (r *textRenderer) enter(n *html.Node) bool {
 	}
 
 	tag := n.Data
-	if dropTags[tag] || hasHiddenAttribute(n) {
-		return false
-	}
-	effect := r.rules.effectFor(n)
-	if style, ok := attributeValue(n, "style"); ok {
-		effect = effect.merge(parseStyle(style))
-	}
-	if effect.drop {
+	effect, shown := r.classify(n)
+	if !shown {
 		return false
 	}
 	if tag == "br" {
@@ -268,7 +301,7 @@ func (r *textRenderer) exit(n *html.Node) {
 	case lineTags[tag]:
 		r.newline(1)
 	}
-	r.states = r.states[:len(r.states)-1]
+	r.pop()
 }
 
 // endLink writes the url after the text of a link.

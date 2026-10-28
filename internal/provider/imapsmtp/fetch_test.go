@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"mime/quotedprintable"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -534,7 +535,8 @@ func TestTextFetchBytes(t *testing.T) {
 		// end can hide an element at the start.
 		require.Equal(t, int64(5000), textFetchBytes(&textPart{html: true, size: 5000}, 10))
 		require.Equal(t, int64(5000), textFetchBytes(&textPart{html: true, encoding: "base64", size: 5000}, want))
-		require.Equal(t, int64(25<<20), textFetchBytes(&textPart{html: true, size: 1<<32 - 1}, 10))
+		// The caller refuses an HTML part larger than the cap before it asks.
+		require.Equal(t, int64(maxHTMLBytes), textFetchBytes(&textPart{html: true, size: 1<<32 - 1}, 10))
 	})
 	t.Run("never more than the part", func(t *testing.T) {
 		require.Equal(t, int64(300), textFetchBytes(&textPart{size: 300}, want))
@@ -750,7 +752,7 @@ func TestGetMessageHTMLFormat(t *testing.T) {
 		partText("html", "utf-8", "", html)))
 
 	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyHTML})
-	require.Equal(t, mime.SanitizeHTML(html), msg.HTML)
+	require.Equal(t, mime.VisibleHTML(html), msg.HTML)
 	require.Contains(t, msg.HTML, "<b>world</b>")
 	require.NotContains(t, msg.HTML, "script")
 	require.NotContains(t, msg.HTML, "onclick")
@@ -1101,33 +1103,140 @@ func TestGetMessageFetchesOnlyTheStartOfALongBody(t *testing.T) {
 func TestGetMessageReadsAllOfAnHTMLPart(t *testing.T) {
 	// A style rule at the end of the document hides a paragraph at the start.
 	// mime.HTMLToText leaves out hidden text, but only if it sees the rule. So
-	// the backend does not render the start of the HTML alone.
-	var html strings.Builder
-	html.WriteString(`<html><body><p class="x">HIDDEN-AT-THE-START</p>`)
-	for i := 0; html.Len() < 600_000; i++ {
-		fmt.Fprintf(&html, `<p style="color:#333">word %05d</p>`, i)
+	// the backend does not render the start of the HTML alone. The sizes are
+	// below the cap on HTML (4 MiB).
+	for _, size := range []int{600_000, 3 << 20} {
+		t.Run(fmt.Sprintf("%d bytes", size), func(t *testing.T) {
+			var html strings.Builder
+			html.WriteString(`<html><body><p class="x">HIDDEN-AT-THE-START</p>`)
+			for i := 0; html.Len() < size; i++ {
+				fmt.Fprintf(&html, `<p style="color:#333">word %05d</p>`, i)
+			}
+			html.WriteString(`<style>.x{display:none}</style></body></html>`)
+			srv := imaptest.New(t)
+			b := newTestBackend(t, srv)
+			ref := appendRef(t, srv, b, textMail("html", "utf-8", "", html.String()))
+			sections := len(srv.FetchedSections())
+
+			msg := mustGet(t, b, ref, mail.BodyOptions{MaxChars: 5000})
+
+			require.NotContains(t, msg.Text, "HIDDEN")
+			require.True(t, strings.HasPrefix(msg.Text, "word 00000\n\nword 00001"), "the hidden paragraph is gone")
+			require.Equal(t, 5000, utf8.RuneCountInString(msg.Text))
+			if size <= 1<<20 { // the reference conversion is slow for the large part
+				whole := []rune(mime.HTMLToText(html.String()))
+				require.Equal(t, string(whole[:5000]), msg.Text)
+			}
+			require.True(t, msg.Truncated)
+			require.Equal(t, 5000, msg.NextOffset)
+			fetches := withPrefix(sectionsSince(srv, sections), "BODY.PEEK[1]")
+			require.Equal(t, []string{fmt.Sprintf("BODY.PEEK[1]<0.%d>", html.Len())}, fetches, "one fetch of the whole part")
+
+			// The same for the HTML format: the page is the start of the visible
+			// HTML.
+			sections = len(srv.FetchedSections())
+			msg = mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyHTML, MaxChars: 300})
+			require.NotContains(t, msg.HTML, "HIDDEN")
+			require.True(t, strings.HasPrefix(msg.HTML, "<p>word 00000</p>"))
+			if size <= 1<<20 {
+				require.Equal(t, string([]rune(mime.CleanUntrusted(mime.VisibleHTML(html.String())))[:300]), msg.HTML)
+			}
+			require.Len(t, withPrefix(sectionsSince(srv, sections), "BODY.PEEK[1]"), 1)
+		})
 	}
-	html.WriteString(`<style>.x{display:none}</style></body></html>`)
+}
+
+func TestGetMessageHTMLFormatDropsHiddenContent(t *testing.T) {
+	// SanitizeHTML alone removes the style attributes and the style element but
+	// keeps the content that they hide. The html format must not show it.
+	html := `<style>.x{display:none}</style><p>Visible</p>` +
+		`<div style="display:none">HIDDEN-STYLE</div><p hidden>HIDDEN-ATTRIBUTE</p>` +
+		`<p class="x">HIDDEN-CLASS</p><span style="font-size:0">HIDDEN-SIZE</span>`
 	srv := imaptest.New(t)
 	b := newTestBackend(t, srv)
-	ref := appendRef(t, srv, b, textMail("html", "utf-8", "", html.String()))
+	ref := appendRef(t, srv, b, textMail("html", "utf-8", "", html))
+
+	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyHTML})
+
+	require.NotContains(t, msg.HTML, "HIDDEN")
+	require.Contains(t, msg.HTML, "<p>Visible</p>")
+	require.Equal(t, "Visible", mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyText}).Text,
+		"the text format shows the same part")
+}
+
+// bigHTML returns HTML of exactly n bytes without line breaks, so the part has
+// n bytes.
+func bigHTML(n int) string {
+	const unit, head, tail = "<p>word</p>", "<html><body>", "</body></html>"
+	units := (n - len(head) - len(tail)) / len(unit)
+	pad := n - len(head) - len(tail) - units*len(unit)
+	return head + strings.Repeat(unit, units) + strings.Repeat("a", pad) + tail
+}
+
+func TestGetMessageHTMLLargerThanTheCapIsNotConverted(t *testing.T) {
+	// 5 MiB of HTML is more than the cap (4 MiB). The conversion needs memory of
+	// about 40 times the size for each page, and the start of the document
+	// alone cannot be converted (see TestGetMessageReadsAllOfAnHTMLPart).
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, textMail("html", "utf-8", "", bigHTML(5<<20)))
 	sections := len(srv.FetchedSections())
+	sent := srv.BytesSent()
 
-	msg := mustGet(t, b, ref, mail.BodyOptions{MaxChars: 5000})
+	for _, format := range []mail.BodyFormat{mail.BodyText, mail.BodyHTML} {
+		msg, err := b.GetMessage(t.Context(), ref, mail.BodyOptions{Format: format})
+		require.ErrorIs(t, err, mail.ErrTooLarge, format)
+		require.Contains(t, err.Error(), "too large", format)
+		require.Contains(t, err.Error(), `body_format "none"`, format)
+		require.Nil(t, msg)
+	}
+	require.Empty(t, withPrefix(sectionsSince(srv, sections), "BODY.PEEK[1]"), "no byte of the body was fetched")
+	require.Less(t, srv.BytesSent()-sent, int64(64<<10))
 
-	require.NotContains(t, msg.Text, "HIDDEN")
-	whole := []rune(mime.HTMLToText(html.String()))
-	require.Equal(t, string(whole[:5000]), msg.Text)
-	require.True(t, msg.Truncated)
-	require.Equal(t, 5000, msg.NextOffset)
-	fetches := withPrefix(sectionsSince(srv, sections), "BODY.PEEK[1]")
-	require.Equal(t, []string{fmt.Sprintf("BODY.PEEK[1]<0.%d>", html.Len())}, fetches, "one fetch of the whole part")
+	// The headers and the attachment list are still there.
+	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyNone})
+	require.Equal(t, "test", msg.Subject)
+	require.Empty(t, msg.Text)
+}
 
-	// The same for the HTML format: the page is the start of the sanitized HTML.
-	sections = len(srv.FetchedSections())
-	msg = mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyHTML, MaxChars: 300})
-	require.Equal(t, mime.CleanUntrusted(mime.SanitizeHTML(html.String()))[:300], msg.HTML)
-	require.Len(t, withPrefix(sectionsSince(srv, sections), "BODY.PEEK[1]"), 1)
+func TestGetMessageLargeHTMLWithAPlainAlternative(t *testing.T) {
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, multiMail("alternative",
+		partText("plain", "utf-8", "", "the plain version"),
+		partText("html", "utf-8", "", bigHTML(5<<20))))
+	sections := len(srv.FetchedSections())
+	sent := srv.BytesSent()
+
+	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyText})
+	require.Equal(t, "the plain version", msg.Text)
+	for _, s := range sectionsSince(srv, sections) {
+		require.NotRegexp(t, `^BODY(\.PEEK)?\[2`, s, "the HTML part was fetched")
+	}
+	require.Less(t, srv.BytesSent()-sent, int64(64<<10))
+
+	// The html format needs the HTML part. The error says what works.
+	_, err := b.GetMessage(t.Context(), ref, mail.BodyOptions{Format: mail.BodyHTML})
+	require.ErrorIs(t, err, mail.ErrTooLarge)
+	require.Contains(t, err.Error(), `body_format "text"`)
+	for _, s := range sectionsSince(srv, sections) {
+		require.NotRegexp(t, `^BODY(\.PEEK)?\[2`, s, "the HTML part was fetched")
+	}
+}
+
+func TestHTMLCapIsOnTheSizeOfThePart(t *testing.T) {
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	refs := appendRefs(t, srv, b, "INBOX",
+		textMail("html", "utf-8", "", bigHTML(maxHTMLBytes)),
+		textMail("html", "utf-8", "", bigHTML(maxHTMLBytes+1)))
+
+	require.Len(t, bigHTML(maxHTMLBytes), maxHTMLBytes)
+	msg := mustGet(t, b, refs[0], mail.BodyOptions{MaxChars: 10})
+	require.Equal(t, "word\n\nword", msg.Text, "a part of exactly the cap is converted")
+
+	_, err := b.GetMessage(t.Context(), refs[1], mail.BodyOptions{MaxChars: 10})
+	require.ErrorIs(t, err, mail.ErrTooLarge, "one byte more is not")
 }
 
 func TestGetMessageFetchesMoreWhenTheFirstFetchHasTooLittleText(t *testing.T) {
@@ -1549,18 +1658,15 @@ func TestConcurrentGetsDoNotDisturbEachOther(t *testing.T) {
 	}
 }
 
-// lyingServer returns a fake server for one message in INBOX. The structure and
-// the size that it reports are small, but the data it sends for the
-// attachment and for the whole message is 3 MB. A server may be wrong, or an
-// attacker may run it. The backend must not read more than the limit.
-func lyingServer(t *testing.T) *fakeIMAP {
+// bodySection matches the section of a FETCH BODY.PEEK[...] command.
+var bodySection = regexp.MustCompile(`BODY\.PEEK\[([0-9.]*)\]`)
+
+// scriptedMessage returns a fake server for one message (UID 1, UIDVALIDITY 7)
+// in INBOX. It says what structure and size the message has, and answers every
+// request for a body section with what answer returns: data, or NIL. The ref
+// of the message is scriptedRef.
+func scriptedMessage(t *testing.T, structure string, rfc822Size int, answer func(section string) (data string, isNil bool)) *fakeIMAP {
 	t.Helper()
-	const (
-		structure = `(("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" 5 1 NIL NIL NIL NIL)` +
-			`("APPLICATION" "OCTET-STREAM" ("NAME" "a.bin") NIL NIL "8BIT" 100 NIL ("ATTACHMENT" ("FILENAME" "a.bin")) NIL NIL) ` +
-			`"MIXED" ("BOUNDARY" "x") NIL NIL NIL)`
-	)
-	lie := strings.Repeat("A", 3_000_000)
 	var self atomic.Pointer[fakeIMAP]
 	fake := newFakeIMAP(t, "* OK [CAPABILITY IMAP4rev1] ready\r\n", func(tag, cmd string) (string, fakeThen) {
 		switch cmd {
@@ -1575,15 +1681,18 @@ func lyingServer(t *testing.T) *fakeIMAP {
 		// A UID FETCH. The last line that the client sent says what it asks.
 		lines := strings.Split(strings.TrimRight(self.Load().Received(), "\r\n"), "\n")
 		last := lines[len(lines)-1]
+		if m := bodySection.FindStringSubmatch(last); m != nil {
+			data, isNil := answer(m[1])
+			if isNil {
+				return fmt.Sprintf("* 1 FETCH (UID 1 BODY[%s] NIL)\r\n%s OK done\r\n", m[1], tag), fakeStay
+			}
+			return fmt.Sprintf("* 1 FETCH (UID 1 BODY[%s] {%d}\r\n%s)\r\n%s OK done\r\n", m[1], len(data), data, tag), fakeStay
+		}
 		switch {
 		case strings.Contains(last, "BODYSTRUCTURE"):
 			return "* 1 FETCH (UID 1 BODYSTRUCTURE " + structure + ")\r\n" + tag + " OK done\r\n", fakeStay
 		case strings.Contains(last, "RFC822.SIZE"):
-			return "* 1 FETCH (UID 1 RFC822.SIZE 10)\r\n" + tag + " OK done\r\n", fakeStay
-		case strings.Contains(last, "BODY.PEEK[2]"):
-			return fmt.Sprintf("* 1 FETCH (UID 1 BODY[2] {%d}\r\n%s)\r\n%s OK done\r\n", len(lie), lie, tag), fakeStay
-		case strings.Contains(last, "BODY.PEEK[]"):
-			return fmt.Sprintf("* 1 FETCH (UID 1 BODY[] {%d}\r\n%s)\r\n%s OK done\r\n", len(lie), lie, tag), fakeStay
+			return fmt.Sprintf("* 1 FETCH (UID 1 RFC822.SIZE %d)\r\n%s OK done\r\n", rfc822Size, tag), fakeStay
 		}
 		return tag + " BAD unexpected command\r\n", fakeStay
 	})
@@ -1591,29 +1700,139 @@ func lyingServer(t *testing.T) *fakeIMAP {
 	return fake
 }
 
-func TestServerThatSendsMoreThanItSaidIsStopped(t *testing.T) {
-	fake := lyingServer(t)
+// scriptedRef is the ref of the message of scriptedMessage.
+var scriptedRef = encodeRef(imapRef{Mailbox: "INBOX", UIDValidity: 7, UID: 1})
+
+// Structures for scriptedMessage. The part sizes are small.
+const (
+	// A plain text part of 5 bytes and an attachment of 100 bytes (part 2).
+	textAndFileStructure = `(("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" 5 1 NIL NIL NIL NIL)` +
+		`("APPLICATION" "OCTET-STREAM" ("NAME" "a.bin") NIL NIL "8BIT" 100 NIL ("ATTACHMENT" ("FILENAME" "a.bin")) NIL NIL) ` +
+		`"MIXED" ("BOUNDARY" "x") NIL NIL NIL)`
+	// A message that is one HTML part of 100 bytes.
+	htmlStructure = `("TEXT" "HTML" ("CHARSET" "utf-8") NIL NIL "7BIT" 100 1 NIL NIL NIL NIL)`
+	// A message that is one plain text part of 100 bytes.
+	plainStructure = `("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" 100 1 NIL NIL NIL NIL)`
+)
+
+// newScriptedBackend returns a backend for a fake server, with a short command
+// timeout. A command that leaves the connection unusable shows as a failure.
+func newScriptedBackend(t *testing.T, fake *fakeIMAP) *Backend {
+	t.Helper()
 	cfg := fake.plainConfig()
 	cfg.TokenScope = testScope
 	cfg.CommandTimeout = 3 * time.Second
 	b := New(cfg, testSigner())
 	t.Cleanup(func() { _ = b.Close() })
-	ref := encodeRef(imapRef{Mailbox: "INBOX", UIDValidity: 7, UID: 1})
+	return b
+}
+
+// requireConnectionReusable checks that the next command works at once on the
+// same connection (see pool.with).
+func requireConnectionReusable(t *testing.T, b *Backend, fake *fakeIMAP, started time.Time) {
+	t.Helper()
+	require.NoError(t, b.pool.with(t.Context(), noop))
+	require.Less(t, time.Since(started), 3*time.Second)
+	require.Equal(t, 1, fake.Accepted(), "the same connection served every command")
+}
+
+func TestServerThatSendsMoreThanItSaidIsStopped(t *testing.T) {
+	// The structure and the size that the server reports are small, but the
+	// data it sends is 3 MB. A server may be wrong, or an attacker may run it.
+	// The backend must not read more than the limit.
+	lie := strings.Repeat("A", 3_000_000)
+	fake := scriptedMessage(t, textAndFileStructure, 10, func(string) (string, bool) { return lie, false })
+	b := newScriptedBackend(t, fake)
 
 	started := time.Now()
-	att, err := b.GetAttachment(t.Context(), ref, "2", 1000)
+	att, err := b.GetAttachment(t.Context(), scriptedRef, "2", 1000)
 	require.ErrorIs(t, err, mail.ErrTooLarge, "the structure says 100 bytes, the server sends 3 MB")
 	require.Nil(t, att)
 
-	raw, err := b.GetRaw(t.Context(), ref, 1000)
+	raw, err := b.GetRaw(t.Context(), scriptedRef, 1000)
 	require.ErrorIs(t, err, mail.ErrTooLarge, "the size says 10 bytes, the server sends 3 MB")
 	require.Nil(t, raw)
 
 	// The rest of the data was read and thrown away, so the connection can
-	// serve the next command at once (see pool.with).
-	require.NoError(t, b.pool.with(t.Context(), noop))
-	require.Less(t, time.Since(started), 3*time.Second)
-	require.Equal(t, 1, fake.Accepted(), "the same connection served every command")
+	// serve the next command at once.
+	requireConnectionReusable(t, b, fake, started)
+}
+
+func TestHTMLPartLargerThanTheStructureSaidIsNotConverted(t *testing.T) {
+	// The structure says 100 bytes of HTML. The server sends 3 MB. The backend
+	// must not convert the first 100 bytes as if they were the whole document.
+	lie := strings.Repeat("<p>x</p>", 400_000)
+	fake := scriptedMessage(t, htmlStructure, 150, func(string) (string, bool) { return lie, false })
+	b := newScriptedBackend(t, fake)
+
+	started := time.Now()
+	for _, format := range []mail.BodyFormat{mail.BodyText, mail.BodyHTML} {
+		msg, err := b.GetMessage(t.Context(), scriptedRef, mail.BodyOptions{Format: format})
+		require.ErrorIs(t, err, mail.ErrTooLarge, format)
+		require.Nil(t, msg)
+	}
+	requireConnectionReusable(t, b, fake, started)
+}
+
+func TestPlainTextLongerThanTheStructureSaidIsCutToIt(t *testing.T) {
+	fake := scriptedMessage(t, plainStructure, 150, func(string) (string, bool) {
+		return strings.Repeat("a", 3_000_000), false
+	})
+	b := newScriptedBackend(t, fake)
+
+	started := time.Now()
+	msg, err := b.GetMessage(t.Context(), scriptedRef, mail.BodyOptions{})
+	require.NoError(t, err)
+	require.Equal(t, strings.Repeat("a", 100), msg.Text, "no more than the 100 bytes of the structure")
+	require.False(t, msg.Truncated)
+	requireConnectionReusable(t, b, fake, started)
+}
+
+func TestNilDataForAPartWithDataIsAnError(t *testing.T) {
+	// The structure says that the part has data, but the server answers NIL.
+	// The result must not be an empty file or an empty message.
+	fake := scriptedMessage(t, textAndFileStructure, 10, func(string) (string, bool) { return "", true })
+	b := newScriptedBackend(t, fake)
+
+	started := time.Now()
+	att, err := b.GetAttachment(t.Context(), scriptedRef, "2", 1000)
+	require.ErrorIs(t, err, mail.ErrNotFound)
+	require.Contains(t, err.Error(), "no data")
+	require.Nil(t, att)
+
+	raw, err := b.GetRaw(t.Context(), scriptedRef, 1000)
+	require.ErrorIs(t, err, mail.ErrNotFound)
+	require.Contains(t, err.Error(), "no data")
+	require.Nil(t, raw)
+
+	msg, err := b.GetMessage(t.Context(), scriptedRef, mail.BodyOptions{})
+	require.ErrorIs(t, err, mail.ErrNotFound, "the text part has 5 bytes")
+	require.Nil(t, msg)
+
+	// The format "none" needs no body.
+	msg, err = b.GetMessage(t.Context(), scriptedRef, mail.BodyOptions{Format: mail.BodyNone})
+	require.NoError(t, err)
+	require.Len(t, msg.Attachments, 1)
+	requireConnectionReusable(t, b, fake, started)
+}
+
+func TestNilDataForAnEmptyPartIsEmptyData(t *testing.T) {
+	// A part of 0 bytes can have NIL as its data. That is not an error.
+	const emptyFile = `(("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" 5 1 NIL NIL NIL NIL)` +
+		`("APPLICATION" "OCTET-STREAM" ("NAME" "empty.bin") NIL NIL "8BIT" 0 NIL ("ATTACHMENT" ("FILENAME" "empty.bin")) NIL NIL) ` +
+		`"MIXED" ("BOUNDARY" "x") NIL NIL NIL)`
+	fake := scriptedMessage(t, emptyFile, 0, func(string) (string, bool) { return "", true })
+	b := newScriptedBackend(t, fake)
+
+	att, err := b.GetAttachment(t.Context(), scriptedRef, "2", 1000)
+	require.NoError(t, err)
+	require.Empty(t, att.Data)
+	require.Equal(t, "empty.bin", att.Filename)
+	require.Zero(t, att.Size)
+
+	raw, err := b.GetRaw(t.Context(), scriptedRef, 1000)
+	require.NoError(t, err)
+	require.Empty(t, raw)
 }
 
 func TestCutTextIsAlwaysTheStartOfTheWholeText(t *testing.T) {
@@ -1675,4 +1894,75 @@ func TestCutTextIsAlwaysTheStartOfTheWholeText(t *testing.T) {
 			require.Empty(t, notStart, "the cut positions where the text is not the start of the whole text")
 		})
 	}
+}
+
+func TestCutHTMLIsNeverConverted(t *testing.T) {
+	// The backend asks for a whole HTML part. If a fetch of less than the part
+	// ever reaches the conversion, it must be refused, not converted.
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	html := `<p class="x">HIDDEN-AT-THE-START</p><p>shown</p><style>.x{display:none}</style>`
+	r := mustDecodeRef(t, appendRef(t, srv, b, textMail("html", "utf-8", "", html)))
+	uid := imap.UID(r.UID)
+
+	err := b.pool.with(t.Context(), func(c *imapclient.Client) error {
+		if err := examineRef(c, r); err != nil {
+			return err
+		}
+		m, err := fetchOne(c, uid, &imap.FetchOptions{UID: true, BodyStructure: &imap.FetchItemBodyStructure{Extended: true}})
+		if err != nil {
+			return err
+		}
+		_, htmlPath := textSections(m.BodyStructure)
+		part := bodyPartAt(m.BodyStructure, htmlPath)
+
+		text, _, err := fetchBodyStart(c, uid, part, int64(part.size)-10, mime.HTMLToText)
+		require.ErrorIs(t, err, mail.ErrTooLarge)
+		require.Empty(t, text)
+
+		text, cut, err := fetchBodyStart(c, uid, part, int64(part.size), mime.HTMLToText)
+		require.NoError(t, err)
+		require.False(t, cut)
+		require.Equal(t, "shown", text)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func TestPlainTextCutAtTheCapIsTruncated(t *testing.T) {
+	// A plain text part longer than the cap (25 MiB) is read only up to the
+	// cap. The test lowers the cap. The last page of what was read must say
+	// that the body goes on, and the page after it ends the paging.
+	old := maxTextFetchBytes
+	maxTextFetchBytes = 64 << 10
+	t.Cleanup(func() { maxTextFetchBytes = old })
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	body := numberedText(200_000)
+	ref := appendRef(t, srv, b, textMail("plain", "utf-8", "", body))
+
+	first := mustGet(t, b, ref, mail.BodyOptions{MaxChars: 20000})
+	require.Equal(t, body[:20000], first.Text)
+	require.True(t, first.Truncated)
+	require.Equal(t, 20000, first.NextOffset)
+
+	// A page that reaches the end of the text that was read.
+	last := mustGet(t, b, ref, mail.BodyOptions{MaxChars: 20000, Offset: 60000})
+	require.NotEmpty(t, last.Text)
+	require.Less(t, utf8.RuneCountInString(last.Text), 20000, "the text that was read ends in this page")
+	require.True(t, strings.HasPrefix(body[60000:], last.Text))
+	require.True(t, last.Truncated, "the body is longer than what was read")
+	require.Equal(t, 60000+utf8.RuneCountInString(last.Text), last.NextOffset)
+
+	// There is no more to read. The paging ends.
+	after := mustGet(t, b, ref, mail.BodyOptions{MaxChars: 20000, Offset: last.NextOffset})
+	require.Empty(t, after.Text)
+	require.False(t, after.Truncated)
+	require.Zero(t, after.NextOffset)
+
+	// A body below the cap is not flagged.
+	small := appendRefs(t, srv, b, "Small", textMail("plain", "utf-8", "", numberedText(30_000)))[0]
+	msg := mustGet(t, b, small, mail.BodyOptions{MaxChars: 50_000})
+	require.Equal(t, 30_000, utf8.RuneCountInString(msg.Text))
+	require.False(t, msg.Truncated)
 }

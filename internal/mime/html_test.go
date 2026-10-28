@@ -27,139 +27,143 @@ func TestHTMLToTextDropsScriptStyle(t *testing.T) {
 	require.NotContains(t, out, "color")
 }
 
-// Each markup below has a hidden part (the word "secret") and a visible part.
+// hiddenVariants is a list of markups that each have a hidden part (the word
+// "secret"). HTMLToText and VisibleHTML must both leave it out.
+var hiddenVariants = []struct{ name, markup string }{
+	// Attributes.
+	{"hidden attribute", `<p hidden>secret</p>`},
+	{"hidden attribute with empty value", `<p hidden="">secret</p>`},
+	{"hidden attribute with any value", `<p hidden="until-found">secret</p>`},
+	{"aria-hidden true", `<p aria-hidden="true">secret</p>`},
+	{"aria-hidden in capitals with spaces", `<p aria-hidden=" TRUE ">secret</p>`},
+	{"dialog that is not open", `<dialog>secret</dialog>`},
+
+	// display and visibility.
+	{"display none", `<p style="display:none">secret</p>`},
+	{"display none with spaces", `<p style="display : none">secret</p>`},
+	{"display none in capitals and important", `<p style="DISPLAY: NONE !important">secret</p>`},
+	{"display none among other rules", `<p style="color:red; display:none; margin:0">secret</p>`},
+	{"visibility hidden", `<p style="visibility:hidden">secret</p>`},
+	{"visibility hidden with spaces", `<p style="visibility :  hidden">secret</p>`},
+
+	// opacity.
+	{"opacity 0", `<p style="opacity:0">secret</p>`},
+	{"opacity 0.0", `<p style="opacity: 0.0">secret</p>`},
+	{"opacity 0 important", `<p style="opacity:0!important">secret</p>`},
+	{"opacity 0 percent", `<p style="opacity:0%">secret</p>`},
+
+	// zero font size.
+	{"font-size 0", `<p style="font-size:0">secret</p>`},
+	{"font-size 0px", `<p style="font-size:0px">secret</p>`},
+	{"font-size 0pt", `<p style="font-size: 0pt">secret</p>`},
+	{"font-size 0em", `<p style="font-size:0em">secret</p>`},
+	{"font-size 0rem", `<p style="font-size:0rem">secret</p>`},
+	{"font-size 0%", `<p style="font-size:0%">secret</p>`},
+	{"font-size 0.0px", `<p style="font-size:0.0px">secret</p>`},
+	{"font-size 0 in capitals", `<p style="FONT-SIZE:0PX">secret</p>`},
+	{"font-size 0 important", `<p style="font-size:0 !important">secret</p>`},
+
+	// Fonts of 1px or 1pt, or smaller, cannot be read.
+	{"font-size 1px", `<p style="font-size:1px">secret</p>`},
+	{"font-size 1.0px", `<p style="font-size: 1.0px">secret</p>`},
+	{"font-size 0.5px", `<p style="font-size:0.5px">secret</p>`},
+	{"font-size 0.01px", `<p style="font-size:0.01px">secret</p>`},
+	{"font-size 1pt", `<p style="font-size:1pt">secret</p>`},
+	{"font-size 0.5pt", `<p style="font-size:0.5pt">secret</p>`},
+	{"font-size 1px in capitals and important", `<p style="FONT-SIZE:1PX !IMPORTANT">secret</p>`},
+	{"font-size 1px among other rules", `<p style="color:#fff;font-size:1px;margin:0">secret</p>`},
+
+	// max-height 0 with overflow hidden.
+	{"max-height 0 and overflow hidden", `<p style="max-height:0;overflow:hidden">secret</p>`},
+	{"overflow hidden and max-height 0px", `<p style="overflow: hidden; max-height: 0px">secret</p>`},
+	{"max-height 0 and overflow-y hidden", `<p style="max-height:0;overflow-y:hidden">secret</p>`},
+	{"max-height 0 and overflow clip", `<p style="max-height:0;overflow:clip">secret</p>`},
+	{"overflow clip and max-height 0px", `<p style="overflow:clip; max-height:0px">secret</p>`},
+	{"max-height 0 and overflow-y clip", `<p style="max-height:0;overflow-y:clip">secret</p>`},
+	{"max-height 0 and overflow with two values", `<p style="max-height:0;overflow:visible hidden">secret</p>`},
+	{"max-height 0 and overflow with two values, clip", `<p style="max-height:0;overflow:auto clip">secret</p>`},
+	{"height 0 and overflow hidden", `<p style="height:0;overflow:hidden">secret</p>`},
+	{"height 0 and overflow clip", `<p style="height:0px;overflow:clip">secret</p>`},
+
+	// Opacity of zero or less, in every spelling.
+	{"opacity -1", `<p style="opacity:-1">secret</p>`},
+	{"opacity -0.5", `<p style="opacity:-0.5">secret</p>`},
+	{"opacity -50 percent", `<p style="opacity:-50%">secret</p>`},
+	{"opacity -0", `<p style="opacity:-0">secret</p>`},
+	{"opacity 0.0 percent", `<p style="opacity:0.0%">secret</p>`},
+	{"opacity 0 with an exponent", `<p style="opacity:0e0">secret</p>`},
+	{"opacity 0 as 0e5", `<p style="opacity:0e5">secret</p>`},
+	{"opacity tiny negative exponent", `<p style="opacity:-1e-3">secret</p>`},
+	{"opacity too big a negative number", `<p style="opacity:-1e999">secret</p>`},
+
+	// visibility:collapse hides like visibility:hidden.
+	{"visibility collapse", `<p style="visibility:collapse">secret</p>`},
+	{"visibility collapse in capitals", `<p style="VISIBILITY: COLLAPSE !important">secret</p>`},
+
+	// Zero or tiny size in the font shorthand: the first token before a "/"
+	// that is zero or has a unit is the size. A number without a unit is a
+	// weight.
+	{"font shorthand 0/0", `<p style="font:0/0 a">secret</p>`},
+	{"font shorthand 0px", `<p style="font: 0px serif">secret</p>`},
+	{"font shorthand with style and weight", `<p style="font:italic bold 0px/0 serif">secret</p>`},
+	{"font shorthand with a number weight", `<p style="font:700 0px serif">secret</p>`},
+	{"font shorthand with zero and no unit", `<p style="font:bold 0 serif">secret</p>`},
+	{"font shorthand with an oblique angle", `<p style="font:oblique 10deg 0px serif">secret</p>`},
+	{"font shorthand 1px", `<p style="font:1px/1 serif">secret</p>`},
+	{"font shorthand in capitals and important", `<p style="FONT:0PX SERIF !important">secret</p>`},
+	{"font shorthand after font-size", `<p style="font-size:20px;font:0/0 a">secret</p>`},
+	{"font-size after font shorthand", `<p style="font:20px serif;font-size:0">secret</p>`},
+
+	// Small sizes in every unit. The limit is 1pt, about 1.33px.
+	{"font-size 1.3px", `<p style="font-size:1.3px">secret</p>`},
+	{"font-size 0.01in", `<p style="font-size:0.01in">secret</p>`},
+	{"font-size 0.2mm", `<p style="font-size:0.2mm">secret</p>`},
+	{"font-size 0.03cm", `<p style="font-size:0.03cm">secret</p>`},
+	{"font-size 1q", `<p style="font-size:1q">secret</p>`},
+	{"font-size 0.05pc", `<p style="font-size:0.05pc">secret</p>`},
+	{"font-size 0.01em", `<p style="font-size:0.01em">secret</p>`},
+	{"font-size 1 percent", `<p style="font-size:1%">secret</p>`},
+	{"font-size 0.05rem", `<p style="font-size:0.05rem">secret</p>`},
+	{"font-size 0.05ex", `<p style="font-size:0.05ex">secret</p>`},
+	{"font-size 0.05vw", `<p style="font-size:0.05vw">secret</p>`},
+	{"font-size smaller applied often", `<p style="font-size:0.1px"><span style="font-size:larger">secret</span></p>`},
+	{"font-size 0.5 without a unit", `<p style="font-size:0.5">secret</p>`},
+
+	// Numbers with an exponent.
+	{"font-size 0e0px", `<p style="font-size:0e0px">secret</p>`},
+	{"font-size 0e5px", `<p style="font-size:0e5px">secret</p>`},
+	{"font-size 0E0PX in capitals", `<p style="font-size:0E0PX">secret</p>`},
+	{"font-size 1e-3px", `<p style="font-size:1e-3px">secret</p>`},
+	{"font-size 1e-400px", `<p style="font-size:1e-400px">secret</p>`},
+	{"font-size 5e-1px", `<p style="font-size:5E-1px">secret</p>`},
+	{"font-size 0.0e+0em", `<p style="font-size:0.0e+0em">secret</p>`},
+
+	// Font size or visibility that the children inherit.
+	{"zero font size is inherited", `<div style="font-size:0"><p><b>secret</b></p></div>`},
+	{"visibility hidden is inherited", `<div style="visibility:hidden"><p><b>secret</b></p></div>`},
+	{"tiny font size is inherited", `<div style="font-size:1px"><p>secret</p></div>`},
+
+	// Ways to write the same style that a browser still understands.
+	{"css comment between name and colon", `<p style="display/**/:none">secret</p>`},
+	{"css comment after colon", `<p style="display:/**/none">secret</p>`},
+	{"css escape in property name", `<p style="d\69splay:none">secret</p>`},
+	{"css escape in value", `<p style="display:n\6fne">secret</p>`},
+	{"css escape with trailing space", `<p style="display:\6e one">secret</p>`},
+	{"html entity for the colon", `<p style="display&colon;none">secret</p>`},
+	{"newline inside the style", "<p style=\"color:red;\n  display:\n none\">secret</p>"},
+
+	// Where the hidden part sits.
+	{"hidden parent hides nested children", `<div style="display:none"><p>a</p><div><span>secret</span></div></div>`},
+	{"hidden span inside a visible paragraph", `<span style="font-size:0">secret</span>`},
+	{"hidden inside a link", `<a href="https://x.test"><span hidden>secret</span></a>`},
+	{"hidden inside noscript", `<noscript><div hidden>secret</div></noscript>`},
+	{"hidden table cell", `<table><tr><td style="display:none">secret</td></tr></table>`},
+}
+
+// Each markup of hiddenVariants has a hidden part (the word "secret") and the
+// test adds a visible part.
 func TestHTMLToTextHiddenVariants(t *testing.T) {
-	tests := []struct{ name, markup string }{
-		// Attributes.
-		{"hidden attribute", `<p hidden>secret</p>`},
-		{"hidden attribute with empty value", `<p hidden="">secret</p>`},
-		{"hidden attribute with any value", `<p hidden="until-found">secret</p>`},
-		{"aria-hidden true", `<p aria-hidden="true">secret</p>`},
-		{"aria-hidden in capitals with spaces", `<p aria-hidden=" TRUE ">secret</p>`},
-		{"dialog that is not open", `<dialog>secret</dialog>`},
-
-		// display and visibility.
-		{"display none", `<p style="display:none">secret</p>`},
-		{"display none with spaces", `<p style="display : none">secret</p>`},
-		{"display none in capitals and important", `<p style="DISPLAY: NONE !important">secret</p>`},
-		{"display none among other rules", `<p style="color:red; display:none; margin:0">secret</p>`},
-		{"visibility hidden", `<p style="visibility:hidden">secret</p>`},
-		{"visibility hidden with spaces", `<p style="visibility :  hidden">secret</p>`},
-
-		// opacity.
-		{"opacity 0", `<p style="opacity:0">secret</p>`},
-		{"opacity 0.0", `<p style="opacity: 0.0">secret</p>`},
-		{"opacity 0 important", `<p style="opacity:0!important">secret</p>`},
-		{"opacity 0 percent", `<p style="opacity:0%">secret</p>`},
-
-		// zero font size.
-		{"font-size 0", `<p style="font-size:0">secret</p>`},
-		{"font-size 0px", `<p style="font-size:0px">secret</p>`},
-		{"font-size 0pt", `<p style="font-size: 0pt">secret</p>`},
-		{"font-size 0em", `<p style="font-size:0em">secret</p>`},
-		{"font-size 0rem", `<p style="font-size:0rem">secret</p>`},
-		{"font-size 0%", `<p style="font-size:0%">secret</p>`},
-		{"font-size 0.0px", `<p style="font-size:0.0px">secret</p>`},
-		{"font-size 0 in capitals", `<p style="FONT-SIZE:0PX">secret</p>`},
-		{"font-size 0 important", `<p style="font-size:0 !important">secret</p>`},
-
-		// Fonts of 1px or 1pt, or smaller, cannot be read.
-		{"font-size 1px", `<p style="font-size:1px">secret</p>`},
-		{"font-size 1.0px", `<p style="font-size: 1.0px">secret</p>`},
-		{"font-size 0.5px", `<p style="font-size:0.5px">secret</p>`},
-		{"font-size 0.01px", `<p style="font-size:0.01px">secret</p>`},
-		{"font-size 1pt", `<p style="font-size:1pt">secret</p>`},
-		{"font-size 0.5pt", `<p style="font-size:0.5pt">secret</p>`},
-		{"font-size 1px in capitals and important", `<p style="FONT-SIZE:1PX !IMPORTANT">secret</p>`},
-		{"font-size 1px among other rules", `<p style="color:#fff;font-size:1px;margin:0">secret</p>`},
-
-		// max-height 0 with overflow hidden.
-		{"max-height 0 and overflow hidden", `<p style="max-height:0;overflow:hidden">secret</p>`},
-		{"overflow hidden and max-height 0px", `<p style="overflow: hidden; max-height: 0px">secret</p>`},
-		{"max-height 0 and overflow-y hidden", `<p style="max-height:0;overflow-y:hidden">secret</p>`},
-		{"max-height 0 and overflow clip", `<p style="max-height:0;overflow:clip">secret</p>`},
-		{"overflow clip and max-height 0px", `<p style="overflow:clip; max-height:0px">secret</p>`},
-		{"max-height 0 and overflow-y clip", `<p style="max-height:0;overflow-y:clip">secret</p>`},
-		{"max-height 0 and overflow with two values", `<p style="max-height:0;overflow:visible hidden">secret</p>`},
-		{"max-height 0 and overflow with two values, clip", `<p style="max-height:0;overflow:auto clip">secret</p>`},
-		{"height 0 and overflow hidden", `<p style="height:0;overflow:hidden">secret</p>`},
-		{"height 0 and overflow clip", `<p style="height:0px;overflow:clip">secret</p>`},
-
-		// Opacity of zero or less, in every spelling.
-		{"opacity -1", `<p style="opacity:-1">secret</p>`},
-		{"opacity -0.5", `<p style="opacity:-0.5">secret</p>`},
-		{"opacity -50 percent", `<p style="opacity:-50%">secret</p>`},
-		{"opacity -0", `<p style="opacity:-0">secret</p>`},
-		{"opacity 0.0 percent", `<p style="opacity:0.0%">secret</p>`},
-		{"opacity 0 with an exponent", `<p style="opacity:0e0">secret</p>`},
-		{"opacity 0 as 0e5", `<p style="opacity:0e5">secret</p>`},
-		{"opacity tiny negative exponent", `<p style="opacity:-1e-3">secret</p>`},
-		{"opacity too big a negative number", `<p style="opacity:-1e999">secret</p>`},
-
-		// visibility:collapse hides like visibility:hidden.
-		{"visibility collapse", `<p style="visibility:collapse">secret</p>`},
-		{"visibility collapse in capitals", `<p style="VISIBILITY: COLLAPSE !important">secret</p>`},
-
-		// Zero or tiny size in the font shorthand: the first token before a "/"
-		// that is zero or has a unit is the size. A number without a unit is a
-		// weight.
-		{"font shorthand 0/0", `<p style="font:0/0 a">secret</p>`},
-		{"font shorthand 0px", `<p style="font: 0px serif">secret</p>`},
-		{"font shorthand with style and weight", `<p style="font:italic bold 0px/0 serif">secret</p>`},
-		{"font shorthand with a number weight", `<p style="font:700 0px serif">secret</p>`},
-		{"font shorthand with zero and no unit", `<p style="font:bold 0 serif">secret</p>`},
-		{"font shorthand with an oblique angle", `<p style="font:oblique 10deg 0px serif">secret</p>`},
-		{"font shorthand 1px", `<p style="font:1px/1 serif">secret</p>`},
-		{"font shorthand in capitals and important", `<p style="FONT:0PX SERIF !important">secret</p>`},
-		{"font shorthand after font-size", `<p style="font-size:20px;font:0/0 a">secret</p>`},
-		{"font-size after font shorthand", `<p style="font:20px serif;font-size:0">secret</p>`},
-
-		// Small sizes in every unit. The limit is 1pt, about 1.33px.
-		{"font-size 1.3px", `<p style="font-size:1.3px">secret</p>`},
-		{"font-size 0.01in", `<p style="font-size:0.01in">secret</p>`},
-		{"font-size 0.2mm", `<p style="font-size:0.2mm">secret</p>`},
-		{"font-size 0.03cm", `<p style="font-size:0.03cm">secret</p>`},
-		{"font-size 1q", `<p style="font-size:1q">secret</p>`},
-		{"font-size 0.05pc", `<p style="font-size:0.05pc">secret</p>`},
-		{"font-size 0.01em", `<p style="font-size:0.01em">secret</p>`},
-		{"font-size 1 percent", `<p style="font-size:1%">secret</p>`},
-		{"font-size 0.05rem", `<p style="font-size:0.05rem">secret</p>`},
-		{"font-size 0.05ex", `<p style="font-size:0.05ex">secret</p>`},
-		{"font-size 0.05vw", `<p style="font-size:0.05vw">secret</p>`},
-		{"font-size smaller applied often", `<p style="font-size:0.1px"><span style="font-size:larger">secret</span></p>`},
-		{"font-size 0.5 without a unit", `<p style="font-size:0.5">secret</p>`},
-
-		// Numbers with an exponent.
-		{"font-size 0e0px", `<p style="font-size:0e0px">secret</p>`},
-		{"font-size 0e5px", `<p style="font-size:0e5px">secret</p>`},
-		{"font-size 0E0PX in capitals", `<p style="font-size:0E0PX">secret</p>`},
-		{"font-size 1e-3px", `<p style="font-size:1e-3px">secret</p>`},
-		{"font-size 1e-400px", `<p style="font-size:1e-400px">secret</p>`},
-		{"font-size 5e-1px", `<p style="font-size:5E-1px">secret</p>`},
-		{"font-size 0.0e+0em", `<p style="font-size:0.0e+0em">secret</p>`},
-
-		// Font size or visibility that the children inherit.
-		{"zero font size is inherited", `<div style="font-size:0"><p><b>secret</b></p></div>`},
-		{"visibility hidden is inherited", `<div style="visibility:hidden"><p><b>secret</b></p></div>`},
-		{"tiny font size is inherited", `<div style="font-size:1px"><p>secret</p></div>`},
-
-		// Ways to write the same style that a browser still understands.
-		{"css comment between name and colon", `<p style="display/**/:none">secret</p>`},
-		{"css comment after colon", `<p style="display:/**/none">secret</p>`},
-		{"css escape in property name", `<p style="d\69splay:none">secret</p>`},
-		{"css escape in value", `<p style="display:n\6fne">secret</p>`},
-		{"css escape with trailing space", `<p style="display:\6e one">secret</p>`},
-		{"html entity for the colon", `<p style="display&colon;none">secret</p>`},
-		{"newline inside the style", "<p style=\"color:red;\n  display:\n none\">secret</p>"},
-
-		// Where the hidden part sits.
-		{"hidden parent hides nested children", `<div style="display:none"><p>a</p><div><span>secret</span></div></div>`},
-		{"hidden span inside a visible paragraph", `<span style="font-size:0">secret</span>`},
-		{"hidden inside a link", `<a href="https://x.test"><span hidden>secret</span></a>`},
-		{"hidden inside noscript", `<noscript><div hidden>secret</div></noscript>`},
-		{"hidden table cell", `<table><tr><td style="display:none">secret</td></tr></table>`},
-	}
-	for _, tc := range tests {
+	for _, tc := range hiddenVariants {
 		t.Run(tc.name, func(t *testing.T) {
 			out := HTMLToText(`<p>visible</p>` + tc.markup)
 			require.NotContains(t, out, "secret")
@@ -228,28 +232,31 @@ func TestHTMLToTextKeepsVisibleStyles(t *testing.T) {
 	require.Equal(t, "shown", HTMLToText(`<dialog open>shown</dialog>`))
 }
 
+// droppedElements is a list of markups that have a part (the word "secret")
+// that a reader does not see, because the element is not shown at all.
+var droppedElements = []struct{ name, markup string }{
+	{"script", `<script>secret</script>`},
+	{"style", `<style>.secret{}</style>`},
+	{"head and title", `<html><head><title>secret</title></head><body></body></html>`},
+	{"title inside body", `<title>secret</title>`},
+	{"template", `<template><p>secret</p></template>`},
+	{"iframe", `<iframe src="https://x.test">secret</iframe>`},
+	{"object", `<object data="x">secret</object>`},
+	{"embed", `<embed src="x">`},
+	{"svg", `<svg><text>secret</text><title>secret</title></svg>`},
+	{"img alt text", `<img src="https://x.test/a.png" alt="secret">`},
+	{"noembed", `<noembed>secret</noembed>`},
+	{"noframes", `<noframes>secret</noframes>`},
+	{"datalist", `<datalist><option value="secret"></datalist>`},
+	{"ruby parenthesis", `<ruby><rp>(secret)</rp></ruby>`},
+	{"comment", `<!-- secret -->`},
+	{"conditional comment", `<!--[if mso]>secret<![endif]-->`},
+	{"cdata", `<![CDATA[secret]]>`},
+	{"doctype", `<!DOCTYPE secret>`},
+}
+
 func TestHTMLToTextDropsNonTextElements(t *testing.T) {
-	tests := []struct{ name, markup string }{
-		{"script", `<script>secret</script>`},
-		{"style", `<style>.secret{}</style>`},
-		{"head and title", `<html><head><title>secret</title></head><body></body></html>`},
-		{"title inside body", `<title>secret</title>`},
-		{"template", `<template><p>secret</p></template>`},
-		{"iframe", `<iframe src="https://x.test">secret</iframe>`},
-		{"object", `<object data="x">secret</object>`},
-		{"embed", `<embed src="x">`},
-		{"svg", `<svg><text>secret</text><title>secret</title></svg>`},
-		{"img alt text", `<img src="https://x.test/a.png" alt="secret">`},
-		{"noembed", `<noembed>secret</noembed>`},
-		{"noframes", `<noframes>secret</noframes>`},
-		{"datalist", `<datalist><option value="secret"></datalist>`},
-		{"ruby parenthesis", `<ruby><rp>(secret)</rp></ruby>`},
-		{"comment", `<!-- secret -->`},
-		{"conditional comment", `<!--[if mso]>secret<![endif]-->`},
-		{"cdata", `<![CDATA[secret]]>`},
-		{"doctype", `<!DOCTYPE secret>`},
-	}
-	for _, tc := range tests {
+	for _, tc := range droppedElements {
 		t.Run(tc.name, func(t *testing.T) {
 			out := HTMLToText(`<p>visible</p>` + tc.markup)
 			require.Equal(t, "visible", out)
