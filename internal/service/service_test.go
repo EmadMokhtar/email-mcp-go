@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -159,6 +160,13 @@ func (f *fixture) newCache() *BackendCache {
 	return c
 }
 
+// newCacheWithTimers is newCache with a timer that the test fires by hand.
+func (f *fixture) newCacheWithTimers(timers *fakeTimers) *BackendCache {
+	c := f.newCache()
+	c.afterFunc = timers.AfterFunc
+	return c
+}
+
 // ctx returns a context with a principal of the fixture tenant and no scope
 // limit, as on a local install.
 func (f *fixture) ctx() context.Context {
@@ -206,27 +214,27 @@ func (l *fakeLinks) settingsCalls() []settingsCall {
 // far as a backend.
 type fakeFactory struct {
 	mu        sync.Mutex
-	backend   mail.Backend
-	err       error // returned by Mail when it is set
+	backend   mail.Backend                       // used for an account that has no entry in byAccount
+	byAccount map[account.AccountID]mail.Backend // a backend for one account
+	err       error                              // returned by Mail when it is set
 	mailCalls int
-	forgotten []account.AccountID
 }
 
-func (f *fakeFactory) Mail(context.Context, *account.Account) (mail.Backend, error) {
+func (f *fakeFactory) Mail(_ context.Context, a *account.Account) (mail.Backend, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.mailCalls++
 	if f.err != nil {
 		return nil, f.err
 	}
+	if b, ok := f.byAccount[a.ID]; ok {
+		return b, nil
+	}
 	return f.backend, nil
 }
 
-func (f *fakeFactory) Forget(id account.AccountID) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.forgotten = append(f.forgotten, id)
-}
+// Forget does nothing. The read use cases never call it.
+func (f *fakeFactory) Forget(account.AccountID) {}
 
 func (f *fakeFactory) calls() int {
 	f.mu.Lock()
@@ -245,9 +253,47 @@ type fakeBackend struct {
 	tagsErr  error
 	attErr   error
 	attBytes int64 // the maxBytes that GetAttachment received
+
+	// How Capabilities behaves. By default it answers at once.
+	capsDelay   time.Duration // wait this long, or until the context ends
+	capsBlock   bool          // wait until the context ends, as a backend that honours it
+	capsStuck   chan struct{} // wait until this channel is closed and ignore the context
+	capsEntered chan struct{} // gets a value each time Capabilities starts (buffered)
+	capsRunning atomic.Int32  // calls that run now
+	capsPeak    atomic.Int32  // the most calls that ran at the same time
 }
 
-func (b *fakeBackend) Capabilities() mail.Capabilities { return b.caps }
+func (b *fakeBackend) Capabilities(ctx context.Context) mail.Capabilities {
+	n := b.capsRunning.Add(1)
+	defer b.capsRunning.Add(-1)
+	for {
+		peak := b.capsPeak.Load()
+		if n <= peak || b.capsPeak.CompareAndSwap(peak, n) {
+			break
+		}
+	}
+	if b.capsEntered != nil {
+		select {
+		case b.capsEntered <- struct{}{}:
+		default:
+		}
+	}
+	switch {
+	case b.capsStuck != nil:
+		<-b.capsStuck
+		return mail.Capabilities{}
+	case b.capsBlock:
+		<-ctx.Done()
+		return mail.Capabilities{}
+	case b.capsDelay > 0:
+		select {
+		case <-time.After(b.capsDelay):
+		case <-ctx.Done():
+			return mail.Capabilities{}
+		}
+	}
+	return b.caps
+}
 
 func (b *fakeBackend) ListTags(context.Context) ([]mail.Tag, error) { return b.tags, b.tagsErr }
 
@@ -275,4 +321,58 @@ func plainMail(subject, body string) []byte {
 		"MIME-Version: 1.0\n" +
 		"Content-Type: text/plain; charset=utf-8\n" +
 		"\n" + body + "\n")
+}
+
+// fakeTimers replaces time.AfterFunc in the backend cache. A test fires a timer
+// by hand, so it does not wait for two minutes.
+type fakeTimers struct {
+	mu     sync.Mutex
+	timers []*fakeTimer
+}
+
+type fakeTimer struct {
+	delay   time.Duration
+	fn      func()
+	stopped bool
+}
+
+// AfterFunc has the signature of BackendCache.afterFunc.
+func (ft *fakeTimers) AfterFunc(d time.Duration, fn func()) (stop func() bool) {
+	t := &fakeTimer{delay: d, fn: fn}
+	ft.mu.Lock()
+	ft.timers = append(ft.timers, t)
+	ft.mu.Unlock()
+	return func() bool {
+		ft.mu.Lock()
+		defer ft.mu.Unlock()
+		was := !t.stopped
+		t.stopped = true
+		return was
+	}
+}
+
+// count returns how many timers were started.
+func (ft *fakeTimers) count() int {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	return len(ft.timers)
+}
+
+// get returns the i-th timer that was started.
+func (ft *fakeTimers) get(i int) *fakeTimer {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	return ft.timers[i]
+}
+
+// fire runs the i-th timer unless it was stopped, as the clock would.
+func (ft *fakeTimers) fire(i int) {
+	t := ft.get(i)
+	ft.mu.Lock()
+	stopped := t.stopped
+	t.stopped = true
+	ft.mu.Unlock()
+	if !stopped {
+		t.fn()
+	}
 }

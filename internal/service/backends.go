@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
@@ -26,13 +27,18 @@ type BackendFactory interface {
 	Mail(ctx context.Context, a *account.Account) (mail.Backend, error)
 	// Forget closes and drops the backends of the account with this id. The
 	// next call to Mail builds a new one. Call it when an account is deleted or
-	// changed by the same process.
+	// disconnected. A change of the settings or of the password needs no call:
+	// Mail notices it by itself.
 	Forget(id account.AccountID)
 }
 
 // passwordSecret is the kind of the stored secret that holds the account
 // password.
 const passwordSecret = "password"
+
+// retireAfter is how long a replaced backend stays open. A use case that
+// started before the replacement may still make calls on it.
+const retireAfter = 2 * time.Minute
 
 // SecretStore reads the sealed secrets of accounts. *store.Store implements it.
 type SecretStore interface {
@@ -54,6 +60,27 @@ type backendEntry struct {
 	fingerprint [sha256.Size]byte
 }
 
+// slot is the place of one account in the cache. A call to Mail takes the slot
+// for its whole run, so calls for the same account take turns and calls for
+// other accounts do not wait for it.
+type slot struct {
+	// lock has room for one value. A call holds the slot while it has put its
+	// value in lock. It is a channel and not a mutex, so a call that waits can
+	// also stop when its context ends.
+	lock chan struct{}
+	// e and dead are read and written only by the holder of the slot.
+	e *backendEntry
+	// dead is true after Forget or Close took the slot out of the cache. A call
+	// that finds it set starts again with a new slot.
+	dead bool
+}
+
+// retiredBackend is a backend that was replaced and waits to be closed.
+type retiredBackend struct {
+	key  backendKey
+	stop func() bool // stops the timer
+}
+
 // BackendCache is the default BackendFactory. It builds one IMAP and SMTP
 // backend per account and keeps it, so the connection pool of the account is
 // reused between requests.
@@ -62,8 +89,17 @@ type backendEntry struct {
 // command line tool can set a new password, and it cannot call Forget in the
 // server. So Mail reads the sealed password again on every call and compares a
 // fingerprint of the server settings and the sealed password with the one of
-// the cached backend. When they differ, Mail closes the cached backend and
-// builds a new one. Mail decrypts the password only when it builds a backend.
+// the cached backend. When they differ, Mail builds a new backend. It decrypts
+// the password only when it builds a backend.
+//
+// The replaced backend is not closed at once, because a use case that started
+// earlier may still make calls on it. It is retired: it closes after
+// retireAfter. Forget (the account is deleted or disconnected) and Close (the
+// program ends) close at once, retired backends included.
+//
+// Each account has its own slot (see slot), so a slow build for one account does
+// not stop the others. The cache lock c.mu protects only the two maps. Nobody
+// holds it while waiting for a slot, or while reading the database.
 //
 // A BackendCache is safe for use by many goroutines.
 type BackendCache struct {
@@ -73,13 +109,15 @@ type BackendCache struct {
 	local   bool
 	logger  *slog.Logger
 
-	// mu protects entries. Mail holds it for its whole run, including the read
-	// of the sealed password. That read is one local database lookup, and a
-	// single lock is what makes it certain that two calls for the same account
-	// never leave two live backends. Closing a backend does not wait for
-	// anything, so it is safe under the lock.
+	// The three functions below are set by the constructor. Tests replace them.
+	decrypt    func(ctx context.Context, tenant account.TenantID, keyVersion int, aad string, sealed []byte) ([]byte, error)
+	newBackend func(cfg imapsmtp.Config, signer *signing.Signer) *imapsmtp.Backend
+	afterFunc  func(d time.Duration, f func()) (stop func() bool)
+
+	// mu protects slots and retired.
 	mu      sync.Mutex
-	entries map[backendKey]*backendEntry
+	slots   map[backendKey]*slot
+	retired map[*imapsmtp.Backend]retiredBackend
 }
 
 var _ BackendFactory = (*BackendCache)(nil)
@@ -97,29 +135,81 @@ func NewBackendFactory(st SecretStore, v *secrets.Vault, signer *signing.Signer,
 		panic("service: NewBackendFactory needs a secret store, a vault and a signer")
 	}
 	return &BackendCache{
-		secrets: st,
-		vault:   v,
-		signer:  signer,
-		local:   local,
-		logger:  logger,
-		entries: make(map[backendKey]*backendEntry),
+		secrets:    st,
+		vault:      v,
+		signer:     signer,
+		local:      local,
+		logger:     logger,
+		decrypt:    v.Decrypt,
+		newBackend: imapsmtp.New,
+		afterFunc: func(d time.Duration, f func()) func() bool {
+			return time.AfterFunc(d, f).Stop
+		},
+		slots:   make(map[backendKey]*slot),
+		retired: make(map[*imapsmtp.Backend]retiredBackend),
 	}
 }
 
 // Mail returns the cached backend of the account, or builds one. See
 // BackendCache for when it builds a new one.
+//
+// If another call holds the account (it builds a backend), Mail waits for it,
+// and stops waiting when ctx ends.
 func (c *BackendCache) Mail(ctx context.Context, a *account.Account) (mail.Backend, error) {
 	if a.Mail == nil {
 		return nil, errors.New("service: the account has no mail server settings")
 	}
+	key := backendKey{tenant: a.TenantID, id: a.ID}
+	for {
+		b, again, err := c.mailOn(ctx, c.slotFor(key), key, a)
+		if again {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return b, nil
+	}
+}
+
+// mailOn is one try of Mail on the slot s. It takes the slot, so it waits for a
+// call that holds it, and stops waiting when ctx ends. It returns again = true
+// when Forget or Close took the slot out of the cache while the call waited:
+// the caller must then get the slot again and try again.
+func (c *BackendCache) mailOn(ctx context.Context, s *slot, key backendKey, a *account.Account) (b *imapsmtp.Backend, again bool, err error) {
+	select {
+	case s.lock <- struct{}{}:
+	case <-ctx.Done():
+		return nil, false, fmt.Errorf("service: wait for the mail backend: %w", ctx.Err())
+	}
+	defer func() { <-s.lock }()
+	if s.dead {
+		return nil, true, nil
+	}
+	b, err = c.fill(ctx, s, key, a)
+	return b, false, err
+}
+
+// slotFor returns the slot of the key and makes it if there is none.
+func (c *BackendCache) slotFor(key backendKey) *slot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	s := c.slots[key]
+	if s == nil {
+		s = &slot{lock: make(chan struct{}, 1)}
+		c.slots[key] = s
+	}
+	return s
+}
 
-	key := backendKey{tenant: a.TenantID, id: a.ID}
+// fill returns the backend of the slot. It builds a new one when the slot is
+// empty or when the settings or the password changed. The caller holds the
+// slot.
+func (c *BackendCache) fill(ctx context.Context, s *slot, key backendKey, a *account.Account) (*imapsmtp.Backend, error) {
 	keyVersion, sealed, err := c.secrets.GetAccountSecret(ctx, a.TenantID, a.ID, passwordSecret)
 	if errors.Is(err, store.ErrNotFound) {
 		// The password is gone, so a backend that was built with it must go too.
-		c.dropLocked(key)
+		c.closeEntry(s)
 		// Do not pass store.ErrNotFound on. A caller could take it for "account
 		// not found", and that is a different case.
 		return nil, errors.New("service: the account has no stored password")
@@ -132,28 +222,28 @@ func (c *BackendCache) Mail(ctx context.Context, a *account.Account) (mail.Backe
 		return nil, err
 	}
 
-	if cached := c.entries[key]; cached != nil {
-		if cached.fingerprint == fingerprint {
-			return cached.backend, nil
+	if s.e != nil {
+		if s.e.fingerprint == fingerprint {
+			return s.e.backend, nil
 		}
-		// The settings or the password changed. Close the old backend now, so it
-		// does not stay open if the new one cannot be built. A call that still
-		// uses the old backend finishes. Calls that start later on it fail.
-		c.dropLocked(key)
+		// The settings or the password changed. Calls that already use the old
+		// backend finish on it. It closes later.
+		c.retire(key, s.e.backend)
+		s.e = nil
 	}
 
 	b, err := c.build(ctx, a, keyVersion, sealed)
 	if err != nil {
 		return nil, err
 	}
-	c.entries[key] = &backendEntry{backend: b, fingerprint: fingerprint}
+	s.e = &backendEntry{backend: b, fingerprint: fingerprint}
 	return b, nil
 }
 
 // build decrypts the password and makes a backend. It does not connect.
 func (c *BackendCache) build(ctx context.Context, a *account.Account, keyVersion int, sealed []byte) (*imapsmtp.Backend, error) {
 	aad := secrets.AAD(string(a.TenantID), string(a.ID), passwordSecret)
-	plain, err := c.vault.Decrypt(ctx, a.TenantID, keyVersion, aad, sealed)
+	plain, err := c.decrypt(ctx, a.TenantID, keyVersion, aad, sealed)
 	if err != nil {
 		return nil, fmt.Errorf("service: decrypt the account password: %w", err)
 	}
@@ -162,7 +252,7 @@ func (c *BackendCache) build(ctx context.Context, a *account.Account, keyVersion
 	// plaintext.
 	clear(plain)
 
-	return imapsmtp.New(imapsmtp.Config{
+	return c.newBackend(imapsmtp.Config{
 		Server:     *a.Mail,
 		Password:   password,
 		Local:      c.local,
@@ -171,33 +261,80 @@ func (c *BackendCache) build(ctx context.Context, a *account.Account, keyVersion
 	}, c.signer), nil
 }
 
-// dropLocked closes and removes the cached backend for key, if there is one.
-// The caller must hold c.mu.
-func (c *BackendCache) dropLocked(key backendKey) {
-	if e, ok := c.entries[key]; ok {
+// closeEntry closes the backend of the slot at once and empties the slot. The
+// caller holds the slot.
+func (c *BackendCache) closeEntry(s *slot) {
+	if s.e != nil {
 		// Close only releases connections, and it never fails.
-		_ = e.backend.Close()
-		delete(c.entries, key)
+		_ = s.e.backend.Close()
+		s.e = nil
 	}
 }
 
-// Forget closes and removes every cached backend whose account has this id.
-func (c *BackendCache) Forget(id account.AccountID) {
+// retire starts the timer that closes a replaced backend.
+func (c *BackendCache) retire(key backendKey, b *imapsmtp.Backend) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for key := range c.entries {
-		if key.id == id {
-			c.dropLocked(key)
+	stop := c.afterFunc(retireAfter, func() { c.closeRetired(b) })
+	c.retired[b] = retiredBackend{key: key, stop: stop}
+}
+
+// closeRetired closes a retired backend when its timer fires. It does nothing
+// when Forget or Close has closed the backend already.
+func (c *BackendCache) closeRetired(b *imapsmtp.Backend) {
+	c.mu.Lock()
+	_, waiting := c.retired[b]
+	delete(c.retired, b)
+	c.mu.Unlock()
+	if waiting {
+		_ = b.Close()
+	}
+}
+
+// Forget closes and removes every cached backend whose account has this id, and
+// the retired backends of that account. It waits for a call that is building a
+// backend for the account, so the backend of that call is closed too.
+func (c *BackendCache) Forget(id account.AccountID) {
+	c.remove(func(key backendKey) bool { return key.id == id })
+}
+
+// Close closes every cached backend and every retired backend. Later calls to
+// Mail build new backends.
+func (c *BackendCache) Close() {
+	c.remove(func(backendKey) bool { return true })
+}
+
+// remove closes and removes the slots and the retired backends whose key
+// matches.
+func (c *BackendCache) remove(match func(backendKey) bool) {
+	// Take the slots out of the maps first, and wait for them after c.mu is
+	// free. Nobody may wait for a slot while holding c.mu.
+	c.mu.Lock()
+	var slots []*slot
+	for key, s := range c.slots {
+		if match(key) {
+			slots = append(slots, s)
+			delete(c.slots, key)
 		}
 	}
-}
+	var retired []*imapsmtp.Backend
+	for b, r := range c.retired {
+		if match(r.key) {
+			r.stop()
+			retired = append(retired, b)
+			delete(c.retired, b)
+		}
+	}
+	c.mu.Unlock()
 
-// Close closes every cached backend. Later calls to Mail build new backends.
-func (c *BackendCache) Close() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for key := range c.entries {
-		c.dropLocked(key)
+	for _, b := range retired {
+		_ = b.Close()
+	}
+	for _, s := range slots {
+		s.lock <- struct{}{} // wait for the call that holds the slot
+		c.closeEntry(s)
+		s.dead = true
+		<-s.lock
 	}
 }
 

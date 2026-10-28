@@ -35,8 +35,11 @@ var (
 //
 // Implementations hold no secrets in exported fields.
 type Backend interface {
-	// Capabilities reports what the backend supports.
-	Capabilities() Capabilities
+	// Capabilities reports what the backend supports. A backend may have to ask
+	// the server, so the call takes a context: when the context ends, the call
+	// ends and reports what it knows (for a server that did not answer, no
+	// optional feature). It never returns an error.
+	Capabilities(ctx context.Context) Capabilities
 
 	// ListFolders returns the folders of the account.
 	ListFolders(ctx context.Context) ([]Folder, error)

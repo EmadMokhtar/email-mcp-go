@@ -5,9 +5,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/require"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
@@ -73,6 +75,7 @@ func TestReadRefusedAtLevel0(t *testing.T) {
 			var perm *PermissionError
 			require.ErrorAs(t, err, &perm)
 			require.False(t, perm.Decision.Allowed)
+			require.False(t, perm.TokenLimited, "the account level is the problem, not the token")
 			require.Equal(t, account.MailRead, perm.Decision.Required)
 			require.Equal(t, account.MailOff, perm.Decision.Current)
 			require.NotEmpty(t, perm.Link)
@@ -150,21 +153,30 @@ func TestReadRefusedByTokenScopes(t *testing.T) {
 
 func TestNeedsReauthRefusedBeforeBackend(t *testing.T) {
 	f := newFixture(t)
+	// Level Organize (2) is neither Off nor the level that reading needs (1), so
+	// the test can tell which level the link asks for.
 	a := f.addAccount(f.tenant, "me@example.com", offlineSettings(), "pw", func(a *account.Account) {
 		a.Status = account.StatusNeedsReauth
+		a.Levels[account.AreaMail] = account.MailOrganize
 	})
 	backends := &fakeFactory{backend: &fakeBackend{}}
 
 	t.Run("with a link", func(t *testing.T) {
-		svc := f.newService(backends, &fakeLinks{})
+		links := &fakeLinks{}
+		svc := f.newService(backends, links)
 		for name, use := range readUses(svc, a.ID) {
 			t.Run(name, func(t *testing.T) {
 				err := use(f.ctx())
 				require.ErrorIs(t, err, ErrNeedsReauth)
 				require.Contains(t, err.Error(), "reconnect")
 				require.Contains(t, err.Error(), "https://mcp.test/settings/"+string(a.ID))
+				require.Contains(t, err.Error(), fmt.Sprintf("level=%d", int(account.MailOrganize)),
+					"the link asks for the level the account has now")
 				require.NotContains(t, err.Error(), "token=")
 			})
+		}
+		for _, c := range links.settingsCalls() {
+			require.Equal(t, settingsCall{ID: a.ID, Area: account.AreaMail, Level: account.MailOrganize}, c)
 		}
 	})
 	t.Run("without a link", func(t *testing.T) {
@@ -289,6 +301,215 @@ func TestListAccountsCapabilities(t *testing.T) {
 		require.Len(t, views, 3, "the list itself needs no permission")
 		require.Zero(t, backends.calls())
 	})
+}
+
+// When the token scopes lower the level, a link to the settings is wrong
+// advice: the user cannot fix it there. The error says that the token does not
+// allow the action.
+func TestReadRefusedByTokenScopesHasNoSettingsLink(t *testing.T) {
+	f := newFixture(t)
+	sendLevel := f.addAccount(f.tenant, "a@example.com", offlineSettings(), "pw") // level Send
+	off := f.addAccount(f.tenant, "b@example.com", offlineSettings(), "pw", func(a *account.Account) {
+		a.Levels[account.AreaMail] = account.MailOff
+	})
+	backends := &fakeFactory{backend: &fakeBackend{}}
+	links := &fakeLinks{}
+	svc := f.newService(backends, links)
+	ctxWith := func(scopes policy.Scopes) context.Context {
+		return WithPrincipal(context.Background(), Principal{Tenant: f.tenant, Scopes: scopes})
+	}
+
+	t.Run("the token is the problem", func(t *testing.T) {
+		for name, scopes := range map[string]policy.Scopes{
+			"no scopes":     {},
+			"unknown scope": {"calendar:read"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				_, err := svc.ListFolders(ctxWith(scopes), sendLevel.ID)
+
+				var perm *PermissionError
+				require.ErrorAs(t, err, &perm)
+				require.True(t, perm.TokenLimited)
+				require.Empty(t, perm.Link)
+				require.Contains(t, err.Error(), perm.Decision.Reason)
+				require.Contains(t, err.Error(), "access token does not allow")
+				require.NotContains(t, err.Error(), "settings")
+				require.NotContains(t, err.Error(), "http")
+			})
+		}
+		require.Empty(t, links.settingsCalls(), "no link may be built when the settings cannot help")
+	})
+	t.Run("the account level is the problem, even with scopes", func(t *testing.T) {
+		_, err := svc.ListFolders(ctxWith(policy.Scopes{"email:read"}), off.ID)
+
+		var perm *PermissionError
+		require.ErrorAs(t, err, &perm)
+		require.False(t, perm.TokenLimited)
+		require.NotEmpty(t, perm.Link)
+		require.NotContains(t, err.Error(), "access token")
+	})
+	require.Zero(t, backends.calls())
+}
+
+// listWithin runs ListAccounts and fails the test when it does not return
+// within the limit. It stops a test that would hang for ever.
+func listWithin(t *testing.T, svc *Service, ctx context.Context, limit time.Duration) []AccountView {
+	t.Helper()
+	type result struct {
+		views []AccountView
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		views, err := svc.ListAccounts(ctx)
+		done <- result{views, err}
+	}()
+	select {
+	case r := <-done:
+		require.NoError(t, r.err)
+		return r.views
+	case <-time.After(limit):
+		require.FailNow(t, "ListAccounts did not return in time")
+		return nil
+	}
+}
+
+// One slow mail server must not slow down the whole list.
+func TestListAccountsDoesNotWaitForASlowBackend(t *testing.T) {
+	f := newFixture(t)
+	first := f.addAccount(f.tenant, "a@example.com", offlineSettings(), "pw")
+	slow := f.addAccount(f.tenant, "b@example.com", offlineSettings(), "pw", func(a *account.Account) {
+		a.CreatedAt = a.CreatedAt.Add(time.Second)
+	})
+	last := f.addAccount(f.tenant, "c@example.com", offlineSettings(), "pw", func(a *account.Account) {
+		a.CreatedAt = a.CreatedAt.Add(2 * time.Second)
+	})
+	want := mail.Capabilities{Tags: true, MaxBatch: 500}
+
+	// newBackends makes a factory in which the second account uses slowBackend.
+	newBackends := func(slowBackend *fakeBackend) *fakeFactory {
+		return &fakeFactory{
+			backend:   &fakeBackend{caps: want},
+			byAccount: map[account.AccountID]mail.Backend{slow.ID: slowBackend},
+		}
+	}
+	// check looks at the views: the fast accounts have answers, the slow one has
+	// none.
+	check := func(t *testing.T, views []AccountView) {
+		t.Helper()
+		require.Len(t, views, 3)
+		require.Equal(t, []account.AccountID{first.ID, slow.ID, last.ID}, []account.AccountID{views[0].ID, views[1].ID, views[2].ID})
+		require.Equal(t, want, views[0].Capabilities)
+		require.Equal(t, mail.Capabilities{}, views[1].Capabilities, "an account that did not answer keeps empty capabilities")
+		require.Equal(t, want, views[2].Capabilities)
+	}
+
+	t.Run("the budget ends the wait for a backend that ignores the context", func(t *testing.T) {
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
+		svc := f.newService(newBackends(&fakeBackend{capsStuck: release}), &fakeLinks{})
+		svc.capabilitiesBudget = 200 * time.Millisecond
+
+		start := time.Now()
+		views := listWithin(t, svc, f.ctx(), 5*time.Second)
+
+		require.Less(t, time.Since(start), 3*time.Second)
+		check(t, views)
+	})
+
+	t.Run("the budget ends the wait for a backend that honours the context", func(t *testing.T) {
+		blocker := &fakeBackend{capsBlock: true}
+		svc := f.newService(newBackends(blocker), &fakeLinks{})
+		svc.capabilitiesBudget = 200 * time.Millisecond
+
+		views := listWithin(t, svc, f.ctx(), 5*time.Second)
+
+		check(t, views)
+		// The end of the budget also ends the question to the backend.
+		require.Eventually(t, func() bool { return blocker.capsRunning.Load() == 0 }, 2*time.Second, 5*time.Millisecond)
+	})
+
+	t.Run("a cancel by the caller ends the wait at once", func(t *testing.T) {
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
+		stuck := &fakeBackend{capsStuck: release, capsEntered: make(chan struct{}, 8)}
+		svc := f.newService(newBackends(stuck), &fakeLinks{})
+		// The default budget (5 seconds) stays: only the cancel can end the wait
+		// within the limit of this test.
+		ctx, cancel := context.WithCancel(f.ctx())
+		defer cancel()
+
+		type result struct {
+			views []AccountView
+			err   error
+		}
+		done := make(chan result, 1)
+		go func() {
+			views, err := svc.ListAccounts(ctx)
+			done <- result{views, err}
+		}()
+		select {
+		case <-stuck.capsEntered:
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "the slow backend was never asked")
+		}
+		start := time.Now()
+		cancel()
+
+		select {
+		case r := <-done:
+			require.NoError(t, r.err, "a cancel is not an error: the answers that came are returned")
+			require.Less(t, time.Since(start), 2*time.Second)
+			check(t, r.views)
+		case <-time.After(3 * time.Second):
+			require.FailNow(t, "ListAccounts did not return after the caller cancelled")
+		}
+	})
+
+	t.Run("without a slow backend nothing is lost", func(t *testing.T) {
+		svc := f.newService(newBackends(&fakeBackend{caps: want}), &fakeLinks{})
+
+		views := listWithin(t, svc, f.ctx(), 5*time.Second)
+
+		require.Len(t, views, 3)
+		for _, v := range views {
+			require.Equal(t, want, v.Capabilities)
+		}
+	})
+}
+
+func TestListAccountsAsksAtMostEightBackendsAtOnce(t *testing.T) {
+	f := newFixture(t)
+	const accounts = 20
+	for i := range accounts {
+		f.addAccount(f.tenant, fmt.Sprintf("user%d@example.com", i), offlineSettings(), "pw")
+	}
+	want := mail.Capabilities{Tags: true, MaxBatch: 500}
+	shared := &fakeBackend{caps: want, capsDelay: 20 * time.Millisecond}
+	svc := f.newService(&fakeFactory{backend: shared}, &fakeLinks{})
+
+	views := listWithin(t, svc, f.ctx(), 10*time.Second)
+
+	require.Len(t, views, accounts)
+	for _, v := range views {
+		require.Equal(t, want, v.Capabilities)
+	}
+	require.EqualValues(t, 8, maxCapabilityCalls)
+	require.LessOrEqual(t, int(shared.capsPeak.Load()), maxCapabilityCalls)
+	require.Greater(t, int(shared.capsPeak.Load()), 1, "the questions must run at the same time")
+}
+
+// The error of a failed backend setup must carry one "service:" prefix, not two.
+func TestBackendSetupErrorHasOneServicePrefix(t *testing.T) {
+	f := newFixture(t)
+	a := f.addAccount(f.tenant, "me@example.com", offlineSettings(), "pw")
+	require.NoError(t, f.store.DeleteAccountSecrets(context.Background(), a.TenantID, a.ID))
+	svc := f.newService(f.newCache(), &fakeLinks{})
+
+	_, err := svc.ListFolders(f.ctx(), a.ID)
+
+	require.Error(t, err)
+	require.Equal(t, 1, strings.Count(err.Error(), "service:"), err.Error())
 }
 
 func TestListTags(t *testing.T) {
@@ -493,8 +714,11 @@ func TestSearchThroughService(t *testing.T) {
 	})
 
 	t.Run("list tags", func(t *testing.T) {
-		_, _, err := svc.ListTags(ctx, a.ID)
+		tags, supported, err := svc.ListTags(ctx, a.ID)
+
 		require.NoError(t, err)
+		require.True(t, supported, "the test server lets clients make new keywords")
+		require.Empty(t, tags)
 	})
 
 	t.Run("list accounts shows capabilities", func(t *testing.T) {
@@ -503,8 +727,60 @@ func TestSearchThroughService(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, views, 1)
 		require.Equal(t, a.ID, views[0].ID)
+		require.True(t, views[0].Capabilities.Tags)
 		require.NotZero(t, views[0].Capabilities.MaxBatch)
 	})
+}
+
+// ListAccounts is the first call to a new backend here. The backend does not
+// know about tags yet, so it must ask the server. MaxBatch is also reported for
+// a server that cannot be reached, so only Tags shows that the answer is real.
+func TestListAccountsAsksTheServer(t *testing.T) {
+	f := newFixture(t)
+	srv := imaptest.New(t)
+	f.addAccount(f.tenant, "me@example.com", serverSettings(srv), srv.Pass)
+	svc := f.newService(f.newCache(), &fakeLinks{})
+
+	views, err := svc.ListAccounts(f.ctx())
+
+	require.NoError(t, err)
+	require.Len(t, views, 1)
+	require.True(t, views[0].Capabilities.Tags)
+	require.NotZero(t, views[0].Capabilities.MaxBatch)
+	require.Equal(t, 1, srv.TotalConns())
+}
+
+// withoutWildcard is a WithPermanentFlags function for a server that does not
+// let clients make new keywords.
+func withoutWildcard(_ string, _ bool, flags []imap.Flag) []imap.Flag {
+	var out []imap.Flag
+	for _, fl := range flags {
+		if fl != imap.FlagWildcard {
+			out = append(out, fl)
+		}
+	}
+	return out
+}
+
+// A server without new keywords has no tags. ListTags says so, and
+// ListAccounts reports Tags false.
+func TestNoTagsThroughService(t *testing.T) {
+	f := newFixture(t)
+	srv := imaptest.New(t, imaptest.WithPermanentFlags(withoutWildcard))
+	a := f.addAccount(f.tenant, "me@example.com", serverSettings(srv), srv.Pass)
+	svc := f.newService(f.newCache(), &fakeLinks{})
+
+	tags, supported, err := svc.ListTags(f.ctx(), a.ID)
+
+	require.NoError(t, err)
+	require.False(t, supported)
+	require.Empty(t, tags)
+
+	views, err := svc.ListAccounts(f.ctx())
+	require.NoError(t, err)
+	require.Len(t, views, 1)
+	require.False(t, views[0].Capabilities.Tags)
+	require.NotZero(t, views[0].Capabilities.MaxBatch)
 }
 
 func TestSearchWithWrongStoredPasswordFails(t *testing.T) {

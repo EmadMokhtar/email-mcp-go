@@ -44,22 +44,31 @@ var (
 )
 
 // PermissionError means that the policy refused an action. The message is for
-// the agent: it says why and where the user can change the level.
+// the agent: it says why and, when the user can fix it, where.
 type PermissionError struct {
 	// Decision is the answer of the policy engine.
 	Decision policy.Decision
 	// Link is the address of the settings page where the user can change the
-	// level. It is empty when the service could not build a link. It never
-	// holds a token.
+	// level. It is empty when the service could not build a link, and when the
+	// settings cannot help (see TokenLimited). It never holds a token.
 	Link string
+	// TokenLimited is true when the level of the account would allow the action
+	// and the scopes of the access token lowered it. The settings of the account
+	// cannot help then, so there is no link.
+	TokenLimited bool
 }
 
-// Error returns the reason of the decision and a sentence about the link.
+// Error returns the reason of the decision and a sentence about what can be
+// done: the link, or the settings in general, or the access token.
 func (e *PermissionError) Error() string {
-	if e.Link == "" {
+	switch {
+	case e.TokenLimited:
+		return e.Decision.Reason + " The access token does not allow this action."
+	case e.Link == "":
 		return e.Decision.Reason + " The user can change the level in the email-mcp settings."
+	default:
+		return e.Decision.Reason + " The user can change the level here: " + e.Link
 	}
-	return e.Decision.Reason + " The user can change the level here: " + e.Link
 }
 
 // Links builds the web addresses that the service puts in its answers. The web
@@ -96,6 +105,9 @@ type Deps struct {
 // Service runs the use cases. It is safe for use by many goroutines.
 type Service struct {
 	d Deps
+	// capabilitiesBudget is how long ListAccounts waits for the answers of the
+	// backends. A test lowers it.
+	capabilitiesBudget time.Duration
 }
 
 // New returns a Service.
@@ -109,7 +121,7 @@ func New(d Deps) *Service {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &Service{d: d}
+	return &Service{d: d, capabilitiesBudget: capabilitiesBudget}
 }
 
 // AccountView is what a caller may see of an account. It holds no secret and no
@@ -121,8 +133,9 @@ type AccountView struct {
 	// Areas maps each area to the name of its level, for example "Read".
 	Areas map[account.Area]string
 	// Capabilities is what the mail backend supports. It is empty when the
-	// service did not ask the backend: the account needs to be reconnected, the
-	// caller may not read it, or the backend could not be set up.
+	// service did not ask the backend (the account needs to be reconnected, or
+	// the caller may not read it), or when the backend could not be set up or did
+	// not answer in time.
 	Capabilities mail.Capabilities
 	Status       account.Status
 }
@@ -161,15 +174,28 @@ func (s *Service) authorize(ctx context.Context, id account.AccountID, act polic
 
 	d := policy.Decide(a, act, p.Scopes)
 	if !d.Allowed {
-		// If the link cannot be built, the refusal still stands. It only has no
-		// link. The action must never go ahead because of a link problem.
-		link := s.settingsLink(ctx, a.ID, account.AreaMail, d.Required)
-		return access{}, &PermissionError{Decision: d, Link: link}
+		return access{}, s.permissionError(ctx, a, d)
 	}
 	if a.Status == account.StatusNeedsReauth {
 		return access{}, s.needsReauthError(ctx, a)
 	}
 	return access{Principal: p, Account: a, Decision: d}, nil
+}
+
+// permissionError builds the error for a refused decision.
+//
+// When the level of the account is already high enough, only the scopes of the
+// token can have lowered the level. A link to the settings would be wrong advice
+// then, so the error has none.
+//
+// Otherwise the link may fail. The refusal still stands, with an empty link:
+// the action must never go ahead because of a link problem.
+func (s *Service) permissionError(ctx context.Context, a *account.Account, d policy.Decision) *PermissionError {
+	level := a.Level(account.AreaMail)
+	if level >= d.Required && level <= account.MailDelete {
+		return &PermissionError{Decision: d, TokenLimited: true}
+	}
+	return &PermissionError{Decision: d, Link: s.settingsLink(ctx, a.ID, account.AreaMail, d.Required)}
 }
 
 // mailBackend authorizes act and returns the mail backend of the account.
@@ -178,11 +204,9 @@ func (s *Service) mailBackend(ctx context.Context, id account.AccountID, act pol
 	if err != nil {
 		return nil, err
 	}
-	b, err := s.d.Backends.Mail(ctx, acc.Account)
-	if err != nil {
-		return nil, fmt.Errorf("service: open mail backend: %w", err)
-	}
-	return b, nil
+	// The factory errors already name this package. Wrapping them again would
+	// give "service: ... service: ...".
+	return s.d.Backends.Mail(ctx, acc.Account)
 }
 
 // settingsLink returns the settings address for an area and a level, or an

@@ -72,8 +72,8 @@ func (b *Backend) Close() error {
 	return nil
 }
 
-// capabilitiesTimeout limits the question that Capabilities may ask the
-// server.
+// capabilitiesTimeout is the longest time that Capabilities may take, whatever
+// the context of the caller allows.
 const capabilitiesTimeout = 15 * time.Second
 
 // Capabilities reports what the backend supports.
@@ -83,8 +83,11 @@ const capabilitiesTimeout = 15 * time.Second
 // When it does not know yet, Capabilities asks the server once and remembers
 // the answer. If the server cannot be asked, it reports Tags false and does not
 // remember that, so a later call asks again.
-func (b *Backend) Capabilities() mail.Capabilities {
-	ctx, cancel := context.WithTimeout(context.Background(), capabilitiesTimeout)
+//
+// The question ends when ctx ends, and after 15 seconds at the latest. Then
+// Capabilities reports Tags false, as for a server that cannot be reached.
+func (b *Backend) Capabilities(ctx context.Context) mail.Capabilities {
+	ctx, cancel := context.WithTimeout(ctx, capabilitiesTimeout)
 	defer cancel()
 	supported, err := b.tagsSupported(ctx)
 	return mail.Capabilities{Tags: err == nil && supported, MaxBatch: maxBatch}

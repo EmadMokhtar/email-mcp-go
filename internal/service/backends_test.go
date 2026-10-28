@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,6 +16,7 @@ import (
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
+	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
 	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
@@ -95,7 +100,8 @@ func TestBackendRebuiltWhenPasswordChanges(t *testing.T) {
 	f := newFixture(t)
 	srv := imaptest.New(t)
 	a := f.addAccount(f.tenant, "me@example.com", serverSettings(srv), srv.Pass)
-	c := f.newCache()
+	timers := &fakeTimers{}
+	c := f.newCacheWithTimers(timers)
 	old := mustMail(t, c, a)
 	require.True(t, works(t, old))
 
@@ -106,9 +112,15 @@ func TestBackendRebuiltWhenPasswordChanges(t *testing.T) {
 
 	fresh := mustMail(t, c, a)
 	require.NotSame(t, old, fresh)
-	require.False(t, works(t, old), "the old backend must be closed")
 	require.True(t, works(t, fresh))
 	require.Same(t, fresh, mustMail(t, c, a), "and the new one is cached")
+	// The old backend is retired and not closed: a use case that makes several
+	// calls may still use it. It closes when the timer fires.
+	require.True(t, works(t, old), "the old backend must stay open for a caller that still uses it")
+	require.Equal(t, 1, timers.count())
+	timers.fire(0)
+	require.False(t, works(t, old), "the old backend must be closed when it is retired")
+	require.True(t, works(t, fresh), "the new backend must not be touched")
 }
 
 func TestBackendUsesTheNewPassword(t *testing.T) {
@@ -130,7 +142,8 @@ func TestBackendRebuiltWhenServerSettingsChange(t *testing.T) {
 	f := newFixture(t)
 	srv := imaptest.New(t)
 	a := f.addAccount(f.tenant, "me@example.com", serverSettings(srv), srv.Pass)
-	c := f.newCache()
+	timers := &fakeTimers{}
+	c := f.newCacheWithTimers(timers)
 	old := mustMail(t, c, a)
 	require.True(t, works(t, old))
 
@@ -139,15 +152,107 @@ func TestBackendRebuiltWhenServerSettingsChange(t *testing.T) {
 
 	fresh := mustMail(t, c, changed)
 	require.NotSame(t, old, fresh)
-	require.False(t, works(t, old))
 	require.True(t, works(t, fresh))
+	require.True(t, works(t, old), "retired, not closed at once")
+	timers.fire(0)
+	require.False(t, works(t, old))
 
 	// A different port is a different setting too.
 	moved := f.reload(a)
 	moved.Mail.IMAPPort++
 	third := mustMail(t, c, moved)
 	require.NotSame(t, fresh, third)
+	require.Equal(t, 2, timers.count())
+	timers.fire(1)
 	require.False(t, works(t, fresh))
+}
+
+// A replaced backend waits two minutes before it closes. Forget and Close are
+// for an account that is gone and for the end of the program, so they close at
+// once, and they include the backends that wait.
+func TestRetiredBackends(t *testing.T) {
+	// replaced returns a cache in which the account has a retired backend.
+	type setup struct {
+		f       *fixture
+		srv     *imaptest.Server
+		a       *account.Account
+		c       *BackendCache
+		timers  *fakeTimers
+		retired mail.Backend
+		current mail.Backend
+	}
+	replaced := func(t *testing.T) *setup {
+		t.Helper()
+		f := newFixture(t)
+		srv := imaptest.New(t)
+		a := f.addAccount(f.tenant, "me@example.com", serverSettings(srv), srv.Pass)
+		timers := &fakeTimers{}
+		c := f.newCacheWithTimers(timers)
+		retired := mustMail(t, c, a)
+		require.True(t, works(t, retired))
+		f.setPassword(a, srv.Pass)
+		current := mustMail(t, c, a)
+		require.Equal(t, 1, timers.count())
+		require.True(t, works(t, retired))
+		return &setup{f: f, srv: srv, a: a, c: c, timers: timers, retired: retired, current: current}
+	}
+
+	t.Run("the delay is two minutes", func(t *testing.T) {
+		s := replaced(t)
+		require.Equal(t, 2*time.Minute, retireAfter)
+		require.Equal(t, retireAfter, s.timers.get(0).delay)
+	})
+	t.Run("Close closes retired backends too", func(t *testing.T) {
+		s := replaced(t)
+
+		s.c.Close()
+
+		require.False(t, works(t, s.retired))
+		require.False(t, works(t, s.current))
+		require.True(t, s.timers.get(0).stopped, "the timer of a closed backend must be stopped")
+	})
+	t.Run("Forget closes the retired backends of that account", func(t *testing.T) {
+		s := replaced(t)
+
+		s.c.Forget(s.a.ID)
+
+		require.False(t, works(t, s.retired))
+		require.False(t, works(t, s.current))
+		require.True(t, s.timers.get(0).stopped)
+	})
+	t.Run("Forget keeps the retired backends of other accounts", func(t *testing.T) {
+		s := replaced(t)
+
+		s.c.Forget(account.NewAccountID())
+
+		require.True(t, works(t, s.retired))
+		require.True(t, works(t, s.current))
+		require.False(t, s.timers.get(0).stopped)
+	})
+	t.Run("the timer closes only the retired backend", func(t *testing.T) {
+		s := replaced(t)
+
+		s.timers.fire(0)
+
+		require.False(t, works(t, s.retired))
+		require.True(t, works(t, s.current))
+		s.c.Forget(s.a.ID) // the timer has run already: nothing is closed twice, nothing breaks
+	})
+	t.Run("each replacement starts its own timer", func(t *testing.T) {
+		s := replaced(t)
+		s.f.setPassword(s.a, s.srv.Pass)
+
+		third := mustMail(t, s.c, s.a)
+
+		require.NotSame(t, s.current, third)
+		require.Equal(t, 2, s.timers.count())
+		require.True(t, works(t, s.retired), "the first retired backend waits for its own timer")
+		require.True(t, works(t, s.current))
+		s.timers.fire(1)
+		require.False(t, works(t, s.current))
+		require.True(t, works(t, s.retired))
+		require.True(t, works(t, third))
+	})
 }
 
 func TestBackendMissingPassword(t *testing.T) {
@@ -369,4 +474,289 @@ func TestBackendSecretStoreError(t *testing.T) {
 	_, err := c.Mail(context.Background(), a)
 
 	require.ErrorIs(t, err, boom)
+}
+
+// The password is decrypted only when a backend is built. A cache hit reads the
+// sealed bytes to compare the fingerprint, and it does not decrypt.
+func TestBackendDecryptsOnlyWhenBuilding(t *testing.T) {
+	f := newFixture(t)
+	a := f.addAccount(f.tenant, "me@example.com", offlineSettings(), "first-password")
+	c := f.newCache()
+	var decrypts atomic.Int32
+	real := c.decrypt
+	c.decrypt = func(ctx context.Context, tenant account.TenantID, version int, aad string, sealed []byte) ([]byte, error) {
+		decrypts.Add(1)
+		return real(ctx, tenant, version, aad, sealed)
+	}
+
+	for range 3 {
+		mustMail(t, c, a)
+	}
+	require.EqualValues(t, 1, decrypts.Load(), "three calls build one backend and decrypt once")
+
+	f.setPassword(a, "second-password")
+	mustMail(t, c, a)
+	require.EqualValues(t, 2, decrypts.Load(), "a new password is decrypted once")
+	mustMail(t, c, a)
+	mustMail(t, c, a)
+	require.EqualValues(t, 2, decrypts.Load())
+}
+
+// The settings of the factory reach the backend, and the password is the one
+// that was stored.
+func TestBackendConfigReachesTheBackend(t *testing.T) {
+	f := newFixture(t)
+	a := f.addAccount(f.tenant, "me@example.com", offlineSettings(), "the-stored-password")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	for _, local := range []bool{true, false} {
+		t.Run(fmt.Sprintf("local=%v", local), func(t *testing.T) {
+			c := NewBackendFactory(f.store, f.vault, f.signer, local, logger)
+			t.Cleanup(c.Close)
+			var (
+				got       imapsmtp.Config
+				gotSigner *signing.Signer
+				built     int
+			)
+			c.newBackend = func(cfg imapsmtp.Config, signer *signing.Signer) *imapsmtp.Backend {
+				built++
+				got, gotSigner = cfg, signer
+				return imapsmtp.New(cfg, signer)
+			}
+
+			mustMail(t, c, a)
+
+			require.Equal(t, 1, built)
+			require.Equal(t, *a.Mail, got.Server)
+			require.Equal(t, "the-stored-password", got.Password.Reveal())
+			require.Equal(t, local, got.Local)
+			require.Same(t, logger, got.Logger)
+			require.Equal(t, string(a.TenantID)+"/"+string(a.ID), got.TokenScope)
+			require.Same(t, f.signer, gotSigner)
+		})
+	}
+}
+
+// blockedDecrypt makes the decrypt function of the cache wait for one account.
+// The first decrypt for that account signals on entered and then waits until
+// release is called. Other accounts and later calls go straight through. It must
+// be set before any goroutine uses the cache.
+type blockedDecrypt struct {
+	entered chan struct{}
+	release func()
+}
+
+func blockDecryptOf(t *testing.T, c *BackendCache, a *account.Account) *blockedDecrypt {
+	t.Helper()
+	var (
+		first   atomic.Bool
+		gate    = make(chan struct{})
+		once    sync.Once
+		release = func() { once.Do(func() { close(gate) }) }
+		entered = make(chan struct{}, 1)
+		real    = c.decrypt
+		marker  = "account:" + string(a.ID)
+	)
+	t.Cleanup(release)
+	c.decrypt = func(ctx context.Context, tenant account.TenantID, version int, aad string, sealed []byte) ([]byte, error) {
+		if strings.Contains(aad, marker) && first.CompareAndSwap(false, true) {
+			entered <- struct{}{}
+			<-gate
+		}
+		return real(ctx, tenant, version, aad, sealed)
+	}
+	return &blockedDecrypt{entered: entered, release: release}
+}
+
+// mailAsync calls Mail in a goroutine and returns the channel of its result.
+type mailResult struct {
+	backend mail.Backend
+	err     error
+}
+
+func mailAsync(c *BackendCache, ctx context.Context, a *account.Account) <-chan mailResult {
+	out := make(chan mailResult, 1)
+	go func() {
+		b, err := c.Mail(ctx, a)
+		out <- mailResult{b, err}
+	}()
+	return out
+}
+
+// waitFor returns the result, or fails the test when it does not come in time.
+func waitFor(t *testing.T, ch <-chan mailResult, limit time.Duration, what string) mailResult {
+	t.Helper()
+	select {
+	case r := <-ch:
+		return r
+	case <-time.After(limit):
+		require.FailNow(t, "timeout: "+what)
+		return mailResult{}
+	}
+}
+
+// A slow build for one account (here: a slow decrypt) must not stall the other
+// accounts, whether they are cached or not.
+func TestBackendCacheConcurrentSlowDecrypt(t *testing.T) {
+	f := newFixture(t)
+	slow := f.addAccount(f.tenant, "slow@example.com", offlineSettings(), "pw")
+	cached := f.addAccount(f.tenant, "cached@example.com", offlineSettings(), "pw")
+	other := f.addAccount(f.tenant, "other@example.com", offlineSettings(), "pw")
+	c := f.newCache()
+	cachedBackend := mustMail(t, c, cached)
+	gate := blockDecryptOf(t, c, slow)
+	ctx := context.Background()
+
+	slowResult := mailAsync(c, ctx, slow)
+	<-gate.entered // the build of the slow account holds its decrypt now
+
+	hit := waitFor(t, mailAsync(c, ctx, cached), 2*time.Second, "a cached account waited for a slow build")
+	require.NoError(t, hit.err)
+	require.Same(t, cachedBackend, hit.backend)
+	miss := waitFor(t, mailAsync(c, ctx, other), 2*time.Second, "an uncached account waited for a slow build")
+	require.NoError(t, miss.err)
+	require.NotNil(t, miss.backend)
+
+	gate.release()
+	done := waitFor(t, slowResult, 2*time.Second, "the slow build never finished")
+	require.NoError(t, done.err)
+	require.NotNil(t, done.backend)
+}
+
+// A call that waits for a busy account must stop when its context ends. It must
+// not wait for the slow build.
+func TestBackendCacheConcurrentWaitCanBeCancelled(t *testing.T) {
+	f := newFixture(t)
+	a := f.addAccount(f.tenant, "a@example.com", offlineSettings(), "pw")
+	c := f.newCache()
+	gate := blockDecryptOf(t, c, a)
+
+	first := mailAsync(c, context.Background(), a)
+	<-gate.entered
+
+	t.Run("cancel", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		waiting := mailAsync(c, ctx, a)
+		time.Sleep(50 * time.Millisecond) // let the call reach the wait
+		cancel()
+
+		r := waitFor(t, waiting, 2*time.Second, "a waiting call did not stop on cancel")
+
+		require.ErrorIs(t, r.err, context.Canceled)
+		require.Nil(t, r.backend)
+	})
+	t.Run("deadline", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+
+		r := waitFor(t, mailAsync(c, ctx, a), 2*time.Second, "a waiting call did not stop at its deadline")
+
+		require.ErrorIs(t, r.err, context.DeadlineExceeded)
+	})
+
+	// The calls that gave up did not harm the account.
+	gate.release()
+	done := waitFor(t, first, 2*time.Second, "the first build never finished")
+	require.NoError(t, done.err)
+	again, err := c.Mail(context.Background(), a)
+	require.NoError(t, err)
+	require.Same(t, done.backend, again)
+}
+
+// Forget has to wait for a build that is running, and then it closes the result.
+// Calls that waited for the account must end with a working backend.
+func TestBackendCacheConcurrentForgetDuringBuild(t *testing.T) {
+	f := newFixture(t)
+	srv := imaptest.New(t)
+	a := f.addAccount(f.tenant, "a@example.com", serverSettings(srv), srv.Pass)
+	c := f.newCache()
+	gate := blockDecryptOf(t, c, a)
+	ctx := context.Background()
+	// Remember every backend that is built, to show at the end that none leaked.
+	var (
+		builtMu sync.Mutex
+		built   []*imapsmtp.Backend
+	)
+	realNew := c.newBackend
+	c.newBackend = func(cfg imapsmtp.Config, signer *signing.Signer) *imapsmtp.Backend {
+		b := realNew(cfg, signer)
+		builtMu.Lock()
+		built = append(built, b)
+		builtMu.Unlock()
+		return b
+	}
+
+	building := mailAsync(c, ctx, a)
+	<-gate.entered
+	waiting := mailAsync(c, ctx, a)
+	forgotten := make(chan struct{})
+	go func() {
+		c.Forget(a.ID)
+		close(forgotten)
+	}()
+	select {
+	case <-forgotten:
+		require.FailNow(t, "Forget returned while a build was running")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	gate.release()
+	first := waitFor(t, building, 2*time.Second, "the build never finished")
+	require.NoError(t, first.err)
+	late := waitFor(t, waiting, 2*time.Second, "the waiting call never finished")
+	require.NoError(t, late.err)
+	select {
+	case <-forgotten:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "Forget never returned")
+	}
+
+	// The account was forgotten, so a backend that was built before is closed.
+	// The next call builds a new one that works.
+	require.False(t, works(t, first.backend), "Forget must close the backend that the running build made")
+	next := mustMail(t, c, a)
+	require.True(t, works(t, next))
+	require.Same(t, next, mustMail(t, c, a))
+
+	// At the end of the program, no backend of this test may stay open. A call
+	// that waited for the account must not leave a backend in a slot that the
+	// cache has forgotten.
+	c.Close()
+	builtMu.Lock()
+	defer builtMu.Unlock()
+	require.NotEmpty(t, built)
+	for _, b := range built {
+		require.False(t, works(t, b), "every backend that was built must be closed")
+	}
+}
+
+// A call can get the slot of an account, and Forget can then remove the slot
+// before the call takes it. The call must not build a backend in that slot: no
+// one could close it. It must ask for the new slot.
+func TestBackendCacheDeadSlotIsNotUsed(t *testing.T) {
+	f := newFixture(t)
+	a := f.addAccount(f.tenant, "a@example.com", offlineSettings(), "pw")
+	c := f.newCache()
+	var built atomic.Int32
+	realNew := c.newBackend
+	c.newBackend = func(cfg imapsmtp.Config, signer *signing.Signer) *imapsmtp.Backend {
+		built.Add(1)
+		return realNew(cfg, signer)
+	}
+	key := backendKey{tenant: a.TenantID, id: a.ID}
+	old := c.slotFor(key)
+
+	c.Forget(a.ID)
+	b, again, err := c.mailOn(context.Background(), old, key, a)
+
+	require.NoError(t, err)
+	require.True(t, again, "the call must start again with a new slot")
+	require.Nil(t, b)
+	require.Zero(t, built.Load(), "no backend may be built in a slot that the cache has forgotten")
+	require.NotSame(t, old, c.slotFor(key), "Forget must take the slot out of the cache")
+
+	// Mail itself finishes with a working, cached backend.
+	first := mustMail(t, c, a)
+	require.Same(t, first, mustMail(t, c, a))
+	require.EqualValues(t, 1, built.Load())
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
+	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
@@ -15,14 +15,25 @@ import (
 // 10 MB. The backend refuses a larger one.
 const maxAttachmentBytes = 10 << 20
 
+// The limits of ListAccounts when it asks the backends what they support.
+const (
+	// capabilitiesBudget is the longest time that ListAccounts waits for the
+	// answers.
+	capabilitiesBudget = 5 * time.Second
+	// maxCapabilityCalls is the largest number of questions at the same time.
+	maxCapabilityCalls = 8
+)
+
 // ListAccounts returns the accounts of the tenant of the caller. It never
 // returns an account of another tenant.
 //
 // It needs no permission check, because the view holds no mail content. For an
 // account that the caller may read and that does not need to be reconnected, it
 // also asks the backend what it supports. That can open a connection to the
-// mail server. The accounts are asked at the same time. If a backend cannot be
-// set up, the view has empty capabilities and the list still succeeds.
+// mail server, so the questions are limited: at most 8 at the same time, and the
+// list waits for the answers at most 5 seconds, or until ctx ends. An account
+// whose backend did not answer in time (or could not be set up) has empty
+// capabilities, and the list still succeeds.
 func (s *Service) ListAccounts(ctx context.Context) ([]AccountView, error) {
 	p, err := PrincipalFrom(ctx)
 	if err != nil {
@@ -35,7 +46,7 @@ func (s *Service) ListAccounts(ctx context.Context) ([]AccountView, error) {
 
 	// An empty list is an empty slice and not nil, so it encodes as [].
 	views := make([]AccountView, len(accounts))
-	var wg sync.WaitGroup
+	var ask []int // the indexes of the accounts to ask
 	for i, a := range accounts {
 		views[i] = AccountView{
 			ID:       a.ID,
@@ -44,16 +55,63 @@ func (s *Service) ListAccounts(ctx context.Context) ([]AccountView, error) {
 			Areas:    map[account.Area]string{account.AreaMail: a.Level(account.AreaMail).MailName()},
 			Status:   a.Status,
 		}
-		if !s.worthAsking(a, p) {
-			continue
+		if s.worthAsking(a, p) {
+			ask = append(ask, i)
 		}
-		// Each goroutine writes only its own element of views.
-		wg.Go(func() {
-			views[i].Capabilities = s.capabilities(ctx, a)
-		})
 	}
-	wg.Wait()
+	s.fillCapabilities(ctx, accounts, views, ask)
 	return views, nil
+}
+
+// fillCapabilities asks the backends of the accounts at the indexes in ask and
+// puts the answers into views.
+//
+// It returns when every answer is in, or when the budget or ctx ends. Only this
+// function writes to views. A question that is still running when it returns
+// puts its answer in a buffered channel that nobody reads, so a backend that
+// ignores its context cannot hold up the list or cause a data race.
+func (s *Service) fillCapabilities(ctx context.Context, accounts []*account.Account, views []AccountView, ask []int) {
+	if len(ask) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.capabilitiesBudget)
+	defer cancel()
+
+	type answer struct {
+		index int
+		caps  mail.Capabilities
+	}
+	answers := make(chan answer, len(ask)) // room for every answer, so no sender ever blocks
+	running := make(chan struct{}, maxCapabilityCalls)
+	for _, i := range ask {
+		go func() {
+			select {
+			case running <- struct{}{}:
+				defer func() { <-running }()
+			case <-ctx.Done():
+				return
+			}
+			answers <- answer{index: i, caps: s.capabilities(ctx, accounts[i])}
+		}()
+	}
+
+	for received := 0; received < len(ask); {
+		select {
+		case a := <-answers:
+			views[a.index].Capabilities = a.caps
+			received++
+		case <-ctx.Done():
+			// Keep the answers that are ready, and stop waiting for the others.
+			for {
+				select {
+				case a := <-answers:
+					views[a.index].Capabilities = a.caps
+				default:
+					return
+				}
+			}
+		}
+	}
 }
 
 // worthAsking reports whether ListAccounts should ask the backend of a for its
@@ -71,7 +129,7 @@ func (s *Service) capabilities(ctx context.Context, a *account.Account) mail.Cap
 	if err != nil {
 		return mail.Capabilities{}
 	}
-	return b.Capabilities()
+	return b.Capabilities(ctx)
 }
 
 // ListFolders returns the folders of the account.

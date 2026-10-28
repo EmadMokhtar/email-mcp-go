@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -295,13 +296,13 @@ func TestCapabilities(t *testing.T) {
 	srv := imaptest.New(t)
 	b := newTestBackend(t, srv)
 
-	caps := b.Capabilities()
+	caps := b.Capabilities(t.Context())
 	require.True(t, caps.Tags)
 	require.Equal(t, 500, caps.MaxBatch)
 
 	// The answer is cached: the server is asked once.
 	before := rwSelects(srv)
-	require.Equal(t, caps, b.Capabilities())
+	require.Equal(t, caps, b.Capabilities(t.Context()))
 	require.Equal(t, before, rwSelects(srv))
 	require.Equal(t, 1, srv.TotalConns())
 }
@@ -310,13 +311,13 @@ func TestCapabilitiesWithoutPermanentKeywords(t *testing.T) {
 	srv := imaptest.New(t, imaptest.WithPermanentFlags(withoutWildcard))
 	b := newTestBackend(t, srv)
 
-	caps := b.Capabilities()
+	caps := b.Capabilities(t.Context())
 	require.False(t, caps.Tags)
 	require.Equal(t, 500, caps.MaxBatch)
 
 	// An answer of a read-write SELECT is final: it is cached too.
 	before := rwSelects(srv)
-	require.Equal(t, caps, b.Capabilities())
+	require.Equal(t, caps, b.Capabilities(t.Context()))
 	require.Equal(t, before, rwSelects(srv))
 }
 
@@ -332,7 +333,7 @@ func TestCapabilitiesLearnsFromAnExamineOfTheInbox(t *testing.T) {
 	require.True(t, known)
 	require.True(t, supported)
 
-	require.True(t, b.Capabilities().Tags)
+	require.True(t, b.Capabilities(t.Context()).Tags)
 	require.Zero(t, rwSelects(srv), "nothing was opened read-write")
 }
 
@@ -354,7 +355,7 @@ func TestCapabilitiesEmptyPermanentFlagsOfExamineAreNotAnAnswer(t *testing.T) {
 	_, known := b.tags.get()
 	require.False(t, known, "an empty list from EXAMINE is not an answer")
 
-	require.True(t, b.Capabilities().Tags)
+	require.True(t, b.Capabilities(t.Context()).Tags)
 	require.Equal(t, 1, rwSelects(srv), "one read-write SELECT of the inbox answered it")
 
 	// Tags work on that server.
@@ -371,7 +372,7 @@ func TestCapabilitiesNoWildcardFromExamineDoesNotDecide(t *testing.T) {
 	mustSearch(t, b, mail.Query{}, "")
 	_, known := b.tags.get()
 	require.False(t, known)
-	require.False(t, b.Capabilities().Tags)
+	require.False(t, b.Capabilities(t.Context()).Tags)
 	_, known = b.tags.get()
 	require.True(t, known, "a read-write SELECT decides")
 }
@@ -393,7 +394,7 @@ func TestCapabilitiesProbeFailureIsNotCached(t *testing.T) {
 
 	// The server cannot be reached. The answer is "no tags", and it is not
 	// remembered.
-	require.False(t, b.Capabilities().Tags)
+	require.False(t, b.Capabilities(t.Context()).Tags)
 	_, known := b.tags.get()
 	require.False(t, known)
 
@@ -401,7 +402,78 @@ func TestCapabilitiesProbeFailureIsNotCached(t *testing.T) {
 	// answer.
 	b.pool.Close()
 	b.pool = newPool(good)
-	require.True(t, b.Capabilities().Tags)
+	require.True(t, b.Capabilities(t.Context()).Tags)
+}
+
+// silentServer returns the host and port of a TCP server that accepts
+// connections and never sends a byte. A client that waits for its greeting or
+// for the TLS handshake waits for ever.
+func silentServer(t *testing.T) (host string, port int) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	var (
+		mu    sync.Mutex
+		conns []net.Conn
+	)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	})
+	addr := ln.Addr().(*net.TCPAddr)
+	return addr.IP.String(), addr.Port
+}
+
+// Capabilities may ask the server. The question must end when the context of
+// the caller ends, and it must not wait for the dial timeout (15 seconds).
+func TestCapabilitiesHonoursTheContext(t *testing.T) {
+	host, port := silentServer(t)
+	cfg := baseConfig()
+	cfg.Server.IMAPHost = host
+	cfg.Server.IMAPPort = port
+	cfg.Server.IMAPSecurity = account.SecurityTLS
+	cfg.TokenScope = testScope
+	b := New(cfg, testSigner())
+	t.Cleanup(func() { _ = b.Close() })
+
+	t.Run("cancel", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		time.AfterFunc(100*time.Millisecond, cancel)
+
+		start := time.Now()
+		caps := b.Capabilities(ctx)
+
+		require.Less(t, time.Since(start), 3*time.Second, "the cancel must end the question")
+		require.False(t, caps.Tags)
+		require.Equal(t, maxBatch, caps.MaxBatch)
+		_, known := b.tags.get()
+		require.False(t, known, "a failed question is not remembered")
+	})
+	t.Run("deadline", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+
+		start := time.Now()
+		caps := b.Capabilities(ctx)
+
+		require.Less(t, time.Since(start), 3*time.Second, "the deadline must end the question")
+		require.False(t, caps.Tags)
+	})
 }
 
 func TestCapabilitiesIsSafeForManyGoroutines(t *testing.T) {
@@ -410,7 +482,7 @@ func TestCapabilitiesIsSafeForManyGoroutines(t *testing.T) {
 
 	done := make(chan mail.Capabilities, 8)
 	for range 8 {
-		go func() { done <- b.Capabilities() }()
+		go func() { done <- b.Capabilities(t.Context()) }()
 	}
 	for range 8 {
 		require.True(t, (<-done).Tags)
@@ -444,7 +516,7 @@ func TestListTagsUsesAReadOnlyInboxOnceTheAnswerIsKnown(t *testing.T) {
 	srv := imaptest.New(t)
 	srv.Append("INBOX", plainMail("a", "x"), "project")
 	b := newTestBackend(t, srv)
-	require.True(t, b.Capabilities().Tags)
+	require.True(t, b.Capabilities(t.Context()).Tags)
 	before := rwSelects(srv)
 
 	tags, err := b.ListTags(t.Context())
@@ -577,7 +649,7 @@ func TestTagUnsupportedWithoutPermanentKeywords(t *testing.T) {
 	b := newTestBackend(t, srv)
 	ref := refsBySubject(t, b, "INBOX")["one"]
 
-	require.False(t, b.Capabilities().Tags)
+	require.False(t, b.Capabilities(t.Context()).Tags)
 
 	err := b.Tag(t.Context(), []mail.Ref{ref}, []string{"project"}, nil)
 	require.ErrorIs(t, err, mail.ErrUnsupported)
@@ -1138,7 +1210,7 @@ func TestBatchLimit(t *testing.T) {
 		require.ErrorContains(t, err, "500", name)
 	}
 	require.Zero(t, srv.TotalConns(), "the server was not contacted")
-	require.Equal(t, maxBatch, b.Capabilities().MaxBatch)
+	require.Equal(t, maxBatch, b.Capabilities(t.Context()).MaxBatch)
 }
 
 func TestBatchOfExactlyMaxBatchRefsWorks(t *testing.T) {
@@ -1218,7 +1290,7 @@ func TestOrganizeOperationsLeaveTheConnectionReusable(t *testing.T) {
 	require.ErrorIs(t, err, mail.ErrUnsupported)
 	_, err = b.ListTags(ctx)
 	require.NoError(t, err)
-	require.True(t, b.Capabilities().Tags)
+	require.True(t, b.Capabilities(t.Context()).Tags)
 	// m 3 and m 4 are in the Trash folder. m 2 went to Archive and came back.
 	require.ElementsMatch(t, []string{"m 1", "m 2", "m 5", "m 6"}, subjects(mustSearch(t, b, mail.Query{Limit: 10}, "").Items))
 
