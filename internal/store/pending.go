@@ -175,7 +175,9 @@ func (s *Store) ListPending(ctx context.Context, tenant account.TenantID, now ti
 // keeps no secret.
 //
 // A call that changes nothing records the expiry of a waiting action that is
-// past its time. See ExpirePending.
+// past its time. See ExpirePending. If the recording fails, the call returns
+// ErrNotFound joined with the error of the recording, so errors.Is(err,
+// ErrNotFound) is still true.
 func (s *Store) TransitionPending(ctx context.Context, tenant account.TenantID, id, from, to, resultID string, now time.Time) error {
 	if err := validateID("tenant", string(tenant)); err != nil {
 		return err
@@ -230,13 +232,17 @@ func (s *Store) ClaimPending(ctx context.Context, tenant account.TenantID, id st
 // requireOneRowOrExpire is requireOneRow for the statements of TransitionPending
 // and ClaimPending. If the statement changed no row, it first records the expiry
 // of the action (see ExpirePending), and then returns ErrNotFound.
+//
+// The recording is housekeeping. The answer to the caller is ErrNotFound in any
+// case: the change did not happen. If the recording fails, its error is joined to
+// ErrNotFound, so the caller can log it, and errors.Is still finds ErrNotFound.
 func (s *Store) requireOneRowOrExpire(ctx context.Context, result sql.Result, what string, tenant account.TenantID, id string, now time.Time) error {
 	err := requireOneRow(result, what)
 	if !errors.Is(err, ErrNotFound) {
 		return err
 	}
 	if expireErr := s.ExpirePending(ctx, tenant, id, now); expireErr != nil {
-		return fmt.Errorf("store: %s: %w", what, expireErr)
+		return errors.Join(ErrNotFound, fmt.Errorf("%s: %w", what, expireErr))
 	}
 	return ErrNotFound
 }

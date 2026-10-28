@@ -67,11 +67,13 @@ import (
 //
 // The context that the Sender gets does not end when the program stops the
 // worker (see Run and Drain). A send that has started is allowed to finish. The
-// context has a deadline of 14 minutes. If the deadline ends while the Sender
-// runs and the Sender returns an error that is not Permanent, the outbox treats
-// the result as unknown. The item is marked "failed" and is not tried again.
+// context has a deadline that is 13 minutes after the claim of the item, so a
+// few seconds less if the outbox needed them to read the message. If the
+// deadline ends while the Sender runs and the Sender returns an error that is not
+// Permanent, the outbox treats the result as unknown. The item is marked "failed"
+// and is not tried again.
 //
-// The Sender should have a deadline of its own that is much shorter than 14
+// The Sender should have a deadline of its own that is much shorter than 13
 // minutes. After 15 minutes another program that uses the same database may take
 // the item for a send that was interrupted and mark it failed.
 type Sender func(ctx context.Context, tenant account.TenantID, acct account.AccountID, msg *mail.RawMessage, draft mail.Ref) error
@@ -202,10 +204,13 @@ const (
 	// detached.
 	storeTimeout = 30 * time.Second
 
-	// sendDeadline is the time limit of one call of the Sender. It is shorter
-	// than recoverAfter, so that another program never fails the item of a send
-	// that is still inside its limit.
-	sendDeadline = 14 * time.Minute
+	// sendDeadline is the time that a send may take, counted from the claim of the
+	// item (not from the start of the Sender). Reading the message, the send and
+	// the write of the result must all end before recoverAfter, or another
+	// program could fail the item of a send that is still running. The steps
+	// around the send are short: reading the message and writing the result each
+	// have at most storeTimeout. So the limit is recoverAfter less two minutes.
+	sendDeadline = 13 * time.Minute
 
 	// resultAttempts and resultBackoff set how the outbox writes the result of a
 	// send. If the database is busy, the write is tried again, up to
@@ -243,8 +248,8 @@ type Outbox struct {
 	// poll is how often Drain looks at the clock while it waits. A test can make
 	// it shorter.
 	poll time.Duration
-	// sendTimeout is the deadline of one call of the Sender. resultBackoff is the
-	// wait between two tries of a result write. Tests can make them shorter.
+	// sendTimeout is how long after the claim the Sender may run. resultBackoff is
+	// the wait between two tries of a result write. Tests can make them shorter.
 	sendTimeout   time.Duration
 	resultBackoff time.Duration
 }
@@ -290,14 +295,20 @@ func messageAAD(tenant account.TenantID, acct account.AccountID, id string) stri
 // error for a failed send.
 //
 // With window 0 the item is stored already claimed, in the state "sending", in
-// one insert. A running worker cannot take it first, so Enqueue never returns
-// "sending" or "queued" for the first try. If the program stops before the
-// result is written, the item stays "sending", and RecoverInterrupted marks it
-// failed later (the delivery is unknown). It is never sent twice.
+// one insert. A running worker cannot take it first, so the first try is always
+// the one of Enqueue. The returned item is "sent" or "failed" after that try, or
+// "queued" if the try failed with a transient error. It is also "queued" if the
+// context of Enqueue ended after the item was stored and before the send
+// started: nothing was sent, so the item is released to the queue, and a worker
+// sends it later, once. If the program stops before the result is written, the
+// item stays "sending", and RecoverInterrupted marks it failed later (the
+// delivery is unknown). It is never sent twice.
 //
-// The context of Enqueue stops it only before the message is stored. After that,
-// the send is not aborted if the context ends, and Enqueue returns when the send
-// has finished, in at most 14 minutes.
+// The context of Enqueue stops it only before the message is stored. The insert
+// itself runs on a context that the caller cannot cancel, so a stored item is
+// never reported as an error (the caller would queue the message again). After
+// the insert, the send is not aborted if the context ends, and Enqueue returns
+// when the send has finished, in at most 13 minutes.
 //
 // Once Enqueue has stored the message, the outbox owns it. From then on Enqueue
 // returns no error, so the caller never queues the same message again. If the
@@ -345,29 +356,36 @@ func (o *Outbox) Enqueue(ctx context.Context, tenant account.TenantID, acct acco
 		return nil, fmt.Errorf("outbox: encrypt message: %w", err)
 	}
 	if window > 0 {
-		if err := o.st.CreateOutbox(ctx, row, sealed, version); err != nil {
+		err := o.insert(ctx, func(c context.Context) error {
+			return o.st.CreateOutbox(c, row, sealed, version)
+		})
+		if err != nil {
 			return nil, fmt.Errorf("outbox: save message: %w", err)
 		}
 		return itemFromRow(row), nil
 	}
 
 	// No undo window: store the item as claimed, so that no worker can take it.
-	// The insert uses a context that the caller cannot cancel. If the context
-	// ended after the database wrote the row but before it answered, the caller
-	// would get an error for an item that is stored (and "sending").
 	row.Status = string(StatusSending)
 	row.ClaimedAt = now
-	if err := o.createSending(ctx, row, sealed, version); err != nil {
+	err = o.insert(ctx, func(c context.Context) error {
+		return o.st.CreateOutboxSending(c, row, sealed, version, row.ClaimedAt)
+	})
+	if err != nil {
 		return nil, fmt.Errorf("outbox: save message: %w", err)
 	}
 	return o.sendInline(ctx, row, msg), nil
 }
 
-// createSending stores a new item in the state "sending".
-func (o *Outbox) createSending(ctx context.Context, row *store.OutboxRow, sealed []byte, keyVersion int) error {
+// insert runs the insert of a new item on a context that ctx cannot cancel. The
+// driver can commit an INSERT and still return the error of a context that ended
+// just then. The caller would get an error for an item that is stored, and
+// would queue the message a second time. The caller of insert checks ctx before
+// it, so a context that has ended stops the call before anything is stored.
+func (o *Outbox) insert(ctx context.Context, create func(context.Context) error) error {
 	cctx, cancel := detached(ctx)
 	defer cancel()
-	return o.st.CreateOutboxSending(cctx, row, sealed, keyVersion, row.ClaimedAt)
+	return create(cctx)
 }
 
 // sendInline sends a new item that is stored as "sending", before Enqueue
@@ -456,8 +474,8 @@ func (o *Outbox) RecoverInterrupted(ctx context.Context) (int, error) {
 //
 // The context of Run only stops new claims. It does not stop a send that is
 // running: the Sender gets a context that this one cannot cancel, with a deadline
-// of 14 minutes. Run returns after that send has finished and its result is
-// written. If the program cannot wait so long, it may exit. The item then stays
+// of 13 minutes after its claim. Run returns after that send has finished and its
+// result is written. If the program cannot wait so long, it may exit. The item then stays
 // "sending", and RecoverInterrupted marks it failed after 15 minutes (the
 // delivery is unknown). It is never sent twice.
 //
@@ -614,9 +632,15 @@ func (o *Outbox) claim(ctx context.Context, row *store.OutboxRow) (*store.Outbox
 // msg is the message, or nil to read it from the store.
 //
 // If ctx has ended after the claim and before the send, nothing is sent, and the
-// item goes back in the queue. Once the send has started, ctx cannot stop it: the
-// Sender gets a context that ctx cannot cancel, with a deadline of its own
-// (sendDeadline). Every database call after the claim uses a context that ctx
+// item goes back in the queue. The same happens if the steps before the send
+// (reading and opening the message) have used all the time that the send may
+// have: a send with a deadline that is over would fail at once, and would mark a
+// message that was never sent as "delivery unknown".
+//
+// Once the send has started, ctx cannot stop it: the Sender gets a context that
+// ctx cannot cancel, with a deadline of sendDeadline after the claim. Counting
+// from the claim keeps the whole item (read, send, write of the result) inside
+// recoverAfter. Every database call after the claim uses a context that ctx
 // cannot cancel either. Without this, a shutdown right after the send would
 // leave a message that was sent in the state "sending".
 //
@@ -636,9 +660,17 @@ func (o *Outbox) deliver(ctx context.Context, row *store.OutboxRow, msg *mail.Ra
 		}
 	}
 
-	if ctx.Err() != nil {
-		// The program was told to stop after the claim and before the send. Nothing
-		// was sent, so the item goes back to the queue. It is not a failed try.
+	// The Sender may run until sendTimeout after the claim.
+	claimedAt := row.ClaimedAt
+	if claimedAt.IsZero() {
+		claimedAt = o.now()
+	}
+	left := claimedAt.Add(o.sendTimeout).Sub(o.now())
+
+	if ctx.Err() != nil || left <= 0 {
+		// The program was told to stop after the claim and before the send, or
+		// there is no time left for a send. Nothing was sent, so the item goes back
+		// to the queue. It is not a failed try.
 		rctx, cancel := detached(ctx)
 		defer cancel()
 		err := o.writeResult(rctx, func(c context.Context) error {
@@ -650,7 +682,7 @@ func (o *Outbox) deliver(ctx context.Context, row *store.OutboxRow, msg *mail.Ra
 		return nil
 	}
 
-	sendCtx, cancelSend := context.WithTimeout(context.WithoutCancel(ctx), o.sendTimeout)
+	sendCtx, cancelSend := context.WithTimeout(context.WithoutCancel(ctx), left)
 	defer cancelSend()
 	sendErr := o.send(sendCtx, row.Tenant, row.Account, msg, mail.Ref(row.DraftRef))
 	return o.record(ctx, row, sendCtx, sendErr)

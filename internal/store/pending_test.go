@@ -594,3 +594,81 @@ func TestExpirePending(t *testing.T) {
 	payloadNull, _ = pendingSecretsAreNull(t, s, tenant, "p2")
 	require.False(t, payloadNull)
 }
+
+// ---- Fix round 1 ----
+
+// When the store cannot record the expiry after a missed change, the caller
+// still gets ErrNotFound (the change did not happen), and the error of the
+// recording is there too, for the log.
+func TestAnExpiryThatCannotBeRecordedStillGivesErrNotFound(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	row := testPendingRow(tenant, acct, "p1", testNow)
+	putPending(t, s, row)
+	late := row.ExpiresAt.Add(time.Millisecond)
+	// A trigger refuses the UPDATE that records the expiry.
+	_, err := s.db.ExecContext(ctx, `CREATE TRIGGER no_expire BEFORE UPDATE ON pending_actions
+		WHEN NEW.state = 'expired' BEGIN SELECT RAISE(ABORT, 'expire failed'); END`)
+	require.NoError(t, err)
+
+	for name, attempt := range map[string]func() error{
+		"transition": func() error { return s.TransitionPending(ctx, tenant, "p1", "pending", "approved", "", late) },
+		"claim":      func() error { return s.ClaimPending(ctx, tenant, "p1", row.Hash, late) },
+	} {
+		err := attempt()
+		require.ErrorIs(t, err, ErrNotFound, name)
+		require.ErrorContains(t, err, "expire failed", name)
+	}
+	require.Equal(t, "pending", pendingState(t, s, tenant, "p1"))
+
+	// A call that finds nothing to expire does not touch the trigger.
+	require.ErrorIs(t, s.TransitionPending(ctx, tenant, "missing", "pending", "approved", "", late), ErrNotFound)
+}
+
+// The table keeps the rule about secrets itself: a waiting or approved action
+// has its payload and its preview, and an action that has ended has neither. A
+// bug cannot leave a secret on disk, or lose one that is needed.
+func TestPendingTableRulesAboutSecrets(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	putPending(t, s, testPendingRow(tenant, acct, "live", testNow))
+	putPending(t, s, testPendingRow(tenant, acct, "approved", testNow))
+	require.NoError(t, s.TransitionPending(ctx, tenant, "approved", "pending", "approved", "", testNow))
+	putPending(t, s, testPendingRow(tenant, acct, "ended", testNow))
+	require.NoError(t, s.TransitionPending(ctx, tenant, "ended", "pending", "done", "", testNow))
+
+	refused := map[string]string{
+		"end a row and keep its secrets":      `UPDATE pending_actions SET state = 'done' WHERE id = 'live'`,
+		"reject a row and keep its secrets":   `UPDATE pending_actions SET state = 'rejected' WHERE id = 'approved'`,
+		"expire a row and keep its secrets":   `UPDATE pending_actions SET state = 'expired' WHERE id = 'live'`,
+		"clear the payload of a waiting row":  `UPDATE pending_actions SET payload = NULL WHERE id = 'live'`,
+		"clear the preview of a waiting row":  `UPDATE pending_actions SET preview = NULL WHERE id = 'live'`,
+		"clear the payload of an approved":    `UPDATE pending_actions SET payload = NULL WHERE id = 'approved'`,
+		"give a payload back to an ended row": `UPDATE pending_actions SET payload = x'0102' WHERE id = 'ended'`,
+		"give a preview back to an ended row": `UPDATE pending_actions SET preview = x'0102' WHERE id = 'ended'`,
+		"bring an ended row back to waiting":  `UPDATE pending_actions SET state = 'pending' WHERE id = 'ended'`,
+		"an unknown state with secrets":       `UPDATE pending_actions SET state = 'sent' WHERE id = 'live'`,
+	}
+	for name, statement := range refused {
+		_, err := s.db.ExecContext(ctx, statement)
+		require.Error(t, err, name)
+		require.ErrorContains(t, err, "CHECK constraint failed", name)
+	}
+
+	// A new row must follow the rule too.
+	ended := testPendingRow(tenant, acct, "new-ended", testNow)
+	ended.State = "done"
+	require.Error(t, s.CreatePending(ctx, ended, []byte("payload"), 1), "an ended row with secrets")
+
+	// The rows are as they were, and the allowed changes still work.
+	require.Equal(t, "pending", pendingState(t, s, tenant, "live"))
+	require.Equal(t, "approved", pendingState(t, s, tenant, "approved"))
+	require.Equal(t, "done", pendingState(t, s, tenant, "ended"))
+	require.NoError(t, s.TransitionPending(ctx, tenant, "approved", "approved", "done", "r", testNow))
+	require.NoError(t, s.ExpirePending(ctx, tenant, "live", testNow.Add(2*pendingLife)))
+	payloadNull, previewNull := pendingSecretsAreNull(t, s, tenant, "live")
+	require.True(t, payloadNull)
+	require.True(t, previewNull)
+}

@@ -15,7 +15,10 @@
 -- An action that has ended (state "done", "rejected" or "expired") does not
 -- need its payload or preview any more, and they must not stay on disk. The
 -- statement that ends the action sets both to NULL. This is why both columns
--- can be NULL. A waiting or approved action always has both.
+-- can be NULL. The table keeps the rule itself, for each column on its own: a
+-- waiting ("pending") or approved action has the payload and the preview, and an
+-- action that has ended has neither. A bug cannot leave a secret on disk (not
+-- even one of the two), or lose one that is still needed.
 --
 -- state is "pending", "approved", "rejected", "expired" or "done". The confirm
 -- package owns these names. result_id is empty until the action has a result.
@@ -35,7 +38,9 @@ CREATE TABLE pending_actions (
     preview             BLOB,
     preview_key_version INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, id),
-    FOREIGN KEY (tenant_id, account_id) REFERENCES accounts (tenant_id, id) ON DELETE CASCADE
+    FOREIGN KEY (tenant_id, account_id) REFERENCES accounts (tenant_id, id) ON DELETE CASCADE,
+    CHECK ((state IN ('pending', 'approved')) = (payload IS NOT NULL)),
+    CHECK ((state IN ('pending', 'approved')) = (preview IS NOT NULL))
 );
 
 -- The list of waiting actions of a tenant, newest first.

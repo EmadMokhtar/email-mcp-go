@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1106,7 +1107,7 @@ func TestAWaitingActionThatLostASecretIsCorrupted(t *testing.T) {
 
 	t.Run("preview", func(t *testing.T) {
 		p := f.create("payload")
-		f.exec(`UPDATE pending_actions SET preview = NULL WHERE id = ?`, p.ID)
+		f.execIgnoringChecks(`UPDATE pending_actions SET preview = NULL WHERE id = ?`, p.ID)
 
 		_, _, err := f.mgr.Get(ctx, f.tenant, p.ID)
 		require.ErrorIs(t, err, ErrCorrupted)
@@ -1120,7 +1121,7 @@ func TestAWaitingActionThatLostASecretIsCorrupted(t *testing.T) {
 	})
 	t.Run("payload", func(t *testing.T) {
 		p := f.create("payload two")
-		f.exec(`UPDATE pending_actions SET payload = NULL WHERE id = ?`, p.ID)
+		f.execIgnoringChecks(`UPDATE pending_actions SET payload = NULL WHERE id = ?`, p.ID)
 
 		_, payload, err := f.mgr.Get(ctx, f.tenant, p.ID)
 		require.ErrorIs(t, err, ErrCorrupted)
@@ -1226,4 +1227,229 @@ func (f *fixture) rowIDs() []string {
 	}
 	require.NoError(f.t, rows.Err())
 	return ids
+}
+
+// ---- Fix round 1: false corruption reports, lost writes, failing expiry ----
+
+// execIgnoringChecks runs one statement on a second connection that does not
+// enforce the CHECK constraints of the tables. It makes the damaged rows that
+// the table rules would refuse.
+func (f *fixture) execIgnoringChecks(query string, args ...any) {
+	f.t.Helper()
+	uriPath := filepath.ToSlash(filepath.Join(f.dir, "email-mcp.db"))
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	db, err := sql.Open("sqlite", "file:"+uriPath+"?_pragma=busy_timeout(5000)&_pragma=ignore_check_constraints(1)")
+	require.NoError(f.t, err)
+	defer func() { require.NoError(f.t, db.Close()) }()
+	_, err = db.ExecContext(context.Background(), query, args...)
+	require.NoError(f.t, err)
+}
+
+// betweenReadsStore runs between runs just before the payload of an action is
+// read. Get reads the row first and the payload second, so this is the moment
+// at which a concurrent call can change the action.
+type betweenReadsStore struct {
+	PendingStore
+	between func()
+}
+
+func (s betweenReadsStore) GetPendingPayload(ctx context.Context, tenant account.TenantID, id string) (int, []byte, error) {
+	s.between()
+	return s.PendingStore.GetPendingPayload(ctx, tenant, id)
+}
+
+func (f *fixture) managerOn(st PendingStore) *Manager {
+	return NewManager(st, f.vault, signing.New(f.key), f.clock.Now)
+}
+
+// An action can end between the two reads of Get. This is the normal flow: the
+// server finishes the send and moves the action to "done" while another caller
+// reads it. Get must not report damage then. It returns the action as it is
+// now, without a payload.
+func TestGetOfAnActionThatEndsBetweenTheReadsIsNotCorrupted(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	p := f.create("payload")
+	f.approve(p, "payload")
+
+	var once sync.Once
+	mgr := f.managerOn(betweenReadsStore{PendingStore: f.store, between: func() {
+		once.Do(func() {
+			require.NoError(t, f.mgr.Transition(ctx, f.tenant, p.ID, StateApproved, StateDone, "msg-1"))
+		})
+	}})
+
+	got, payload, err := mgr.Get(ctx, f.tenant, p.ID)
+	require.NoError(t, err)
+	require.Nil(t, payload)
+	require.Equal(t, StateDone, got.State, "the state of the second read")
+	require.Equal(t, "msg-1", got.ResultID)
+	require.Equal(t, p.Hash, got.Hash)
+	require.Equal(t, Preview{}, got.Preview)
+}
+
+func TestGetOfAnActionThatIsDeletedBetweenTheReadsIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	old := f.create("old")
+
+	var once sync.Once
+	mgr := f.managerOn(betweenReadsStore{PendingStore: f.store, between: func() {
+		once.Do(func() { f.exec(`DELETE FROM pending_actions WHERE id = ?`, old.ID) })
+	}})
+
+	_, _, err := mgr.Get(ctx, f.tenant, old.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+// A waiting action that has lost its payload is damaged, also when Get reads it
+// again after it finds the payload missing.
+func TestGetOfAWaitingActionWithoutAPayloadIsStillCorrupted(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	p := f.create("payload")
+	f.approve(p, "payload")
+
+	var once sync.Once
+	mgr := f.managerOn(betweenReadsStore{PendingStore: f.store, between: func() {
+		once.Do(func() { f.execIgnoringChecks(`UPDATE pending_actions SET payload = NULL WHERE id = ?`, p.ID) })
+	}})
+
+	_, payload, err := mgr.Get(ctx, f.tenant, p.ID)
+	require.ErrorIs(t, err, ErrCorrupted)
+	require.Nil(t, payload)
+}
+
+// commitThenCancelStore commits a claim or a move of state and then ends the
+// context of the caller, before the call returns. It returns the error of the
+// context, as the driver does when the context ends after the statement ran and
+// before the answer came back. The change is committed, and the call says it
+// failed.
+type commitThenCancelStore struct {
+	PendingStore
+	cancel context.CancelFunc
+}
+
+func (s commitThenCancelStore) ClaimPending(ctx context.Context, tenant account.TenantID, id string, hash []byte, now time.Time) error {
+	err := s.PendingStore.ClaimPending(context.WithoutCancel(ctx), tenant, id, hash, now)
+	return s.report(ctx, err)
+}
+
+func (s commitThenCancelStore) TransitionPending(ctx context.Context, tenant account.TenantID, id, from, to, resultID string, now time.Time) error {
+	err := s.PendingStore.TransitionPending(context.WithoutCancel(ctx), tenant, id, from, to, resultID, now)
+	return s.report(ctx, err)
+}
+
+func (s commitThenCancelStore) report(ctx context.Context, err error) error {
+	s.cancel()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return err
+}
+
+// If the context ends while the claim statement runs, the claim may be
+// committed. Claim must not report a failure for it: the action would stay
+// "approved" with its payload and preview for ever, and the caller would not
+// act on it.
+func TestClaimIsNotLostWhenTheContextEndsDuringIt(t *testing.T) {
+	f := newFixture(t)
+	p := f.create("payload")
+	state := f.state(p)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mgr := f.managerOn(commitThenCancelStore{PendingStore: f.store, cancel: cancel})
+
+	got, err := mgr.Claim(ctx, f.tenant, state, []byte("payload"))
+	require.NoError(t, err)
+	require.Equal(t, StateApproved, got.State)
+	require.Equal(t, p.ID, got.ID)
+	require.Equal(t, "approved", f.storedState(p.ID))
+}
+
+// The move to a final state is the same: when the statement ran, the caller
+// learns it.
+func TestTransitionIsNotLostWhenTheContextEndsDuringIt(t *testing.T) {
+	f := newFixture(t)
+	p := f.create("payload")
+	f.approve(p, "payload")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mgr := f.managerOn(commitThenCancelStore{PendingStore: f.store, cancel: cancel})
+
+	require.NoError(t, mgr.Transition(ctx, f.tenant, p.ID, StateApproved, StateDone, "msg-1"))
+	require.Equal(t, "done", f.storedState(p.ID))
+	payload, preview := f.sealedColumns(p.ID)
+	require.Nil(t, payload)
+	require.Nil(t, preview)
+}
+
+// A context that has ended before Transition starts stops it. Nothing changes.
+func TestTransitionWithAnEndedContextChangesNothing(t *testing.T) {
+	f := newFixture(t)
+	p := f.create("payload")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := f.mgr.Transition(ctx, f.tenant, p.ID, StatePending, StateRejected, "")
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, "pending", f.storedState(p.ID))
+}
+
+// expireFailsStore cannot record an expiry.
+type expireFailsStore struct{ PendingStore }
+
+func (expireFailsStore) ExpirePending(context.Context, account.TenantID, string, time.Time) error {
+	return errors.New("the database failed")
+}
+
+// An action past its time is "not pending" for a Claim or a Transition, also
+// when the expiry cannot be recorded. The caller gets ErrNotPending, not a
+// generic database error. The recording is housekeeping.
+func TestAnExpiryThatCannotBeRecordedStillGivesErrNotPending(t *testing.T) {
+	ctx := context.Background()
+	payload := []byte("payload")
+
+	t.Run("Claim, the call of the manager fails", func(t *testing.T) {
+		f := newFixture(t)
+		p := f.create(string(payload))
+		f.clock.Set(testStart.Add(24*time.Hour - 5*time.Minute))
+		state := f.state(p)
+		f.clock.Set(testStart.Add(24*time.Hour + time.Second))
+		mgr := f.managerOn(expireFailsStore{f.store})
+
+		_, err := mgr.Claim(ctx, f.tenant, state, payload)
+		require.ErrorIs(t, err, ErrNotPending)
+	})
+
+	// Here the store itself fails to record the expiry: a trigger refuses the
+	// UPDATE to the state "expired".
+	for name, attempt := range map[string]func(f *fixture, p *Pending, state string) error{
+		"Claim": func(f *fixture, _ *Pending, state string) error {
+			_, err := f.mgr.Claim(ctx, f.tenant, state, payload)
+			return err
+		},
+		"Transition": func(f *fixture, p *Pending, _ string) error {
+			return f.mgr.Transition(ctx, f.tenant, p.ID, StatePending, StateApproved, "")
+		},
+	} {
+		t.Run(name+", the store fails", func(t *testing.T) {
+			f := newFixture(t)
+			p := f.create(string(payload))
+			f.clock.Set(testStart.Add(24*time.Hour - 5*time.Minute))
+			state := f.state(p)
+			f.clock.Set(testStart.Add(24*time.Hour + time.Second))
+			f.exec(`CREATE TRIGGER no_expire BEFORE UPDATE ON pending_actions
+				WHEN NEW.state = 'expired' BEGIN SELECT RAISE(ABORT, 'expire failed'); END`)
+
+			err := attempt(f, p, state)
+
+			require.ErrorIs(t, err, ErrNotPending)
+			require.Equal(t, "pending", f.storedState(p.ID), "nothing was recorded")
+		})
+	}
 }

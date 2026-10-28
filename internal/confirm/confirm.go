@@ -80,6 +80,9 @@ const (
 
 // The limits and lifetimes of this package.
 const (
+	// storeTimeout is the time that a write gets when it must not be cancelled by
+	// the context of the caller. See detached.
+	storeTimeout = 30 * time.Second
 	// pendingLifetime is how long an action waits for the user.
 	pendingLifetime = 24 * time.Hour
 	// requestStateLifetime is how long a RequestState works.
@@ -340,6 +343,10 @@ func (m *Manager) Resume(ctx context.Context, tenant account.TenantID, state str
 // has changed does not use up the confirmation. There is one exception: if the
 // action waits and its time has passed, the claim fails with ErrNotPending, and
 // Claim records the expiry and deletes the payload and the preview.
+//
+// The context stops Claim before the claim statement starts (the checks before
+// it read the store with it). The statement itself runs on a context that the
+// caller cannot cancel, so a committed claim is never reported as a failure.
 func (m *Manager) Claim(ctx context.Context, tenant account.TenantID, state string, payload []byte) (*Pending, error) {
 	now := m.now()
 	// The read in verify chooses the error for the caller. It does not decide
@@ -351,7 +358,9 @@ func (m *Manager) Claim(ctx context.Context, tenant account.TenantID, state stri
 			// expiry and delete the secrets. The claim has failed in any case, so
 			// an error here is not worth another answer. The next attempt, or
 			// Prune, does it again.
-			_ = m.st.ExpirePending(ctx, tenant, row.ID, now)
+			wctx, cancel := detached(ctx)
+			defer cancel()
+			_ = m.st.ExpirePending(wctx, tenant, row.ID, now)
 		}
 		return nil, err
 	}
@@ -362,7 +371,14 @@ func (m *Manager) Claim(ctx context.Context, tenant account.TenantID, state stri
 	}
 	// The statement checks the state, the time and the hash again, at the time
 	// of the move. The hash is the hash of the payload that the caller passed.
-	err = m.st.ClaimPending(ctx, tenant, row.ID, sum[:], now)
+	//
+	// It runs on a context that ctx cannot cancel. The driver can commit the
+	// statement and still return the error of a context that ended just then.
+	// The claim would be done, the caller would be told it failed, and the action
+	// would stay "approved" for ever.
+	wctx, cancel := detached(ctx)
+	defer cancel()
+	err = m.st.ClaimPending(wctx, tenant, row.ID, sum[:], now)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, ErrNotPending
 	}
@@ -461,10 +477,26 @@ func (m *Manager) Get(ctx context.Context, tenant account.TenantID, id string) (
 
 	version, sealed, err := m.st.GetPendingPayload(ctx, tenant, id)
 	if errors.Is(err, store.ErrNotFound) {
-		// The row has no payload. Either Prune deleted the row after the read
-		// above, or the row lost its payload.
-		if _, readErr := m.st.GetPending(ctx, tenant, id); errors.Is(readErr, store.ErrNotFound) {
+		// The row has no payload. Read it again to see why:
+		//  - Prune deleted the row after the first read: not found.
+		//  - A call moved the action to a final state after the first read, and
+		//    the same statement deleted the payload. This is the normal flow, for
+		//    example when the server finishes the send. Return the action as it is
+		//    now, without a payload.
+		//  - The action still waits or is approved: it lost its payload, so the
+		//    storage is damaged.
+		reread, readErr := m.st.GetPending(ctx, tenant, id)
+		switch {
+		case errors.Is(readErr, store.ErrNotFound):
 			return nil, nil, ErrNotFound
+		case readErr != nil:
+			return nil, nil, fmt.Errorf("confirm: load pending action: %w", readErr)
+		case hasEnded(State(reread.State)):
+			ended, err := m.pendingFromRow(ctx, reread, m.now())
+			if err != nil {
+				return nil, nil, err
+			}
+			return ended, nil, nil
 		}
 		return nil, nil, ErrCorrupted
 	}
@@ -497,6 +529,10 @@ func (m *Manager) Get(ctx context.Context, tenant account.TenantID, id string) (
 //
 // If the action waits and its time has passed, the move fails with ErrNotPending,
 // and Transition records the expiry and deletes the payload and the preview.
+//
+// A context that has ended stops Transition before it starts. The statement
+// itself runs on a context that the caller cannot cancel, so a committed move is
+// never reported as a failure.
 func (m *Manager) Transition(ctx context.Context, tenant account.TenantID, id string, from, to State, resultID string) error {
 	switch {
 	case !isState(from):
@@ -509,7 +545,12 @@ func (m *Manager) Transition(ctx context.Context, tenant account.TenantID, id st
 		return ErrNotPending
 	}
 
-	err := m.st.TransitionPending(ctx, tenant, id, string(from), string(to), resultID, m.now())
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	wctx, cancel := detached(ctx)
+	defer cancel()
+	err := m.st.TransitionPending(wctx, tenant, id, string(from), string(to), resultID, m.now())
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrInvalidID) {
 		return ErrNotPending
 	}
@@ -597,6 +638,14 @@ func (m *Manager) Prune(ctx context.Context, olderThan time.Duration) (int, erro
 		return 0, fmt.Errorf("confirm: prune pending actions: %w", err)
 	}
 	return n, nil
+}
+
+// detached returns a context that ctx cannot cancel, with a time limit. It keeps
+// the values of ctx. The driver of the database can commit a statement and still
+// return the error of a context that ended just then. For a write that must not
+// be lost, or reported as lost, the caller uses this context.
+func detached(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
 }
 
 // hasEnded reports whether s is a state in which an action has ended: done,

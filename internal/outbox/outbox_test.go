@@ -1827,3 +1827,156 @@ func TestWindowZeroEnqueuesWithRunningWorkersSendEachMessageOnce(t *testing.T) {
 		require.Equal(t, 1, n, "%q was sent %d times", body, n)
 	}
 }
+
+// ---- Fix round 1: inserts, the send deadline, window 0 and a stop ----
+
+// insertThenCancelStore commits the insert of a new item and then ends the
+// context of the caller. With reportError it also returns the error of the
+// context, as the driver does when the context ends after the INSERT ran and
+// before the answer came back: the row is committed and the call says it
+// failed.
+type insertThenCancelStore struct {
+	*store.Store
+	cancel      context.CancelFunc
+	reportError bool
+}
+
+func (s *insertThenCancelStore) CreateOutbox(ctx context.Context, row *store.OutboxRow, sealed []byte, keyVersion int) error {
+	err := s.Store.CreateOutbox(context.WithoutCancel(ctx), row, sealed, keyVersion)
+	return s.after(ctx, err)
+}
+
+func (s *insertThenCancelStore) CreateOutboxSending(ctx context.Context, row *store.OutboxRow, sealed []byte, keyVersion int, claimedAt time.Time) error {
+	err := s.Store.CreateOutboxSending(context.WithoutCancel(ctx), row, sealed, keyVersion, claimedAt)
+	return s.after(ctx, err)
+}
+
+func (s *insertThenCancelStore) after(ctx context.Context, err error) error {
+	s.cancel()
+	if s.reportError {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+	}
+	return err
+}
+
+// rowCount returns the number of items in the table.
+func (f *fixture) rowCount() int {
+	f.t.Helper()
+	db := f.openDB()
+	defer func() { require.NoError(f.t, db.Close()) }()
+	var n int
+	require.NoError(f.t, db.QueryRowContext(context.Background(), `SELECT count(*) FROM outbox`).Scan(&n))
+	return n
+}
+
+// If the context ends while the insert runs, the row may be committed. Enqueue
+// must not return an error then: the caller would queue the message again, and
+// the user would get two copies. Both inserts use a context that the caller
+// cannot cancel.
+func TestEnqueueKeepsAnItemWhenTheContextEndsDuringTheInsert(t *testing.T) {
+	for name, window := range map[string]time.Duration{"with a window": time.Minute, "window 0": 0} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ob := New(&insertThenCancelStore{Store: f.store, cancel: cancel, reportError: true}, f.vault, f.sender.send, f.clock.Now)
+
+			item, err := ob.Enqueue(ctx, f.tenant, f.acct, testMessage("one copy"), window, "")
+
+			require.NoError(t, err)
+			require.NotNil(t, item)
+			require.Equal(t, 1, f.rowCount(), "exactly one item is stored")
+			require.Equal(t, StatusQueued, item.Status, "queued, or released to the queue before the send")
+			require.Zero(t, f.sender.count())
+		})
+	}
+}
+
+// With window 0 the caller may stop between the insert and the start of the
+// send. Nothing was sent. The item is released to the queue and a worker sends
+// it later, once. (This is why Enqueue does not promise "sent" for window 0.)
+func TestWindowZeroItemIsReleasedWhenTheContextEndsBeforeTheSend(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ob := New(&insertThenCancelStore{Store: f.store, cancel: cancel}, f.vault, f.sender.send, f.clock.Now)
+
+	item, err := ob.Enqueue(ctx, f.tenant, f.acct, testMessage("not yet"), 0, "")
+	require.NoError(t, err)
+
+	require.Equal(t, StatusQueued, item.Status)
+	require.Zero(t, f.sender.count())
+	r := f.raw(item.ID)
+	require.Equal(t, "queued", r.status)
+	require.Equal(t, 0, r.attempts, "a release is not a failed try")
+	require.False(t, r.messageNull)
+
+	f.pass()
+	require.Equal(t, 1, f.sender.count())
+	require.Equal(t, StatusSent, f.status(item.ID))
+	f.pass()
+	require.Equal(t, 1, f.sender.count(), "sent once")
+}
+
+// slowOpenStore moves the clock when the stored message is read, as a slow key
+// service or a slow disk would.
+type slowOpenStore struct {
+	*store.Store
+	clock *clock
+	delay time.Duration
+}
+
+func (s *slowOpenStore) GetOutboxMessage(ctx context.Context, tenant account.TenantID, id string) (int, []byte, error) {
+	s.clock.Advance(s.delay)
+	return s.Store.GetOutboxMessage(ctx, tenant, id)
+}
+
+// The deadline of the Sender counts from the claim, not from the start of the
+// send. The steps before the send (reading and opening the message) use up a
+// part of it. Without this, claim + open + send + result could pass the 15
+// minutes after which another program fails the item.
+func TestSendDeadlineCountsFromTheClaim(t *testing.T) {
+	f := newFixture(t)
+	item := f.enqueue("slow to open", 10*time.Second)
+	f.clock.Advance(10 * time.Second)
+	var deadline time.Time
+	var hasDeadline bool
+	f.sender.setFn(func(ctx context.Context, _ int) error {
+		deadline, hasDeadline = ctx.Deadline()
+		return nil
+	})
+	ob := New(&slowOpenStore{Store: f.store, clock: f.clock, delay: 2 * time.Minute}, f.vault, f.sender.send, f.clock.Now)
+
+	require.NoError(t, ob.Drain(context.Background(), 0))
+
+	require.True(t, hasDeadline)
+	require.Equal(t, StatusSent, f.status(item.ID))
+	// The open step took 2 minutes of the clock. 13 - 2 = 11 minutes are left.
+	left := time.Until(deadline)
+	require.Greater(t, left, 11*time.Minute-10*time.Second)
+	require.LessOrEqual(t, left, 11*time.Minute)
+}
+
+// If the steps before the send have used the whole time, nothing is sent: a send
+// with a deadline that is over would fail at once and mark an unsent message as
+// "delivery unknown". The item goes back to the queue instead.
+func TestNoSendWhenTheTimeIsUsedUpBeforeTheSend(t *testing.T) {
+	f := newFixture(t)
+	item := f.enqueue("far too slow", 10*time.Second)
+	f.clock.Advance(10 * time.Second)
+	slow := New(&slowOpenStore{Store: f.store, clock: f.clock, delay: sendDeadline + time.Second}, f.vault, f.sender.send, f.clock.Now)
+
+	require.NoError(t, slow.Drain(context.Background(), 0))
+
+	require.Zero(t, f.sender.count())
+	r := f.raw(item.ID)
+	require.Equal(t, "queued", r.status)
+	require.Equal(t, 0, r.attempts)
+	require.False(t, r.messageNull)
+
+	f.pass()
+	require.Equal(t, 1, f.sender.count())
+	require.Equal(t, StatusSent, f.status(item.ID))
+}
