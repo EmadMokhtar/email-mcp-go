@@ -333,6 +333,8 @@ func TestDiscardDraftMovesTheDraftToTrash(t *testing.T) {
 	require.Equal(t, "Keep me", mustGet(t, b, other, mail.BodyOptions{Format: mail.BodyNone}).Subject)
 }
 
+// This pins the contract of mail.Backend.DiscardDraft: a message that is not a
+// draft is refused with ErrUnsupported, before anything changes.
 func TestDiscardDraftRefusesNonDraft(t *testing.T) {
 	srv := draftServer(t)
 	srv.Append("INBOX", plainMail("In the inbox", "x"), imap.FlagSeen)

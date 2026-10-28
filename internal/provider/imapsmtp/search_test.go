@@ -1346,3 +1346,33 @@ func TestListFoldersPrefersTrashForAFolderWithTwoAttributes(t *testing.T) {
 		require.Equal(t, mail.AliasInbox, aliasOf["INBOX"])
 	}
 }
+
+// Only one folder gets the alias "@trash", but every folder with the \Trash
+// attribute is marked, so the service can refuse a plain move to any of them.
+func TestListFoldersMarksEveryTrashFolder(t *testing.T) {
+	srv := imaptest.New(t)
+	srv.Create("Deleted Items", imap.MailboxAttrTrash)
+	srv.Create("Trash", imap.MailboxAttrTrash)
+	srv.Create("Projects")
+	b := newTestBackend(t, srv)
+
+	trash, err := b.resolveFolder(t.Context(), mail.AliasTrash)
+	require.NoError(t, err)
+	folders, err := b.ListFolders(t.Context())
+	require.NoError(t, err)
+
+	byName := map[string]mail.Folder{}
+	for _, f := range folders {
+		byName[f.Name] = f
+	}
+	require.True(t, byName["Deleted Items"].Trash)
+	require.True(t, byName["Trash"].Trash)
+	require.False(t, byName["Projects"].Trash)
+	require.False(t, byName["INBOX"].Trash)
+	require.Equal(t, mail.AliasTrash, byName[trash].Alias, "the folder of the backend's Trash has the alias")
+	other := "Trash"
+	if trash == "Trash" {
+		other = "Deleted Items"
+	}
+	require.Empty(t, byName[other].Alias, "the second Trash folder has no alias")
+}

@@ -35,6 +35,10 @@ const (
 	toolSend         = "send_message"
 	toolCancelSend   = "cancel_send"
 	toolTrash        = "trash_messages"
+	// The approvals page uses these names only for an entry whose action could
+	// not be found. Otherwise the entry has the tool of the action.
+	toolApprovePending = "approve_pending"
+	toolRejectPending  = "reject_pending"
 )
 
 // The audit codes that say how an action that was done got the go-ahead.
@@ -312,6 +316,8 @@ func auditCode(err error) (audit.Outcome, string) {
 		return refused("state_expired")
 	case errors.Is(err, confirm.ErrNotPending):
 		return refused("not_pending")
+	case errors.Is(err, confirm.ErrNotFound):
+		return refused("not_found")
 	// A partial change can also wrap one of the errors below, so it comes first.
 	case errors.Is(err, mail.ErrPartial):
 		return failed("partial")
@@ -450,9 +456,10 @@ func (s *Service) Tag(ctx context.Context, id account.AccountID, refs []mail.Ref
 // A move to the Trash folder is refused at every level with ErrMoveToTrash: the
 // agent must use Trash, which asks the user when the account wants it and counts
 // toward the Trash limit. The Trash folder is the one that the backend's own
-// Trash uses: the folder that the backend lists with the alias "@trash". The
-// target is resolved the way the backend resolves it, and its name is compared
-// without regard to case, because some servers do not care about case.
+// Trash uses (the folder with the alias "@trash"), and every other folder that
+// the backend marks as Trash. The target is resolved the way the backend
+// resolves it, and its name is compared without regard to case, because some
+// servers do not care about case.
 func (s *Service) Move(ctx context.Context, id account.AccountID, refs []mail.Ref, folder string) ([]mail.Ref, error) {
 	acc, b, err := s.begin(ctx, id, policy.ActOrganize, toolMove)
 	if err != nil {
@@ -481,10 +488,12 @@ func refuseTrashTarget(ctx context.Context, b mail.Backend, folder string) error
 	if err != nil {
 		return err
 	}
-	// policy.IsTrashTarget compares exactly. Here case does not count.
-	trash := aliasFolder(folders, mail.AliasTrash)
-	if trash != "" && strings.EqualFold(target, trash) {
-		return ErrMoveToTrash
+	// Every folder that holds deleted mail counts, not only the one with the
+	// alias. policy.IsTrashTarget compares exactly. Here case does not count.
+	for _, f := range folders {
+		if (f.Trash || f.Alias == mail.AliasTrash) && strings.EqualFold(target, f.Name) {
+			return ErrMoveToTrash
+		}
 	}
 	return nil
 }
@@ -604,16 +613,16 @@ func (s *Service) approvalLink(ctx context.Context, id string) string {
 }
 
 // declineAnswer records the user's "no" in band. The state must be genuine, the
-// payload unchanged, and the action must belong to this account (Resume and the
-// account check). Then the action moves from "pending" to "rejected". It acts on
-// nothing.
-func (s *Service) declineAnswer(ctx context.Context, acc access, payload []byte, ans *ConfirmAnswer) (*confirm.Pending, error) {
+// payload unchanged, and the action must be of this kind and belong to this
+// account (Resume and the checks). Then the action moves from "pending" to
+// "rejected". It acts on nothing.
+func (s *Service) declineAnswer(ctx context.Context, acc access, kind confirm.Kind, payload []byte, ans *ConfirmAnswer) (*confirm.Pending, error) {
 	t := acc.Principal.Tenant
 	p, err := s.d.Confirm.Resume(ctx, t, ans.RequestState, payload)
 	if err != nil {
 		return nil, err
 	}
-	if p.Account != acc.Account.ID {
+	if !sameAction(p, acc, kind) {
 		return nil, confirm.ErrStateInvalid
 	}
 	if err := s.d.Confirm.Transition(ctx, t, p.ID, confirm.StatePending, confirm.StateRejected, ""); err != nil {
@@ -627,28 +636,37 @@ func (s *Service) declineAnswer(ctx context.Context, acc access, payload []byte,
 // moves the action from "pending" to "approved" in one compare-and-set, so only
 // one caller can act on it.
 //
-// A state of another account of the tenant is refused before the claim, so an
-// agent cannot use the confirmation of one account to act on another one, and
+// A state of another account of the tenant, or of another kind of action, is
+// refused before the claim. So an agent cannot use the confirmation of one
+// account to act on another one, or a Trash confirmation to send (the payload
+// bytes of the two kinds can be the same, because a Trash ref is any text), and
 // such a try does not use the confirmation up.
-func (s *Service) claimAnswer(ctx context.Context, acc access, payload []byte, ans *ConfirmAnswer) (*confirm.Pending, error) {
+func (s *Service) claimAnswer(ctx context.Context, acc access, kind confirm.Kind, payload []byte, ans *ConfirmAnswer) (*confirm.Pending, error) {
 	t := acc.Principal.Tenant
 	checked, err := s.d.Confirm.Resume(ctx, t, ans.RequestState, payload)
 	if err != nil {
 		return nil, err
 	}
-	if checked.Account != acc.Account.ID {
+	if !sameAction(checked, acc, kind) {
 		return nil, confirm.ErrStateInvalid
 	}
 	p, err := s.d.Confirm.Claim(ctx, t, ans.RequestState, payload)
 	if err != nil {
 		return nil, err
 	}
-	if p.Account != acc.Account.ID {
-		// The account of an action never changes, so this does not happen.
+	if !sameAction(p, acc, kind) {
+		// The account and the kind of an action never change, so this does not
+		// happen.
 		s.endAction(ctx, t, p.ID, confirm.StateRejected, "")
 		return nil, confirm.ErrStateInvalid
 	}
 	return p, nil
+}
+
+// sameAction reports whether the action is of this kind and belongs to the
+// account of acc.
+func sameAction(p *confirm.Pending, acc access, kind confirm.Kind) bool {
+	return p.Account == acc.Account.ID && p.Kind == kind
 }
 
 // endAction moves an approved action to a final state. An empty id does
@@ -716,14 +734,14 @@ func (s *Service) Trash(ctx context.Context, id account.AccountID, refs []mail.R
 
 	if ans != nil {
 		if !ans.Accepted {
-			if _, err := s.declineAnswer(ctx, acc, payload, ans); err != nil {
+			if _, err := s.declineAnswer(ctx, acc, confirm.KindTrash, payload, ans); err != nil {
 				s.finish(ctx, acc, toolTrash, n, nil, "", err)
 				return nil, nil, err
 			}
 			s.recordOutcome(ctx, acc, toolTrash, n, nil, audit.OutcomeDeclined, "declined")
 			return &TrashResult{Status: TrashDeclined, Count: n}, nil, nil
 		}
-		p, err := s.claimAnswer(ctx, acc, payload, ans)
+		p, err := s.claimAnswer(ctx, acc, confirm.KindTrash, payload, ans)
 		if err != nil {
 			s.finish(ctx, acc, toolTrash, n, nil, "", err)
 			return nil, nil, err
@@ -826,8 +844,11 @@ func trashRefs(payload []byte) []mail.Ref {
 // A send is built again from its payload. When the message would not be the one
 // that the preview showed (other recipients, sender, subject or body start), the
 // action is rejected and the error wraps confirm.ErrPayloadChanged.
+//
+// An approval that cannot be carried out (no such action, or it does not wait
+// any more) is in the audit log as "refused". A Trash approval needs no outbox.
 func (s *Service) ApprovePending(ctx context.Context, pendingID string) error {
-	if err := s.sendDeps(); err != nil {
+	if err := s.confirmDeps(); err != nil {
 		return err
 	}
 	p, err := PrincipalFrom(ctx)
@@ -836,13 +857,19 @@ func (s *Service) ApprovePending(ctx context.Context, pendingID string) error {
 	}
 	pending, payload, err := s.d.Confirm.Get(ctx, p.Tenant, pendingID)
 	if err != nil {
+		s.recordPendingRefusal(ctx, p, nil, toolApprovePending, err)
 		return err
 	}
 	if pending.State != confirm.StatePending || payload == nil {
-		return confirm.ErrNotPending
+		err := confirm.ErrNotPending
+		s.recordPendingRefusal(ctx, p, pending, toolApprovePending, err)
+		return err
 	}
 	switch pending.Kind {
 	case confirm.KindSend:
+		if err := s.sendDeps(); err != nil {
+			return err
+		}
 		return s.approveSend(ctx, pending, payload)
 	case confirm.KindTrash:
 		return s.approveTrash(ctx, pending, payload)
@@ -873,7 +900,8 @@ func (s *Service) approveTrash(ctx context.Context, pending *confirm.Pending, pa
 
 // RejectPending rejects an action that waits for the user. The web page calls it
 // when the user presses Reject, in the tenant of the principal. It returns
-// confirm.ErrNotPending when the action does not wait any more.
+// confirm.ErrNotPending when the action does not wait any more. A rejection
+// that cannot be carried out is in the audit log as "refused".
 func (s *Service) RejectPending(ctx context.Context, pendingID string) error {
 	if err := s.confirmDeps(); err != nil {
 		return err
@@ -884,18 +912,36 @@ func (s *Service) RejectPending(ctx context.Context, pendingID string) error {
 	}
 	pending, _, err := s.d.Confirm.Get(ctx, p.Tenant, pendingID)
 	if err != nil {
+		s.recordPendingRefusal(ctx, p, nil, toolRejectPending, err)
 		return err
 	}
 	if err := s.d.Confirm.Transition(ctx, p.Tenant, pendingID, confirm.StatePending, confirm.StateRejected, ""); err != nil {
+		s.recordPendingRefusal(ctx, p, pending, toolRejectPending, err)
 		return err
 	}
-	tool := toolTrash
-	if pending.Kind == confirm.KindSend {
-		tool = toolSend
-	}
 	s.record(ctx, p, entry{
-		tool: tool, account: pending.Account, count: pending.Preview.Count, recipients: pending.Preview.To,
+		tool: toolOf(pending.Kind), account: pending.Account, count: pending.Preview.Count, recipients: pending.Preview.To,
 		outcome: audit.OutcomeDeclined, detail: "rejected_on_web",
 	})
 	return nil
+}
+
+// recordPendingRefusal records an approval or a rejection that could not be
+// carried out. When the action is known, the entry has the tool of the action
+// and its account. Otherwise it is an entry of the tenant under fallbackTool.
+func (s *Service) recordPendingRefusal(ctx context.Context, p Principal, pending *confirm.Pending, fallbackTool string, err error) {
+	e := entry{tool: fallbackTool}
+	if pending != nil {
+		e.tool, e.account = toolOf(pending.Kind), pending.Account
+	}
+	e.outcome, e.detail = auditCode(err)
+	s.record(ctx, p, e)
+}
+
+// toolOf returns the tool of a kind of action.
+func toolOf(kind confirm.Kind) string {
+	if kind == confirm.KindSend {
+		return toolSend
+	}
+	return toolTrash
 }

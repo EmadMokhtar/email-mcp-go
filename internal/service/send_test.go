@@ -332,7 +332,7 @@ func TestKnownRecipientsStoredHashed(t *testing.T) {
 func TestSendDraftUsesDraftRecipientsAndTrashesDraft(t *testing.T) {
 	env := newWriteEnv(t)
 	a := env.account(autonomy)
-	env.backend.raws["d1"] = draftMail("me@example.com")
+	env.backend.addMessage("d1", draftMail("me@example.com"), true)
 	draft := mail.Ref("d1")
 
 	res, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
@@ -426,6 +426,29 @@ func TestSendPayloadIsCanonical(t *testing.T) {
 		_, err := decodeSendPayload([]byte(bad))
 		require.Error(t, err, name)
 	}
+}
+
+// The payload of a send waits in the database until the user answers, so it
+// has a size limit.
+func TestSendPayloadTooLargeRefused(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	c := compose("bob@example.com")
+	c.Body = strings.Repeat("a", 15<<20)
+
+	_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+	require.ErrorIs(t, err, ErrInvalidRequest)
+	require.Contains(t, err.Error(), "15 MB")
+	require.Nil(t, needs)
+	require.Empty(t, env.waitingActions())
+	requireEntry(t, env.lastEntry(), "send_message", audit.OutcomeRefused, "invalid_request")
+
+	_, err = newSendRequest(&c, nil)
+	require.ErrorIs(t, err, ErrInvalidRequest)
+	c.Body = strings.Repeat("a", 14<<20)
+	_, err = newSendRequest(&c, nil)
+	require.NoError(t, err)
 }
 
 func TestSendNeedsExactlyOneOfComposeAndDraft(t *testing.T) {
@@ -680,13 +703,57 @@ func TestRequestStateOfAnotherAccountRefused(t *testing.T) {
 	require.ErrorIs(t, err, confirm.ErrStateInvalid)
 }
 
+// A request state names an action of one kind. A Trash state must not send,
+// and a send state must not move mail to Trash, even when the payload bytes are
+// the same: an agent can pick a Trash ref that looks like a send payload. The
+// try does not use the confirmation up.
+func TestStateOfAnotherKindRefused(t *testing.T) {
+	draft := mail.Ref("d1")
+	req, err := newSendRequest(nil, &draft)
+	require.NoError(t, err)
+	sameBytes := []mail.Ref{mail.Ref(req.payload)}
+
+	t.Run("a Trash state used to send", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account(level(account.MailDelete))
+		env.backend.addMessage(draft, draftMail("me@example.com"), true)
+		ctx := env.ctx()
+		_, needs, err := env.svc.Trash(ctx, a.ID, sameBytes, ConfirmInBand, nil)
+		require.NoError(t, err)
+
+		_, _, err = env.svc.Send(ctx, a.ID, nil, &draft, ConfirmInBand, accept(needs))
+		require.ErrorIs(t, err, confirm.ErrStateInvalid)
+		_, _, err = env.svc.Send(ctx, a.ID, nil, &draft, ConfirmInBand, decline(needs))
+		require.ErrorIs(t, err, confirm.ErrStateInvalid)
+
+		require.Empty(t, env.sender.sent())
+		require.Equal(t, confirm.StatePending, env.pending(needs.Pending.ID).State)
+	})
+	t.Run("a send state used to move mail to Trash", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account(level(account.MailDelete))
+		env.backend.addMessage(draft, draftMail("me@example.com"), true)
+		ctx := env.ctx()
+		_, needs, err := env.svc.Send(ctx, a.ID, nil, &draft, ConfirmInBand, nil)
+		require.NoError(t, err)
+
+		_, _, err = env.svc.Trash(ctx, a.ID, sameBytes, ConfirmInBand, accept(needs))
+		require.ErrorIs(t, err, confirm.ErrStateInvalid)
+		_, _, err = env.svc.Trash(ctx, a.ID, sameBytes, ConfirmInBand, decline(needs))
+		require.ErrorIs(t, err, confirm.ErrStateInvalid)
+
+		require.Empty(t, env.backend.trashCalls())
+		require.Equal(t, confirm.StatePending, env.pending(needs.Pending.ID).State)
+	})
+}
+
 // ---------------------------------------------------------------- drafts
 
 func TestSendDraftFromAnotherAddressRefused(t *testing.T) {
 	env := newWriteEnv(t)
 	a := env.account(autonomy)
-	env.backend.raws["d1"] = draftMail("boss@example.com")
-	env.backend.raws["d2"] = draftMail("ME@Example.COM")
+	env.backend.addMessage("d1", draftMail("boss@example.com"), true)
+	env.backend.addMessage("d2", draftMail("ME@Example.COM"), true)
 	ctx := env.ctx()
 
 	d1 := mail.Ref("d1")
@@ -701,10 +768,38 @@ func TestSendDraftFromAnotherAddressRefused(t *testing.T) {
 	require.Equal(t, "queued", res.Status)
 }
 
+// Only a real draft is sent as it is saved. A received message with a From
+// forged to the user's own address, or an old message in Sent, has the right
+// From but is not a draft. It is refused before it is read.
+func TestSendRefusesAMessageThatIsNotADraft(t *testing.T) {
+	for name, ref := range map[string]mail.Ref{"inbox message": "in1", "sent message": "sent1"} {
+		t.Run(name, func(t *testing.T) {
+			env := newWriteEnv(t)
+			a := env.account(autonomy, func(a *account.Account) { a.Limits.UndoWindowAuto = 0 })
+			env.backend.addMessage(ref, draftMail("me@example.com"), false)
+
+			res, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &ref, ConfirmInBand, nil)
+
+			require.ErrorIs(t, err, ErrNotADraft)
+			require.ErrorIs(t, err, ErrInvalidRequest)
+			require.Contains(t, err.Error(), "not a draft")
+			require.Nil(t, res)
+			require.Nil(t, needs)
+			require.Zero(t, env.backend.rawMax, "the message is not read")
+			require.Empty(t, env.sender.sent())
+			require.Empty(t, env.waitingActions())
+			due, err := env.f.store.DueOutbox(context.Background(), testStart.Add(time.Hour), 10)
+			require.NoError(t, err)
+			require.Empty(t, due, "nothing is queued")
+			requireEntry(t, env.lastEntry(), "send_message", audit.OutcomeRefused, "invalid_request")
+		})
+	}
+}
+
 func TestSendDraftWithConfirmation(t *testing.T) {
 	env := newWriteEnv(t)
 	a := env.account()
-	env.backend.raws["d1"] = draftMail("me@example.com")
+	env.backend.addMessage("d1", draftMail("me@example.com"), true)
 	ctx := env.ctx()
 	draft := mail.Ref("d1")
 
@@ -812,7 +907,7 @@ func TestCancelSendWithdrawsAWaitingApproval(t *testing.T) {
 
 // ---------------------------------------------------------------- failed sends
 
-func TestFailedInlineSendIsAnError(t *testing.T) {
+func TestFailedInlineSendIsReportedAsFailed(t *testing.T) {
 	env := newWriteEnv(t)
 	a := env.account(autonomy, func(a *account.Account) {
 		a.Limits.UndoWindowAuto = 0

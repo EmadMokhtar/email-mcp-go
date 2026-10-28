@@ -57,6 +57,9 @@ const (
 	previewParseChars = 20000
 	// sendPayloadVersion is the version of the send payload format.
 	sendPayloadVersion = 1
+	// maxSendPayloadBytes is the largest send payload: 15 MB, the largest HTTP
+	// request body. The payload waits in the database until the user answers.
+	maxSendPayloadBytes = 15 << 20
 	// knownRecipientsLabel makes the key of the known-recipient hashes from the
 	// server key. A new label gives new keys, and the old hashes no longer match.
 	knownRecipientsLabel = "known-recipients/v1"
@@ -82,6 +85,11 @@ var (
 	// account, so the service does not send it from that account.
 	ErrDraftNotFromAccount = errors.New("service: the draft is not from the address of this account, so it is not sent")
 
+	// ErrNotADraft means that the message to send as a draft does not have the
+	// draft state. Only a draft is sent as it was saved. It matches
+	// ErrInvalidRequest.
+	ErrNotADraft = fmt.Errorf("%w: the message is not a draft, so it is not sent. Send a saved draft, or write a new message", ErrInvalidRequest)
+
 	// ErrSendNotFound means that the account has no send with this id.
 	ErrSendNotFound = errors.New("service: no send with this id for this account")
 )
@@ -104,7 +112,9 @@ func (s *Service) sendDeps() error {
 //  1. The permission (Decide), before anything else.
 //  2. The message is built: from c with mime.Build (a reply or a forward reads
 //     the original first), or from the draft with GetRaw (at most 25 MB) and
-//     mime.FromDraft. A draft must be from the address of the account.
+//     mime.FromDraft. A draft must have the draft state, checked before it is
+//     read, and must be from the address of the account. The payload of the
+//     request is at most 15 MB.
 //  3. The limits that can never allow it: more recipients than the account
 //     allows in one message (counted on the final envelope, after a reply to all
 //     adds people), or a send limit of 0.
@@ -188,7 +198,7 @@ func (s *Service) Send(ctx context.Context, id account.AccountID, c *mail.Compos
 func (s *Service) answerSend(ctx context.Context, acc access, req *sendRequest, msg *mail.RawMessage, preview confirm.Preview, ans *ConfirmAnswer) (*SendResult, error) {
 	recipients := auditRecipients(msg)
 	if !ans.Accepted {
-		p, err := s.declineAnswer(ctx, acc, req.payload, ans)
+		p, err := s.declineAnswer(ctx, acc, confirm.KindSend, req.payload, ans)
 		if err != nil {
 			s.finish(ctx, acc, toolSend, 1, recipients, "", err)
 			return nil, err
@@ -197,7 +207,7 @@ func (s *Service) answerSend(ctx context.Context, acc access, req *sendRequest, 
 		return &SendResult{Status: SendDeclined, SendID: p.ID}, nil
 	}
 
-	p, err := s.claimAnswer(ctx, acc, req.payload, ans)
+	p, err := s.claimAnswer(ctx, acc, confirm.KindSend, req.payload, ans)
 	if err != nil {
 		s.finish(ctx, acc, toolSend, 1, recipients, "", err)
 		return nil, err
@@ -327,10 +337,21 @@ func (s *Service) prepareSend(ctx context.Context, b mail.Backend, a *account.Ac
 }
 
 // buildSend builds the message to send: from the Compose of the request, or from
-// the saved draft. A draft must be from the address of the account.
+// the saved draft. A draft must have the draft state (ErrNotADraft) and be from
+// the address of the account (ErrDraftNotFromAccount).
 func (s *Service) buildSend(ctx context.Context, b mail.Backend, a *account.Account, req *sendRequest) (*mail.RawMessage, error) {
 	if req.compose != nil {
 		return s.buildMessage(ctx, b, a, *req.compose, false)
+	}
+	// Only a real draft is sent as it is. A received message with a From forged
+	// to the user's own address, or an old message in Sent, is not one. The
+	// check comes before the message is read.
+	head, err := b.GetMessage(ctx, req.draft, mail.BodyOptions{Format: mail.BodyNone})
+	if err != nil {
+		return nil, err
+	}
+	if !head.Draft {
+		return nil, ErrNotADraft
 	}
 	raw, err := b.GetRaw(ctx, req.draft, maxDraftBytes)
 	if err != nil {
@@ -475,7 +496,8 @@ type attachmentPayload struct {
 }
 
 // newSendRequest checks a send request and returns its canonical form. Exactly
-// one of c and draft must be set, and a draft ref must not be empty.
+// one of c and draft must be set, a draft ref must not be empty, and the payload
+// must be at most 15 MB.
 //
 // The message is built later from the Compose that is read back from the
 // payload, not from c. So the first call, the second call and the approval page
@@ -498,6 +520,10 @@ func newSendRequest(c *mail.Compose, draft *mail.Ref) (*sendRequest, error) {
 	data, err := json.Marshal(p)
 	if err != nil {
 		return nil, fmt.Errorf("%w: the message cannot be stored", ErrInvalidRequest)
+	}
+	if len(data) > maxSendPayloadBytes {
+		return nil, fmt.Errorf("%w: the message is larger than 15 MB, so it cannot be kept until the user answers. "+
+			"Use a shorter text or smaller attachments", ErrInvalidRequest)
 	}
 	return decodeSendPayload(data)
 }

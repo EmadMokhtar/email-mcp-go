@@ -2208,3 +2208,19 @@ func newsletterHTML(n int) string {
 	b.WriteString(`</table></body></html>`)
 	return b.String()
 }
+
+// The service sends a message as a draft only when it has the draft state, so
+// the \Draft flag must reach the summary and the message.
+func TestDraftFlagIsReported(t *testing.T) {
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	srv.Append("INBOX", plainMail("draft", "x"), imap.FlagDraft)
+	srv.Append("INBOX", plainMail("mail", "x"), imap.FlagSeen)
+	p := mustSearch(t, b, mail.Query{}, "")
+	newer, older := p.Items[0], p.Items[1]
+
+	require.True(t, older.Draft, "the search summary of a draft")
+	require.False(t, newer.Draft)
+	require.True(t, mustGet(t, b, older.Ref, mail.BodyOptions{Format: mail.BodyNone}).Draft, "the message of a draft")
+	require.False(t, mustGet(t, b, newer.Ref, mail.BodyOptions{Format: mail.BodyNone}).Draft)
+}

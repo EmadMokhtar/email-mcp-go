@@ -113,7 +113,7 @@ func newRecBackend() *recBackend {
 		folders: []mail.Folder{
 			{Name: "INBOX", Alias: mail.AliasInbox},
 			{Name: "Archive", Alias: mail.AliasArchive},
-			{Name: "Deleted Items", Alias: mail.AliasTrash},
+			{Name: "Deleted Items", Alias: mail.AliasTrash, Trash: true},
 			{Name: "Drafts", Alias: mail.AliasDrafts},
 			{Name: "Projects"},
 		},
@@ -121,6 +121,15 @@ func newRecBackend() *recBackend {
 		raws:      map[mail.Ref][]byte{},
 		errs:      map[string]error{},
 	}
+}
+
+// addMessage stores a message for GetMessage and GetRaw. draft says whether it
+// has the draft state.
+func (b *recBackend) addMessage(ref mail.Ref, raw []byte, draft bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.raws[ref] = raw
+	b.originals[ref] = &mail.Message{Summary: mail.Summary{Ref: ref, Draft: draft}}
 }
 
 func (b *recBackend) setErr(method string, err error) {
@@ -617,13 +626,34 @@ func TestMoveToAnAliasOfTheTrashFolderRefused(t *testing.T) {
 	// shows it as Trash. A move to @junk must not reach it.
 	env.backend.folders = []mail.Folder{
 		{Name: "INBOX", Alias: mail.AliasInbox},
-		{Name: "Bin", Alias: mail.AliasTrash},
+		{Name: "Bin", Alias: mail.AliasTrash, Trash: true},
 	}
 
 	_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, mail.AliasJunk)
 
 	require.ErrorIs(t, err, mail.ErrNotFound, "an alias that the list does not show is not passed on")
 	require.Empty(t, env.backend.moveCalls())
+}
+
+// A server can have more than one folder with the \Trash attribute. Only one
+// has the alias, but a move to any of them is a move to Trash.
+func TestMoveToAnyTrashFolderRefused(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete), autonomy)
+	env.backend.folders = []mail.Folder{
+		{Name: "INBOX", Alias: mail.AliasInbox},
+		{Name: "Deleted Items", Alias: mail.AliasTrash, Trash: true},
+		{Name: "Trash", Trash: true},
+		{Name: "Projects"},
+	}
+	for _, target := range []string{"Deleted Items", "Trash", "TRASH"} {
+		_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, target)
+		require.ErrorIs(t, err, ErrMoveToTrash, target)
+	}
+	require.Empty(t, env.backend.moveCalls())
+
+	_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, "Projects")
+	require.NoError(t, err)
 }
 
 func TestMoveToOtherFoldersAllowed(t *testing.T) {
@@ -815,6 +845,58 @@ func TestTrashFallbackThenApprove(t *testing.T) {
 
 	require.ErrorIs(t, env.svc.ApprovePending(ctx, waiting[0].ID), confirm.ErrNotPending)
 	require.Len(t, env.backend.trashCalls(), 1, "an approval acts once")
+}
+
+// A Trash approval needs no outbox and no vault: only a send does.
+func TestTrashApprovalNeedsNoOutbox(t *testing.T) {
+	env := newWriteEnv(t, func(d *Deps) { d.Outbox = nil })
+	a := env.account(level(account.MailDelete))
+	_, _, err := env.svc.Trash(env.ctx(), a.ID, []mail.Ref{"r1"}, ConfirmFallback, nil)
+	require.NoError(t, err)
+	id := env.waitingActions()[0].ID
+
+	require.NoError(t, env.svc.ApprovePending(env.ctx(), id))
+	require.Len(t, env.backend.trashCalls(), 1)
+}
+
+// An approval or a rejection that cannot be carried out is in the audit log
+// too. With the action known, the entry names its tool and account. Without it,
+// the entry is one of the tenant.
+func TestApproveAndRejectFailuresAreAudited(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete))
+	ctx := env.ctx()
+	_, _, err := env.svc.Trash(ctx, a.ID, []mail.Ref{"r1"}, ConfirmFallback, nil)
+	require.NoError(t, err)
+	id := env.waitingActions()[0].ID
+	require.NoError(t, env.svc.RejectPending(ctx, id))
+
+	// Each failed call adds exactly one entry.
+	newEntry := func(call func() error, want error) audit.Entry {
+		t.Helper()
+		before := len(env.entries())
+		require.ErrorIs(t, call(), want)
+		after := env.entries()
+		require.Len(t, after, before+1, "one entry for the failed call")
+		return after[0]
+	}
+
+	last := newEntry(func() error { return env.svc.ApprovePending(ctx, id) }, confirm.ErrNotPending)
+	requireEntry(t, last, "trash_messages", audit.OutcomeRefused, "not_pending")
+	require.Equal(t, a.ID, last.Account)
+
+	last = newEntry(func() error { return env.svc.RejectPending(ctx, id) }, confirm.ErrNotPending)
+	requireEntry(t, last, "trash_messages", audit.OutcomeRefused, "not_pending")
+	require.Equal(t, a.ID, last.Account)
+
+	last = newEntry(func() error { return env.svc.ApprovePending(ctx, "no-such-action") }, confirm.ErrNotFound)
+	requireEntry(t, last, "approve_pending", audit.OutcomeRefused, "not_found")
+	require.Empty(t, last.Account)
+
+	last = newEntry(func() error { return env.svc.RejectPending(ctx, "no-such-action") }, confirm.ErrNotFound)
+	requireEntry(t, last, "reject_pending", audit.OutcomeRefused, "not_found")
+	require.Empty(t, last.Account)
+	require.Empty(t, env.backend.trashCalls())
 }
 
 func TestRejectPendingTrash(t *testing.T) {

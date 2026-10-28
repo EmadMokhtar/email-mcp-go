@@ -347,6 +347,8 @@ func newSummary(m *imapclient.FetchMessageBuffer) mail.Summary {
 			s.Seen = true
 		case strings.EqualFold(string(f), string(imap.FlagFlagged)):
 			s.Flagged = true
+		case strings.EqualFold(string(f), string(imap.FlagDraft)):
+			s.Draft = true
 		case isTag(string(f)):
 			// A tag name has only letters, digits, - and _, so it needs no
 			// cleaning. Other keywords (system flags, $-keywords and the

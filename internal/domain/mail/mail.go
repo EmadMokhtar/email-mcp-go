@@ -62,6 +62,10 @@ type Folder struct {
 	// Unread and Total are message counts. A nil value means the backend does
 	// not know the count.
 	Unread, Total *int
+	// Trash is true for a folder that holds deleted mail (for IMAP, a folder
+	// with the \Trash attribute). More than one folder can have it, while only
+	// one has the alias AliasTrash. A move to any of them is a move to Trash.
+	Trash bool
 }
 
 // Tag is a label on messages. A backend that supports tags reports it in
@@ -114,6 +118,9 @@ type Summary struct {
 	Seen bool
 	// Flagged is true when the message is starred or flagged.
 	Flagged bool
+	// Draft is true when the message is a draft (for IMAP, it has the \Draft
+	// flag). Only a draft may be sent as it is saved.
+	Draft bool
 	// HasAttachments is true when the message has at least one attachment.
 	HasAttachments bool
 	// HasInvite is true when the message carries a calendar invite.

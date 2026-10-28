@@ -91,8 +91,11 @@ type Backend interface {
 
 	// SaveDraft saves a message in the Drafts folder and returns its ref.
 	SaveDraft(ctx context.Context, msg *RawMessage) (Ref, error)
-	// DiscardDraft removes a draft. Like every other method, it must not
-	// delete mail permanently.
+	// DiscardDraft moves a draft to Trash. Like every other method, it must not
+	// delete mail permanently. It must refuse a message that is not a draft
+	// (Summary.Draft is false) with ErrUnsupported, before it changes anything:
+	// a caller that may only discard drafts must not be able to move other mail
+	// to Trash with it.
 	DiscardDraft(ctx context.Context, ref Ref) error
 	// Send sends a message.
 	Send(ctx context.Context, msg *RawMessage) error
