@@ -28,11 +28,27 @@ type Backend struct {
 
 var _ mail.Backend = (*Backend)(nil)
 
+// The panic messages of New.
+const (
+	panicNoScope  = "imapsmtp: New needs a non-empty cfg.TokenScope: without it, page tokens and cursors of one account would open for another account"
+	panicNoSigner = "imapsmtp: New needs a signer: without it, the backend cannot make or check page tokens and cursors"
+)
+
 // New returns a Backend. It does not connect until the first call.
 //
 // The signer makes and checks the page tokens and cursors. Those are bound to
 // cfg.TokenScope, so a token of one account does not work for another.
+//
+// New panics when cfg.TokenScope is empty or signer is nil. Both are mistakes
+// in the code that sets the backend up, not errors of a user request. An empty
+// scope would let a token of one account open for another account.
 func New(cfg Config, signer *signing.Signer) *Backend {
+	if cfg.TokenScope == "" {
+		panic(panicNoScope)
+	}
+	if signer == nil {
+		panic(panicNoSigner)
+	}
 	cfg.withDefaults()
 	return &Backend{cfg: cfg, signer: signer, pool: newPool(cfg)}
 }

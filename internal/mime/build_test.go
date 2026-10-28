@@ -99,6 +99,40 @@ func headerBlock(data []byte) string {
 	return s
 }
 
+// headerFieldNames returns the field names of a header block, in order: the
+// text before the first ":" on each line that does not start a continuation
+// (a line that starts with a space or a tab). Field values are not searched, so
+// a random Message-ID that happens to contain "bcc" cannot match.
+func headerFieldNames(block string) []string {
+	var names []string
+	for _, line := range strings.Split(block, "\r\n") {
+		if line == "" || line[0] == ' ' || line[0] == '\t' {
+			continue
+		}
+		name, _, _ := strings.Cut(line, ":")
+		names = append(names, name)
+	}
+	return names
+}
+
+// requireNoBccField checks that no header field of the message is called
+// "Bcc", in any letter case.
+func requireNoBccField(t *testing.T, data []byte) {
+	t.Helper()
+	for _, name := range headerFieldNames(headerBlock(data)) {
+		require.False(t, strings.EqualFold(strings.TrimSpace(name), "bcc"), "found a Bcc header field %q", name)
+	}
+}
+
+func TestHeaderFieldNamesIgnoresValues(t *testing.T) {
+	block := "From: me@x\r\nMessage-Id: <5bcc0000000000000000000000000000@x.test>\r\n" +
+		"Subject: a long subject\r\n Bcc: continuation text\r\n\tbcc: more\r\nTo: bob@x"
+	require.Equal(t, []string{"From", "Message-Id", "Subject", "To"}, headerFieldNames(block))
+
+	withBcc := []byte("From: me@x\r\nbCC : secret@x\r\nTo: bob@x\r\n\r\nbody")
+	require.Equal(t, []string{"From", "bCC ", "To"}, headerFieldNames(headerBlock(withBcc)))
+}
+
 func mediaTypeOf(t *testing.T, h netmail.Header) string {
 	t.Helper()
 	mt, _, err := stdmime.ParseMediaType(h.Get("Content-Type"))
@@ -624,7 +658,7 @@ func TestBccNotInHeaders(t *testing.T) {
 	}, newContext())
 
 	require.Equal(t, []string{"bob@x", "carol@x", "secret@x", "hidden@x"}, raw.Recipients)
-	require.NotContains(t, strings.ToLower(headerBlock(raw.Data)), "bcc")
+	requireNoBccField(t, raw.Data)
 	require.NotContains(t, string(raw.Data), "secret@x")
 	require.NotContains(t, string(raw.Data), "hidden@x")
 	require.NotContains(t, string(raw.Data), "Hidden Person")
@@ -657,7 +691,7 @@ func TestDraftKeepsBccAndFromDraftStripsIt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "me@x", sendable.From)
 	require.Equal(t, []string{"bob@x", "carol@x", "secret@x"}, sendable.Recipients)
-	require.NotContains(t, strings.ToLower(headerBlock(sendable.Data)), "bcc")
+	requireNoBccField(t, sendable.Data)
 	require.NotContains(t, string(sendable.Data), "secret@x")
 
 	// Only the Bcc field is gone. Every other byte is the same.

@@ -55,5 +55,10 @@ func decodeRef(ref mail.Ref) (imapRef, error) {
 	if r.Mailbox == "" || r.UID == 0 {
 		return bad("no folder or no UID")
 	}
+	// RFC 3501 says UIDVALIDITY is never zero. The backend never makes a ref
+	// with zero, so a ref with zero was not made by it.
+	if r.UIDValidity == 0 {
+		return bad("no UIDVALIDITY")
+	}
 	return r, nil
 }

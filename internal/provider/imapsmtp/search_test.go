@@ -130,6 +130,8 @@ func TestDecodeRefRejectsMalformedRefs(t *testing.T) {
 		"json array":       enc(`[1,2,3]`),
 		"zero uid":         enc(`{"m":"INBOX","v":1,"u":0}`),
 		"no mailbox":       enc(`{"m":"","v":1,"u":5}`),
+		"zero uidvalidity": enc(`{"m":"INBOX","v":0,"u":5}`),
+		"no uidvalidity":   enc(`{"m":"INBOX","u":5}`),
 		"negative uid":     enc(`{"m":"INBOX","v":1,"u":-4}`),
 		"uid too large":    enc(`{"m":"INBOX","v":1,"u":4294967296}`),
 		"wrong type":       enc(`{"m":5,"v":1,"u":5}`),
@@ -1027,6 +1029,29 @@ func pagedBackend(t *testing.T) (*imaptest.Server, *Backend, mail.PageToken) {
 	return srv, b, p.Next
 }
 
+// tamperToken changes the last character of a token to a different base64url
+// character, so the result is never equal to the token. Setting the last
+// characters to a fixed text does not always change the token: it stays the
+// same when the token already ends with that text.
+func tamperToken(token string) string {
+	last := byte('A')
+	if token != "" && token[len(token)-1] == 'A' {
+		last = 'B'
+	}
+	return token[:max(len(token)-1, 0)] + string(last)
+}
+
+func TestTamperTokenAlwaysChangesTheToken(t *testing.T) {
+	for _, token := range []string{"", "A", "B", "x.AA", "x.AB", "x.BA", "x.zz", "x.A-", "x.A_"} {
+		got := tamperToken(token)
+		require.NotEqual(t, token, got, "token %q", token)
+		if token != "" {
+			require.Len(t, got, len(token))
+			require.Equal(t, token[:len(token)-1], got[:len(got)-1], "only the last character changes")
+		}
+	}
+}
+
 func TestPageTokenBindings(t *testing.T) {
 	t.Run("another account", func(t *testing.T) {
 		srv, _, token := pagedBackend(t)
@@ -1043,8 +1068,8 @@ func TestPageTokenBindings(t *testing.T) {
 	})
 	t.Run("changed token", func(t *testing.T) {
 		_, b, token := pagedBackend(t)
-		bad := string(token)
-		bad = bad[:len(bad)-2] + "AA"
+		bad := tamperToken(string(token))
+		require.NotEqual(t, string(token), bad)
 		_, err := b.Search(t.Context(), mail.Query{Limit: 2}, mail.PageToken(bad))
 		require.ErrorIs(t, err, signing.ErrInvalid)
 	})
