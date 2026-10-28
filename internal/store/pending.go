@@ -15,6 +15,10 @@ import (
 // a waiting action expires.
 const pendingStateWaiting = "pending"
 
+// pendingStateClaimed is the state that ClaimPending sets. It is the state
+// "approved" of the confirm package.
+const pendingStateClaimed = "approved"
+
 // PendingRow is one action that waits for the user to confirm it. The store
 // does not look inside the sealed values or know what the states and kinds
 // mean. The confirm package does.
@@ -160,6 +164,36 @@ func (s *Store) TransitionPending(ctx context.Context, tenant account.TenantID, 
 		return fmt.Errorf("store: transition pending action: %w", err)
 	}
 	return requireOneRow(result, "transition pending action")
+}
+
+// ClaimPending moves a waiting action to the state "approved", but only if the
+// stored hash is the given hash. The checks and the change are one statement, so
+// nothing can change the row between them: the tenant has the action, the action
+// is in the state "pending", its time has not passed at now, and its hash is the
+// hash that the caller computed from the payload in the request.
+//
+// It returns ErrNotFound if the statement changes no row, for any of these
+// reasons. Of two callers that claim the same action, one succeeds and the other
+// gets ErrNotFound. A call with a wrong hash changes nothing.
+//
+// The database compares the hashes. The comparison does not need to take the
+// same time for every input, because the hash is not a secret. It is also in the
+// request state that the agent holds.
+func (s *Store) ClaimPending(ctx context.Context, tenant account.TenantID, id string, hash []byte, now time.Time) error {
+	if err := validateID("tenant", string(tenant)); err != nil {
+		return err
+	}
+	if err := validateID("pending action", id); err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE pending_actions SET state = ?
+		WHERE tenant_id = ? AND id = ? AND state = ? AND expires_at >= ? AND hash = ?`,
+		pendingStateClaimed, string(tenant), id, pendingStateWaiting, now.UnixMilli(), hash)
+	if err != nil {
+		return fmt.Errorf("store: claim pending action: %w", err)
+	}
+	return requireOneRow(result, "claim pending action")
 }
 
 // scanPending reads one row with the columns of pendingColumns. Times are

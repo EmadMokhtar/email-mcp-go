@@ -180,6 +180,67 @@ func TestTransitionPendingRefusesAnExpiredPendingRow(t *testing.T) {
 	require.NoError(t, s.TransitionPending(ctx, tenant, "p1", "approved", "done", "m", late))
 }
 
+func TestClaimPendingChecksTheHashInTheSameStatement(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	row := testPendingRow(tenant, acct, "p1", testNow)
+	putPending(t, s, row)
+	now := testNow.Add(time.Minute)
+
+	// A hash that is not the stored hash changes nothing, whatever its shape.
+	other := bytes.Repeat([]byte{0xcd}, 32)
+	almost := bytes.Clone(row.Hash)
+	almost[31] ^= 1
+	for name, hash := range map[string][]byte{
+		"another hash":         other,
+		"one bit different":    almost,
+		"too short":            row.Hash[:31],
+		"too long":             append(bytes.Clone(row.Hash), 0),
+		"empty":                {},
+		"nil":                  nil,
+		"the hash as a string": []byte("abababababababababababababababab"),
+	} {
+		err := s.ClaimPending(ctx, tenant, "p1", hash, now)
+		require.ErrorIs(t, err, ErrNotFound, name)
+		require.Equal(t, "pending", pendingState(t, s, tenant, "p1"), name)
+	}
+
+	// The right hash claims the row, once.
+	require.NoError(t, s.ClaimPending(ctx, tenant, "p1", row.Hash, now))
+	got, err := s.GetPending(ctx, tenant, "p1")
+	require.NoError(t, err)
+	require.Equal(t, "approved", got.State)
+	require.Empty(t, got.ResultID)
+	require.ErrorIs(t, s.ClaimPending(ctx, tenant, "p1", row.Hash, now), ErrNotFound)
+}
+
+func TestClaimPendingOnlyClaimsALivePendingRowOfTheTenant(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	ensureTestTenant(t, s, "other")
+	row := testPendingRow(tenant, acct, "p1", testNow)
+	putPending(t, s, row)
+
+	// Another tenant has no such row.
+	require.ErrorIs(t, s.ClaimPending(ctx, "other", "p1", row.Hash, testNow), ErrNotFound)
+	// The row is live up to its expiry time, to the millisecond.
+	require.ErrorIs(t, s.ClaimPending(ctx, tenant, "p1", row.Hash, row.ExpiresAt.Add(time.Millisecond)), ErrNotFound)
+	require.Equal(t, "pending", pendingState(t, s, tenant, "p1"))
+	require.NoError(t, s.ClaimPending(ctx, tenant, "p1", row.Hash, row.ExpiresAt))
+
+	// A row in another state is not claimed, even with the right hash.
+	done := testPendingRow(tenant, acct, "p2", testNow)
+	putPending(t, s, done)
+	require.NoError(t, s.TransitionPending(ctx, tenant, "p2", "pending", "done", "", testNow))
+	require.ErrorIs(t, s.ClaimPending(ctx, tenant, "p2", done.Hash, testNow), ErrNotFound)
+	require.Equal(t, "done", pendingState(t, s, tenant, "p2"))
+
+	require.ErrorIs(t, s.ClaimPending(ctx, tenant, "p|1", row.Hash, testNow), ErrInvalidID)
+	require.ErrorIs(t, s.ClaimPending(ctx, "", "p1", row.Hash, testNow), ErrInvalidID)
+}
+
 func TestListPendingReturnsLivePendingRowsNewestFirst(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

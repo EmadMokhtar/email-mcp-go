@@ -134,24 +134,36 @@ func (f *fixture) forge(v any) string {
 	return token
 }
 
-// addTenant adds a tenant with one account, for isolation tests. The store has
-// no exported method that makes a tenant other than "local", so the test writes
-// the row itself.
-func (f *fixture) addTenant(id account.TenantID) account.AccountID {
+// openDB opens a second connection to the database file. The store has no
+// exported method for some things that a test needs, such as a tenant other
+// than "local" or a damaged row, so the test writes them itself. The caller
+// closes the handle.
+func (f *fixture) openDB() *sql.DB {
 	f.t.Helper()
-	ctx := context.Background()
 	uriPath := filepath.ToSlash(filepath.Join(f.dir, "email-mcp.db"))
 	if !strings.HasPrefix(uriPath, "/") {
 		uriPath = "/" + uriPath
 	}
 	db, err := sql.Open("sqlite", "file:"+uriPath+"?_pragma=busy_timeout(5000)")
 	require.NoError(f.t, err)
-	defer func() { require.NoError(f.t, db.Close()) }()
-	_, err = db.ExecContext(ctx, `INSERT OR IGNORE INTO tenants (id, created_at) VALUES (?, 0)`, string(id))
-	require.NoError(f.t, err)
+	return db
+}
 
+// exec runs one statement on a second connection.
+func (f *fixture) exec(query string, args ...any) {
+	f.t.Helper()
+	db := f.openDB()
+	defer func() { require.NoError(f.t, db.Close()) }()
+	_, err := db.ExecContext(context.Background(), query, args...)
+	require.NoError(f.t, err)
+}
+
+// addTenant adds a tenant with one account, for isolation tests.
+func (f *fixture) addTenant(id account.TenantID) account.AccountID {
+	f.t.Helper()
+	f.exec(`INSERT OR IGNORE INTO tenants (id, created_at) VALUES (?, 0)`, string(id))
 	a := account.NewIMAPAccount(id, "other@example.com", account.MailServer{}, testStart)
-	require.NoError(f.t, f.store.CreateAccount(ctx, a))
+	require.NoError(f.t, f.store.CreateAccount(context.Background(), a))
 	return a.ID
 }
 
@@ -482,6 +494,82 @@ func TestClaimConcurrentCallersExactlyOneWins(t *testing.T) {
 		require.ErrorIs(t, err, ErrNotPending)
 	}
 	require.Equal(t, 1, wins, "exactly one caller may claim the action")
+}
+
+func TestClaimPutsTheHashOfThePayloadIntoTheClaimStatement(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	approved := []byte("the message the user approved")
+	attack := []byte("a different message")
+	p := f.create(string(approved))
+
+	// Make the read in Claim stale: it shows the hash of the other payload, as
+	// if the row had been changed after the read. A token that carries the same
+	// hash gets past every check that works on the read.
+	fake := HashPayload(KindSend, attack)
+	stale := NewManager(staleReadStore{PendingStore: f.store, hash: fake[:]}, f.vault, signing.New(f.key), f.clock.Now)
+	state := f.forge(map[string]string{
+		"id": p.ID, "hash": hex.EncodeToString(fake[:]), "tenant": string(f.tenant),
+	})
+	_, err := stale.Resume(ctx, f.tenant, state, attack)
+	require.NoError(t, err, "the stale read must get past the checks that work on the read")
+
+	// The claim statement still refuses, because the stored hash is not the
+	// hash of this payload. The action is not used up.
+	_, err = stale.Claim(ctx, f.tenant, state, attack)
+	require.ErrorIs(t, err, ErrNotPending)
+	got, _, err := f.mgr.Get(ctx, f.tenant, p.ID)
+	require.NoError(t, err)
+	require.Equal(t, StatePending, got.State)
+
+	// The real approval still works.
+	_, err = f.mgr.Claim(ctx, f.tenant, f.state(p), approved)
+	require.NoError(t, err)
+}
+
+// staleReadStore shows the hash of every pending action as hash.
+type staleReadStore struct {
+	PendingStore
+	hash []byte
+}
+
+func (k staleReadStore) GetPending(ctx context.Context, tenant account.TenantID, id string) (*store.PendingRow, error) {
+	row, err := k.PendingStore.GetPending(ctx, tenant, id)
+	if row != nil {
+		row.Hash = k.hash
+	}
+	return row, err
+}
+
+func TestGetRefusesAnActionWhoseStoredDataDoesNotMatchItsHash(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	other := KindTrash
+	otherHash := HashPayload(KindSend, []byte("another payload"))
+
+	for name, damage := range map[string]func(id string){
+		"kind": func(id string) {
+			f.exec(`UPDATE pending_actions SET kind = ? WHERE id = ?`, string(other), id)
+		},
+		"hash": func(id string) {
+			f.exec(`UPDATE pending_actions SET hash = ? WHERE id = ?`, otherHash[:], id)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := f.create("the payload " + name)
+
+			// Before the damage, Get works.
+			_, payload, err := f.mgr.Get(ctx, f.tenant, p.ID)
+			require.NoError(t, err)
+			require.Equal(t, []byte("the payload "+name), payload)
+
+			damage(p.ID)
+			got, payload, err := f.mgr.Get(ctx, f.tenant, p.ID)
+			require.ErrorIs(t, err, ErrCorrupted)
+			require.Nil(t, got)
+			require.Nil(t, payload, "a payload that does not match its hash must not be returned")
+		})
+	}
 }
 
 func TestKindIsPartOfTheHash(t *testing.T) {

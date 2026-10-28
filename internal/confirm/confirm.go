@@ -16,9 +16,14 @@
 //     action to "approved", once. The server acts on the payload and then moves
 //     the action to "done".
 //
-// The agent cannot approve an action by itself and cannot change what the user
-// approved. A change of one byte changes the hash. Because Claim is a
-// compare-and-set, two callers cannot both use one confirmation.
+// Claim proves four things: the payload is exactly the payload that was stored
+// (a change of one byte changes the hash), the request is for this tenant, it is
+// in time, and it happens once (two callers cannot both use one confirmation).
+// Claim does not prove consent. A signed state shows only that the server made
+// it, and the agent holds it. The caller must call Claim only after the user has
+// accepted, in a channel that the agent cannot answer, such as the answer to an
+// elicitation or the Approve button of the web page. This package does not know
+// that channel.
 package confirm
 
 import (
@@ -100,6 +105,11 @@ var (
 
 	// ErrNotFound means that the tenant has no action with this id.
 	ErrNotFound = errors.New("confirm: pending action not found")
+
+	// ErrCorrupted means that the stored data of an action does not match the
+	// hash of the action. Someone changed the stored kind, hash or payload, or
+	// the storage is damaged. Get returns it and does not return the payload.
+	ErrCorrupted = errors.New("confirm: the stored action does not match its hash")
 )
 
 // Preview is what the user sees before they confirm. It is not the payload. It
@@ -155,14 +165,15 @@ func HashPayload(kind Kind, payload []byte) [32]byte {
 // implements it.
 //
 // The store compares times in whole milliseconds and does not know what the
-// states and kinds mean. TransitionPending is a compare-and-set that returns
-// store.ErrNotFound when it changes nothing.
+// states and kinds mean. TransitionPending and ClaimPending are compare-and-set
+// statements that return store.ErrNotFound when they change nothing.
 type PendingStore interface {
 	CreatePending(ctx context.Context, row *store.PendingRow, payload []byte, payloadKeyVersion int) error
 	GetPending(ctx context.Context, tenant account.TenantID, id string) (*store.PendingRow, error)
 	GetPendingPayload(ctx context.Context, tenant account.TenantID, id string) (keyVersion int, sealed []byte, err error)
 	ListPending(ctx context.Context, tenant account.TenantID, now time.Time) ([]*store.PendingRow, error)
 	TransitionPending(ctx context.Context, tenant account.TenantID, id, from, to, resultID string, now time.Time) error
+	ClaimPending(ctx context.Context, tenant account.TenantID, id string, hash []byte, now time.Time) error
 }
 
 var _ PendingStore = (*store.Store)(nil)
@@ -290,7 +301,7 @@ func (m *Manager) RequestState(p *Pending) (string, error) {
 // confirmation, call Claim.
 func (m *Manager) Resume(ctx context.Context, tenant account.TenantID, state string, payload []byte) (*Pending, error) {
 	now := m.now()
-	row, err := m.verify(ctx, now, tenant, state, payload)
+	row, _, err := m.verify(ctx, now, tenant, state, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -298,16 +309,26 @@ func (m *Manager) Resume(ctx context.Context, tenant account.TenantID, state str
 }
 
 // Claim does everything that Resume checks and moves the action from "pending"
-// to "approved". The move is a compare-and-set in the store. If two callers
-// claim one action at the same time, one succeeds and the other gets
-// ErrNotPending. The caller that succeeds is the only one that may act on the
-// payload.
+// to "approved". The move is one statement in the store. It changes the action
+// only if the action of this tenant still waits, its time has not passed, and
+// its stored hash is the hash of the payload in this call. If two callers claim
+// one action at the same time, one succeeds and the other gets ErrNotPending.
+// The caller that succeeds is the only one that may act on the payload.
+//
+// Claim proves that the payload is exactly the stored payload, that the request
+// is for this tenant and in time, and that it happens once. It does NOT prove
+// consent. The state is signed by the server, but the agent holds it, so the
+// agent can call Claim. The caller must call Claim only after the user has
+// accepted in a channel that the agent cannot answer, such as the answer to an
+// elicitation or the Approve button of the web page.
 //
 // A claim that fails leaves the action as it was. In particular, a payload that
 // has changed does not use up the confirmation.
 func (m *Manager) Claim(ctx context.Context, tenant account.TenantID, state string, payload []byte) (*Pending, error) {
 	now := m.now()
-	row, err := m.verify(ctx, now, tenant, state, payload)
+	// The read in verify chooses the error for the caller. It does not decide
+	// the claim, because the row can change after the read.
+	row, sum, err := m.verify(ctx, now, tenant, state, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -316,9 +337,9 @@ func (m *Manager) Claim(ctx context.Context, tenant account.TenantID, state stri
 	if err != nil {
 		return nil, err
 	}
-	// The hash in the row never changes, so a check before the move is as good
-	// as a check in the same statement. The move itself decides who wins.
-	err = m.st.TransitionPending(ctx, tenant, row.ID, string(StatePending), string(StateApproved), "", now)
+	// The statement checks the state, the time and the hash again, at the time
+	// of the move. The hash is the hash of the payload that the caller passed.
+	err = m.st.ClaimPending(ctx, tenant, row.ID, sum[:], now)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, ErrNotPending
 	}
@@ -338,51 +359,58 @@ func (m *Manager) Claim(ctx context.Context, tenant account.TenantID, state stri
 //
 // Errors before step 4 do not say which check failed. They are
 // ErrStateInvalid, except for an expired state.
-func (m *Manager) verify(ctx context.Context, now time.Time, tenant account.TenantID, state string, payload []byte) (*store.PendingRow, error) {
+//
+// verify also returns the hash of the payload, so that Claim can put it into
+// the claim statement.
+func (m *Manager) verify(ctx context.Context, now time.Time, tenant account.TenantID, state string, payload []byte) (*store.PendingRow, [32]byte, error) {
+	var none [32]byte
 	var token requestState
 	if err := m.signer.Open(signing.PurposeRequestState, state, &token); err != nil {
 		switch {
 		case errors.Is(err, signing.ErrExpired):
-			return nil, ErrStateExpired
+			return nil, none, ErrStateExpired
 		case errors.Is(err, signing.ErrInvalid):
-			return nil, ErrStateInvalid
+			return nil, none, ErrStateInvalid
 		default:
-			return nil, fmt.Errorf("confirm: open request state: %w", err)
+			return nil, none, fmt.Errorf("confirm: open request state: %w", err)
 		}
 	}
 	if token.Tenant != tenant {
-		return nil, ErrStateInvalid
+		return nil, none, ErrStateInvalid
 	}
 	tokenHash, err := hex.DecodeString(token.Hash)
 	if err != nil || len(tokenHash) != sha256.Size {
-		return nil, ErrStateInvalid
+		return nil, none, ErrStateInvalid
 	}
 
 	row, err := m.st.GetPending(ctx, tenant, token.ID)
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, ErrStateInvalid
+		return nil, none, ErrStateInvalid
 	}
 	if err != nil {
-		return nil, fmt.Errorf("confirm: load pending action: %w", err)
+		return nil, none, fmt.Errorf("confirm: load pending action: %w", err)
 	}
 	if subtle.ConstantTimeCompare(tokenHash, row.Hash) != 1 {
-		return nil, ErrStateInvalid
+		return nil, none, ErrStateInvalid
 	}
 
 	if stateOf(row, now) != StatePending {
-		return nil, ErrNotPending
+		return nil, none, ErrNotPending
 	}
 	// The kind of the stored action is part of the hash.
 	sum := HashPayload(Kind(row.Kind), payload)
 	if subtle.ConstantTimeCompare(sum[:], row.Hash) != 1 {
-		return nil, ErrPayloadChanged
+		return nil, none, ErrPayloadChanged
 	}
-	return row, nil
+	return row, sum, nil
 }
 
 // Get returns an action of the tenant and its payload. It returns ErrNotFound if
 // the tenant has no action with this id. An action that has expired is still
 // returned, with the state "expired".
+//
+// Get hashes the decrypted payload with the stored kind and compares the result
+// with the stored hash. If they differ, it returns ErrCorrupted and no payload.
 func (m *Manager) Get(ctx context.Context, tenant account.TenantID, id string) (*Pending, []byte, error) {
 	row, err := m.st.GetPending(ctx, tenant, id)
 	if errors.Is(err, store.ErrNotFound) {
@@ -406,6 +434,11 @@ func (m *Manager) Get(ctx context.Context, tenant account.TenantID, id string) (
 	payload, err := m.vault.Decrypt(ctx, tenant, version, fieldAAD(row.Tenant, row.Account, payloadField(row.ID)), sealed)
 	if err != nil {
 		return nil, nil, fmt.Errorf("confirm: decrypt payload: %w", err)
+	}
+	sum := HashPayload(Kind(row.Kind), payload)
+	if subtle.ConstantTimeCompare(sum[:], row.Hash) != 1 {
+		clear(payload)
+		return nil, nil, ErrCorrupted
 	}
 	return pending, payload, nil
 }
