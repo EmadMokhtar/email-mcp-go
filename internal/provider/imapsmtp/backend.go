@@ -64,8 +64,8 @@ func (b *Backend) Capabilities() mail.Capabilities {
 	return mail.Capabilities{Tags: false, MaxBatch: maxBatch}
 }
 
-// The methods below belong to later tasks (messages, flags, folders and
-// drafts, and sending). Until then they report that they are not supported.
+// The methods below belong to later tasks (flags, folders and drafts, and
+// sending). Until then they report that they are not supported.
 
 // ListTags returns the tags of the account. IMAP keywords are not supported as
 // tags yet.
@@ -79,18 +79,6 @@ func (b *Backend) CreateFolder(context.Context, string, string) (mail.Folder, er
 
 func (b *Backend) CreateTag(context.Context, string) (mail.Tag, error) {
 	return mail.Tag{}, mail.ErrUnsupported
-}
-
-func (b *Backend) GetMessage(context.Context, mail.Ref, mail.BodyOptions) (*mail.Message, error) {
-	return nil, mail.ErrUnsupported
-}
-
-func (b *Backend) GetRaw(context.Context, mail.Ref, int64) ([]byte, error) {
-	return nil, mail.ErrUnsupported
-}
-
-func (b *Backend) GetAttachment(context.Context, mail.Ref, string, int64) (*mail.Attachment, error) {
-	return nil, mail.ErrUnsupported
 }
 
 func (b *Backend) SetFlags(context.Context, []mail.Ref, mail.FlagChange) error {

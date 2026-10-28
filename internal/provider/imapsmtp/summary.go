@@ -31,15 +31,53 @@ type textPart struct {
 	html     bool  // text/html. Otherwise text/plain.
 	charset  string
 	encoding string // Content-Transfer-Encoding
+	size     uint32 // the size in bytes before the transfer encoding is removed
 }
 
 // section returns the part number as the text used in a FETCH, "1.2".
-func (p *textPart) section() string {
-	parts := make([]string, len(p.path))
-	for i, n := range p.path {
+func (p *textPart) section() string { return partPath(p.path) }
+
+// partPath writes a part number as the text used in a FETCH, "1.2".
+func partPath(path []int) string {
+	parts := make([]string, len(path))
+	for i, n := range path {
 		parts[i] = strconv.Itoa(n)
 	}
 	return strings.Join(parts, ".")
+}
+
+// leaf is a part that is not multipart, with its part number.
+type leaf struct {
+	path []int
+	part *imap.BodyStructureSinglePart
+}
+
+// leaves returns the parts of a message that are not multipart, in the order
+// of the message. A message inside the message (message/rfc822) is one part:
+// its own parts are not searched. A message that is not multipart is part 1.
+func leaves(bs imap.BodyStructure) []leaf {
+	if bs == nil {
+		return nil
+	}
+	var out []leaf
+	bs.Walk(func(path []int, part imap.BodyStructure) bool {
+		if single, ok := part.(*imap.BodyStructureSinglePart); ok {
+			out = append(out, leaf{path: slices.Clone(path), part: single})
+		}
+		return true // multipart: look at its children
+	})
+	return out
+}
+
+// isAttachment reports whether a part is an attachment: its Content-Disposition
+// is "attachment", or it is not text (an image, a PDF, a message). This is the
+// one rule for HasAttachments of a summary, for the list of attachments of a
+// message, and for leaving a part out of the body.
+func isAttachment(p *imap.BodyStructureSinglePart) bool {
+	if d := p.Disposition(); d != nil && strings.EqualFold(d.Value, "attachment") {
+		return true
+	}
+	return !strings.EqualFold(p.Type, "text")
 }
 
 // structure is what a summary needs from the BODYSTRUCTURE of a message.
@@ -51,59 +89,27 @@ type structure struct {
 
 // analyzeStructure reads the BODYSTRUCTURE of a message.
 //
-// A part is an attachment when its Content-Disposition is "attachment", or
-// when it is not multipart and not text (an image, a PDF). A part is an invite
-// when it is text/calendar. The snippet comes from the first text/plain part
-// that is not an attachment, or, when there is none, from the first text/html
-// part that is not an attachment. A part without content is not used.
+// A part is an attachment by isAttachment. A part is an invite when it is
+// text/calendar. The snippet comes from the first text/plain part that is not
+// an attachment, or, when there is none, from the first text/html part that
+// is not an attachment (see textSections). A part without content is not used.
 // Messages inside the message (message/rfc822) are not searched.
 func analyzeStructure(bs imap.BodyStructure) structure {
 	var s structure
-	if bs == nil {
-		return s
-	}
-	var plain, html *textPart
-	bs.Walk(func(path []int, part imap.BodyStructure) bool {
-		leaf, ok := part.(*imap.BodyStructureSinglePart)
-		if !ok {
-			return true // multipart: look at its children
-		}
-		media := leaf.MediaType()
-		isText := strings.EqualFold(leaf.Type, "text")
-		disposition := leaf.Disposition()
-		attachment := disposition != nil && strings.EqualFold(disposition.Value, "attachment")
-
-		if media == "text/calendar" {
+	for _, l := range leaves(bs) {
+		if l.part.MediaType() == "text/calendar" {
 			s.hasInvite = true
 		}
-		if attachment || !isText {
+		if isAttachment(l.part) {
 			s.hasAttachments = true
 		}
-		if attachment || leaf.Size == 0 {
-			return true
-		}
-		candidate := &textPart{
-			path:     slices.Clone(path),
-			charset:  leaf.Params["charset"],
-			encoding: leaf.Encoding,
-		}
-		switch media {
-		case "text/plain":
-			if plain == nil {
-				plain = candidate
-			}
-		case "text/html":
-			if html == nil {
-				candidate.html = true
-				html = candidate
-			}
-		}
-		return true
-	})
+	}
+	plain, html := textSections(bs)
+	if plain == nil {
+		plain = html
+	}
 	if plain != nil {
-		s.text = plain
-	} else {
-		s.text = html
+		s.text = bodyPartAt(bs, plain)
 	}
 	return s
 }
@@ -331,11 +337,7 @@ func newSummary(m *imapclient.FetchMessageBuffer) mail.Summary {
 				break
 			}
 		}
-		for _, a := range env.To {
-			if addr, ok := convertAddress(a); ok {
-				s.To = append(s.To, addr)
-			}
-		}
+		s.To = convertAddresses(env.To)
 	}
 	for _, f := range m.Flags {
 		switch {
@@ -354,6 +356,18 @@ func newSummary(m *imapclient.FetchMessageBuffer) mail.Summary {
 // cleanHeaderText decodes the encoded words in a header text and cleans it.
 func cleanHeaderText(s string) string {
 	return mime.CleanUntrusted(mime.DecodeHeaderValue(s))
+}
+
+// convertAddresses converts the addresses of an envelope field. Group markers
+// are left out.
+func convertAddresses(list []imap.Address) []mail.Address {
+	var out []mail.Address
+	for _, a := range list {
+		if addr, ok := convertAddress(a); ok {
+			out = append(out, addr)
+		}
+	}
+	return out
 }
 
 // convertAddress converts an address of the envelope. It returns false for a

@@ -4,8 +4,8 @@
 // newer, STARTTLS that never falls back to plain text, and certificate
 // pinning) and keeps a small pool of logged-in connections. Backend, made by
 // New, implements mail.Backend on top of the pool. It lists folders, searches,
-// and reports new messages. The folder aliases (@trash and the others) come
-// from the SPECIAL-USE attributes of the folders.
+// reports new messages, and reads messages and attachments. The folder aliases
+// (@trash and the others) come from the SPECIAL-USE attributes of the folders.
 package imapsmtp
 
 import (

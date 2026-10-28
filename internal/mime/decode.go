@@ -110,6 +110,27 @@ func (t *errTracker) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// DecodeTransfer returns a reader that removes the Content-Transfer-Encoding
+// from r. It is for data that is not text, such as an attachment: unlike
+// DecodeText, it does not change the bytes in any other way.
+//
+// The encoding is matched without regard to case. "base64" and
+// "quoted-printable" are decoded. Anything else ("7bit", "8bit", "binary",
+// empty or unknown) is not encoded, so r is read as it is.
+//
+// Base64 is read like DecodeText reads it: white space and "=" padding are
+// ignored, so data with missing or wrong padding still decodes. Data that is
+// not valid for the encoding (for example a character that is not in the
+// base64 alphabet) gives an error when it is read, after the bytes that were
+// decoded before it. DecodeText hides this error, and a caller that wants a
+// complete file must not.
+//
+// The reader reads its input in pieces, but it does not limit it. The caller
+// limits the output (for example with io.LimitReader).
+func DecodeTransfer(encoding string, r io.Reader) io.Reader {
+	return transferDecoder(encoding, r)
+}
+
 // transferDecoder undoes the Content-Transfer-Encoding of a body.
 func transferDecoder(encoding string, r io.Reader) io.Reader {
 	switch strings.ToLower(strings.TrimSpace(encoding)) {

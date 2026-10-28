@@ -101,6 +101,20 @@ func paramText(params map[string]string, name string) string {
 	return ""
 }
 
+// ParamText returns the text of the parameter called name in params, the
+// parameters of a header value such as Content-Disposition or Content-Type.
+// The keys of params must be lower case. This is the form that an IMAP server
+// gives in BODYSTRUCTURE, where a name such as "filename*" or "filename*0*"
+// holds an RFC 2231 value that is not decoded yet.
+//
+// ParamText reads RFC 2231 values (name*=charset'language'text, and the
+// numbered pieces name*0*, name*1*, ...) and RFC 2047 words in a plain value.
+// It returns an empty string when there is no such parameter. The result is
+// valid UTF-8. It is not cleaned: pass it to CleanUntrusted.
+func ParamText(params map[string]string, name string) string {
+	return paramText(params, name)
+}
+
 func paramText2231(params map[string]string, name string) string {
 	type piece struct {
 		value   string

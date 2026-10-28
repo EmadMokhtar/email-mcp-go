@@ -13,7 +13,7 @@
 // A test can also make mailboxes with special-use attributes (see Create),
 // choose the capabilities that the server advertises (see WithCaps), add
 // messages with a given date (see AppendAt) and read the server state (see
-// Unseen and SelectCounts).
+// Unseen, SelectCounts, FetchedSections and BytesSent).
 //
 // This package is for tests only. Do not import it from production code.
 package imaptest
@@ -35,6 +35,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -124,6 +125,10 @@ type Server struct {
 	specialUse map[string][]imap.MailboxAttr
 	selects    int // SELECT commands
 	examines   int // EXAMINE commands
+	fetched    []string
+
+	// sent counts the bytes that the server wrote to its connections.
+	sent atomic.Int64
 }
 
 // New starts a server and registers its shutdown with t.Cleanup. It stops
@@ -306,6 +311,22 @@ func (s *Server) SelectCounts() (readWrite, readOnly int) {
 	return s.selects, s.examines
 }
 
+// FetchedSections returns every body section that clients asked for with
+// FETCH, in the order of the commands. Each entry is written as the client
+// sends it, for example "BODY.PEEK[1]<0.2048>" or "BODY[]". A test uses it to
+// check which parts of a message the client read, and that it used PEEK.
+func (s *Server) FetchedSections() []string {
+	s.boxMu.Lock()
+	defer s.boxMu.Unlock()
+	return append([]string(nil), s.fetched...)
+}
+
+// BytesSent returns how many bytes the server has written to its client
+// connections so far. The count is taken under TLS, so it is a little larger
+// than the IMAP data alone. A test uses the difference between two calls to
+// check that a client did not download a large part of a message.
+func (s *Server) BytesSent() int64 { return s.sent.Load() }
+
 // DropConnections closes every connection the server has open, as a network
 // failure or a server restart would. The server keeps accepting new
 // connections.
@@ -399,6 +420,12 @@ type trackedConn struct {
 	once sync.Once
 }
 
+func (c *trackedConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	c.s.sent.Add(int64(n))
+	return n, err
+}
+
 func (c *trackedConn) Close() error {
 	err := c.Conn.Close()
 	c.once.Do(func() { c.s.untrack(c) })
@@ -456,6 +483,52 @@ func (ss *session) Select(mailbox string, options *imap.SelectOptions) (*imap.Se
 	}
 	ss.s.boxMu.Unlock()
 	return ss.SessionIMAP4rev2.Select(mailbox, options)
+}
+
+// Fetch records the body sections of the command, then lets imapmemserver
+// answer it.
+func (ss *session) Fetch(w *imapserver.FetchWriter, numSet imap.NumSet, options *imap.FetchOptions) error {
+	if len(options.BodySection) > 0 {
+		ss.s.boxMu.Lock()
+		for _, sec := range options.BodySection {
+			ss.s.fetched = append(ss.s.fetched, sectionString(sec))
+		}
+		ss.s.boxMu.Unlock()
+	}
+	return ss.SessionIMAP4rev2.Fetch(w, numSet, options)
+}
+
+// sectionString writes a body section in the form a client sends it.
+func sectionString(sec *imap.FetchItemBodySection) string {
+	var b strings.Builder
+	b.WriteString("BODY")
+	if sec.Peek {
+		b.WriteString(".PEEK")
+	}
+	b.WriteByte('[')
+	for i, n := range sec.Part {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(strconv.Itoa(n))
+	}
+	if sec.Specifier != imap.PartSpecifierNone {
+		if len(sec.Part) > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(string(sec.Specifier))
+		if len(sec.HeaderFields) > 0 {
+			b.WriteString(".FIELDS (" + strings.Join(sec.HeaderFields, " ") + ")")
+		}
+		if len(sec.HeaderFieldsNot) > 0 {
+			b.WriteString(".FIELDS.NOT (" + strings.Join(sec.HeaderFieldsNot, " ") + ")")
+		}
+	}
+	b.WriteByte(']')
+	if p := sec.Partial; p != nil {
+		b.WriteString("<" + strconv.FormatInt(p.Offset, 10) + "." + strconv.FormatInt(p.Size, 10) + ">")
+	}
+	return b.String()
 }
 
 func (ss *session) Create(mailbox string, options *imap.CreateOptions) error {

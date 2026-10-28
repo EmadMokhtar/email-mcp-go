@@ -1129,3 +1129,60 @@ func TestParseDeeplyNestedBodyOfLineEndingsIsFast(t *testing.T) {
 	// About 0.3 s on a laptop. Before the fix, this took 38 s.
 	require.Less(t, elapsed, 3*time.Second)
 }
+
+func TestDecodeTransfer(t *testing.T) {
+	// All 256 byte values, so any change to the bytes shows.
+	data := make([]byte, 600)
+	for i := range data {
+		data[i] = byte(i * 7)
+	}
+	b64 := base64.StdEncoding.EncodeToString(data)
+	var wrapped strings.Builder
+	for len(b64) > 76 {
+		wrapped.WriteString(b64[:76] + "\r\n")
+		b64 = b64[76:]
+	}
+	wrapped.WriteString(b64)
+
+	read := func(encoding, src string) []byte {
+		t.Helper()
+		out, err := io.ReadAll(DecodeTransfer(encoding, strings.NewReader(src)))
+		require.NoError(t, err)
+		return out
+	}
+	require.Equal(t, data, read("base64", wrapped.String()))
+	require.Equal(t, data, read(" BASE64 ", wrapped.String()), "the name is not case sensitive")
+	require.Equal(t, data, read("base64", strings.TrimRight(wrapped.String(), "=")), "padding is not needed")
+	require.Equal(t, []byte("caf\xC3\xA9 = ok"), read("Quoted-Printable", "caf=C3=A9 =3D ok"),
+		"the bytes are not changed to valid UTF-8 or to another charset")
+	require.Equal(t, []byte("caf\xE9"), read("quoted-printable", "caf=E9"))
+	for _, enc := range []string{"", "7bit", "8bit", "binary", "x-unknown"} {
+		require.Equal(t, data, read(enc, string(data)), enc)
+	}
+
+	// Damaged data is an error after the good part, not a silent short result.
+	out, err := io.ReadAll(DecodeTransfer("base64", strings.NewReader("QUJD!!!!REVG")))
+	require.Error(t, err)
+	require.Equal(t, "ABC", string(out))
+}
+
+func TestParamText(t *testing.T) {
+	cases := []struct {
+		name   string
+		params map[string]string
+		want   string
+	}{
+		{"plain value", params("filename", "a.pdf"), "a.pdf"},
+		{"missing", params("name", "a.pdf"), ""},
+		{"rfc 2047 word", params("filename", "=?UTF-8?B?w5xiZXIucGRm?="), "\U000000DCber.pdf"},
+		{"rfc 2231", params("filename*", "UTF-8''%C3%9Cber%20Plan.pdf"), "\U000000DCber Plan.pdf"},
+		{"rfc 2231 pieces", params("filename*0*", "UTF-8''%C3%9Cber", "filename*1", ".pdf"), "\U000000DCber.pdf"},
+		{"rfc 2231 wins", params("filename*", "UTF-8''new.pdf", "filename", "old.pdf"), "new.pdf"},
+		{"nil", nil, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, ParamText(tc.params, "filename"))
+		})
+	}
+}
