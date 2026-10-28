@@ -74,6 +74,12 @@ func FuzzHTMLToText(f *testing.F) {
 		`<a href="https://x.test/) a (b">c</a><a href="mailto:a@b.test?x=y z"><img src="i.png"></a>`,
 		`<a href="https://x.test/%zz">a</a><a href="http://x.test:port/">b</a><a href="https://[::1/">c</a>`,
 		`<a style="font-size:0" href="https://x.test">hidden</a><div style="font-size:0"><a href="https://x.test">h</a></div>`,
+		`<div style="font-size:0!important;font-size:14px;visibility:hidden ! IMPORTANT;visibility:visible">a</div>`,
+		`<style>.x{font-size:0!important}.x{font-size:14px}#i{visibility:hidden!important}div{font-size:1px!important}</style><div class="x" id="i" style="font-size:9px!important">b</div>`,
+		`<style>.s{font-size:13px}.h{font-size:0}</style><style>.v{visibility:visible}</style><div class="h s v">c</div>`,
+		`<div style="font-size:0svh"><span style="font-size:0lh;font:0cqw serif">d</span></div>`,
+		`<style>.a{font-size:2em!important}.b{font-size:1e999px!important}</style><div style="font-size:0"><i class="a b">e</i></div>`,
+		`<p style="font-size:0!imp\6frtant;font-size:0 !/**/important;visibility:hidden!;font:0/0 a!important">f</p>`,
 	}
 	for _, s := range seeds {
 		f.Add(s)

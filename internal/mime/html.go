@@ -35,10 +35,14 @@ import (
 // A rule is used only when the selector is one class, one id or one element
 // name, alone or in a comma list. Longer selectors (descendant, child,
 // attribute or pseudo selectors, and so on) are ignored, and so are @media
-// and the other at-rules. For a property that is set more than once, the
-// style attribute is the strongest, then an id rule, then class rules, then an
-// element rule. A display:none is applied even if something else would show
-// the element again.
+// and the other at-rules. When font-size or visibility is set more than once
+// for an element: an !important declaration beats a normal one, whatever its
+// source; between two !important declarations the one that hides wins;
+// among normal declarations the style attribute is the strongest, then an id
+// rule, then a class rule, then an element rule; and of two rules of the same
+// kind the one that comes later in the document wins (the class attribute does
+// not matter). A display:none, and the other declarations that hide a whole
+// element, are applied even if something else would show the element again.
 //
 // It does not find text that is hidden in other ways. Colour tricks, such as
 // white text on a white background, are not detected. The same is true for
@@ -130,13 +134,8 @@ func (r *textRenderer) state() inherited {
 // push opens an element with the given effect and works out its properties.
 func (r *textRenderer) push(n *html.Node, e styleEffect) {
 	s := r.state()
-	switch e.visibility {
-	case visHidden:
-		s.invisible = true
-	case visVisible:
-		s.invisible = false
-	}
-	s.fontSize = e.fontSize.resolve(s.fontSize, r.root)
+	s.invisible = e.invisible(s.invisible)
+	s.fontSize = e.size(s.fontSize, r.root)
 	// rem is relative to the html element. Its own size uses the default.
 	if n.Data == "html" && n.Parent != nil && n.Parent.Type == html.DocumentNode {
 		r.root = s.fontSize
@@ -200,7 +199,7 @@ func (r *textRenderer) enter(n *html.Node) bool {
 	}
 	effect := r.rules.effectFor(n)
 	if style, ok := attributeValue(n, "style"); ok {
-		effect = effect.then(parseStyle(style))
+		effect = effect.merge(parseStyle(style).ranked(rank{level: levelAttribute}))
 	}
 	if effect.drop {
 		return false
