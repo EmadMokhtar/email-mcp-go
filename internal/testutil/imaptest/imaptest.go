@@ -10,6 +10,11 @@
 //	srv := imaptest.New(t, imaptest.WithMode(imaptest.ModeSTARTTLS))
 //	srv := imaptest.New(t, imaptest.WithMode(imaptest.ModePlain))
 //
+// A test can also make mailboxes with special-use attributes (see Create),
+// choose the capabilities that the server advertises (see WithCaps), add
+// messages with a given date (see AppendAt) and read the server state (see
+// Unseen and SelectCounts).
+//
 // This package is for tests only. Do not import it from production code.
 package imaptest
 
@@ -26,7 +31,9 @@ import (
 	"errors"
 	"math/big"
 	"net"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -55,11 +62,28 @@ type Option func(*options)
 
 type options struct {
 	mode Mode
+	caps imap.CapSet
 }
 
 // WithMode sets the server mode. The default is ModeTLS.
 func WithMode(m Mode) Option {
 	return func(o *options) { o.mode = m }
+}
+
+// WithCaps sets the capabilities that the server advertises, instead of the
+// default (IMAP4rev1 and IMAP4rev2). Give at least IMAP4rev1 or IMAP4rev2.
+//
+// IMAP4rev2 implies LIST-EXTENDED, LIST-STATUS, UIDPLUS, MOVE and more, so a
+// test that wants a server without LIST-STATUS, or one that uses modified
+// UTF-7 folder names (an IMAP4rev1 server without UTF8=ACCEPT enabled), gives
+// IMAP4rev1 and lists the extensions it needs.
+func WithCaps(caps ...imap.Cap) Option {
+	return func(o *options) {
+		o.caps = make(imap.CapSet, len(caps))
+		for _, c := range caps {
+			o.caps[c] = struct{}{}
+		}
+	}
 }
 
 // Server is a running test IMAP server.
@@ -92,6 +116,14 @@ type Server struct {
 	live  map[*trackedConn]struct{}
 	total int
 	peak  int
+
+	// boxMu guards the fields below. They describe the mailboxes, because
+	// imapmemserver cannot list its mailboxes with special-use attributes.
+	boxMu      sync.Mutex
+	boxes      map[string]struct{}
+	specialUse map[string][]imap.MailboxAttr
+	selects    int // SELECT commands
+	examines   int // EXAMINE commands
 }
 
 // New starts a server and registers its shutdown with t.Cleanup. It stops
@@ -122,21 +154,34 @@ func New(t testing.TB, opts ...Option) *Server {
 		Pass:       "s3cret-pass",
 		t:          t,
 		live:       make(map[*trackedConn]struct{}),
+		boxes:      make(map[string]struct{}),
+		specialUse: make(map[string][]imap.MailboxAttr),
 	}
 
 	mem := imapmemserver.New()
 	s.user = imapmemserver.NewUser(s.User, s.Pass)
-	if err := s.user.Create("INBOX", nil); err != nil {
-		t.Fatalf("imaptest: create INBOX: %v", err)
-	}
 	mem.AddUser(s.user)
+	s.Create("INBOX")
 
 	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	caps := o.caps
+	if caps == nil {
+		caps = imap.CapSet{imap.CapIMAP4rev1: {}, imap.CapIMAP4rev2: {}}
+	}
 	srvOpts := &imapserver.Options{
 		NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
-			return mem.NewSession(), nil, nil
+			// mem.NewSession returns a session that also supports NAMESPACE
+			// and MOVE (imapserver.SessionIMAP4rev2). This runs in a server
+			// goroutine, so it must not call t.Fatal.
+			sess := mem.NewSession()
+			inner, ok := sess.(imapserver.SessionIMAP4rev2)
+			if !ok {
+				t.Errorf("imaptest: the session of imapmemserver lost its IMAP4rev2 methods")
+				return sess, nil, nil
+			}
+			return &session{SessionIMAP4rev2: inner, s: s}, nil, nil
 		},
-		Caps:   imap.CapSet{imap.CapIMAP4rev1: {}, imap.CapIMAP4rev2: {}},
+		Caps:   caps,
 		Logger: discardLogger{},
 	}
 	switch o.mode {
@@ -182,16 +227,83 @@ func New(t testing.TB, opts ...Option) *Server {
 // t.Fatal on an error.
 func (s *Server) Append(mailbox string, raw []byte, flags ...imap.Flag) {
 	s.t.Helper()
+	s.AppendAt(mailbox, raw, time.Time{}, flags...)
+}
+
+// AppendAt is Append with an internal date (the date the server received the
+// message). A zero time means the current time.
+func (s *Server) AppendAt(mailbox string, raw []byte, at time.Time, flags ...imap.Flag) {
+	s.t.Helper()
+	s.Create(mailbox)
+	// bytes.Reader has Read and Size, so it is a valid imap.LiteralReader.
+	opts := &imap.AppendOptions{Flags: flags, Time: at}
+	if _, err := s.user.Append(mailbox, bytes.NewReader(raw), opts); err != nil {
+		s.t.Fatalf("imaptest: append: %v", err)
+	}
+}
+
+// Create makes an empty mailbox. It does nothing if the mailbox exists. It
+// stops the test with t.Fatal on an error.
+//
+// The optional attributes are special-use attributes (RFC 6154, for example
+// imap.MailboxAttrTrash) that LIST reports for the mailbox. imapmemserver
+// cannot set them. When the first mailbox with such an attribute is made,
+// this package answers LIST itself, from the mailboxes made through this
+// package and through CREATE. That answer has no \Subscribed attribute.
+func (s *Server) Create(mailbox string, specialUse ...imap.MailboxAttr) {
+	s.t.Helper()
 	if err := s.user.Create(mailbox, nil); err != nil {
 		var imapErr *imap.Error
 		if !errors.As(err, &imapErr) || imapErr.Code != imap.ResponseCodeAlreadyExists {
 			s.t.Fatalf("imaptest: create mailbox: %v", err)
 		}
 	}
-	// bytes.Reader has Read and Size, so it is a valid imap.LiteralReader.
-	if _, err := s.user.Append(mailbox, bytes.NewReader(raw), &imap.AppendOptions{Flags: flags}); err != nil {
-		s.t.Fatalf("imaptest: append: %v", err)
+	s.boxMu.Lock()
+	defer s.boxMu.Unlock()
+	s.boxes[mailbox] = struct{}{}
+	if len(specialUse) > 0 {
+		s.specialUse[mailbox] = append([]imap.MailboxAttr(nil), specialUse...)
 	}
+}
+
+// Delete removes a mailbox with its messages. When a mailbox with the same
+// name is made again, it has a new UIDVALIDITY, as on a real server. It stops
+// the test with t.Fatal on an error.
+func (s *Server) Delete(mailbox string) {
+	s.t.Helper()
+	if err := s.user.Delete(mailbox); err != nil {
+		s.t.Fatalf("imaptest: delete mailbox: %v", err)
+	}
+	s.forget(mailbox)
+}
+
+func (s *Server) forget(mailbox string) {
+	s.boxMu.Lock()
+	defer s.boxMu.Unlock()
+	delete(s.boxes, mailbox)
+	delete(s.specialUse, mailbox)
+}
+
+// Unseen returns how many messages of a mailbox do not have the \Seen flag. It
+// reads the state of the server, not the answer to a command, so a test can
+// check that a client did not mark mail as read. It stops the test with
+// t.Fatal if the mailbox does not exist.
+func (s *Server) Unseen(mailbox string) int {
+	s.t.Helper()
+	data, err := s.user.Status(mailbox, &imap.StatusOptions{NumUnseen: true})
+	if err != nil || data.NumUnseen == nil {
+		s.t.Fatalf("imaptest: status of %q: %v", mailbox, err)
+	}
+	return int(*data.NumUnseen)
+}
+
+// SelectCounts returns how many SELECT commands (readWrite) and how many
+// EXAMINE commands (readOnly) the server has received. A client that only
+// reads mail must use EXAMINE, so that nothing changes in the mailbox.
+func (s *Server) SelectCounts() (readWrite, readOnly int) {
+	s.boxMu.Lock()
+	defer s.boxMu.Unlock()
+	return s.selects, s.examines
 }
 
 // DropConnections closes every connection the server has open, as a network
@@ -325,4 +437,114 @@ func selfSignedCert() (tls.Certificate, []byte, error) {
 		return tls.Certificate{}, nil, err
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, der, nil
+}
+
+// session wraps the session of imapmemserver. It records SELECT and EXAMINE,
+// keeps the list of mailboxes, and answers LIST when a mailbox has special-use
+// attributes.
+type session struct {
+	imapserver.SessionIMAP4rev2
+	s *Server
+}
+
+func (ss *session) Select(mailbox string, options *imap.SelectOptions) (*imap.SelectData, error) {
+	ss.s.boxMu.Lock()
+	if options != nil && options.ReadOnly {
+		ss.s.examines++
+	} else {
+		ss.s.selects++
+	}
+	ss.s.boxMu.Unlock()
+	return ss.SessionIMAP4rev2.Select(mailbox, options)
+}
+
+func (ss *session) Create(mailbox string, options *imap.CreateOptions) error {
+	if err := ss.SessionIMAP4rev2.Create(mailbox, options); err != nil {
+		return err
+	}
+	name := strings.TrimRight(mailbox, string(listDelim))
+	ss.s.boxMu.Lock()
+	defer ss.s.boxMu.Unlock()
+	ss.s.boxes[name] = struct{}{}
+	if options != nil && len(options.SpecialUse) > 0 {
+		ss.s.specialUse[name] = append([]imap.MailboxAttr(nil), options.SpecialUse...)
+	}
+	return nil
+}
+
+func (ss *session) Delete(mailbox string) error {
+	if err := ss.SessionIMAP4rev2.Delete(mailbox); err != nil {
+		return err
+	}
+	ss.s.forget(mailbox)
+	return nil
+}
+
+func (ss *session) Rename(mailbox, newName string, options *imap.RenameOptions) error {
+	if err := ss.SessionIMAP4rev2.Rename(mailbox, newName, options); err != nil {
+		return err
+	}
+	newName = strings.TrimRight(newName, string(listDelim))
+	ss.s.boxMu.Lock()
+	defer ss.s.boxMu.Unlock()
+	delete(ss.s.boxes, mailbox)
+	ss.s.boxes[newName] = struct{}{}
+	if attrs, ok := ss.s.specialUse[mailbox]; ok {
+		delete(ss.s.specialUse, mailbox)
+		ss.s.specialUse[newName] = attrs
+	}
+	return nil
+}
+
+// listDelim is the hierarchy delimiter of imapmemserver.
+const listDelim = '/'
+
+// List answers like imapmemserver, until a mailbox has special-use
+// attributes. Then it answers from its own list of mailboxes, with those
+// attributes.
+func (ss *session) List(w *imapserver.ListWriter, ref string, patterns []string, options *imap.ListOptions) error {
+	ss.s.boxMu.Lock()
+	custom := len(ss.s.specialUse) > 0
+	names := make([]string, 0, len(ss.s.boxes))
+	for name := range ss.s.boxes {
+		names = append(names, name)
+	}
+	attrs := make(map[string][]imap.MailboxAttr, len(ss.s.specialUse))
+	for name, a := range ss.s.specialUse {
+		attrs[name] = a
+	}
+	ss.s.boxMu.Unlock()
+
+	if !custom || len(patterns) == 0 || options.SelectSubscribed {
+		return ss.SessionIMAP4rev2.List(w, ref, patterns, options)
+	}
+
+	sort.Strings(names)
+	for _, name := range names {
+		match := false
+		for _, pattern := range patterns {
+			if imapserver.MatchList(name, listDelim, ref, pattern) {
+				match = true
+				break
+			}
+		}
+		if !match || (options.SelectSpecialUse && len(attrs[name]) == 0) {
+			continue
+		}
+		data := imap.ListData{Mailbox: name, Delim: listDelim}
+		if options.ReturnSpecialUse || options.SelectSpecialUse {
+			data.Attrs = append(data.Attrs, attrs[name]...)
+		}
+		if options.ReturnStatus != nil {
+			status, err := ss.s.user.Status(name, options.ReturnStatus)
+			if err != nil {
+				return err
+			}
+			data.Status = status
+		}
+		if err := w.WriteList(&data); err != nil {
+			return err
+		}
+	}
+	return nil
 }
