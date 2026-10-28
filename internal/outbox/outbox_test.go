@@ -1095,6 +1095,7 @@ func TestResultIsRecordedAfterTheContextIsCancelled(t *testing.T) {
 func TestSendThatRunsIntoItsDeadlineIsNotRetried(t *testing.T) {
 	f := newFixture(t)
 	f.ob.sendTimeout = 20 * time.Millisecond
+	f.ob.minBudget = 0 // this test needs a deadline that is shorter than the usual minimum
 	item := f.enqueue("too slow", 10*time.Second)
 	f.clock.Advance(10 * time.Second)
 
@@ -1979,4 +1980,50 @@ func TestNoSendWhenTheTimeIsUsedUpBeforeTheSend(t *testing.T) {
 	f.pass()
 	require.Equal(t, 1, f.sender.count())
 	require.Equal(t, StatusSent, f.status(item.ID))
+}
+
+// ---- Fix round 2: a minimum time budget for the send ----
+
+// A send needs a minimum of time. If less than minSendBudget is left after the
+// steps before the send, nothing is sent and the item is released. A tiny rest
+// (for example after a jump of the wall clock) would make the Sender fail at
+// once, and a message that was never sent would be marked "delivery unknown".
+func TestNoSendWhenLessThanTheMinimumBudgetIsLeft(t *testing.T) {
+	require.Equal(t, 30*time.Second, minSendBudget)
+
+	for name, c := range map[string]struct {
+		left     time.Duration
+		wantSent bool
+	}{
+		"1 millisecond left":           {left: time.Millisecond},
+		"one millisecond under budget": {left: minSendBudget - time.Millisecond},
+		"exactly the budget":           {left: minSendBudget, wantSent: true},
+		"plenty":                       {left: 5 * time.Minute, wantSent: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			item := f.enqueue("short of time", 10*time.Second)
+			f.clock.Advance(10 * time.Second)
+			// The open step uses sendDeadline - left of the clock.
+			ob := New(&slowOpenStore{Store: f.store, clock: f.clock, delay: sendDeadline - c.left}, f.vault, f.sender.send, f.clock.Now)
+
+			require.NoError(t, ob.Drain(context.Background(), 0))
+
+			if c.wantSent {
+				require.Equal(t, 1, f.sender.count())
+				require.Equal(t, StatusSent, f.status(item.ID))
+				return
+			}
+			require.Zero(t, f.sender.count(), "the Sender is not called")
+			r := f.raw(item.ID)
+			require.Equal(t, "queued", r.status, "released, not failed")
+			require.Equal(t, 0, r.attempts, "a release is not a failed try")
+			require.Empty(t, r.errText)
+			require.False(t, r.messageNull)
+
+			f.pass()
+			require.Equal(t, 1, f.sender.count())
+			require.Equal(t, StatusSent, f.status(item.ID))
+		})
+	}
 }

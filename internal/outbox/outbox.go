@@ -212,6 +212,14 @@ const (
 	// have at most storeTimeout. So the limit is recoverAfter less two minutes.
 	sendDeadline = 13 * time.Minute
 
+	// minSendBudget is the least time that must be left for a send, after the
+	// steps before it. With less, the item is released and nothing is sent. The
+	// time left is computed from claimed_at, which the database keeps as whole
+	// milliseconds with no monotonic reading, so a jump of the wall clock can leave
+	// a tiny positive rest. A send with such a deadline would fail at once and mark
+	// a message that was never sent as "delivery unknown".
+	minSendBudget = 30 * time.Second
+
 	// resultAttempts and resultBackoff set how the outbox writes the result of a
 	// send. If the database is busy, the write is tried again, up to
 	// resultAttempts tries in all, with resultBackoff between two tries. All the
@@ -252,6 +260,9 @@ type Outbox struct {
 	// the wait between two tries of a result write. Tests can make them shorter.
 	sendTimeout   time.Duration
 	resultBackoff time.Duration
+	// minBudget is the least time that must be left for a send. See
+	// minSendBudget.
+	minBudget time.Duration
 }
 
 // New returns an Outbox. The vault encrypts the stored messages. send is called
@@ -266,7 +277,7 @@ func New(st OutboxStore, v *secrets.Vault, send Sender, now func() time.Time) *O
 		now = time.Now
 	}
 	return &Outbox{st: st, vault: v, send: send, now: now, poll: defaultPoll,
-		sendTimeout: sendDeadline, resultBackoff: resultBackoff}
+		sendTimeout: sendDeadline, resultBackoff: resultBackoff, minBudget: minSendBudget}
 }
 
 // storedMessage is the form in which a message is stored, before it is
@@ -633,9 +644,10 @@ func (o *Outbox) claim(ctx context.Context, row *store.OutboxRow) (*store.Outbox
 //
 // If ctx has ended after the claim and before the send, nothing is sent, and the
 // item goes back in the queue. The same happens if the steps before the send
-// (reading and opening the message) have used all the time that the send may
-// have: a send with a deadline that is over would fail at once, and would mark a
-// message that was never sent as "delivery unknown".
+// (reading and opening the message) have left less than minSendBudget of the time
+// that the send may have: a send with a deadline that is over, or that is about
+// to end, would fail at once, and would mark a message that was never sent as
+// "delivery unknown".
 //
 // Once the send has started, ctx cannot stop it: the Sender gets a context that
 // ctx cannot cancel, with a deadline of sendDeadline after the claim. Counting
@@ -667,10 +679,10 @@ func (o *Outbox) deliver(ctx context.Context, row *store.OutboxRow, msg *mail.Ra
 	}
 	left := claimedAt.Add(o.sendTimeout).Sub(o.now())
 
-	if ctx.Err() != nil || left <= 0 {
+	if ctx.Err() != nil || left < o.minBudget {
 		// The program was told to stop after the claim and before the send, or
-		// there is no time left for a send. Nothing was sent, so the item goes back
-		// to the queue. It is not a failed try.
+		// there is not enough time left for a send. Nothing was sent, so the item
+		// goes back to the queue. It is not a failed try.
 		rctx, cancel := detached(ctx)
 		defer cancel()
 		err := o.writeResult(rctx, func(c context.Context) error {

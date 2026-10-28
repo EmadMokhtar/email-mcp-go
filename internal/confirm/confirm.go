@@ -530,9 +530,14 @@ func (m *Manager) Get(ctx context.Context, tenant account.TenantID, id string) (
 // If the action waits and its time has passed, the move fails with ErrNotPending,
 // and Transition records the expiry and deletes the payload and the preview.
 //
-// A context that has ended stops Transition before it starts. The statement
-// itself runs on a context that the caller cannot cancel, so a committed move is
-// never reported as a failure.
+// The statement runs on a context that the caller cannot cancel, so a committed
+// move is never reported as a failure. A move to a final state ("rejected",
+// "expired" or "done") always runs, also when the context of the caller has
+// ended. The usual flow is: Claim, send the message (this can take minutes), move
+// the action to "done". If the client leaves during the send, the action must
+// still end and lose its payload and preview, because Prune never deletes an
+// action that stays "approved". Only a move to "approved" is refused when the
+// context has ended: a caller that has left must not approve an action.
 func (m *Manager) Transition(ctx context.Context, tenant account.TenantID, id string, from, to State, resultID string) error {
 	switch {
 	case !isState(from):
@@ -545,8 +550,10 @@ func (m *Manager) Transition(ctx context.Context, tenant account.TenantID, id st
 		return ErrNotPending
 	}
 
-	if err := ctx.Err(); err != nil {
-		return err
+	if to == StateApproved {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 	}
 	wctx, cancel := detached(ctx)
 	defer cancel()

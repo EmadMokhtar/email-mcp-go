@@ -1388,16 +1388,64 @@ func TestTransitionIsNotLostWhenTheContextEndsDuringIt(t *testing.T) {
 	require.Nil(t, preview)
 }
 
-// A context that has ended before Transition starts stops it. Nothing changes.
-func TestTransitionWithAnEndedContextChangesNothing(t *testing.T) {
+// A caller whose context has ended must not approve an action. A move to
+// "approved" is refused before it starts, and nothing changes.
+func TestApproveWithAnEndedContextChangesNothing(t *testing.T) {
 	f := newFixture(t)
 	p := f.create("payload")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := f.mgr.Transition(ctx, f.tenant, p.ID, StatePending, StateRejected, "")
+	err := f.mgr.Transition(ctx, f.tenant, p.ID, StatePending, StateApproved, "")
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, "pending", f.storedState(p.ID))
+}
+
+// A move to a final state always runs, also after the context of the caller has
+// ended. The usual flow is: Claim, send the message (which can take minutes),
+// then move the action to "done". If the client leaves during the send, the
+// action must still end, and the payload and the preview must be deleted. An
+// action that stays "approved" keeps its secrets for ever, because Prune never
+// deletes it.
+func TestFinalMoveRunsAfterTheContextHasEnded(t *testing.T) {
+	cases := map[string]struct {
+		from, to State
+		resultID string
+	}{
+		"approved to done":     {StateApproved, StateDone, "msg-1"},
+		"approved to rejected": {StateApproved, StateRejected, ""},
+		"approved to expired":  {StateApproved, StateExpired, ""},
+		"pending to rejected":  {StatePending, StateRejected, ""},
+		"pending to expired":   {StatePending, StateExpired, ""},
+		"pending to done":      {StatePending, StateDone, "msg-2"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			p := f.create("payload")
+			if c.from == StateApproved {
+				f.approve(p, "payload")
+			}
+			sealedPayload, sealedPreview := f.sealedColumns(p.ID)
+			require.NotEmpty(t, sealedPayload)
+			require.NotEmpty(t, sealedPreview)
+
+			// The client has left: the context of the call has ended already.
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			require.NoError(t, f.mgr.Transition(ctx, f.tenant, p.ID, c.from, c.to, c.resultID))
+
+			require.Equal(t, string(c.to), f.storedState(p.ID))
+			payload, preview := f.sealedColumns(p.ID)
+			require.Nil(t, payload, "payload column")
+			require.Nil(t, preview, "preview column")
+			got, gotPayload, err := f.mgr.Get(context.Background(), f.tenant, p.ID)
+			require.NoError(t, err)
+			require.Nil(t, gotPayload)
+			require.Equal(t, c.to, got.State)
+			require.Equal(t, c.resultID, got.ResultID)
+		})
+	}
 }
 
 // expireFailsStore cannot record an expiry.
