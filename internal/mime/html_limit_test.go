@@ -436,3 +436,193 @@ func TestLargeHTMLWithSVGAndNoscriptIsConverted(t *testing.T) {
 	require.Contains(t, html, "Read more about this")
 	require.NotContains(t, html, "<svg", "the svg is not content")
 }
+
+// escapedLinkCopiedHTML has a link whose address repeats esc s times, and then
+// c paragraphs. The parser copies the link into each paragraph. The work budget
+// counts the bytes of the address once for each copy, but the HTML written
+// from the tree is longer: xhtml.Render writes "&" as "&amp;" and a quote as
+// "&#34;", five bytes for one.
+func escapedLinkCopiedHTML(esc string, s, c int) string {
+	return `<p><a href="https://e.example/` + strings.Repeat(esc, s) + `">` + strings.Repeat("<p>y", c)
+}
+
+// encodedLinkCopiedHTML has a link with 338 "é" (676 bytes), copied into c
+// paragraphs. The sanitizer writes each "é" of the url as "%C3%A9", three bytes
+// for one, so the result of the sanitizer is three times longer than its input.
+func encodedLinkCopiedHTML(c int) string {
+	return `<p><a href="https://e.example/` + strings.Repeat("\U000000e9", 338) + `x">` + strings.Repeat("<p>y", c)
+}
+
+// shownLinkCopiedHTML has a link with 676 spaces in its url, copied into c
+// paragraphs. HTMLToText shows the url for each copy, with each space written
+// as %20: 2,047 characters.
+func shownLinkCopiedHTML(c int) string {
+	return `<p><a href="https://e.example/` + strings.Repeat(" ", 676) + `x">` + strings.Repeat("<p>y", c)
+}
+
+// renderedVisibleHTML returns the tree of VisibleHTML as it goes into the
+// sanitizer, without a limit.
+func renderedVisibleHTML(t *testing.T, markup string) string {
+	t.Helper()
+	doc, err := parseHTML(markup)
+	require.NoError(t, err)
+	v := newVisibility(doc)
+	v.prune(doc)
+	var b strings.Builder
+	require.NoError(t, xhtml.Render(&b, doc))
+	return b.String()
+}
+
+// requireTooLargeRefused checks that convert refuses markup because its output
+// would be larger than the limit, and that it uses little memory and time.
+func requireTooLargeRefused(t *testing.T, convert func(string) (string, error), markup string, maxAllocated uint64) usage {
+	t.Helper()
+	_, err := parseHTML(markup)
+	require.NoError(t, err, "the document is under the work budget of the parser")
+
+	var out string
+	u := measured(func() { out, err = convert(markup) })
+	require.ErrorIs(t, err, ErrHTMLTooComplex)
+	require.ErrorIs(t, err, errConvertedTooLarge)
+	require.NotErrorIs(t, err, xhtml.ErrTooComplex, "the output limit refuses it, not the parser")
+	require.Empty(t, out)
+	require.Less(t, u.allocated, maxAllocated)
+	require.Less(t, u.peak, uint64(maxRefusedPeak))
+	if !raceEnabled {
+		require.Less(t, u.elapsed, time.Second)
+	}
+	return u
+}
+
+// These documents are under the work budget of the parser, but the HTML written
+// from them was 80 MB, 48 MB and 44 MB, from 19 KB, 89 KB and 85 KB of markup.
+// For the first, VisibleHTML took 1.65 s, a peak heap of +395 MiB, and 1,251
+// MiB of allocations. Now the rendered tree, or the result of the sanitizer,
+// reaches the limit and VisibleHTML stops.
+func TestVisibleHTMLThatWouldBeTooLargeIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		markup       string
+		maxAllocated uint64
+		// renderedFits: the rendered tree is under the limit, and the sanitizer
+		// stops. Else Render stops. The url of this link is longer than 2,048
+		// characters, so HTMLToText does not show it, and the text is small.
+		renderedFits bool
+	}{
+		{"14,000 & in a link, 1,134 copies (19 KB)", escapedLinkCopiedHTML("&", 14_000, 1134), 160 << 20, false},
+		{"14,000 &quot; in a link, 1,134 copies (89 KB)", escapedLinkCopiedHTML("&quot;", 14_000, 1134), 160 << 20, false},
+		// Before: 0.44 s, +196 MiB, 769 MiB allocated, 44 MB of HTML. HTMLToText
+		// shows this url (see TestHTMLToTextThatWouldBeTooLongIsRefused).
+		{"338 non-ASCII letters in a link, 20,968 copies (85 KB)", encodedLinkCopiedHTML(20_968), 512 << 20, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u := requireTooLargeRefused(t, VisibleHTML, tc.markup, tc.maxAllocated)
+			t.Logf("VisibleHTML: %d bytes refused in %v", len(tc.markup), u)
+
+			if tc.renderedFits {
+				rendered := renderedVisibleHTML(t, tc.markup)
+				t.Logf("rendered tree: %d bytes (limit %d)", len(rendered), maxVisibleHTMLBytes)
+				require.Less(t, len(rendered), maxVisibleHTMLBytes)
+				return
+			}
+			text, err := HTMLToText(tc.markup)
+			require.NoError(t, err)
+			require.Less(t, len(text), 1<<20)
+		})
+	}
+}
+
+// The url of the link is shown for each copy that the parser makes. The text
+// would be 43 MB from 85 KB of markup, which took 0.98 s, +204 MiB and 764 MiB
+// of allocations.
+func TestHTMLToTextThatWouldBeTooLongIsRefused(t *testing.T) {
+	for name, in := range map[string]string{
+		"text in each copy (85 KB)": shownLinkCopiedHTML(20_968),
+		"the url alone (147 KB)":    strings.ReplaceAll(shownLinkCopiedHTML(20_968), "<p>y", "<p><br>"),
+		"non-ASCII letters (85 KB)": encodedLinkCopiedHTML(20_968),
+	} {
+		t.Run(name, func(t *testing.T) {
+			u := requireTooLargeRefused(t, HTMLToText, in, 384<<20)
+			t.Logf("HTMLToText: %d bytes refused in %v", len(in), u)
+		})
+	}
+}
+
+// The limit on the text is exact, also for a letter of several bytes. It
+// counts the text as it is built, with the line breaks of the blocks, so the
+// text here is not in a paragraph.
+func TestHTMLToTextIsLimitedToMaxConvertedTextBytes(t *testing.T) {
+	const euro = "\U000020ac" // three bytes in UTF-8
+	atTheLimit := strings.Repeat("a", maxConvertedTextBytes-3) + euro
+	out, err := HTMLToText(atTheLimit)
+	require.NoError(t, err)
+	require.Equal(t, maxConvertedTextBytes, len(out))
+	require.True(t, out == atTheLimit, "the text is kept as it is")
+
+	out, err = HTMLToText("a" + atTheLimit)
+	require.ErrorIs(t, err, ErrHTMLTooComplex)
+	require.ErrorIs(t, err, errConvertedTooLarge)
+	require.Empty(t, out)
+}
+
+// The limit on the rendered tree is exact. Render writes the html and body
+// elements around the paragraph, and the sanitizer takes them away.
+func TestVisibleHTMLIsLimitedToMaxVisibleHTMLBytes(t *testing.T) {
+	frame := len(renderedVisibleHTML(t, "<p>"))
+	text := strings.Repeat("a", maxVisibleHTMLBytes-frame)
+	require.Len(t, renderedVisibleHTML(t, "<p>"+text), maxVisibleHTMLBytes)
+
+	out, err := VisibleHTML("<p>" + text)
+	require.NoError(t, err)
+	require.True(t, out == "<p>"+text+"</p>", "the paragraph is kept as it is")
+
+	out, err = VisibleHTML("<p>a" + text)
+	require.ErrorIs(t, err, ErrHTMLTooComplex)
+	require.ErrorIs(t, err, errConvertedTooLarge)
+	require.Empty(t, out)
+}
+
+func TestLimitedBuilderNeverPassesItsLimit(t *testing.T) {
+	w := &limitedBuilder{max: 10}
+	n, err := w.WriteString("12345678")
+	require.NoError(t, err)
+	require.Equal(t, 8, n)
+
+	// Writes that do not fit write nothing.
+	n, err = w.WriteString("abc")
+	require.ErrorIs(t, err, errConvertedTooLarge)
+	require.Zero(t, n)
+	n, err = w.Write([]byte("abc"))
+	require.ErrorIs(t, err, errConvertedTooLarge)
+	require.Zero(t, n)
+	require.Equal(t, "12345678", w.String())
+
+	// Writes that fit exactly are kept.
+	require.NoError(t, w.WriteByte('9'))
+	n, err = w.Write([]byte("0"))
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	require.ErrorIs(t, w.WriteByte('x'), errConvertedTooLarge)
+	_, err = w.WriteString("")
+	require.NoError(t, err)
+	require.Equal(t, "1234567890", w.String())
+}
+
+// xhtml.Render returns the error of the first write that does not fit, so it
+// stops there. What it wrote is the start of the whole HTML.
+func TestRenderStopsAtTheLimit(t *testing.T) {
+	doc, err := parseHTML(newsletterHTML(50<<10, false))
+	require.NoError(t, err)
+	var whole strings.Builder
+	require.NoError(t, xhtml.Render(&whole, doc))
+
+	for _, limit := range []int{0, 1, 100, 4096, whole.Len() / 2, whole.Len() - 1} {
+		w := &limitedBuilder{max: limit}
+		require.ErrorIs(t, xhtml.Render(w, doc), errConvertedTooLarge, limit)
+		require.LessOrEqual(t, len(w.String()), limit)
+		require.True(t, strings.HasPrefix(whole.String(), w.String()), limit)
+	}
+	w := &limitedBuilder{max: whole.Len()}
+	require.NoError(t, xhtml.Render(w, doc))
+	require.True(t, w.String() == whole.String())
+}

@@ -69,8 +69,9 @@ import (
 // become line breaks. The result is passed through CleanUntrusted, so it is
 // always valid UTF-8 with no invisible characters.
 //
-// A document that would make the parser do too much work, or that is nested
-// more than 512 elements deep, gives an empty string and an error that wraps
+// A document that would make the parser do too much work, that is nested more
+// than 512 elements deep, or whose text would be longer than
+// maxConvertedTextBytes, gives an empty string and an error that wraps
 // ErrHTMLTooComplex. Nothing is returned for it, instead of text that was not
 // checked. The size of the markup is not limited here: the caller does that.
 func HTMLToText(markup string) (string, error) {
@@ -80,12 +81,34 @@ func HTMLToText(markup string) (string, error) {
 	}
 	r := textRenderer{visibility: newVisibility(doc)}
 	r.walk(doc)
+	if r.full {
+		return "", fmt.Errorf("%w: %w", ErrHTMLTooComplex, errConvertedTooLarge)
+	}
 	return CleanUntrusted(tidyLines(string(r.buf))), nil
 }
 
+// maxConvertedTextBytes is the longest text that HTMLToText makes, in bytes.
+//
+// The work budget of the parser bounds the tree, but not the text. The parser
+// copies a link into each paragraph that follows it, and the url is written
+// for each copy. The url can also grow three times when it is written (a space
+// or a byte that is not ASCII becomes %XX). Without this limit, 85 KB of markup
+// with a link of 700 bytes and 21,000 paragraphs gave 43 MB of text.
+//
+// The limit counts the text as it is built: with the line breaks of the blocks
+// and the spaces that tidyLines takes away at the end. The result is never
+// longer.
+const maxConvertedTextBytes = 16 << 20
+
+// errConvertedTooLarge means that the text or the HTML made from a document is
+// larger than the limit (maxConvertedTextBytes, maxVisibleHTMLBytes).
+// HTMLToText and VisibleHTML wrap it in ErrHTMLTooComplex.
+var errConvertedTooLarge = errors.New("mime: the converted html is larger than the limit")
+
 // ErrHTMLTooComplex means that HTML would make the parser do too much work, so
 // it was not parsed. HTMLToText and VisibleHTML return it, also for a document
-// that is nested too deep for the parser.
+// that is nested too deep for the parser, and for a document whose text or
+// visible HTML would be larger than the limit (16 MiB).
 //
 // The size of the input does not bound the work of the parser and of the code
 // that reads the tree. The tree builder keeps a list of the formatting elements
@@ -181,6 +204,16 @@ type textRenderer struct {
 	pre    int        // how many pre elements we are inside
 	bullet bool       // a list item started and its "- " is not written yet
 	links  []linkMark // links that are open, innermost last
+	full   bool       // the text reached maxConvertedTextBytes; the walk stops
+}
+
+// room reports whether n more bytes fit in the text. When they do not, it
+// marks the text as full. Then nothing more is written, and the walk stops.
+func (r *textRenderer) room(n int) bool {
+	if len(r.buf)+n > maxConvertedTextBytes {
+		r.full = true
+	}
+	return !r.full
 }
 
 // inherited holds the properties that an element gets from its parent.
@@ -238,10 +271,11 @@ type linkMark struct {
 
 // walk visits every node below root, in document order. It does not call
 // itself, so the depth of the document cannot exhaust the stack. (The parser
-// also refuses documents that are nested more than 512 elements deep.)
+// also refuses documents that are nested more than 512 elements deep.) It stops
+// when the text is full.
 func (r *textRenderer) walk(root *xhtml.Node) {
 	n := root
-	for {
+	for !r.full {
 		entered := r.enter(n)
 		if entered && n.FirstChild != nil {
 			n = n.FirstChild
@@ -369,7 +403,7 @@ func (r *textRenderer) endLink(n *xhtml.Node) {
 // space writes one space. It does nothing at the start of a line, or after
 // another space, so runs of white space collapse.
 func (r *textRenderer) space() {
-	if n := len(r.buf); n > 0 && r.buf[n-1] != ' ' && r.buf[n-1] != '\n' {
+	if n := len(r.buf); n > 0 && r.buf[n-1] != ' ' && r.buf[n-1] != '\n' && r.room(1) {
 		r.buf = append(r.buf, ' ')
 	}
 }
@@ -393,7 +427,7 @@ func (r *textRenderer) newline(n int) {
 	for i := len(r.buf) - 1; i >= 0 && r.buf[i] == '\n' && have < n; i-- {
 		have++
 	}
-	for ; have < n; have++ {
+	for ; have < n && r.room(1); have++ {
 		r.buf = append(r.buf, '\n')
 	}
 }
@@ -401,11 +435,13 @@ func (r *textRenderer) newline(n int) {
 // hardBreak writes one line break, even when the line is empty (the br element).
 func (r *textRenderer) hardBreak() {
 	r.trimSpace()
-	r.buf = append(r.buf, '\n')
+	if r.room(1) {
+		r.buf = append(r.buf, '\n')
+	}
 }
 
 func (r *textRenderer) flushBullet() {
-	if r.bullet {
+	if r.bullet && r.room(2) {
 		r.buf = append(r.buf, '-', ' ')
 		r.bullet = false
 	}
@@ -415,6 +451,9 @@ func (r *textRenderer) flushBullet() {
 // white space. Inside pre it is a real line break.
 func (r *textRenderer) text(s string) {
 	for _, c := range s {
+		if r.full {
+			return
+		}
 		switch {
 		case c == '\n' && r.pre > 0:
 			r.hardBreak()
@@ -422,7 +461,9 @@ func (r *textRenderer) text(s string) {
 			r.space()
 		default:
 			r.flushBullet()
-			r.buf = utf8.AppendRune(r.buf, c)
+			if r.room(utf8.RuneLen(c)) {
+				r.buf = utf8.AppendRune(r.buf, c)
+			}
 		}
 	}
 }

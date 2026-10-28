@@ -2106,6 +2106,60 @@ func TestGetMessageHTMLWithALongLinkCopiedIsRefused(t *testing.T) {
 	}
 }
 
+// totalAllocated returns every byte that f allocated, also the bytes that were
+// freed again. It does not depend on when the garbage collector runs.
+func totalAllocated(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+func TestGetMessageHTMLThatWouldBeTooLargeToShowIsRefused(t *testing.T) {
+	// 19 KB, under the work budget of the parser. The parser copies the link into
+	// each paragraph, and each "&" of it is written as "&amp;". Before, the html
+	// format made 80 MB of HTML, with a peak heap of +395 MiB.
+	escaped := `<p><a href="https://e.example/` + strings.Repeat("&", 14_000) + `">` + strings.Repeat("<p>y", 1134)
+	// 85 KB. The text shows the url of each copy (2,047 characters, a space is
+	// written as %20). Before, the text format made 43 MB of text.
+	shown := `<p><a href="https://e.example/` + strings.Repeat(" ", 676) + `x">` + strings.Repeat("<p>y", 20_968)
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	refs := appendRefs(t, srv, b, "INBOX",
+		textMail("html", "utf-8", "", escaped),
+		textMail("html", "utf-8", "", shown))
+
+	refused := func(ref mail.Ref, format mail.BodyFormat) {
+		t.Helper()
+		var msg *mail.Message
+		var err error
+		allocated := totalAllocated(func() { msg, err = b.GetMessage(t.Context(), ref, mail.BodyOptions{Format: format}) })
+		require.ErrorIs(t, err, mail.ErrTooLarge, format)
+		require.ErrorIs(t, err, mime.ErrHTMLTooComplex, format)
+		require.Contains(t, err.Error(), `body_format "none"`, format)
+		require.Nil(t, msg)
+		// The fetch, the test server in this process, and the conversion that stops.
+		require.Less(t, allocated, uint64(400<<20), format)
+		t.Logf("%s: refused, %d MiB allocated", format, allocated>>20)
+	}
+	refused(refs[0], mail.BodyHTML)
+	refused(refs[1], mail.BodyText)
+
+	// The text of the first does not show a url longer than 2,048 characters, so
+	// it is small. (The sanitizer drops the href of the second, which has
+	// spaces, so its HTML is small too.)
+	msg := mustGet(t, b, refs[0], mail.BodyOptions{Format: mail.BodyText})
+	require.Equal(t, strings.TrimSuffix(strings.Repeat("y\n\n", 1134), "\n\n"), msg.Text)
+	msg = mustGet(t, b, refs[1], mail.BodyOptions{Format: mail.BodyHTML})
+	require.True(t, strings.HasPrefix(msg.HTML, "<p></p><p>y</p><p>y</p>"), msg.HTML[:min(len(msg.HTML), 40)])
+	require.NotContains(t, msg.HTML, "href")
+	// The headers and the attachment list are still there.
+	msg = mustGet(t, b, refs[1], mail.BodyOptions{Format: mail.BodyNone})
+	require.Equal(t, "test", msg.Subject)
+}
+
 func TestGetMessageComplexHTMLWithAPlainAlternative(t *testing.T) {
 	srv := imaptest.New(t)
 	b := newTestBackend(t, srv)
