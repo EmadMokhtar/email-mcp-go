@@ -22,7 +22,9 @@ import (
 // The messages name the field that is wrong. They never hold an address, a
 // subject or any other text from the message, so they are safe to log.
 var (
-	// ErrInvalidAddress means an address is missing or cannot be parsed.
+	// ErrInvalidAddress means an address is missing, cannot be parsed, or
+	// cannot be sent as it is. The last case is a quoted local part such as
+	// "a b"@example.com, and a domain literal such as bob@[1.2.3.4].
 	ErrInvalidAddress = errors.New("mime: invalid address")
 	// ErrNoRecipients means the message would go to nobody. A draft built with
 	// BuildContext.ForDraft is the one message that may have none.
@@ -68,7 +70,10 @@ type BuildContext struct {
 // Build writes a new message, a reply, a reply to all, or a forward, as an
 // RFC 5322 message (the internet message format).
 //
-// Every address goes through net/mail.ParseAddress. Every value that the
+// Every address goes through net/mail.ParseAddress. An address that needs
+// quotes or brackets is refused with ErrInvalidAddress, because net/mail
+// returns it without the quotes, and the SMTP envelope would not match the
+// header (see isEnvelopeSafe). Every value that the
 // caller gives and that reaches a header is checked, and Build returns
 // ErrHeaderInjection when it has a CR, an LF or a NUL.
 //

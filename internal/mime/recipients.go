@@ -156,12 +156,39 @@ func parseRecipients(field string, given []string) ([]*netmail.Address, error) {
 	return out, nil
 }
 
-// checkAddress checks the parts of a parsed address for line breaks and NUL.
+// checkAddress checks a parsed address. The name and the address must not
+// have a CR, an LF or a NUL (ErrHeaderInjection), and the address must be safe
+// to use in the SMTP envelope (ErrInvalidAddress, see isEnvelopeSafe).
 func checkAddress(field string, a *netmail.Address) error {
 	if err := checkValue(field, a.Name); err != nil {
 		return err
 	}
-	return checkValue(field, a.Address)
+	if err := checkValue(field, a.Address); err != nil {
+		return err
+	}
+	if !isEnvelopeSafe(a.Address) {
+		return fmt.Errorf("%w: %s", ErrInvalidAddress, field)
+	}
+	return nil
+}
+
+// isEnvelopeSafe reports whether an address can be written into an SMTP path,
+// "RCPT TO:<address>", exactly as it is.
+//
+// net/mail removes the quotes of a quoted local part and returns the text
+// that was inside. For "a> NOTIFY=SUCCESS"@x it returns a> NOTIFY=SUCCESS@x.
+// In the envelope the ">" would end the path early, and the rest would be read
+// as SMTP parameters, while the header still shows the quoted address. So an
+// address is refused when it has a space or one of these characters: a double
+// quote, < > ( ) [ ] , ; : and a backslash. The square brackets make a domain
+// literal such as bob@[1.2.3.4] unsafe too. An address is also refused when
+// net/mail would have to quote it again (a dot at the start or the end of the
+// local part, two dots in a row, an "@" in the local part, and so on).
+func isEnvelopeSafe(address string) bool {
+	if address == "" || strings.ContainsAny(address, " \"<>()[],;:\\") {
+		return false
+	}
+	return !strings.Contains((&netmail.Address{Address: address}).String(), `"`)
 }
 
 // plainAddresses is plainAddress for a list.
@@ -179,7 +206,8 @@ func plainAddresses(field string, list []mail.Address) ([]*netmail.Address, erro
 
 // plainAddress checks a mail.Address and returns it as a net/mail address.
 // The Email field must be one bare address, such as "bob@example.com", and
-// not "Bob <bob@example.com>".
+// not "Bob <bob@example.com>". It must be safe for the SMTP envelope too (see
+// isEnvelopeSafe).
 func plainAddress(field string, a mail.Address) (*netmail.Address, error) {
 	if err := checkValue(field, a.Name); err != nil {
 		return nil, err
@@ -188,7 +216,7 @@ func plainAddress(field string, a mail.Address) (*netmail.Address, error) {
 		return nil, err
 	}
 	p, err := netmail.ParseAddress(a.Email)
-	if err != nil || p.Name != "" || p.Address != a.Email {
+	if err != nil || p.Name != "" || p.Address != a.Email || !isEnvelopeSafe(p.Address) {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidAddress, field)
 	}
 	return &netmail.Address{Name: a.Name, Address: a.Email}, nil

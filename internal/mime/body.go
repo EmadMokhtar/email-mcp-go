@@ -139,12 +139,14 @@ type attachment struct {
 
 // collectAttachments returns the attachments of the message: the original
 // ones for a forward that asks for them, then the new ones. It returns
-// mail.ErrTooLarge when the data is over maxAttachmentBytes in all.
+// mail.ErrTooLarge when the data is over maxAttachmentBytes in all. The file
+// name of an original attachment comes from a third party, so it is cleaned
+// (see cleanOriginal). The file name of a new attachment is checked.
 func collectAttachments(c mail.Compose, bc BuildContext) ([]attachment, error) {
 	var in []mail.OutgoingAttachment
 	if c.ForwardOf != nil && c.IncludeOriginalAttachments {
 		for _, a := range bc.OriginalAttachments {
-			in = append(in, mail.OutgoingAttachment{Filename: a.Filename, ContentType: a.ContentType, Data: a.Data})
+			in = append(in, mail.OutgoingAttachment{Filename: cleanOriginal(a.Filename), ContentType: a.ContentType, Data: a.Data})
 		}
 	}
 	in = append(in, c.Attachments...)

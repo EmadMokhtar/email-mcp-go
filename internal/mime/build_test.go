@@ -341,6 +341,31 @@ func TestForwardAttachmentsOnlyWhenAsked(t *testing.T) {
 	require.Empty(t, parsedOf(t, reply.Data).Attachments)
 }
 
+func TestForwardCleansOriginalAttachmentNames(t *testing.T) {
+	bc := newContext()
+	bc.Original = originalMessage()
+	for _, tc := range []struct{ name, want string }{
+		{"a\nb.pdf", "a b.pdf"},
+		{"a\r\nb\x00c.pdf", "a b c.pdf"},
+		{"plan.pdf" + hostile, "plan.pdf Bcc: evil@x"},
+	} {
+		bc.OriginalAttachments = []mail.Attachment{{
+			AttachmentInfo: mail.AttachmentInfo{Filename: tc.name, ContentType: "application/pdf"},
+			Data:           []byte("%PDF-1.4 fake"),
+		}}
+		raw := mustBuild(t, mail.Compose{ForwardOf: forwardOf(), To: []string{"dave@x"}, IncludeOriginalAttachments: true}, bc)
+		noInjectedHeader(t, raw.Data)
+		require.Equal(t, []string{tc.want}, attachmentNames(parsedOf(t, raw.Data)), "name %q", tc.name)
+	}
+
+	// A name that the caller gives is still refused.
+	_, err := Build(mail.Compose{
+		ForwardOf: forwardOf(), To: []string{"dave@x"},
+		Attachments: []mail.OutgoingAttachment{{Filename: "a\nb.pdf", ContentType: "application/pdf", Data: []byte("x")}},
+	}, bc)
+	require.ErrorIs(t, err, ErrHeaderInjection)
+}
+
 func attachmentNames(p *Parsed) []string {
 	var names []string
 	for _, a := range p.Attachments {
@@ -670,6 +695,107 @@ func TestRecipientsAreDeduplicated(t *testing.T) {
 	require.Contains(t, string(raw.Data), "Bob", "the first display name is kept")
 }
 
+// quotedLocalParts are addresses that net/mail accepts but that SMTP cannot
+// carry as they are. net/mail returns the text inside the quotes, so the
+// envelope would hold "a b@x" or "a> NOTIFY=SUCCESS@x" and not what the header
+// shows.
+var quotedLocalParts = []string{
+	`"a> NOTIFY=SUCCESS"@x`,
+	`"victim@evil.example>"@x`,
+	`"a b"@x`,
+	`"a>b"@x`,
+	`"x>"@y`,
+	`"a<b"@x`,
+	`"a(b)"@x`,
+	`"a[b]"@x`,
+	`"a,b"@x`,
+	`"a;b"@x`,
+	`"a:b"@x`,
+	`"a\\b"@x`,
+	`"a\"b"@x`,
+	`"a@b"@x`,
+	`"a..b"@x`,
+	`".a"@x`,
+	`"a."@x`,
+	`""@x`,
+	`Bob <"a b"@x>`,
+	`bob@[1.2.3.4]`,
+}
+
+func TestQuotedLocalPartsAreRefused(t *testing.T) {
+	for _, address := range quotedLocalParts {
+		for _, field := range []string{"to", "cc", "bcc"} {
+			c := mail.Compose{To: []string{"bob@x"}}
+			switch field {
+			case "to":
+				c.To = append(c.To, address)
+			case "cc":
+				c.Cc = []string{address}
+			case "bcc":
+				c.Bcc = []string{address}
+			}
+			raw, err := Build(c, newContext())
+			require.ErrorIs(t, err, ErrInvalidAddress, "%s %q", field, address)
+			require.Contains(t, err.Error(), field+"[")
+			require.NotContains(t, err.Error(), "NOTIFY", "the address text stays out of the error")
+			require.Nil(t, raw)
+		}
+	}
+}
+
+func TestOrdinaryAddressesAreStillAccepted(t *testing.T) {
+	for _, address := range []string{
+		"bob@x",
+		"bob@example.com",
+		"first.last@example.com",
+		"a+tag@example.com",
+		"o'brien@example.com",
+		"a_b-c=d@sub.example.com",
+		"{x}@example.com",
+		"\U00004F60\U00006211@example.com",
+		"Bob <bob@x>",
+		`"Bob B." <bob@x>`,
+		`"B>b" <bob@x>`,
+		"Bob (work) <bob@x>",
+	} {
+		raw, err := Build(mail.Compose{To: []string{address}}, newContext())
+		require.NoError(t, err, "address %q", address)
+		require.Len(t, raw.Recipients, 1)
+		requireEnvelopeSafe(t, raw.Recipients[0])
+	}
+}
+
+// requireEnvelopeSafe checks that an address can be written into an SMTP path
+// (RCPT TO:<address>) as it is, and that it is the address the header shows.
+func requireEnvelopeSafe(t *testing.T, address string) {
+	t.Helper()
+	require.False(t, strings.ContainsAny(address, "\r\n\x00 \"<>()[],;:\\"), "address %q", address)
+	parsed, err := netmail.ParseAddress(address)
+	require.NoError(t, err, "address %q", address)
+	require.Equal(t, address, parsed.Address)
+	require.Equal(t, "<"+address+">", (&netmail.Address{Address: address}).String(), "address %q needs quotes", address)
+}
+
+func TestOriginalAddressMustBeSafeToo(t *testing.T) {
+	for _, email := range []string{`"a b"@x`, "a b@x", "bob@[1.2.3.4]", "a>b@x"} {
+		bc := newContext()
+		bc.Original = originalMessage()
+		bc.Original.From = mail.Address{Email: email}
+		_, err := Build(mail.Compose{ReplyTo: replyTo(false)}, bc)
+		require.ErrorIs(t, err, ErrInvalidAddress, "email %q", email)
+
+		bc.Original = originalMessage()
+		bc.Original.Cc = []mail.Address{{Email: email}}
+		_, err = Build(mail.Compose{ReplyTo: replyTo(true)}, bc)
+		require.ErrorIs(t, err, ErrInvalidAddress, "email %q", email)
+	}
+
+	bc := newContext()
+	bc.From = mail.Address{Email: "bob@[1.2.3.4]"}
+	_, err := Build(mail.Compose{To: []string{"bob@x"}}, bc)
+	require.ErrorIs(t, err, ErrInvalidAddress)
+}
+
 func TestInvalidRecipients(t *testing.T) {
 	cases := []struct {
 		name string
@@ -985,6 +1111,11 @@ func FuzzBuildHeaders(f *testing.F) {
 	f.Add("hi", "bob@x", "Bob", "a.txt", "text/plain\r\nBcc: evil@x", "body")
 	f.Add("=?utf-8?q?hi=0D=0ABcc:_evil@x?=", "\"Bob\" <bob@x>", "=?utf-8?q?B=0D=0A?=", "a.txt", "text/plain; name=\"x\"", "\r\nBcc: evil@x\r\n")
 	f.Add("hi", "bob@x", "J\U000000FCrgen", "\U00004F60.txt", "application/pdf; x=y", "Bcc: evil@x")
+	f.Add("hi", `"a b"@x`, "Bob", "a.txt", "text/plain", "body")
+	f.Add("hi", `"x>"@y`, "Bob", "a.txt", "text/plain", "body")
+	f.Add("hi", `"a> NOTIFY=SUCCESS"@x`, "Bob", "a.txt", "text/plain", "body")
+	f.Add("hi", `"victim@evil.example>"@x`, "Bob", "a.txt", "text/plain", "body")
+	f.Add("hi", `Bob <"a\"b"@x>`, "Bob", "a.txt", "text/plain", "body")
 
 	f.Fuzz(func(t *testing.T, subject, to, name, filename, contentType, body string) {
 		// The same text in the original message must never add a header, and
@@ -1032,7 +1163,8 @@ func FuzzBuildHeaders(f *testing.F) {
 		require.Contains(t, raw.Recipients, "hidden@x")
 		require.NotContains(t, strings.ToLower(headerBlock(raw.Data)), "hidden@x")
 		for _, address := range raw.Recipients {
-			require.False(t, strings.ContainsAny(address, "\r\n\x00 <>,"), "recipient %q", address)
+			requireEnvelopeSafe(t, address)
 		}
+		requireEnvelopeSafe(t, raw.From)
 	})
 }

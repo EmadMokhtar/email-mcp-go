@@ -164,6 +164,27 @@ func TestFromDraftRefusesRecipientsItCannotRead(t *testing.T) {
 	}
 }
 
+func TestFromDraftRefusesQuotedLocalParts(t *testing.T) {
+	for _, address := range quotedLocalParts {
+		for _, field := range []string{"From", "To", "Cc", "Bcc"} {
+			draft := "From: me@x\r\nTo: bob@x\r\n" + field + ": " + address + "\r\n\r\nbody"
+			if field == "From" {
+				draft = "From: " + address + "\r\nTo: bob@x\r\n\r\nbody"
+			}
+			raw, err := FromDraft([]byte(draft))
+			require.ErrorIs(t, err, ErrInvalidAddress, "%s %q", field, address)
+			require.NotContains(t, err.Error(), "NOTIFY")
+			require.Nil(t, raw)
+		}
+	}
+
+	// Ordinary addresses still work, and the envelope is what the header shows.
+	raw, err := FromDraft([]byte("From: Me <me@example.com>\r\nTo: first.last@example.com, \"Bob B.\" <bob@example.com>\r\n\r\nbody"))
+	require.NoError(t, err)
+	require.Equal(t, "me@example.com", raw.From)
+	require.Equal(t, []string{"first.last@example.com", "bob@example.com"}, raw.Recipients)
+}
+
 func TestFromDraftDoesNotShareInput(t *testing.T) {
 	draft := []byte("From: me@x\r\nTo: bob@x\r\n\r\nbody")
 	keep := bytes.Clone(draft)
@@ -186,6 +207,8 @@ func FuzzFromDraft(f *testing.F) {
 		"From: me@x\rBcc: s@x\rTo: bob@x\r\r",
 		"From: me@x\r\nTo: =?utf-8?q?a?= <a@x>\r\nBcc:\r\n\r\n",
 		"\r\n\r\nFrom: me@x\r\nTo: bob@x\r\n",
+		"From: me@x\r\nTo: \"a b\"@x\r\n\r\n",
+		"From: me@x\r\nTo: bob@x\r\nBcc: \"x>\"@y\r\n\r\n",
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))
@@ -198,6 +221,10 @@ func FuzzFromDraft(f *testing.F) {
 		}
 		require.NotEmpty(t, raw.From)
 		require.NotEmpty(t, raw.Recipients)
+		requireEnvelopeSafe(t, raw.From)
+		for _, address := range raw.Recipients {
+			requireEnvelopeSafe(t, address)
+		}
 
 		// No Bcc field is left, as the standard library sees it and as
 		// FromDraft sees it.
