@@ -108,6 +108,10 @@ type Service struct {
 	// capabilitiesBudget is how long ListAccounts waits for the answers of the
 	// backends. A test lowers it.
 	capabilitiesBudget time.Duration
+	// beforeCollect is a hook for tests. fillCapabilities calls it when it has
+	// started all the questions and before it collects the answers. ready returns
+	// the number of answers that wait in the channel. It is nil in production.
+	beforeCollect func(ready func() int)
 }
 
 // New returns a Service.
@@ -184,15 +188,19 @@ func (s *Service) authorize(ctx context.Context, id account.AccountID, act polic
 
 // permissionError builds the error for a refused decision.
 //
-// When the level of the account is already high enough, only the scopes of the
-// token can have lowered the level. A link to the settings would be wrong advice
-// then, so the error has none.
+// When the level of the account is already high enough and the scopes of the
+// token lowered the level (d.Current is below the account level), only the token
+// can be the reason. A link to the settings would be wrong advice then, so the
+// error has none. A damaged account level (outside 0 to 5) counts as Off, as in
+// the policy. An action that the policy does not know is refused whatever the
+// level is, and the scopes are not the reason either.
 //
 // Otherwise the link may fail. The refusal still stands, with an empty link:
 // the action must never go ahead because of a link problem.
 func (s *Service) permissionError(ctx context.Context, a *account.Account, d policy.Decision) *PermissionError {
 	level := a.Level(account.AreaMail)
-	if level >= d.Required && level <= account.MailDelete {
+	validLevel := level >= account.MailOff && level <= account.MailDelete
+	if validLevel && level >= d.Required && d.Current < level {
 		return &PermissionError{Decision: d, TokenLimited: true}
 	}
 	return &PermissionError{Decision: d, Link: s.settingsLink(ctx, a.ID, account.AreaMail, d.Required)}

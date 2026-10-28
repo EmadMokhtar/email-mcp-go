@@ -95,6 +95,9 @@ func (s *Service) fillCapabilities(ctx context.Context, accounts []*account.Acco
 		}()
 	}
 
+	if s.beforeCollect != nil {
+		s.beforeCollect(func() int { return len(answers) })
+	}
 	for received := 0; received < len(ask); {
 		select {
 		case a := <-answers:

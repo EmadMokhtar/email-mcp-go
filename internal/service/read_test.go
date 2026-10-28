@@ -351,6 +351,47 @@ func TestReadRefusedByTokenScopesHasNoSettingsLink(t *testing.T) {
 	require.Zero(t, backends.calls())
 }
 
+// TokenLimited is set only when the token scopes really lowered the level and
+// the level of the account would have been enough.
+func TestPermissionErrorTokenLimited(t *testing.T) {
+	f := newFixture(t)
+	svc := f.newService(&fakeFactory{}, &fakeLinks{})
+	tests := []struct {
+		name   string
+		level  account.Level
+		action policy.Action
+		scopes policy.Scopes
+		want   bool
+	}{
+		{"scopes lowered the level below what the action needs", account.MailSend, policy.ActRead, policy.Scopes{}, true},
+		{"the account level is too low, with scopes that would allow it", account.MailOff, policy.ActRead, policy.Scopes{"email:read"}, false},
+		{"the account level is too low, without scopes", account.MailRead, policy.ActSend, nil, false},
+		{"an action that is not known, at the highest level, without scopes", account.MailDelete, policy.Action("bogus"), nil, false},
+		{"a damaged account level counts as Off", account.Level(9), policy.ActRead, nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &account.Account{
+				ID: "acct", TenantID: f.tenant, Address: "me@example.com",
+				Levels: map[account.Area]account.Level{account.AreaMail: tt.level},
+			}
+			d := policy.Decide(a, tt.action, tt.scopes)
+			require.False(t, d.Allowed, "the test needs a refused decision")
+
+			err := svc.permissionError(f.ctx(), a, d)
+
+			require.Equal(t, tt.want, err.TokenLimited)
+			if tt.want {
+				require.Empty(t, err.Link)
+				require.Contains(t, err.Error(), "access token does not allow")
+			} else {
+				require.NotEmpty(t, err.Link)
+				require.NotContains(t, err.Error(), "access token")
+			}
+		})
+	}
+}
+
 // listWithin runs ListAccounts and fails the test when it does not return
 // within the limit. It stops a test that would hang for ever.
 func listWithin(t *testing.T, svc *Service, ctx context.Context, limit time.Duration) []AccountView {
@@ -460,7 +501,14 @@ func TestListAccountsDoesNotWaitForASlowBackend(t *testing.T) {
 		case r := <-done:
 			require.NoError(t, r.err, "a cancel is not an error: the answers that came are returned")
 			require.Less(t, time.Since(start), 2*time.Second)
-			check(t, r.views)
+			// The test cancels as soon as the slow backend is asked. The fast
+			// accounts may or may not have answered by then, so this test does not
+			// look at their capabilities.
+			// TestListAccountsKeepsTheAnswersThatCameBeforeTheCancel does.
+			require.Len(t, r.views, 3)
+			require.Equal(t, []account.AccountID{first.ID, slow.ID, last.ID},
+				[]account.AccountID{r.views[0].ID, r.views[1].ID, r.views[2].ID})
+			require.Equal(t, mail.Capabilities{}, r.views[1].Capabilities, "the slow account never answered")
 		case <-time.After(3 * time.Second):
 			require.FailNow(t, "ListAccounts did not return after the caller cancelled")
 		}
@@ -476,6 +524,53 @@ func TestListAccountsDoesNotWaitForASlowBackend(t *testing.T) {
 			require.Equal(t, want, v.Capabilities)
 		}
 	})
+}
+
+// The answers that came before the cancel are kept. The test makes sure that
+// every fast answer waits in the channel of ListAccounts when the cancel comes,
+// so the collector sees the cancel and the answers at the same time. It may
+// take the cancel first. It must still return every answer.
+func TestListAccountsKeepsTheAnswersThatCameBeforeTheCancel(t *testing.T) {
+	f := newFixture(t)
+	const total, slowIndex = 13, 5
+	accounts := make([]*account.Account, total)
+	for i := range total {
+		accounts[i] = f.addAccount(f.tenant, fmt.Sprintf("user%d@example.com", i), offlineSettings(), "pw", func(a *account.Account) {
+			a.CreatedAt = a.CreatedAt.Add(time.Duration(i) * time.Second) // the store sorts by time
+		})
+	}
+	want := mail.Capabilities{Tags: true, MaxBatch: 500}
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	backends := &fakeFactory{
+		backend:   &fakeBackend{caps: want},
+		byAccount: map[account.AccountID]mail.Backend{accounts[slowIndex].ID: &fakeBackend{capsStuck: release}},
+	}
+	svc := f.newService(backends, &fakeLinks{})
+	ctx, cancel := context.WithCancel(f.ctx())
+	defer cancel()
+	svc.beforeCollect = func(ready func() int) {
+		// Wait until all the fast answers are in the channel, then cancel.
+		for deadline := time.Now().Add(5 * time.Second); ready() < total-1 && time.Now().Before(deadline); {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}
+
+	start := time.Now()
+	views, err := svc.ListAccounts(ctx)
+
+	require.NoError(t, err)
+	require.Less(t, time.Since(start), 2*time.Second, "the cancel must end the wait for the slow account")
+	require.Len(t, views, total)
+	for i, v := range views {
+		require.Equal(t, accounts[i].ID, v.ID)
+		if i == slowIndex {
+			require.Equal(t, mail.Capabilities{}, v.Capabilities, "the slow account never answered")
+			continue
+		}
+		require.Equal(t, want, v.Capabilities, "account %d answered before the cancel", i)
+	}
 }
 
 func TestListAccountsAsksAtMostEightBackendsAtOnce(t *testing.T) {

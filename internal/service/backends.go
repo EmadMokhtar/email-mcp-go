@@ -307,8 +307,8 @@ func (c *BackendCache) Close() {
 // remove closes and removes the slots and the retired backends whose key
 // matches.
 func (c *BackendCache) remove(match func(backendKey) bool) {
-	// Take the slots out of the maps first, and wait for them after c.mu is
-	// free. Nobody may wait for a slot while holding c.mu.
+	// Take the slots out of the map first, and wait for them after c.mu is free.
+	// Nobody may wait for a slot while holding c.mu.
 	c.mu.Lock()
 	var slots []*slot
 	for key, s := range c.slots {
@@ -317,6 +317,28 @@ func (c *BackendCache) remove(match func(backendKey) bool) {
 			delete(c.slots, key)
 		}
 	}
+	c.mu.Unlock()
+
+	// Close the retired backends now, before the wait for the slots.
+	c.closeRetiredMatching(match)
+	for _, s := range slots {
+		s.lock <- struct{}{} // wait for the call that holds the slot
+		c.closeEntry(s)
+		s.dead = true
+		<-s.lock
+	}
+	// A call that held a slot while we waited may have retired a backend after
+	// the first look. Every such call has ended now, because we held its slot
+	// and marked it dead. Look again, so that this backend is closed now and does
+	// not wait for its timer.
+	c.closeRetiredMatching(match)
+}
+
+// closeRetiredMatching closes the retired backends whose key matches and stops
+// their timers. A backend leaves the map before it is closed, so it is closed
+// once: by this function or by its timer, never by both.
+func (c *BackendCache) closeRetiredMatching(match func(backendKey) bool) {
+	c.mu.Lock()
 	var retired []*imapsmtp.Backend
 	for b, r := range c.retired {
 		if match(r.key) {
@@ -326,15 +348,8 @@ func (c *BackendCache) remove(match func(backendKey) bool) {
 		}
 	}
 	c.mu.Unlock()
-
 	for _, b := range retired {
 		_ = b.Close()
-	}
-	for _, s := range slots {
-		s.lock <- struct{}{} // wait for the call that holds the slot
-		c.closeEntry(s)
-		s.dead = true
-		<-s.lock
 	}
 }
 

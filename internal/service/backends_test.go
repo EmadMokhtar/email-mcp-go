@@ -664,7 +664,8 @@ func TestBackendCacheConcurrentWaitCanBeCancelled(t *testing.T) {
 }
 
 // Forget has to wait for a build that is running, and then it closes the result.
-// Calls that waited for the account must end with a working backend.
+// Calls that waited for the account must not fail. The backend that such a call
+// returns may already be closed by Forget, so the test does not use it.
 func TestBackendCacheConcurrentForgetDuringBuild(t *testing.T) {
 	f := newFixture(t)
 	srv := imaptest.New(t)
@@ -759,4 +760,110 @@ func TestBackendCacheDeadSlotIsNotUsed(t *testing.T) {
 	first := mustMail(t, c, a)
 	require.Same(t, first, mustMail(t, c, a))
 	require.EqualValues(t, 1, built.Load())
+}
+
+// gatedSecrets is a SecretStore that holds one call of GetAccountSecret until
+// the test lets it go. The call that is held has the slot of its account.
+type gatedSecrets struct {
+	inner   SecretStore
+	armed   atomic.Bool
+	entered chan struct{} // gets a value when the held call starts (buffered)
+	gate    chan struct{} // the held call goes on when this is closed
+}
+
+func (g *gatedSecrets) arm() { g.armed.Store(true) }
+
+func (g *gatedSecrets) GetAccountSecret(ctx context.Context, tenant account.TenantID, acct account.AccountID, kind string) (int, []byte, error) {
+	if g.armed.CompareAndSwap(true, false) {
+		g.entered <- struct{}{}
+		<-g.gate
+	}
+	return g.inner.GetAccountSecret(ctx, tenant, acct, kind)
+}
+
+// A call can hold the slot of an account and retire a backend after Forget (or
+// Close) has taken its first look at the retired backends. Forget waits for the
+// slot, so it must look again and close that backend itself. The timer must not
+// be the one that closes it two minutes later.
+func TestBackendCacheConcurrentRetireWhileRemoveWaits(t *testing.T) {
+	removers := map[string]func(c *BackendCache, id account.AccountID){
+		"Forget": func(c *BackendCache, id account.AccountID) { c.Forget(id) },
+		"Close":  func(c *BackendCache, _ account.AccountID) { c.Close() },
+	}
+	for name, remove := range removers {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			srv := imaptest.New(t)
+			a := f.addAccount(f.tenant, "me@example.com", serverSettings(srv), srv.Pass)
+			gated := &gatedSecrets{inner: f.store, entered: make(chan struct{}, 1), gate: make(chan struct{})}
+			var once sync.Once
+			letGo := func() { once.Do(func() { close(gated.gate) }) }
+			t.Cleanup(letGo)
+			timers := &fakeTimers{}
+			c := NewBackendFactory(gated, f.vault, f.signer, true, nil)
+			c.afterFunc = timers.AfterFunc
+			t.Cleanup(c.Close)
+			// A first replacement happens before the test starts to wait. It retires
+			// the oldest backend and starts timer 0.
+			oldest := mustMail(t, c, a)
+			require.True(t, works(t, oldest))
+			f.setPassword(a, srv.Pass)
+			old := mustMail(t, c, a)
+			require.NotSame(t, oldest, old)
+			require.Equal(t, 1, timers.count())
+			require.True(t, works(t, oldest), "retired, not closed yet")
+
+			// The password changes again. The next call to Mail holds the slot and
+			// waits in the read of the secret. It has not retired anything yet.
+			f.setPassword(a, srv.Pass)
+			gated.arm()
+			rebuilding := mailAsync(c, context.Background(), a)
+			select {
+			case <-gated.entered:
+			case <-time.After(2 * time.Second):
+				require.FailNow(t, "the call never reached the read of the secret")
+			}
+			require.Equal(t, 1, timers.count(), "the call has not retired its backend yet")
+
+			// Forget takes the slot out of the cache and waits for the call.
+			removed := make(chan struct{})
+			go func() {
+				remove(c, a.ID)
+				close(removed)
+			}()
+			require.Eventually(t, func() bool {
+				c.mu.Lock()
+				defer c.mu.Unlock()
+				return len(c.slots) == 0
+			}, 2*time.Second, time.Millisecond)
+			select {
+			case <-removed:
+				require.FailNow(t, "the remove call returned while another call held the slot")
+			case <-time.After(50 * time.Millisecond):
+			}
+			// The first look closes the backend that was retired earlier, at once.
+			// It does not wait for the call that holds the slot.
+			require.Eventually(t, func() bool { return !works(t, oldest) }, 2*time.Second, time.Millisecond,
+				"a backend that is retired already must be closed before the wait for the slot ends")
+
+			// Now the call goes on. It retires the old backend and builds a new one.
+			letGo()
+			r := waitFor(t, rebuilding, 2*time.Second, "the rebuilding call never finished")
+			require.NoError(t, r.err)
+			select {
+			case <-removed:
+			case <-time.After(2 * time.Second):
+				require.FailNow(t, "the remove call never returned")
+			}
+
+			require.Equal(t, 2, timers.count(), "the call retired the backend that was current")
+			require.True(t, timers.get(0).stopped, "the remove call must stop the timer of the first retired backend")
+			require.True(t, timers.get(1).stopped, "the remove call must stop the timer of the backend retired during the wait")
+			require.False(t, works(t, old), "the backend retired during the wait must be closed by the remove call, not by the timer")
+			require.False(t, works(t, r.backend), "the backend that the call built must be closed too")
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			require.Empty(t, c.retired, "no retired backend may wait for a timer")
+		})
+	}
 }
