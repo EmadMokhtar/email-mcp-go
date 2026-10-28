@@ -4,6 +4,11 @@
 // instructions (prompt injection). The functions here remove characters a
 // reader cannot see, and turn HTML into plain text without the parts that a
 // reader cannot see either.
+//
+// The package also writes mail: Build makes a new message, a reply or a
+// forward, and FromDraft prepares a saved draft for sending. Both keep Bcc
+// recipients out of the headers that are sent, and refuse values that could
+// add a header.
 package mime
 
 import (
