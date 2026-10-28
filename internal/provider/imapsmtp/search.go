@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
@@ -144,7 +143,7 @@ func (b *Backend) Search(ctx context.Context, q mail.Query, page mail.PageToken)
 		if tok != nil && tok.Mailbox != mailbox {
 			return fmt.Errorf("imap: the page token is for another folder: %w", signing.ErrInvalid)
 		}
-		sel, err := examine(c, mailbox)
+		sel, err := b.openFolder(c, mailbox, true)
 		if err != nil {
 			return err
 		}
@@ -265,27 +264,27 @@ func buildCriteria(q mail.Query, folderFlags []imap.Flag) (criteria *imap.Search
 		}
 	}
 
-	// A tag is an IMAP keyword. A name that is not a valid keyword (for
-	// example, one with a space) is on no message. So it never matches in
-	// TagsAny, and it changes nothing in TagsNone.
+	// A name that is not a tag (see isTag) is on no message as a tag. So it
+	// never matches in TagsAny, and it changes nothing in TagsNone. This also
+	// holds for a keyword that a message does have, such as $Forwarded.
 	if len(q.TagsAny) > 0 {
-		keywords := validKeywords(q.TagsAny)
+		keywords := tagKeywords(q.TagsAny)
 		if len(keywords) == 0 {
 			return c, true
 		}
 		anyOf := anyKeyword(keywords)
 		c.And(&anyOf)
 	}
-	c.NotFlag = append(c.NotFlag, validKeywords(q.TagsNone)...)
+	c.NotFlag = append(c.NotFlag, tagKeywords(q.TagsNone)...)
 	if q.Untagged {
-		// Untagged means: none of the keywords that the folder uses.
+		// Untagged means: none of the keywords that the folder uses and that
+		// are tags. Other keywords ($Forwarded, Junk and the like) are not
+		// tags, so they do not make a message tagged.
 		var used []string
 		for _, f := range folderFlags {
-			if !strings.HasPrefix(string(f), `\`) {
-				used = append(used, string(f))
-			}
+			used = append(used, string(f))
 		}
-		c.NotFlag = append(c.NotFlag, validKeywords(used)...)
+		c.NotFlag = append(c.NotFlag, tagKeywords(used)...)
 	}
 	return c, false
 }
@@ -320,31 +319,15 @@ func anyKeyword(keywords []imap.Flag) imap.SearchCriteria {
 	}}}
 }
 
-// validKeywords returns the names that are valid IMAP keywords, as flags.
-func validKeywords(names []string) []imap.Flag {
+// tagKeywords returns the names that are tags (see isTag), as flags.
+func tagKeywords(names []string) []imap.Flag {
 	var out []imap.Flag
 	for _, n := range names {
-		if isKeyword(n) {
+		if isTag(n) {
 			out = append(out, imap.Flag(n))
 		}
 	}
 	return out
-}
-
-// isKeyword reports whether s can be an IMAP keyword (RFC 3501: an atom that
-// does not start with a backslash). An atom is printable ASCII without the
-// characters ( ) { % * " \ ] and white space.
-func isKeyword(s string) bool {
-	if s == "" || len(s) > 255 {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if ch <= ' ' || ch >= 0x7f || strings.IndexByte(`(){%*"\]`, ch) >= 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // hasDateFilter reports whether the query limits the date.
@@ -466,7 +449,7 @@ func (b *Backend) Changes(ctx context.Context, folder string, since mail.Cursor)
 		if since != "" && cur.Mailbox != mailbox {
 			return fmt.Errorf("imap: the cursor is for another folder: %w", signing.ErrInvalid)
 		}
-		sel, err := examine(c, mailbox)
+		sel, err := b.openFolder(c, mailbox, true)
 		if err != nil {
 			return err
 		}

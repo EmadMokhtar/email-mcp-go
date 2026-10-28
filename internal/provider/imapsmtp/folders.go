@@ -197,13 +197,18 @@ func listMailboxes(c *imapclient.Client, withStatus bool) ([]*imap.ListData, err
 	return list, nil
 }
 
-// examine opens a folder read-only (EXAMINE). A read-only folder cannot
-// change, so reading never sets \Seen or \Recent. The data holds the
-// UIDVALIDITY, the UIDNEXT and the flags that the folder uses.
+// openMailbox opens a folder. With readOnly, it uses EXAMINE: a read-only
+// folder cannot change, so reading never sets \Seen or \Recent. Without it,
+// it uses SELECT, for the commands that change messages. The data holds the
+// UIDVALIDITY, the UIDNEXT, the flags that the folder uses and the permanent
+// flags.
 //
 // A folder that does not exist gives an error that wraps mail.ErrNotFound.
-func examine(c *imapclient.Client, mailbox string) (*imap.SelectData, error) {
-	data, err := c.Select(mailbox, &imap.SelectOptions{ReadOnly: true}).Wait()
+//
+// Code in a Backend method uses Backend.openFolder, which also notes whether
+// the account supports tags.
+func openMailbox(c *imapclient.Client, mailbox string, readOnly bool) (*imap.SelectData, error) {
+	data, err := c.Select(mailbox, &imap.SelectOptions{ReadOnly: readOnly}).Wait()
 	if err != nil {
 		var serverErr *imap.Error
 		if errors.As(err, &serverErr) && serverErr.Type == imap.StatusResponseTypeNo &&
@@ -218,4 +223,146 @@ func examine(c *imapclient.Client, mailbox string) (*imap.SelectData, error) {
 		return nil, fmt.Errorf("%w: the server does not report UIDVALIDITY", mail.ErrUnsupported)
 	}
 	return data, nil
+}
+
+// CreateFolder creates a folder and returns it. The parent may be empty (a
+// top-level folder), a folder alias or a folder name. The name of the new
+// folder is the name of the parent, the hierarchy delimiter of the server and
+// the name.
+//
+// The name may not be empty, may not have a control character, the delimiter
+// of the server, or one of the LIST wildcards (* and %), and may not be a
+// folder alias. A name that is not valid wraps mail.ErrUnsupported. A parent
+// that does not exist wraps mail.ErrNotFound, and the backend does not make it.
+// A folder that exists already wraps mail.ErrConflict.
+//
+// CREATE is not repeated after a dropped connection: the folder may exist
+// already, and the second try would report a conflict that is not real.
+func (b *Backend) CreateFolder(ctx context.Context, name, parent string) (mail.Folder, error) {
+	if err := checkNewFolderName(name); err != nil {
+		return mail.Folder{}, err
+	}
+	if err := checkFolderName(parent); err != nil {
+		return mail.Folder{}, err
+	}
+	if strings.ContainsAny(parent, "*%") {
+		return mail.Folder{}, fmt.Errorf("%w: the folder name is not valid", mail.ErrNotFound)
+	}
+
+	var out mail.Folder
+	err := b.pool.withNoRetry(ctx, func(c *imapclient.Client) error {
+		out = mail.Folder{}
+		delim, err := hierarchyDelimiter(c)
+		if err != nil {
+			return err
+		}
+		if delim != 0 && strings.ContainsRune(name, delim) {
+			return fmt.Errorf("%w: a folder name may not contain %q. Use the parent to make a folder inside a folder", mail.ErrUnsupported, string(delim))
+		}
+
+		full := name
+		if parent != "" {
+			parentName, err := resolveOn(c, parent)
+			if err != nil {
+				return err
+			}
+			// A parent that only holds other folders (\Noselect) is fine.
+			parentData, err := listExact(c, parentName)
+			if err != nil {
+				return err
+			}
+			if parentData == nil {
+				return fmt.Errorf("%w: the parent folder %q does not exist", mail.ErrNotFound, parentName)
+			}
+			if delim == 0 {
+				return fmt.Errorf("%w: this server has no folder hierarchy, so a folder cannot have a parent", mail.ErrUnsupported)
+			}
+			full = parentName + string(delim) + name
+		}
+		if len(full) > maxFolderNameLen {
+			return fmt.Errorf("%w: the folder name is too long", mail.ErrUnsupported)
+		}
+
+		existing, err := listExact(c, full)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			return fmt.Errorf("%w: the folder %q exists", mail.ErrConflict, full)
+		}
+		if err := c.Create(full, nil).Wait(); err != nil {
+			var serverErr *imap.Error
+			if errors.As(err, &serverErr) && serverErr.Code == imap.ResponseCodeAlreadyExists {
+				return fmt.Errorf("%w: the folder %q exists", mail.ErrConflict, full)
+			}
+			return err
+		}
+
+		out = mail.Folder{Name: full}
+		// The alias is a help to the caller. The folder exists now, so a
+		// failed LIST does not make the call fail: an error here would make
+		// the caller try again and get a conflict.
+		if list, err := listMailboxes(c, false); err == nil {
+			aliases := aliasFolders(list)
+			for _, a := range aliasAttrs {
+				if aliases[a.alias] == full {
+					out.Alias = a.alias
+					break
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return mail.Folder{}, err
+	}
+	return out, nil
+}
+
+// checkNewFolderName checks the name of a folder that is going to be made. The
+// error wraps mail.ErrUnsupported. The hierarchy delimiter is checked later,
+// because only the server knows it.
+func checkNewFolderName(name string) error {
+	switch {
+	case strings.TrimSpace(name) == "":
+		return fmt.Errorf("%w: the folder name is empty", mail.ErrUnsupported)
+	case len(name) > maxFolderNameLen || strings.IndexFunc(name, unicode.IsControl) >= 0:
+		return fmt.Errorf("%w: a folder name may not be longer than %d bytes or have control characters", mail.ErrUnsupported, maxFolderNameLen)
+	case strings.ContainsAny(name, "*%"):
+		return fmt.Errorf("%w: a folder name may not contain * or %%", mail.ErrUnsupported)
+	case mail.IsAlias(name):
+		return fmt.Errorf("%w: %q is a folder alias and cannot be the name of a folder", mail.ErrUnsupported, name)
+	}
+	return nil
+}
+
+// hierarchyDelimiter returns the hierarchy delimiter of the server: the
+// character between a folder and its sub-folder. It is 0 for a server with
+// flat folders. LIST with an empty name asks for it (RFC 3501, section 6.3.8).
+func hierarchyDelimiter(c *imapclient.Client) (rune, error) {
+	list, err := c.List("", "", nil).Collect()
+	if err != nil {
+		return 0, err
+	}
+	if len(list) == 0 {
+		return 0, nil
+	}
+	return list[0].Delim, nil
+}
+
+// listExact returns the folder with exactly this name, or nil when there is
+// none. The name must not have the LIST wildcards. A folder that is only a
+// name that was subscribed to (\NonExistent) does not exist.
+func listExact(c *imapclient.Client, name string) (*imap.ListData, error) {
+	list, err := c.List("", name, nil).Collect()
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range list {
+		same := d.Mailbox == name || (strings.EqualFold(name, inboxName) && strings.EqualFold(d.Mailbox, inboxName))
+		if same && !hasAttr(d.Attrs, imap.MailboxAttrNonExistent) {
+			return d, nil
+		}
+	}
+	return nil, nil
 }

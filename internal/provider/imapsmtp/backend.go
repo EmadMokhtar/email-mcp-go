@@ -2,6 +2,7 @@ package imapsmtp
 
 import (
 	"context"
+	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
@@ -19,11 +20,19 @@ const maxBatch = 500
 // Reads open a folder read-only (EXAMINE) and fetch message data with
 // BODY.PEEK. So reading never sets \Seen and never changes the folder.
 //
+// The calls that change messages (flags, tags, move and trash) first check
+// every reference of the call against the server, and change nothing when one
+// is stale or missing. They never delete a message for good: a message goes to
+// another folder, and only the UID of a message that was copied by the
+// fallback of Move is expunged.
+//
 // A Backend is safe for use by many goroutines.
 type Backend struct {
 	cfg    Config
 	signer *signing.Signer
 	pool   *pool
+	// tags is what the backend knows about tag support (see tagSupport).
+	tags tagSupport
 }
 
 var _ mail.Backend = (*Backend)(nil)
@@ -59,43 +68,26 @@ func (b *Backend) Close() error {
 	return nil
 }
 
+// capabilitiesTimeout limits the question that Capabilities may ask the
+// server.
+const capabilitiesTimeout = 15 * time.Second
+
 // Capabilities reports what the backend supports.
+//
+// Tags is true when the inbox lets clients make new keywords (the wildcard \*
+// in its PERMANENTFLAGS). The backend notes this whenever it opens the inbox.
+// When it does not know yet, Capabilities asks the server once and remembers
+// the answer. If the server cannot be asked, it reports Tags false and does not
+// remember that, so a later call asks again.
 func (b *Backend) Capabilities() mail.Capabilities {
-	return mail.Capabilities{Tags: false, MaxBatch: maxBatch}
+	ctx, cancel := context.WithTimeout(context.Background(), capabilitiesTimeout)
+	defer cancel()
+	supported, err := b.tagsSupported(ctx)
+	return mail.Capabilities{Tags: err == nil && supported, MaxBatch: maxBatch}
 }
 
-// The methods below belong to later tasks (flags, folders and drafts, and
-// sending). Until then they report that they are not supported.
-
-// ListTags returns the tags of the account. IMAP keywords are not supported as
-// tags yet.
-func (b *Backend) ListTags(context.Context) ([]mail.Tag, error) {
-	return nil, mail.ErrUnsupported
-}
-
-func (b *Backend) CreateFolder(context.Context, string, string) (mail.Folder, error) {
-	return mail.Folder{}, mail.ErrUnsupported
-}
-
-func (b *Backend) CreateTag(context.Context, string) (mail.Tag, error) {
-	return mail.Tag{}, mail.ErrUnsupported
-}
-
-func (b *Backend) SetFlags(context.Context, []mail.Ref, mail.FlagChange) error {
-	return mail.ErrUnsupported
-}
-
-func (b *Backend) Tag(context.Context, []mail.Ref, []string, []string) error {
-	return mail.ErrUnsupported
-}
-
-func (b *Backend) Move(context.Context, []mail.Ref, string) ([]mail.Ref, error) {
-	return nil, mail.ErrUnsupported
-}
-
-func (b *Backend) Trash(context.Context, []mail.Ref) error {
-	return mail.ErrUnsupported
-}
+// The methods below belong to a later task (drafts and sending). Until then
+// they report that they are not supported.
 
 func (b *Backend) SaveDraft(context.Context, *mail.RawMessage) (mail.Ref, error) {
 	return "", mail.ErrUnsupported

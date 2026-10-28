@@ -347,8 +347,11 @@ func newSummary(m *imapclient.FetchMessageBuffer) mail.Summary {
 			s.Seen = true
 		case strings.EqualFold(string(f), string(imap.FlagFlagged)):
 			s.Flagged = true
-		case !strings.HasPrefix(string(f), `\`):
-			s.Tags = append(s.Tags, mime.CleanUntrusted(string(f)))
+		case isTag(string(f)):
+			// A tag name has only letters, digits, - and _, so it needs no
+			// cleaning. Other keywords (system flags, $-keywords and the
+			// spam marks) are not tags (see isTag).
+			s.Tags = append(s.Tags, string(f))
 		}
 	}
 	slices.Sort(s.Tags)

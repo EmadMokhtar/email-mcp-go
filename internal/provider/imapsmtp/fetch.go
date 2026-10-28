@@ -370,25 +370,33 @@ func openRef(ref mail.Ref) (imapRef, error) {
 	return r, nil
 }
 
-// examineRef opens the folder of a ref read-only and checks that the UIDs of
-// the folder still mean what they meant when the ref was made.
+// checkRefFolder opens the folder of a ref and checks that the UIDs of the
+// folder still mean what they meant when the ref was made. It opens the
+// folder read-only (EXAMINE), or for writing (SELECT) when readOnly is false.
+// It returns the data of the folder.
 //
 // A different UIDVALIDITY means that the folder was rebuilt, so the UID of the
 // ref can name another message. A folder that is gone is the same case. Both
 // give an error that wraps mail.ErrRefStale. The ref is never used with
 // another UIDVALIDITY: the wrong message must never be returned.
-func examineRef(c *imapclient.Client, r imapRef) error {
-	sel, err := examine(c, r.Mailbox)
+func (b *Backend) checkRefFolder(c *imapclient.Client, r imapRef, readOnly bool) (*imap.SelectData, error) {
+	sel, err := b.openFolder(c, r.Mailbox, readOnly)
 	if err != nil {
 		if errors.Is(err, mail.ErrNotFound) {
-			return fmt.Errorf("%w: the folder of the message is gone, search again", mail.ErrRefStale)
+			return nil, fmt.Errorf("%w: the folder of the message is gone, search again", mail.ErrRefStale)
 		}
-		return err
+		return nil, err
 	}
 	if sel.UIDValidity != r.UIDValidity {
-		return fmt.Errorf("%w: the folder was rebuilt since the reference was made, search again", mail.ErrRefStale)
+		return nil, fmt.Errorf("%w: the folder was rebuilt since the reference was made, search again", mail.ErrRefStale)
 	}
-	return nil
+	return sel, nil
+}
+
+// examineRef opens the folder of a ref read-only (see checkRefFolder).
+func (b *Backend) examineRef(c *imapclient.Client, r imapRef) error {
+	_, err := b.checkRefFolder(c, r, true)
+	return err
 }
 
 // errGone is the error for a message that is not in its folder any more.
@@ -549,7 +557,7 @@ func (b *Backend) GetMessage(ctx context.Context, ref mail.Ref, opts mail.BodyOp
 	// The pool may run this function twice, so it starts from nothing.
 	err = b.pool.with(ctx, func(c *imapclient.Client) error {
 		msg = nil
-		if err := examineRef(c, r); err != nil {
+		if err := b.examineRef(c, r); err != nil {
 			return err
 		}
 		uid := imap.UID(r.UID)
@@ -807,7 +815,7 @@ func (b *Backend) GetRaw(ctx context.Context, ref mail.Ref, maxBytes int64) ([]b
 	// The pool may run this function twice, so it starts from nothing.
 	err = b.pool.with(ctx, func(c *imapclient.Client) error {
 		raw = nil
-		if err := examineRef(c, r); err != nil {
+		if err := b.examineRef(c, r); err != nil {
 			return err
 		}
 		uid := imap.UID(r.UID)
@@ -866,7 +874,7 @@ func (b *Backend) GetAttachment(ctx context.Context, ref mail.Ref, attachmentID 
 	// The pool may run this function twice, so it starts from nothing.
 	err = b.pool.with(ctx, func(c *imapclient.Client) error {
 		att = nil
-		if err := examineRef(c, r); err != nil {
+		if err := b.examineRef(c, r); err != nil {
 			return err
 		}
 		uid := imap.UID(r.UID)

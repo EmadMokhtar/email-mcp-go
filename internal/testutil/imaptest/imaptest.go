@@ -11,7 +11,9 @@
 //	srv := imaptest.New(t, imaptest.WithMode(imaptest.ModePlain))
 //
 // A test can also make mailboxes with special-use attributes (see Create),
-// choose the capabilities that the server advertises (see WithCaps), add
+// choose the capabilities that the server advertises (see WithCaps), change
+// the PERMANENTFLAGS answer of SELECT and EXAMINE (see WithPermanentFlags),
+// leave the COPYUID code out of COPY answers (see WithoutCopyUID), add
 // messages with a given date (see AppendAt) and read the server state (see
 // Unseen, SelectCounts, FetchedSections and BytesSent).
 //
@@ -62,8 +64,10 @@ const (
 type Option func(*options)
 
 type options struct {
-	mode Mode
-	caps imap.CapSet
+	mode           Mode
+	caps           imap.CapSet
+	permanentFlags func(mailbox string, readOnly bool, flags []imap.Flag) []imap.Flag
+	noCopyUID      bool
 }
 
 // WithMode sets the server mode. The default is ModeTLS.
@@ -85,6 +89,26 @@ func WithCaps(caps ...imap.Cap) Option {
 			o.caps[c] = struct{}{}
 		}
 	}
+}
+
+// WithPermanentFlags lets a test change the PERMANENTFLAGS that the server
+// reports when a client opens a mailbox. fn gets the mailbox name, whether the
+// client used EXAMINE (readOnly), and the flags the server would report. It
+// returns the flags to report.
+//
+// imapmemserver always reports the wildcard \* (clients may create new
+// keywords). A test uses this option to make a server that does not, or one
+// that reports no permanent flags for a read-only mailbox (as Dovecot does).
+// It changes only the answer. The server still stores every flag it is given.
+func WithPermanentFlags(fn func(mailbox string, readOnly bool, flags []imap.Flag) []imap.Flag) Option {
+	return func(o *options) { o.permanentFlags = fn }
+}
+
+// WithoutCopyUID makes the server answer COPY without the COPYUID response
+// code (RFC 4315), as a server without UIDPLUS does. The copy is still made.
+// MOVE is not changed: imapmemserver writes its COPYUID itself.
+func WithoutCopyUID() Option {
+	return func(o *options) { o.noCopyUID = true }
 }
 
 // Server is a running test IMAP server.
@@ -110,6 +134,10 @@ type Server struct {
 	t    testing.TB
 	user *imapmemserver.User
 	srv  *imapserver.Server
+	// permanentFlags is the option WithPermanentFlags. It is nil by default.
+	permanentFlags func(mailbox string, readOnly bool, flags []imap.Flag) []imap.Flag
+	// noCopyUID is the option WithoutCopyUID.
+	noCopyUID bool
 
 	closeOnce sync.Once
 
@@ -161,6 +189,9 @@ func New(t testing.TB, opts ...Option) *Server {
 		live:       make(map[*trackedConn]struct{}),
 		boxes:      make(map[string]struct{}),
 		specialUse: make(map[string][]imap.MailboxAttr),
+
+		permanentFlags: o.permanentFlags,
+		noCopyUID:      o.noCopyUID,
 	}
 
 	mem := imapmemserver.New()
@@ -475,14 +506,29 @@ type session struct {
 }
 
 func (ss *session) Select(mailbox string, options *imap.SelectOptions) (*imap.SelectData, error) {
+	readOnly := options != nil && options.ReadOnly
 	ss.s.boxMu.Lock()
-	if options != nil && options.ReadOnly {
+	if readOnly {
 		ss.s.examines++
 	} else {
 		ss.s.selects++
 	}
 	ss.s.boxMu.Unlock()
-	return ss.SessionIMAP4rev2.Select(mailbox, options)
+	data, err := ss.SessionIMAP4rev2.Select(mailbox, options)
+	if err == nil && ss.s.permanentFlags != nil {
+		data.PermanentFlags = ss.s.permanentFlags(mailbox, readOnly, data.PermanentFlags)
+	}
+	return data, err
+}
+
+// Copy copies the messages like imapmemserver. When the server was made
+// WithoutCopyUID, it does not report the new UIDs.
+func (ss *session) Copy(numSet imap.NumSet, dest string) (*imap.CopyData, error) {
+	data, err := ss.SessionIMAP4rev2.Copy(numSet, dest)
+	if ss.s.noCopyUID {
+		return nil, err
+	}
+	return data, err
 }
 
 // Fetch records the body sections of the command, then lets imapmemserver

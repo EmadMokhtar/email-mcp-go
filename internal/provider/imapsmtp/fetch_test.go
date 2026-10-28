@@ -826,7 +826,7 @@ func TestGetMessageFields(t *testing.T) {
 		"Content-Transfer-Encoding: base64\n\n" + b64Lines(binaryData(300), 76) + "\n" +
 		"--B\nContent-Type: text/calendar; method=REQUEST\n\nBEGIN:VCALENDAR\n" +
 		"--B--\n")
-	srv.Append("INBOX", raw, imap.FlagSeen, "$project")
+	srv.Append("INBOX", raw, imap.FlagSeen, "project", "$Forwarded")
 	ref := mustSearch(t, b, mail.Query{}, "").Items[0].Ref
 
 	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyNone})
@@ -841,7 +841,7 @@ func TestGetMessageFields(t *testing.T) {
 	require.Equal(t, "<m2@example.com>", msg.InReplyTo)
 	require.Equal(t, []string{"<m1@example.com>", "<m2@example.com>"}, msg.References)
 	require.True(t, msg.Seen)
-	require.Equal(t, []string{"$project"}, msg.Tags)
+	require.Equal(t, []string{"project"}, msg.Tags, "$Forwarded is not a tag")
 	require.True(t, msg.HasAttachments)
 	require.True(t, msg.HasInvite)
 	require.Equal(t, int64(len(raw)), msg.Size)
@@ -1884,7 +1884,7 @@ func TestCutTextIsAlwaysTheStartOfTheWholeText(t *testing.T) {
 			var tooLong, notStart []int64
 			var sizes int64
 			err := b.pool.with(t.Context(), func(c *imapclient.Client) error {
-				if err := examineRef(c, r); err != nil {
+				if err := b.examineRef(c, r); err != nil {
 					return err
 				}
 				m, err := fetchOne(c, uid, &imap.FetchOptions{UID: true, BodyStructure: &imap.FetchItemBodyStructure{Extended: true}})
@@ -1932,7 +1932,7 @@ func TestCutHTMLIsNeverConverted(t *testing.T) {
 	uid := imap.UID(r.UID)
 
 	err := b.pool.with(t.Context(), func(c *imapclient.Client) error {
-		if err := examineRef(c, r); err != nil {
+		if err := b.examineRef(c, r); err != nil {
 			return err
 		}
 		m, err := fetchOne(c, uid, &imap.FetchOptions{UID: true, BodyStructure: &imap.FetchItemBodyStructure{Extended: true}})
