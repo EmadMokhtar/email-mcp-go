@@ -428,46 +428,95 @@ func TestHTMLToTextStyleSheetFontSizeIsInherited(t *testing.T) {
 	}
 }
 
-// The order of strength is: element rules, class rules, id rules, then the
-// style attribute. A later rule of the same kind wins over an earlier one.
-func TestHTMLToTextStyleSheetOrderOfStrength(t *testing.T) {
+// For font size and visibility, every declaration that applies to an element
+// counts: from the style attribute, and from the rules of its classes, its id
+// and its name. If any of them hides, the element is hidden, whatever the
+// source, the order or the importance. The cost is that text which a sender
+// hides and then shows again on the same element is dropped.
+func TestHTMLToTextOnElementAnyHidingDeclarationWins(t *testing.T) {
 	tests := []struct{ name, sheet, markup, want string }{
-		{"style attribute over a class rule",
-			`.x{font-size:0}`, `<div class="x" style="font-size:13px">shown</div>`, "shown"},
-		{"style attribute over an id rule",
-			`#x{font-size:0}`, `<div id="x" style="font-size:13px">shown</div>`, "shown"},
-		{"style attribute can hide what a rule shows",
-			`.x{font-size:13px}`, `<div class="x" style="font-size:0">secret</div>`, ""},
-		{"visibility in the style attribute over a rule",
-			`.x{visibility:hidden}`, `<div class="x" style="visibility:visible">shown</div>`, "shown"},
-		{"class rule over an element rule",
-			`p{font-size:0} .t{font-size:13px}`, `<p class="t">shown</p>`, "shown"},
-		{"class rule can hide what an element rule shows",
-			`p{font-size:13px} .z{font-size:0}`, `<p class="z">secret</p>`, ""},
-		{"id rule over a class rule",
-			`.x{font-size:13px} #y{font-size:0}`, `<div id="y" class="x">secret</div>`, ""},
-		{"id rule over a class rule, the other way",
-			`.x{font-size:0} #y{font-size:13px}`, `<div id="y" class="x">shown</div>`, "shown"},
-		{"later rule of the same kind",
-			`.x{font-size:0} .x{font-size:13px}`, `<div class="x">shown</div>`, "shown"},
-		{"later rule of the same kind that hides",
-			`.x{font-size:13px} .x{font-size:0}`, `<div class="x">secret</div>`, ""},
-		{"later rule keeps what it does not set",
-			`.x{font-size:0} .x{color:red}`, `<div class="x">secret</div>`, ""},
+		// The style attribute does not show what a rule hides.
+		{"style attribute against a class rule",
+			`.x{font-size:0}`, `<div class="x" style="font-size:13px">secret</div>`, "visible"},
+		{"style attribute against an id rule",
+			`#x{font-size:0}`, `<div id="x" style="font-size:13px">secret</div>`, "visible"},
+		{"style attribute against an element rule",
+			`div{font-size:0}`, `<div style="font-size:13px">secret</div>`, "visible"},
+		{"visibility in the style attribute against a rule",
+			`.x{visibility:hidden}`, `<div class="x" style="visibility:visible">secret</div>`, "visible"},
+		// The style attribute can hide what a rule shows.
+		{"style attribute hides what a rule shows",
+			`.x{font-size:13px}`, `<div class="x" style="font-size:0">secret</div>`, "visible"},
+		{"style attribute hides what a rule shows, visibility",
+			`.x{visibility:visible}`, `<div class="x" style="visibility:hidden">secret</div>`, "visible"},
+		// Rules of different kinds, in either order.
+		{"id rule against a class rule",
+			`.x{font-size:0}#y{font-size:13px}`, `<div id="y" class="x">secret</div>`, "visible"},
+		{"id rule against a class rule, the other way",
+			`.x{font-size:13px}#y{font-size:0}`, `<div id="y" class="x">secret</div>`, "visible"},
+		{"class rule against an element rule",
+			`b{font-size:0} .t{font-size:13px}`, `<b class="t">secret</b>`, "visible"},
+		{"class rule against an element rule, the other way",
+			`p{font-size:13px} .z{font-size:0}`, `<p class="z">secret</p>`, "visible"},
+		{"element rule after a class rule",
+			`.h{font-size:0}div{font-size:13px}`, `<div class="h">secret</div>`, "visible"},
+		// Rules of the same kind, in either order.
+		{"later rule shows",
+			`.x{font-size:0} .x{font-size:13px}`, `<div class="x">secret</div>`, "visible"},
+		{"later rule hides",
+			`.x{font-size:13px} .x{font-size:0}`, `<div class="x">secret</div>`, "visible"},
+		{"later rule for the same name sets another size",
+			`.h{font-size:0}.s{font-size:13px}.h{font-size:5px}`, `<div class="h s">secret</div>`, "visible"},
+		// Nothing hides, so the element is shown.
+		{"two showing rules",
+			`.a{font-size:13px}.b{font-size:20px}`, `<div class="a b">shown</div>`, "visible\n\nshown"},
+		{"showing rule and showing style attribute",
+			`.a{font-size:13px;visibility:visible}`, `<div class="a" style="font-size:20px;visibility:visible">shown</div>`, "visible\n\nshown"},
+		{"rule that sets other properties only",
+			`.x{color:red} .x{margin:0}`, `<div class="x" style="font-size:13px">shown</div>`, "visible\n\nshown"},
 		// display:none is a whole-element rule and nothing shows it again.
 		{"display none is not undone by a later rule",
-			`.x{display:none} .x{display:block}`, `<div class="x">secret</div>`, ""},
+			`.x{display:none} .x{display:block}`, `<div class="x">secret</div>`, "visible"},
 		{"display none is not undone by the style attribute",
-			`.x{display:none}`, `<div class="x" style="display:block">secret</div>`, ""},
+			`.x{display:none}`, `<div class="x" style="display:block">secret</div>`, "visible"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, HTMLToText(`<style>`+tc.sheet+`</style>`+tc.markup))
+			require.Equal(t, tc.want, HTMLToText(mailWithSheet(tc.sheet, tc.markup)))
 		})
 	}
 }
 
-// --- !important, the order of rules, and zero in any unit ---
+// The order of the rules, and the order of the classes in the class attribute,
+// do not matter.
+func TestHTMLToTextRuleOrderDoesNotMatter(t *testing.T) {
+	sheets := []string{
+		`.s{font-size:13px}.h{font-size:0}`,
+		`.h{font-size:0}.s{font-size:13px}`,
+		`.s{font-size:13px}</style><style>.h{font-size:0}`,
+		`.h{font-size:0}</style><style>.s{font-size:13px}`,
+		`.s{font-size:13px}.a,.h,.b{font-size:0}`,
+		`.s{font-size:13px}.o{color:red}.p{margin:0}.h{font-size:0}`,
+	}
+	for _, sheet := range sheets {
+		for _, class := range []string{"h s", "s h", "o h p s"} {
+			out := HTMLToText(mailWithSheet(sheet, `<div class="`+class+`">secret</div>`))
+			require.Equal(t, "visible", out, "sheet %q, class %q", sheet, class)
+		}
+	}
+	// The same for visibility.
+	for _, sheet := range []string{`.v{visibility:visible}.h{visibility:hidden}`, `.h{visibility:hidden}.v{visibility:visible}`} {
+		for _, class := range []string{"h v", "v h"} {
+			out := HTMLToText(mailWithSheet(sheet, `<div class="`+class+`">secret</div>`))
+			require.Equal(t, "visible", out, "sheet %q, class %q", sheet, class)
+		}
+	}
+	// A style element after the element counts too.
+	out := HTMLToText(`<style>.s{font-size:13px}</style><p>visible</p><div class="h s">secret</div><style>.h{font-size:0}</style>`)
+	require.Equal(t, "visible", out)
+}
+
+// --- !important, the order of rules, zero in any unit, and the last reviews ---
 
 // mailWithSheet puts the style sheet in a style element, and the visible
 // paragraph "visible" before the element that must stay hidden. A sheet may
@@ -476,8 +525,8 @@ func mailWithSheet(sheet, element string) string {
 	return "<style>" + sheet + "</style><p>visible</p>" + element
 }
 
-// An !important declaration is not replaced by a normal one, whatever the
-// source of the normal one is, and whatever comes later.
+// !important does not change anything: a hiding declaration hides, and no
+// other declaration for the element can show the element again.
 func TestHTMLToTextImportantIsNotUndoneByNormalDeclarations(t *testing.T) {
 	tests := []struct{ name, sheet, element string }{
 		// The same style attribute.
@@ -532,24 +581,34 @@ func TestHTMLToTextImportantIsNotUndoneByNormalDeclarations(t *testing.T) {
 	}
 }
 
-func TestHTMLToTextImportantShowsWhatNormalWouldHide(t *testing.T) {
+// !important on a showing declaration does not show what another declaration
+// for the same element hides. Children are different elements: a child with
+// its own size still shows its text in a hidden parent.
+func TestHTMLToTextImportantDoesNotShowWhatAnotherDeclarationHides(t *testing.T) {
 	tests := []struct{ name, sheet, element, want string }{
-		{"inline size", ``, `<div style="font-size:14px!important;font-size:0">shown</div>`, "shown"},
-		{"inline visibility", ``, `<div style="visibility:visible!important;visibility:hidden">shown</div>`, "shown"},
-		{"class rule against the style attribute", `.x{font-size:14px!important}`, `<div class="x" style="font-size:0">shown</div>`, "shown"},
-		{"visibility rule against the style attribute", `.x{visibility:visible!important}`, `<div class="x" style="visibility:hidden">shown</div>`, "shown"},
-		{"element rule against a class rule", `p{font-size:14px!important}.z{font-size:0}`, `<p class="z">shown</p>`, "shown"},
-		{"a normal rule against an important rule in a parent", `.x{font-size:0!important}`, `<div class="x"><span style="font-size:14px">shown</span></div>`, "shown"},
-		{"important on the parent only", ``, `<div style="font-size:0!important"><span style="font-size:14px">shown</span></div>`, "shown"},
-		{"important visibility on the parent only", ``, `<div style="visibility:hidden!important"><span style="visibility:visible">shown</span></div>`, "shown"},
-		// "!foo" is not "!important", and a browser drops such a declaration.
-		{"bang with another word", ``, `<div style="font-size:0!foo;font-size:14px">shown</div>`, "shown"},
-		{"bang with no word", ``, `<div style="font-size:0!;font-size:14px">shown</div>`, "shown"},
-		{"escaped bang is not a bang", ``, `<div style="font-size:0\21 important;font-size:14px">shown</div>`, "shown"},
+		{"inline size", ``, `<div style="font-size:14px!important;font-size:0">secret</div>`, "visible"},
+		{"inline visibility", ``, `<div style="visibility:visible!important;visibility:hidden">secret</div>`, "visible"},
+		{"class rule against the style attribute", `.x{font-size:14px!important}`, `<div class="x" style="font-size:0">secret</div>`, "visible"},
+		{"style attribute against a normal class rule", `.c{font-size:0}`, `<div class="c" style="font-size:14px!important">secret</div>`, "visible"},
+		{"visibility rule against the style attribute", `.x{visibility:visible!important}`, `<div class="x" style="visibility:hidden">secret</div>`, "visible"},
+		{"element rule against a class rule", `p{font-size:14px!important}.z{font-size:0}`, `<p class="z">secret</p>`, "visible"},
+		{"important id against important class", `#i{visibility:visible!important}.c{visibility:hidden!important}`, `<div id="i" class="c">secret</div>`, "visible"},
+		// A bang that is not !important is not looked at.
+		{"bang with another word", ``, `<div style="font-size:0!foo;font-size:14px">secret</div>`, "visible"},
+		{"bang with no word", ``, `<div style="font-size:0!;font-size:14px">secret</div>`, "visible"},
+		// An escaped bang is not a bang. "0\21 important" is a number with a unit
+		// that does not exist, so a browser drops the declaration, and so does
+		// this code. The text is visible in both.
+		{"escaped bang", ``, `<div style="font-size:0\21 important;font-size:14px">shown</div>`, "visible\n\nshown"},
+
+		// Different elements.
+		{"important on the parent only", ``, `<div style="font-size:0!important"><span style="font-size:14px">shown</span></div>`, "visible\n\nshown"},
+		{"important visibility on the parent only", ``, `<div style="visibility:hidden!important"><span style="visibility:visible">shown</span></div>`, "visible\n\nshown"},
+		{"a normal rule in a child of an important parent", `.x{font-size:0!important}`, `<div class="x"><span style="font-size:14px">shown</span></div>`, "visible\n\nshown"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, HTMLToText(`<style>`+tc.sheet+`</style>`+tc.element))
+			require.Equal(t, tc.want, HTMLToText(mailWithSheet(tc.sheet, tc.element)))
 		})
 	}
 }
@@ -590,40 +649,153 @@ func TestHTMLToTextTwoImportantSizesWithAZeroRoot(t *testing.T) {
 	require.Equal(t, "shown", HTMLToText(mail))
 }
 
-// A browser uses the rule that comes later in the style sheet, not the class
-// that comes later in the class attribute.
-func TestHTMLToTextRulesAreUsedInSourceOrder(t *testing.T) {
-	tests := []struct{ name, sheet, element, want string }{
-		{"hiding rule is later, size", `.s{font-size:13px}.h{font-size:0}`, `<div class="h s">secret</div>`, "visible"},
-		{"hiding rule is later, size, other order of the attribute", `.s{font-size:13px}.h{font-size:0}`, `<div class="s h">secret</div>`, "visible"},
-		{"hiding rule is later, visibility", `.v{visibility:visible}.h{visibility:hidden}`, `<div class="h v">secret</div>`, "visible"},
-		{"hiding rule is later, visibility, other order", `.v{visibility:visible}.h{visibility:hidden}`, `<div class="v h">secret</div>`, "visible"},
-		{"hiding rule is later, in two style elements", `.s{font-size:13px}</style><style>.h{font-size:0}`, `<div class="h s">secret</div>`, "visible"},
-		{"hiding rule is later, visibility, in two style elements", `.v{visibility:visible}</style><style>.h{visibility:hidden}`, `<div class="h v">secret</div>`, "visible"},
-		{"hiding rule is later, three classes", `.a{font-size:20px}.s{font-size:13px}.h{font-size:0}`, `<div class="h a s">secret</div>`, "visible"},
-		{"hiding rule is later, with other classes between", `.s{font-size:13px}.o{color:red}.p{margin:0}.h{font-size:0}`, `<div class="h o p s">secret</div>`, "visible"},
-		{"hiding rule is later, in a rule list", `.s{font-size:13px}.a,.h,.b{font-size:0}`, `<div class="h s">secret</div>`, "visible"},
+// --- the probes of the last review ---
 
-		{"showing rule is later, size", `.h{font-size:0}.s{font-size:13px}`, `<div class="h s">shown</div>`, "visible\n\nshown"},
-		{"showing rule is later, size, other order of the attribute", `.h{font-size:0}.s{font-size:13px}`, `<div class="s h">shown</div>`, "visible\n\nshown"},
-		{"showing rule is later, visibility", `.h{visibility:hidden}.v{visibility:visible}`, `<div class="h v">shown</div>`, "visible\n\nshown"},
-		{"showing rule is later, in two style elements", `.h{font-size:0}</style><style>.s{font-size:13px}`, `<div class="h s">shown</div>`, "visible\n\nshown"},
-
-		// The kind of selector is stronger than the order.
-		{"id rule is stronger than a later class rule", `#i{font-size:0}.s{font-size:13px}`, `<div id="i" class="s">secret</div>`, "visible"},
-		{"class rule is stronger than a later element rule", `.h{font-size:0}div{font-size:13px}`, `<div class="h">secret</div>`, "visible"},
-		{"the style attribute is stronger than a later rule", `.s{font-size:0}.t{font-size:13px}`, `<div class="s t" style="font-size:0">secret</div>`, "visible"},
-
-		// A later rule for the same name replaces the earlier one, and its
-		// place in the order is the place of the later rule.
-		{"same name set again later wins over the class between", `.h{font-size:0}.s{font-size:13px}.h{font-size:5px}`, `<div class="h s">shown</div>`, "visible\n\nshown"},
-		{"same name set again later and hides", `.h{font-size:13px}.s{font-size:13px}.h{font-size:0}`, `<div class="s h">secret</div>`, "visible"},
+// Each element below has a hiding declaration for font size or visibility, and
+// another declaration that a browser would use instead, or that this code once
+// read as something else. The element must stay hidden.
+func TestHTMLToTextFakeImportantStillCounts(t *testing.T) {
+	// A browser drops "14px! important" (a declaration with a bad suffix), so
+	// the hiding value stays there. The code once read it as !important.
+	tests := []struct{ name, sheet, element string }{
+		{"entity for a no-break space before the word", ``, `<div style="font-size:14px!&nbsp;important;font-size:0">secret</div>`},
+		{"no-break space before the word", ``, "<div style=\"font-size:14px!\U000000A0important;font-size:0\">secret</div>"},
+		{"ideographic space after the word", ``, "<div style=\"font-size:14px!important\U00003000;font-size:0\">secret</div>"},
+		{"next line character before the word", ``, "<div style=\"font-size:14px!\U00000085important;font-size:0\">secret</div>"},
+		{"escaped space before the word", ``, `<div style="font-size:14px!\20 important;font-size:0">secret</div>`},
+		{"escaped space after the word", ``, `<div style="font-size:14px!important\20;font-size:0">secret</div>`},
+		{"visibility with an entity for a no-break space", ``, `<div style="visibility:visible!&nbsp;important;visibility:hidden">secret</div>`},
+		{"rule with an entity, against a later class rule", `.s{font-size:14px!&nbsp;important}.h{font-size:0}`, `<div class="h s">secret</div>`},
+		{"rule with a no-break space, against the style attribute", ".s{font-size:14px!\U000000A0important}", `<div class="s" style="font-size:0">secret</div>`},
+		{"rule with an escaped space, against an id rule", `.s{font-size:14px!\20 important}#h{font-size:0}`, `<div class="s" id="h">secret</div>`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, HTMLToText(mailWithSheet(tc.sheet, tc.element)))
+			require.Equal(t, "visible", HTMLToText(mailWithSheet(tc.sheet, tc.element)))
 		})
 	}
+}
+
+func TestHTMLToTextBangInAStringOrEscapeDoesNotHideTheRealOne(t *testing.T) {
+	tests := []struct{ name, sheet, element string }{
+		{"single quoted string", ``, `<div style="font:0 'a!b' !important;font-size:14px">secret</div>`},
+		{"double quoted string", ``, `<div style='font:0/0 "x!y"!important;font-size:14px'>secret</div>`},
+		{"escaped bang", ``, `<div style="font:0 a\!b !important;font-size:14px">secret</div>`},
+		{"string without the important word", ``, `<div style="font:0 'a!b' serif;font-size:14px">secret</div>`},
+		{"rule against the style attribute", `.x{font:0 'a!b'!important}`, `<div class="x" style="font-size:14px">secret</div>`},
+		{"rule against a later rule", `.x{font:0 'a!b'!important}.y{font-size:14px}`, `<div class="x y">secret</div>`},
+		{"rule with an escaped bang", `.x{font:0 a\!b!important}`, `<div class="x" style="font-size:14px">secret</div>`},
+		{"visibility after a string", ``, `<div style="font-family:'a!b';visibility:hidden!important;visibility:visible">secret</div>`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, "visible", HTMLToText(mailWithSheet(tc.sheet, tc.element)))
+		})
+	}
+}
+
+// inherit, unset, revert and revert-layer take the value of the parent. With
+// !important they must not be dropped, and they must not let a normal
+// declaration show the text of an element in a hidden parent.
+func TestHTMLToTextInheritWithImportantStillCounts(t *testing.T) {
+	zero := func(sheet, child string) string {
+		return mailWithSheet(sheet, `<div style="font-size:0">`+child+`</div>`)
+	}
+	hidden := func(sheet, child string) string {
+		return mailWithSheet(sheet, `<div style="visibility:hidden">`+child+`</div>`)
+	}
+	for _, keyword := range []string{"inherit", "unset", "revert", "revert-layer"} {
+		t.Run(keyword, func(t *testing.T) {
+			// A rule against the style attribute, in a parent with no size.
+			require.Equal(t, "visible", HTMLToText(zero(`.x{font-size:`+keyword+`!important}`,
+				`<span class="x" style="font-size:14px">secret</span>`)))
+			require.Equal(t, "visible", HTMLToText(zero(`.x{font:`+keyword+`!important}`,
+				`<span class="x" style="font-size:14px">secret</span>`)))
+			// The same in the style attribute.
+			require.Equal(t, "visible", HTMLToText(zero(``,
+				`<span style="font-size:`+keyword+`!important;font-size:14px">secret</span>`)))
+			require.Equal(t, "visible", HTMLToText(zero(``,
+				`<span style="font:`+keyword+` !important;font-size:14px">secret</span>`)))
+			// Visibility.
+			require.Equal(t, "visible", HTMLToText(hidden(`.x{visibility:`+keyword+`!important}`,
+				`<span class="x" style="visibility:visible">secret</span>`)))
+			require.Equal(t, "visible", HTMLToText(hidden(``,
+				`<span style="visibility:`+keyword+`!important;visibility:visible">secret</span>`)))
+			// Without !important it is the same: the element is hidden.
+			require.Equal(t, "visible", HTMLToText(zero(``,
+				`<span style="font-size:`+keyword+`;font-size:14px">secret</span>`)))
+			require.Equal(t, "visible", HTMLToText(hidden(``,
+				`<span style="visibility:`+keyword+`;visibility:visible">secret</span>`)))
+		})
+	}
+}
+
+// A bad suffix after "!" is not looked at. The value in front of it counts, so
+// the element is hidden if any declaration for it hides.
+func TestHTMLToTextBadBangSuffixDoesNotShowTheElement(t *testing.T) {
+	tests := []struct{ name, sheet, element string }{
+		{"size", ``, `<div style="font-size:0;font-size:14px!x">secret</div>`},
+		{"visibility", ``, `<div style="visibility:hidden;visibility:visible!x">secret</div>`},
+		{"double important", ``, `<div style="font-size:0;font-size:14px!important!important">secret</div>`},
+		{"no-break space", ``, "<div style=\"font-size:0;font-size:14px! important\">secret</div>"},
+		{"rule against an earlier rule", `.h{font-size:0}.s{font-size:14px!x}`, `<div class="h s">secret</div>`},
+		{"hiding value with a bad suffix", ``, `<div style="font-size:14px;font-size:0!x">secret</div>`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, "visible", HTMLToText(mailWithSheet(tc.sheet, tc.element)))
+		})
+	}
+}
+
+// A font-size declaration and the font shorthand on one element: whichever
+// comes last, a hiding one hides.
+func TestHTMLToTextFontShorthandAndFontSizeOnOneElement(t *testing.T) {
+	for _, markup := range []string{
+		`<div style="font-size:0;font:14px">secret</div>`,
+		`<div style="font:14px;font-size:0">secret</div>`,
+		`<div style="font-size:0;font:0deg 14px serif">secret</div>`,
+		`<div style="font:0 serif;font:14px serif">secret</div>`,
+	} {
+		require.Equal(t, "", HTMLToText(markup), "markup %q", markup)
+	}
+	require.Equal(t, "visible", HTMLToText(mailWithSheet(`.h{font-size:0}.s{font:14px}`, `<div class="h s">secret</div>`)))
+}
+
+// The size an element passes to its children is the smallest of its sizes.
+func TestHTMLToTextSmallestSizePassesToChildren(t *testing.T) {
+	// 10px and 20px: the children get 10px. 0.1em is 1px (too small to read).
+	// With 20px it would be 2px, which is readable.
+	mail := mailWithSheet(`.a{font-size:10px}`,
+		`<div class="a" style="font-size:20px"><span style="font-size:0.1em">secret</span><span style="font-size:0.3em">shown</span></div>`)
+	require.Equal(t, "visible\n\nshown", HTMLToText(mail))
+	// The same with a relative size and a size in px: the smaller result.
+	mail = mailWithSheet(`.a{font-size:2em}`,
+		`<div style="font-size:0.5px"><div class="a" style="font-size:30px"><span style="font-size:1em">secret</span></div></div>`)
+	require.Equal(t, "visible", HTMLToText(mail), "2em of 0.5px is 1px, smaller than 30px")
+	// rem: the smaller of the rem size and the px size.
+	mail = `<html style="font-size:10px"><body><style>.a{font-size:0.05rem}</style>` +
+		`<p style="font-size:20px">visible</p><div class="a" style="font-size:20px"><span style="font-size:1em">secret</span></div></body></html>`
+	require.Equal(t, "visible", HTMLToText(mail), "0.05rem is 0.5px, smaller than 20px")
+}
+
+func TestHTMLToTextCSSWideKeywordsTakeTheParentValue(t *testing.T) {
+	for _, keyword := range []string{"inherit", "unset", "revert", "revert-layer"} {
+		// The size of the parent.
+		require.Equal(t, "", HTMLToText(`<div style="font-size:0"><span style="font-size:`+keyword+`">secret</span></div>`), keyword)
+		require.Equal(t, "", HTMLToText(`<div style="font-size:0"><span style="font:`+keyword+`">secret</span></div>`), keyword)
+		require.Equal(t, "shown", HTMLToText(`<div style="font-size:20px"><span style="font-size:`+keyword+`">shown</span></div>`), keyword)
+		require.Equal(t, "shown", HTMLToText(`<div><span style="font:`+keyword+`">shown</span></div>`), keyword)
+		// The visibility of the parent.
+		require.Equal(t, "", HTMLToText(`<div style="visibility:hidden"><span style="visibility:`+keyword+`">secret</span></div>`), keyword)
+		require.Equal(t, "shown", HTMLToText(`<div style="visibility:visible"><span style="visibility:`+keyword+`">shown</span></div>`), keyword)
+		require.Equal(t, "shown", HTMLToText(`<span style="visibility:`+keyword+`">shown</span>`), keyword)
+	}
+	// initial is the default: 16px, and visible.
+	require.Equal(t, "shown", HTMLToText(`<div style="font-size:0"><span style="font-size:initial">shown</span></div>`))
+	require.Equal(t, "shown", HTMLToText(`<div style="visibility:hidden"><span style="visibility:initial">shown</span></div>`))
+	// A keyword is only one when it is the whole value.
+	require.Equal(t, "shown", HTMLToText(`<div style="font-size:0"><span style="font:14px unset">shown</span></div>`))
 }
 
 // Zero is zero in every unit, also in units this code does not know.

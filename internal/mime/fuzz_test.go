@@ -80,6 +80,11 @@ func FuzzHTMLToText(f *testing.F) {
 		`<div style="font-size:0svh"><span style="font-size:0lh;font:0cqw serif">d</span></div>`,
 		`<style>.a{font-size:2em!important}.b{font-size:1e999px!important}</style><div style="font-size:0"><i class="a b">e</i></div>`,
 		`<p style="font-size:0!imp\6frtant;font-size:0 !/**/important;visibility:hidden!;font:0/0 a!important">f</p>`,
+		"<div style=\"font-size:14px!\U000000A0important;font-size:0\">g</div><div style=\"font-size:14px!\\20 important;font-size:0\">h</div>",
+		`<div style="font:0 'a!b' !important;font-size:14px">i</div><div style='font:0/0 "x!y"!important'>j</div><b style="font:0 a\!b !important">k</b>`,
+		`<style>.x{font-size:inherit!important}.y{visibility:revert-layer!important}</style><div style="font-size:0;visibility:hidden"><i class="x y" style="font-size:14px;visibility:visible">l</i></div>`,
+		`<div style="font-size:0;font-size:14px!x"><b style="visibility:hidden;visibility:visible!important!important">m</b></div>`,
+		`<style>.a{font-size:10px}.a{font-size:2em}</style><div class="a" style="font-size:20px;font:inherit"><span style="font-size:0.1em">n</span></div>`,
 	}
 	for _, s := range seeds {
 		f.Add(s)

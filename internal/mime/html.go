@@ -35,14 +35,24 @@ import (
 // A rule is used only when the selector is one class, one id or one element
 // name, alone or in a comma list. Longer selectors (descendant, child,
 // attribute or pseudo selectors, and so on) are ignored, and so are @media
-// and the other at-rules. When font-size or visibility is set more than once
-// for an element: an !important declaration beats a normal one, whatever its
-// source; between two !important declarations the one that hides wins;
-// among normal declarations the style attribute is the strongest, then an id
-// rule, then a class rule, then an element rule; and of two rules of the same
-// kind the one that comes later in the document wins (the class attribute does
-// not matter). A display:none, and the other declarations that hide a whole
-// element, are applied even if something else would show the element again.
+// and the other at-rules.
+//
+// Hiding wins on each element. For font-size and visibility, every
+// declaration that applies to an element counts: those in its style attribute
+// and those in the rules for its name, its classes and its id. It does not
+// matter which one comes first, which source is stronger, or whether it has
+// !important (anything after a "!" is cut off). Each declaration is worked out
+// against the state of the parent: inherit, unset and revert take the value of
+// the parent, and a relative size is a multiple of the size of the parent. If
+// any declaration hides, the element is hidden. If none does, the element is
+// shown, and the size that its children get is the smallest of its sizes.
+// This is stricter than a browser, which picks one declaration. The known cost
+// is that text which a sender hides and then shows again on the same element
+// (for example font-size:0 in a rule and font-size:14px in the style
+// attribute) is dropped. A child is a different element, so it can still show
+// its text inside a hidden parent. A display:none, and the other declarations
+// that hide a whole element, are applied even if something else would show the
+// element again.
 //
 // It does not find text that is hidden in other ways. Colour tricks, such as
 // white text on a white background, are not detected. The same is true for
@@ -199,7 +209,7 @@ func (r *textRenderer) enter(n *html.Node) bool {
 	}
 	effect := r.rules.effectFor(n)
 	if style, ok := attributeValue(n, "style"); ok {
-		effect = effect.merge(parseStyle(style).ranked(rank{level: levelAttribute}))
+		effect = effect.merge(parseStyle(style))
 	}
 	if effect.drop {
 		return false

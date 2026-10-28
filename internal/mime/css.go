@@ -17,27 +17,16 @@ import (
 
 // --- what a list of declarations does ---
 
-// visibility is the value of the visibility property. The property is
-// inherited: an element that does not set it keeps the value of its parent.
-type visibility uint8
-
-const (
-	visInherit visibility = iota // not set
-	visVisible
-	visHidden // hidden or collapse
-)
-
-// fontSizeMode says how a font-size declaration is worked out.
+// fontSizeMode says how a font-size value is worked out.
 type fontSizeMode uint8
 
 const (
-	fsInherit fontSizeMode = iota // not set: the size of the parent
-	fsPixels                      // a size in pixels, whatever the parent is
-	fsParent                      // a multiple of the size of the parent (em, %, ex, larger)
-	fsRoot                        // a multiple of the size of the html element (rem)
+	fsPixels fontSizeMode = iota + 1 // a size in pixels, whatever the parent is
+	fsParent                         // a multiple of the size of the parent (em, %, ex, larger, inherit)
+	fsRoot                           // a multiple of the size of the html element (rem)
 )
 
-// fontSize is the value of a font-size declaration. The property is inherited.
+// fontSize is the value of a font-size declaration.
 type fontSize struct {
 	mode  fontSizeMode
 	value float64
@@ -52,63 +41,6 @@ const (
 	// never a number that is not a number.
 	maxFontSize = 1e12
 )
-
-// resolve returns the size in pixels for an element, given the size of its
-// parent and the size of the html element.
-func (f fontSize) resolve(parent, root float64) float64 {
-	var size float64
-	switch f.mode {
-	case fsPixels:
-		size = f.value
-	case fsParent:
-		size = parent * f.value
-	case fsRoot:
-		size = root * f.value
-	default:
-		return parent
-	}
-	return min(size, maxFontSize)
-}
-
-// rank says how strong a normal (not !important) declaration is, when two of
-// them set the same property. A style attribute is stronger than an id rule, an
-// id rule than a class rule, and a class rule than an element rule. Between
-// rules of the same kind, the one that comes later in the document is stronger
-// (this counts all style elements, in order). The class attribute does not
-// matter.
-type rank struct {
-	level uint8 // one of the level constants
-	order int   // position of the rule in the document
-}
-
-const (
-	levelElement   uint8 = iota + 1 // a rule for an element name
-	levelClass                      // a rule for a class
-	levelID                         // a rule for an id
-	levelAttribute                  // the style attribute
-)
-
-// atLeast reports whether r is as strong as o.
-func (r rank) atLeast(o rank) bool {
-	if r.level != o.level {
-		return r.level > o.level
-	}
-	return r.order >= o.order
-}
-
-// visibilityDecl is a normal visibility declaration, with its strength.
-type visibilityDecl struct {
-	set   bool
-	value visibility
-	rank  rank
-}
-
-// fontSizeDecl is a normal font-size declaration, with its strength.
-type fontSizeDecl struct {
-	set   bool
-	value fontSize
-	rank  rank
-}
 
 // smallest remembers the smallest of some numbers.
 type smallest struct {
@@ -130,18 +62,19 @@ func (s smallest) merge(o smallest) smallest {
 	return s
 }
 
-// importantSizes are the !important font sizes of an element. Between two of
-// them the smaller one wins, because that is the one that hides. A size
-// depends on the parent for em and %, and on the html element for rem, so the
-// smallest one is kept for each of the three ways to work out a size. That is
-// enough to find the smallest result for any parent.
-type importantSizes struct {
-	pixels smallest // sizes in pixels
-	parent smallest // multiples of the size of the parent
-	root   smallest // multiples of the size of the html element
+// sizeCandidates are the font sizes that the declarations for one element give.
+// Only the smallest result matters, so the smallest value is kept for each of
+// the three ways a size is worked out (pixels, multiple of the parent, multiple
+// of the html element). The smallest result for any parent is then the
+// smallest of these three results. This keeps the memory the same however many
+// declarations there are.
+type sizeCandidates struct {
+	pixels smallest
+	parent smallest
+	root   smallest
 }
 
-func (m importantSizes) add(f fontSize) importantSizes {
+func (m sizeCandidates) add(f fontSize) sizeCandidates {
 	switch f.mode {
 	case fsPixels:
 		m.pixels = m.pixels.with(f.value)
@@ -153,19 +86,20 @@ func (m importantSizes) add(f fontSize) importantSizes {
 	return m
 }
 
-func (m importantSizes) merge(o importantSizes) importantSizes {
+func (m sizeCandidates) merge(o sizeCandidates) sizeCandidates {
 	m.pixels = m.pixels.merge(o.pixels)
 	m.parent = m.parent.merge(o.parent)
 	m.root = m.root.merge(o.root)
 	return m
 }
 
-func (m importantSizes) any() bool {
+func (m sizeCandidates) any() bool {
 	return m.pixels.set || m.parent.set || m.root.set
 }
 
-// resolve returns the smallest size, in pixels.
-func (m importantSizes) resolve(parent, root float64) float64 {
+// smallest returns the smallest size in pixels, given the size of the parent
+// and the size of the html element.
+func (m sizeCandidates) smallest(parent, root float64) float64 {
 	size := float64(maxFontSize)
 	if m.pixels.set {
 		size = min(size, m.pixels.value)
@@ -180,95 +114,68 @@ func (m importantSizes) resolve(parent, root float64) float64 {
 }
 
 // styleEffect is what the declarations that apply to an element do to it.
+//
+// For the inherited properties (visibility and font size) the effect holds
+// every value that any declaration gives: from the style attribute and from the
+// rules of the element, its classes and its id. It does not matter which one
+// comes first, which source is stronger, or whether a declaration has
+// !important. If any of them hides, the element is hidden. This is stricter
+// than a browser, which picks one value. The cost is that text which a sender
+// hides and then shows again on the same element is dropped. The gain is that
+// no way of ordering or marking declarations can show hidden text.
 type styleEffect struct {
 	// drop means the element and everything in it is not shown, and nothing
 	// inside can show itself again. display:none, a zero opacity and a zero
-	// height with clipped overflow work like this. Where they come from does
-	// not matter, and !important does not matter.
+	// height with clipped overflow work like this.
 	drop bool
 
-	// visibility and fontSize are inherited. They hide the text of the element
-	// and of its children, but a child can set its own value. For each of them
-	// the effect keeps the strongest normal declaration, and the !important
-	// declarations apart, because an !important declaration is never replaced
-	// by a normal one.
-	visibility          visibilityDecl
-	importantVisibility visibility // visInherit if there is none; hidden wins over visible
-	fontSize            fontSizeDecl
-	importantFontSize   importantSizes
-}
-
-// ranked returns e with the strength of its normal declarations set. An
-// !important declaration has no strength: the hiding one wins.
-func (e styleEffect) ranked(r rank) styleEffect {
-	if e.visibility.set {
-		e.visibility.rank = r
-	}
-	if e.fontSize.set {
-		e.fontSize.rank = r
-	}
-	return e
+	// Values of visibility from the declarations.
+	hidden         bool // hidden or collapse
+	visible        bool // visible or initial
+	sameVisibility bool // inherit, unset, revert or revert-layer: the value of the parent
+	sizes          sizeCandidates
 }
 
 // merge adds the effect of other declarations that apply to the same element.
-// It does not matter which one is the receiver: the ranks decide.
 func (e styleEffect) merge(o styleEffect) styleEffect {
 	e.drop = e.drop || o.drop
-	if o.visibility.set && (!e.visibility.set || o.visibility.rank.atLeast(e.visibility.rank)) {
-		e.visibility = o.visibility
-	}
-	e.importantVisibility = max(e.importantVisibility, o.importantVisibility)
-	if o.fontSize.set && (!e.fontSize.set || o.fontSize.rank.atLeast(e.fontSize.rank)) {
-		e.fontSize = o.fontSize
-	}
-	e.importantFontSize = e.importantFontSize.merge(o.importantFontSize)
+	e.hidden = e.hidden || o.hidden
+	e.visible = e.visible || o.visible
+	e.sameVisibility = e.sameVisibility || o.sameVisibility
+	e.sizes = e.sizes.merge(o.sizes)
 	return e
 }
 
 // invisible works out the visibility of the element, given the one of its
-// parent. It returns true for hidden.
+// parent. It returns true for hidden. An element with no declaration keeps the
+// value of its parent.
 func (e styleEffect) invisible(parent bool) bool {
-	switch {
-	case e.importantVisibility != visInherit:
-		return e.importantVisibility == visHidden
-	case e.visibility.set:
-		return e.visibility.value == visHidden
+	if !e.hidden && !e.visible && !e.sameVisibility {
+		return parent
 	}
-	return parent
+	return e.hidden || (e.sameVisibility && parent)
 }
 
 // size works out the font size of the element in pixels, given the size of its
-// parent and the size of the html element.
+// parent and the size of the html element. It is the smallest size that any
+// declaration gives. An element with no declaration keeps the size of its
+// parent.
 func (e styleEffect) size(parent, root float64) float64 {
-	switch {
-	case e.importantFontSize.any():
-		return e.importantFontSize.resolve(parent, root)
-	case e.fontSize.set:
-		return e.fontSize.value.resolve(parent, root)
+	if !e.sizes.any() {
+		return parent
 	}
-	return parent
+	return e.sizes.smallest(parent, root)
 }
 
-// setFontSize records a font-size declaration. A later normal declaration of
-// the same list replaces an earlier one. !important ones are all kept.
-func (e *styleEffect) setFontSize(f fontSize, important bool) {
-	if important {
-		e.importantFontSize = e.importantFontSize.add(f)
-		return
+// isGlobalKeyword reports whether v is a keyword that takes the value of the
+// parent: inherit, unset, revert or revert-layer. (Both inherited properties
+// take the value of the parent for all four.)
+func isGlobalKeyword(v string) bool {
+	switch v {
+	case "inherit", "unset", "revert", "revert-layer":
+		return true
 	}
-	e.fontSize = fontSizeDecl{set: true, value: f}
-}
-
-// splitImportant cuts "!important" off the end of a value. The word may have
-// spaces before it, in any case, with comments or escapes in it. A "!" that is
-// followed by anything else is not !important (a browser drops such a
-// declaration, but the value is still used here, because it shows less).
-func splitImportant(value string) (string, bool) {
-	before, after, found := strings.Cut(value, "!")
-	if !found {
-		return value, false
-	}
-	return before, lowerASCII(strings.TrimSpace(unescapeCSS(after))) == "important"
+	return false
 }
 
 // parseStyle reads a list of declarations: the value of a style attribute, or
@@ -276,13 +183,13 @@ func splitImportant(value string) (string, bool) {
 //   - display:none
 //   - opacity of zero or less
 //   - max-height:0 or height:0, together with overflow of hidden or clip
-//   - visibility:hidden and visibility:collapse
+//   - visibility:hidden and visibility:collapse, and the other values
 //   - the font size, from font-size and from the font shorthand
 //
 // Names and values are matched the way a browser does it: ignoring case,
-// white space, comments and escapes. In one list a later normal declaration
-// replaces an earlier one, and !important declarations are kept apart. The
-// strength of the normal ones is set by the caller (see ranked).
+// white space, comments and escapes. Whatever follows a "!" that is not inside
+// a string or after a backslash is cut off, whatever it says: "!important"
+// does not change anything here (see styleEffect).
 func parseStyle(style string) styleEffect {
 	var e styleEffect
 	zeroHeight, clipped := false, false
@@ -292,7 +199,7 @@ func parseStyle(style string) styleEffect {
 			continue
 		}
 		name = lowerASCII(strings.TrimSpace(unescapeCSS(name)))
-		value, important := splitImportant(value)
+		value = value[:scanCSS(value, 0, "!")]
 		value = lowerASCII(strings.TrimSpace(unescapeCSS(value)))
 
 		switch name {
@@ -301,19 +208,13 @@ func parseStyle(style string) styleEffect {
 				e.drop = true
 			}
 		case "visibility":
-			v := visInherit
-			switch value {
-			case "hidden", "collapse":
-				v = visHidden
-			case "visible", "initial":
-				v = visVisible
-			}
 			switch {
-			case v == visInherit:
-			case important:
-				e.importantVisibility = max(e.importantVisibility, v)
-			default:
-				e.visibility = visibilityDecl{set: true, value: v}
+			case value == "hidden" || value == "collapse":
+				e.hidden = true
+			case value == "visible" || value == "initial":
+				e.visible = true
+			case isGlobalKeyword(value):
+				e.sameVisibility = true
 			}
 		case "opacity":
 			if n, _, ok := numberWithUnit(value); ok && n <= 0 {
@@ -321,11 +222,11 @@ func parseStyle(style string) styleEffect {
 			}
 		case "font-size":
 			if f, ok := parseFontSize(value, true); ok {
-				e.setFontSize(f, important)
+				e.sizes = e.sizes.add(f)
 			}
 		case "font":
 			if f, ok := fontShorthandSize(value); ok {
-				e.setFontSize(f, important)
+				e.sizes = e.sizes.add(f)
 			}
 		case "max-height", "height":
 			if n, _, ok := numberWithUnit(value); ok && n <= 0 {
@@ -421,14 +322,23 @@ var fontSizeKeywords = map[string]float64{
 }
 
 // parseFontSize reads the value of font-size. The value must already be in
-// lower case. It returns false for a value that a browser would not accept and
-// for values that keep the size of the parent (inherit, unset), so the element
-// then keeps the size it has. Functions such as calc() are not worked out and
-// are treated the same way.
+// lower case. The keywords inherit, unset, revert and revert-layer are the size
+// of the parent. It returns false for a value that a browser would not accept,
+// so a declaration like that gives no size. Functions such as calc() are not
+// worked out and are treated the same way.
 //
 // A number with no unit is a size in pixels if unitlessIsPixels is true (a page
 // without a doctype does this). Zero never needs a unit.
 func parseFontSize(v string, unitlessIsPixels bool) (fontSize, bool) {
+	if isGlobalKeyword(v) {
+		return fontSize{fsParent, 1}, true
+	}
+	return parseSizeValue(v, unitlessIsPixels)
+}
+
+// parseSizeValue reads a size: a keyword such as "small", or a number with a
+// unit.
+func parseSizeValue(v string, unitlessIsPixels bool) (fontSize, bool) {
 	if px, ok := fontSizeKeywords[v]; ok {
 		return fontSize{fsPixels, px}, true
 	}
@@ -479,6 +389,11 @@ func parseFontSize(v string, unitlessIsPixels bool) (fontSize, bool) {
 // word, before any "/", that is zero or has a unit, or that is a size keyword.
 // A number with no unit is a weight, and an angle is the slant of "oblique".
 func fontShorthandSize(value string) (fontSize, bool) {
+	// One of the keywords for the whole value is the size of the parent. As a
+	// word in the middle it could be the name of a font.
+	if isGlobalKeyword(value) {
+		return fontSize{fsParent, 1}, true
+	}
 	for _, word := range strings.Fields(value) {
 		word, _, _ = strings.Cut(word, "/")
 		if word == "" {
@@ -490,7 +405,7 @@ func fontShorthandSize(value string) (fontSize, bool) {
 				continue
 			}
 		}
-		if f, ok := parseFontSize(word, false); ok {
+		if f, ok := parseSizeValue(word, false); ok {
 			return f, true
 		}
 	}
@@ -507,12 +422,13 @@ func fontShorthandSize(value string) (fontSize, bool) {
 //
 // A rule is kept if it hides, and also if it sets a font size or a
 // visibility, because a child can use its own size to show its text in a
-// parent that has none.
+// parent that has none. The rules for one name are put together, and so are the
+// rules for an element (see styleEffect), so the order of the rules does not
+// matter.
 type styleRules struct {
 	classes  map[string]styleEffect
 	ids      map[string]styleEffect
 	elements map[string]styleEffect
-	order    int // number of rules read so far, over all style elements
 }
 
 // collectStyleRules reads every style element of the document.
@@ -551,11 +467,10 @@ func nextNode(n *html.Node) *html.Node {
 	return nil
 }
 
-// effectFor returns what the rules do to the element. The element rule, the
-// rules of its classes and the rule of its id are put together, and the ranks
-// of their declarations decide which one wins (see rank). Names are compared
-// ignoring case, because a page without a doctype matches classes and ids
-// that way.
+// effectFor returns what the rules do to the element: the rules for its name,
+// for each of its classes and for its id, all put together. Names are compared
+// ignoring case, because a page without a doctype matches classes and ids that
+// way.
 func (h *styleRules) effectFor(n *html.Node) styleEffect {
 	e := h.elements[n.Data]
 	var class, id string
@@ -607,7 +522,6 @@ func (h *styleRules) addStyleSheet(css string) {
 		if effect == (styleEffect{}) {
 			continue
 		}
-		h.order++
 		for _, sel := range splitCSS(prelude, ',') {
 			h.addSelector(strings.TrimSpace(sel), effect)
 		}
@@ -628,26 +542,25 @@ func trimPrelude(s string) string {
 	}
 }
 
-// addSelector remembers the effect of the rule that was read last, for a
-// selector that is one class, one id or one element name. A later rule for the
-// same name is stronger, and replaces what an earlier one set.
+// addSelector adds the effect of a rule to a selector that is one class, one
+// id or one element name. The effects of all the rules for a name are put
+// together.
 func (h *styleRules) addSelector(sel string, effect styleEffect) {
 	var names map[string]styleEffect
 	var name string
-	var level uint8
 	switch {
 	case strings.HasPrefix(sel, "."):
-		names, name, level = h.classes, sel[1:], levelClass
+		names, name = h.classes, sel[1:]
 	case strings.HasPrefix(sel, "#"):
-		names, name, level = h.ids, sel[1:], levelID
+		names, name = h.ids, sel[1:]
 	default:
-		names, name, level = h.elements, sel, levelElement
+		names, name = h.elements, sel
 	}
 	if !isCSSIdent(name) {
 		return
 	}
 	name = lowerASCII(unescapeCSS(name))
-	names[name] = names[name].merge(effect.ranked(rank{level: level, order: h.order}))
+	names[name] = names[name].merge(effect)
 }
 
 // isCSSIdent reports whether s is one name: letters, digits, "-", "_",
