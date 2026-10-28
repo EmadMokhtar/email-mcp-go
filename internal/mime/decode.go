@@ -36,8 +36,14 @@ const (
 	maxParts = 10000
 	// maxDepth is the deepest multipart nesting that ParseMessage follows.
 	maxDepth = 32
-	// maxHeaderBytes is the size limit of the header block of the message.
+	// maxHeaderBytes is the size limit of one header block, of the message or
+	// of a part.
 	maxHeaderBytes = 1 << 20
+	// maxHeaderFields is the most fields in one header block.
+	maxHeaderFields = 10000
+	// qpBufSize is the longest line of quoted-printable text that is decoded.
+	// The text is cut at a longer line.
+	qpBufSize = 256 << 10
 )
 
 // DecodeText decodes the body of one text part into a string.
@@ -56,6 +62,9 @@ const (
 // A part that is damaged half way (for example bad base64) gives the text
 // decoded up to that point, and no error. The error is not nil only when
 // reading r fails. The text read before the failure is returned with it.
+//
+// DecodeText reads r to its end and keeps the whole text in memory. The caller
+// must pass a bounded reader.
 func DecodeText(contentType string, params map[string]string, transferEncoding string, r io.Reader) (string, error) {
 	return decodeText(contentType, params, transferEncoding, r, 0)
 }
@@ -104,7 +113,10 @@ func transferDecoder(encoding string, r io.Reader) io.Reader {
 	case "base64":
 		return base64.NewDecoder(base64.RawStdEncoding, base64Cleaner{r})
 	case "quoted-printable":
-		return quotedprintable.NewReader(r)
+		// The reader of the standard library fails on a line that is longer
+		// than its buffer (4096 bytes), and the text would be cut there.
+		// Mail has such lines, so give it a bigger buffer.
+		return quotedprintable.NewReader(bufio.NewReaderSize(r, qpBufSize))
 	default:
 		// 7bit, 8bit, binary, empty and unknown values: not encoded.
 		return r
@@ -228,11 +240,13 @@ type Parsed struct {
 // maxText limits Text and HTML to that many characters. Zero or less means no
 // limit.
 //
-// The work is bounded. ParseMessage reads at most 10000 parts and follows
-// multipart nesting to a fixed depth. Damaged mail does not make it fail, and
-// it does not panic: it returns what it decoded. The error is not nil only
-// when reading r fails. The Parsed value is then still returned, with what
-// was decoded before the failure.
+// The work is bounded. ParseMessage reads at most 10000 parts, follows
+// multipart nesting to a fixed depth, and reads at most 1 MiB and 10000 fields
+// of each header block. A part whose header is over a limit is skipped (it
+// keeps its number). A header line that is not valid is skipped. Damaged mail
+// does not make ParseMessage fail, and it does not panic: it returns what it
+// decoded. The error is not nil only when reading r fails. The Parsed value is
+// then still returned, with what was decoded before the failure.
 func ParseMessage(r io.Reader, maxText int) (*Parsed, error) {
 	parsed, _, err := parseMessage(r, maxText)
 	return parsed, err
@@ -255,52 +269,22 @@ func parseMessage(r io.Reader, maxText int) (parsed *Parsed, recovered any, err 
 type walker struct {
 	maxText int
 	out     *Parsed
-	// parts counts the parts read, not counting the message itself.
+	// parts counts the parts found, not counting the message itself.
 	parts            int
 	hasText, hasHTML bool
 }
 
 func (w *walker) run(src io.Reader) {
-	// The limit protects against a header that never ends. It is lifted when
-	// the header is read. The body has no limit.
-	limited := &io.LimitedReader{R: src, N: maxHeaderBytes}
-	br := bufio.NewReader(limited)
-	h := readHeader(br)
-	limited.N = math.MaxInt64
+	br := bufio.NewReader(src)
+	// If the header is too big, the fields read so far are used and the rest
+	// is taken as the body.
+	h, _ := readHeader(newLineReader(br))
 	w.part(h, br, "", 0)
-}
-
-// readHeader reads the header block of the message. A line that is not a
-// valid header field (for example the "From " line of a mbox file) makes the
-// reader of the library fail. That line is skipped and the reading goes on,
-// so one bad line does not hide the fields after it.
-func readHeader(br *bufio.Reader) textproto.Header {
-	fields := map[string][]string{}
-	for {
-		h, err := textproto.ReadHeader(br)
-		for key, values := range h.Map() {
-			fields[key] = append(fields[key], values...)
-		}
-		if err == nil {
-			break
-		}
-		if _, peekErr := br.Peek(1); peekErr != nil {
-			break // nothing more to read
-		}
-	}
-	return textproto.HeaderFromMap(fields)
 }
 
 // part handles one part. id is its part path, empty for the message itself.
 // It returns false when the whole walk must stop.
 func (w *walker) part(h textproto.Header, body io.Reader, id string, depth int) bool {
-	if depth > 0 {
-		w.parts++
-		if w.parts > maxParts {
-			return false
-		}
-	}
-
 	mediaType, params := contentTypeOf(h)
 	if _, hasMethod := params["method"]; hasMethod || mediaType == "text/calendar" {
 		w.out.HasInvite = true
@@ -314,21 +298,28 @@ func (w *walker) part(h textproto.Header, body io.Reader, id string, depth int) 
 }
 
 func (w *walker) multipart(boundary string, body io.Reader, id string, depth int) bool {
-	if depth >= maxDepth {
+	if depth >= maxDepth || boundary == "" {
 		return true
 	}
-	mr := textproto.NewMultipartReader(body, boundary)
+	mr := newMultipartReader(body, boundary)
 	for i := 1; ; i++ {
-		p, err := mr.NextPart()
-		if err != nil {
-			// The end of the parts, or damaged data. Keep what was read.
+		h, partBody, tooBig, ok := mr.next()
+		if !ok {
 			return true
+		}
+		w.parts++
+		if w.parts > maxParts {
+			return false
+		}
+		if tooBig {
+			// The part keeps its place in the numbering, but it is not read.
+			continue
 		}
 		childID := strconv.Itoa(i)
 		if id != "" {
 			childID = id + "." + childID
 		}
-		if !w.part(p.Header, p, childID, depth+1) {
+		if !w.part(h, partBody, childID, depth+1) {
 			return false
 		}
 	}
@@ -372,11 +363,21 @@ func (w *walker) leaf(h textproto.Header, mediaType string, params map[string]st
 
 // filenameOf returns the decoded file name of a part, or an empty string.
 // The library reads RFC 2231 and RFC 2047 names, and falls back to the "name"
-// parameter of the Content-Type.
+// parameter of the Content-Type. It gives up on some names that mail has: a
+// charset other than UTF-8 in RFC 2231, an unquoted name with a space. For
+// these, and when its result holds U+FFFD, the parameters are read again
+// without strict rules (see lenientFilename).
 func filenameOf(h textproto.Header) string {
 	ah := gomail.AttachmentHeader{Header: message.Header{Header: h}}
-	name, _ := ah.Filename()
-	return strings.ToValidUTF8(name, string(utf8.RuneError))
+	name, err := ah.Filename()
+	name = strings.ToValidUTF8(name, string(utf8.RuneError))
+	if err == nil && name != "" && !strings.ContainsRune(name, utf8.RuneError) {
+		return name
+	}
+	if lenient := lenientFilename(h); lenient != "" && (name == "" || !strings.ContainsRune(lenient, utf8.RuneError)) {
+		return lenient
+	}
+	return name
 }
 
 // mediaTypePattern is what a media type may look like (RFC 6838). A media
@@ -412,30 +413,5 @@ func parseMedia(value string) (string, map[string]string) {
 	if i := strings.IndexAny(first, "; \t"); i >= 0 {
 		first = first[:i]
 	}
-	return strings.ToLower(strings.TrimSpace(first)), lenientParams(value)
-}
-
-// lenientParams reads the "name=value" parameters of a header value without
-// the strict rules of the standard library. It splits at semicolons, so it
-// does not handle a quoted value that holds a semicolon.
-func lenientParams(value string) map[string]string {
-	params := map[string]string{}
-	_, rest, _ := strings.Cut(value, ";")
-	for _, field := range strings.Split(rest, ";") {
-		name, val, ok := strings.Cut(field, "=")
-		name = strings.ToLower(strings.TrimSpace(name))
-		if !ok || name == "" {
-			continue
-		}
-		val = strings.TrimSpace(val)
-		if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
-			val = val[1 : len(val)-1]
-		} else if i := strings.IndexAny(val, " \t"); i >= 0 {
-			val = val[:i]
-		}
-		if _, seen := params[name]; !seen {
-			params[name] = val
-		}
-	}
-	return params
+	return strings.ToLower(strings.TrimSpace(first)), rawParams(value, true)
 }

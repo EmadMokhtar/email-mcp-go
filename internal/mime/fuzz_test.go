@@ -126,6 +126,12 @@ func FuzzDecodeMessage(f *testing.F) {
 		"Content-Type: text/plain; charset=utf-16\r\n\r\n\xff\xfea\x00",
 		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: multipart/mixed; boundary=c\r\n\r\n--c\r\nContent-Type: multipart/mixed; boundary=d\r\n\r\n--d\r\n\r\nx",
 		"Content-Type: image/png; x=\x00\r\nContent-Disposition: \r\n\r\n",
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\nbad line\r\n folded\r\n\r\nx\r\n--b \t\r\nX: y\r\n--b--",
+		"Content-Type: multipart/mixed; boundary=b\n\n--b\nContent-Disposition: attachment; filename=my report.pdf\n\nx\n--b\n--bx\n--b--\n--b",
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Disposition: attachment; filename*0*=windows-1256''%C7%E1; filename*1*=%CA%DE.pdf\r\n\r\nx\r\n--b--",
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: image/png; name*=iso-8859-1''caf%E9; name*0=\"a;\r\n\r\nx\r\n--b--",
+		"Content-Type: text/plain\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" + strings.Repeat("a=3D", 3000) + "=\r\n=zz=",
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n" + strings.Repeat("X: y\r\n", 12000) + "\r\nx\r\n--b--",
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s), 0)

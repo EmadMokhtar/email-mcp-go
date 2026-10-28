@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -808,5 +809,194 @@ func TestParsedStringsAreValidUTF8(t *testing.T) {
 	for _, a := range p.Attachments {
 		require.True(t, utf8.ValidString(a.Filename))
 		require.True(t, utf8.ValidString(a.ContentType))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix round 1
+
+// allocated returns how many bytes f allocates in total. This is an upper
+// bound of the heap that f needs at one time.
+func allocated(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+// A part header that is far too big must not use much memory, and the parts
+// after it must still be read.
+func TestParsePartHeaderSizeIsBounded(t *testing.T) {
+	headers := map[string]string{
+		"millions of tiny fields": strings.Repeat("X: y\r\n", 3_000_000),
+		"one huge line":           "X: " + strings.Repeat("a", 32<<20) + "\r\n",
+		"huge folded field":       "X: a\r\n" + strings.Repeat(" b\r\n", 3_000_000),
+	}
+	for name, header := range headers {
+		t.Run(name, func(t *testing.T) {
+			raw := "Content-Type: multipart/mixed; boundary=b\r\n\r\n" +
+				"--b\r\nContent-Type: text/plain\r\n\r\nfirst\r\n" +
+				"--b\r\n" + header + "\r\nignored body\r\n" +
+				"--b\r\nContent-Type: text/html\r\n\r\n<p>after</p>\r\n" +
+				"--b\r\nContent-Type: image/png\r\n\r\nxyz\r\n" +
+				"--b--\r\n"
+
+			var p *Parsed
+			var err error
+			grown := allocated(func() { p, err = ParseMessage(strings.NewReader(raw), 0) })
+
+			require.NoError(t, err)
+			require.Less(t, grown, uint64(24<<20), "the part header used too much memory")
+			require.Equal(t, "first", p.Text)
+			require.Equal(t, "<p>after</p>", p.HTML)
+			// The part with the big header is skipped, but it still has a
+			// place in the numbering.
+			require.Equal(t, []mail.AttachmentInfo{
+				{ID: "4", ContentType: "image/png", Size: 3},
+			}, p.Attachments)
+		})
+	}
+}
+
+func TestParseMessageHeaderSizeIsBounded(t *testing.T) {
+	headers := map[string]string{
+		"millions of tiny fields": strings.Repeat("X: y\r\n", 3_000_000),
+		"one huge line":           "X: " + strings.Repeat("a", 32<<20) + "\r\n",
+	}
+	for name, header := range headers {
+		t.Run(name, func(t *testing.T) {
+			raw := header + "\r\nbody text"
+			var err error
+			grown := allocated(func() { _, err = ParseMessage(strings.NewReader(raw), 100) })
+			require.NoError(t, err)
+			require.Less(t, grown, uint64(24<<20), "the header used too much memory")
+		})
+	}
+}
+
+func TestParsePartHeaderFieldLimit(t *testing.T) {
+	build := func(fields int) string {
+		return "Content-Type: multipart/mixed; boundary=b\r\n\r\n" +
+			"--b\r\nContent-Type: image/png\r\n" + strings.Repeat("X: y\r\n", fields-1) + "\r\nabc\r\n" +
+			"--b--\r\n"
+	}
+	p, err := ParseMessage(strings.NewReader(build(maxHeaderFields)), 0)
+	require.NoError(t, err)
+	require.Len(t, p.Attachments, 1)
+
+	p, err = ParseMessage(strings.NewReader(build(maxHeaderFields+1)), 0)
+	require.NoError(t, err)
+	require.Empty(t, p.Attachments)
+}
+
+func TestParseBadLineInPartHeaderKeepsLaterParts(t *testing.T) {
+	raw := msg("Content-Type: multipart/mixed; boundary=b", "",
+		"--b",
+		"Content-Type: text/plain",
+		"this line has no colon",
+		"Content-Transfer-Encoding: base64",
+		"",
+		"SGVsbG8=",
+		"--b",
+		"Content-Type: text/html",
+		"",
+		"<p>second</p>",
+		"--b--")
+	p, err := ParseMessage(strings.NewReader(raw), 0)
+	require.NoError(t, err)
+	// The field after the bad line is still used.
+	require.Equal(t, "Hello", p.Text)
+	require.Equal(t, "<p>second</p>", p.HTML)
+}
+
+func TestDecodeTextLongQuotedPrintableLines(t *testing.T) {
+	for _, n := range []int{5000, 200000} {
+		for name, tc := range map[string]struct{ in, want string }{
+			"plain":   {strings.Repeat("a", n), strings.Repeat("a", n)},
+			"escapes": {strings.Repeat("a=3D", n/4), strings.Repeat("a=", n/4)},
+		} {
+			got, err := DecodeText("text/plain", nil, "quoted-printable", strings.NewReader(tc.in))
+			require.NoError(t, err)
+			require.Equal(t, len(tc.want), len(got), "%s, %d bytes", name, n)
+			require.True(t, got == tc.want, "%s, %d bytes: text differs", name, n)
+		}
+	}
+}
+
+func TestParseLongQuotedPrintableLines(t *testing.T) {
+	line := strings.Repeat("ab=3D", 40000) // 200,000 bytes
+	want := strings.Repeat("ab=", 40000)   // 120,000 bytes
+	qp := []string{"Content-Transfer-Encoding: quoted-printable", ""}
+
+	single := msg(append([]string{"Content-Type: text/plain; charset=utf-8"}, append(qp, line)...)...)
+	p, err := ParseMessage(strings.NewReader(single), 0)
+	require.NoError(t, err)
+	require.True(t, p.Text == want, "single part text differs (%d bytes)", len(p.Text))
+
+	multi := msg("Content-Type: multipart/mixed; boundary=b", "",
+		"--b", "Content-Type: text/plain", qp[0], "", line,
+		"--b", "Content-Type: application/x-thing", qp[0], "", line,
+		"--b--")
+	p, err = ParseMessage(strings.NewReader(multi), 0)
+	require.NoError(t, err)
+	require.True(t, p.Text == want, "multipart text differs (%d bytes)", len(p.Text))
+	require.Len(t, p.Attachments, 1)
+	require.Equal(t, int64(len(want)), p.Attachments[0].Size)
+
+	// A non-multipart attachment.
+	raw := msg("Content-Type: application/x-thing", qp[0], "", line)
+	p, err = ParseMessage(strings.NewReader(raw), 0)
+	require.NoError(t, err)
+	require.Len(t, p.Attachments, 1)
+	require.Equal(t, int64(len(want)), p.Attachments[0].Size)
+}
+
+func TestParseRecoversDamagedFilenames(t *testing.T) {
+	arabic := "\U00000645\U00000644\U00000641" // three Arabic letters
+	tests := []struct {
+		name        string
+		disposition string
+		contentType string
+		want        string
+	}{
+		{"rfc 2231 latin-1", `attachment; filename*=iso-8859-1''caf%E9.pdf`, "application/pdf", "caf\U000000E9.pdf"},
+		{
+			"rfc 2231 windows-1256 in two segments",
+			`attachment; filename*0*=windows-1256''%C7%E1; filename*1*=%CA%DE.pdf`,
+			"application/pdf",
+			"\U00000627\U00000644\U0000062A\U00000642.pdf",
+		},
+		{"rfc 2231 with a language", `attachment; filename*=windows-1256'ar'%C7%E1.pdf`, "application/pdf", "\U00000627\U00000644.pdf"},
+		{"rfc 2231 unknown charset", `attachment; filename*=x-unknown''abc%FFdef.txt`, "application/pdf", "abc\U0000FFFDdef.txt"},
+		{"unquoted with a space", `attachment; filename=my report.pdf`, "application/pdf", "my report.pdf"},
+		{"unquoted with several spaces and a later parameter", `attachment; filename=my  big report.pdf ; size=10`, "application/pdf", "my  big report.pdf"},
+		{"unquoted raw utf-8", "attachment; filename=" + arabic + ".pdf", "application/pdf", arabic + ".pdf"},
+		{"unquoted raw utf-8 with a space", "attachment; filename=" + arabic + " 2.pdf", "application/pdf", arabic + " 2.pdf"},
+		{"unquoted rfc 2047 word", `attachment; filename==?UTF-8?B?w5xiZXIucGRm?=`, "application/pdf", "\U000000DCber.pdf"},
+		{"quoted with a semicolon and a bad parameter", `attachment; filename="a;b c.pdf"; bad parameter`, "application/pdf", "a;b c.pdf"},
+		{"quoted with an escaped quote and a bad parameter", `attachment; filename="a\"b.pdf"; bad parameter`, "application/pdf", `a"b.pdf`},
+		{"name in content type, unquoted with a space", `attachment`, `application/pdf; name=my report.pdf`, "my report.pdf"},
+		{"name in content type, rfc 2231", `attachment`, `application/pdf; name*=iso-8859-1''caf%E9.pdf`, "caf\U000000E9.pdf"},
+		{"invisible characters are removed", "attachment; filename=a\U0000200Bb c.txt", "application/pdf", "ab c.txt"},
+		// Names that the standard parser reads must not change.
+		{"quoted name", `attachment; filename="plain name.pdf"`, "application/pdf", "plain name.pdf"},
+		{"rfc 2231 utf-8", `attachment; filename*=UTF-8''%C3%9Cber%20Plan.pdf`, "application/pdf", "\U000000DCber Plan.pdf"},
+		{"rfc 2231 utf-8 in two segments", `attachment; filename*0*=UTF-8''%C3%9Cber; filename*1=".pdf"`, "application/pdf", "\U000000DCber.pdf"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := msg(
+				"Content-Type: "+tc.contentType,
+				"Content-Disposition: "+tc.disposition,
+				"Content-Transfer-Encoding: base64",
+				"",
+				"SGVsbG8=",
+			)
+			p, err := ParseMessage(strings.NewReader(raw), 0)
+			require.NoError(t, err)
+			require.Len(t, p.Attachments, 1)
+			require.Equal(t, tc.want, p.Attachments[0].Filename)
+		})
 	}
 }
