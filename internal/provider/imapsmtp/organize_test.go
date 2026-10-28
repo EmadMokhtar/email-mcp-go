@@ -1583,3 +1583,45 @@ func TestNewUIDs(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------- partial changes
+
+// An error after some messages were changed says so with mail.ErrPartial, so the
+// service can tell the agent not to repeat the call. An error before the first
+// change is not partial: nothing was changed.
+func TestChangedMarksAPartialChange(t *testing.T) {
+	cause := errors.New("the server went away")
+
+	err := changed(cause, 1, 3, "moved")
+	require.ErrorIs(t, err, mail.ErrPartial)
+	require.ErrorIs(t, err, cause)
+	require.EqualError(t, err, "imap: 1 of 3 messages were already moved when this error happened: the server went away")
+
+	require.NotErrorIs(t, changed(cause, 0, 3, "moved"), mail.ErrPartial)
+	require.NoError(t, changed(nil, 2, 3, "moved"))
+}
+
+// A move that made copies but could not finish has changed the mailbox. The
+// error must be partial, so nobody repeats the move and makes more copies.
+func TestMoveThatCopiedButDidNotFinishIsPartial(t *testing.T) {
+	srv := imaptest.New(t, uidPlusOnly(), imaptest.WithoutCopyUID())
+	srv.Create("Archive")
+	srv.Append("INBOX", plainMail("m", "x"))
+	b := newTestBackend(t, srv)
+	ref := refsBySubject(t, b, "INBOX")["m"]
+
+	_, err := b.Move(t.Context(), []mail.Ref{ref}, "Archive")
+
+	require.ErrorIs(t, err, mail.ErrPartial)
+	require.ErrorIs(t, err, mail.ErrUnsupported, "the cause is still visible")
+	require.Equal(t, []string{"m"}, serverSubjects(t, srv, "Archive"), "the copy was made")
+}
+
+func TestPartialKeepsTheTextAndTheCause(t *testing.T) {
+	cause := fmt.Errorf("%w: no COPYUID", mail.ErrUnsupported)
+	err := partial(cause)
+	require.EqualError(t, err, cause.Error())
+	require.ErrorIs(t, err, mail.ErrPartial)
+	require.ErrorIs(t, err, mail.ErrUnsupported)
+	require.NoError(t, partial(nil))
+}

@@ -58,10 +58,11 @@ func appendMessage(c *imapclient.Client, folder string, data []byte, flags []ima
 // way, so SaveDraft refuses it before it stores anything.
 //
 // Once the draft is stored, every error says "the draft was saved, but its
-// reference is not known", so that nobody saves it again. This holds for the
-// search that finds no message or more than one (the error then also wraps
-// mail.ErrUnsupported), for a search, a fetch or a folder that fails, and for
-// a time out. The wording is added in one place, after the pool returns.
+// reference is not known" and wraps mail.ErrPartial, so that nobody saves it
+// again. This holds for the search that finds no message or more than one (the
+// error then also wraps mail.ErrUnsupported), for a search, a fetch or a folder
+// that fails, and for a time out. The wording is added in one place, after the
+// pool returns.
 //
 // A missing Drafts folder gives an error that wraps mail.ErrNotFound.
 //
@@ -105,7 +106,7 @@ func (b *Backend) SaveDraft(ctx context.Context, raw *mail.RawMessage) (mail.Ref
 	if err != nil {
 		if stored.Load() {
 			// The draft is in the folder. Say so, so that nobody saves it again.
-			err = fmt.Errorf("imap: the draft was saved, but its reference is not known: %w", err)
+			err = partial(fmt.Errorf("imap: the draft was saved, but its reference is not known: %w", err))
 		}
 		return "", err
 	}

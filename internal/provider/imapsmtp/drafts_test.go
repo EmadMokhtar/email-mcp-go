@@ -300,6 +300,7 @@ func TestSaveDraftSaysItWasSavedWhenTheRefCannotBeFound(t *testing.T) {
 			require.Error(t, err)
 			require.Empty(t, ref)
 			require.ErrorContains(t, err, "the draft was saved, but its reference is not known")
+			require.ErrorIs(t, err, mail.ErrPartial, "the draft exists, so the caller must not save it again")
 			require.Equal(t, 1, strings.Count(fake.Received(), " APPEND "), "APPEND was sent once")
 		})
 	}

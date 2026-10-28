@@ -33,7 +33,9 @@ var aliasAttrs = []struct {
 }
 
 // ListFolders returns the folders of the account that can hold messages. The
-// folder alias comes from the SPECIAL-USE attribute of the folder.
+// folder alias comes from the SPECIAL-USE attribute of the folder. A folder with
+// more than one such attribute gets one alias, chosen by aliasPriority, and the
+// alias of the backend's own Trash folder is always "@trash".
 //
 // The counts (Unread and Total) are set when the server supports LIST-STATUS,
 // because then the server sends them with the list in one command. Without
@@ -46,10 +48,7 @@ func (b *Backend) ListFolders(ctx context.Context) ([]mail.Folder, error) {
 		if err != nil {
 			return err
 		}
-		aliasOf := make(map[string]string, len(list))
-		for alias, name := range aliasFolders(list) {
-			aliasOf[name] = alias
-		}
+		aliasOf := folderAliases(aliasFolders(list))
 		folders = make([]mail.Folder, 0, len(list))
 		for _, data := range list {
 			f := mail.Folder{Name: data.Mailbox, Alias: aliasOf[data.Mailbox]}
@@ -156,6 +155,31 @@ func aliasFolders(list []*imap.ListData) map[string]string {
 		}
 	}
 	return out
+}
+
+// aliasPriority is the order in which a folder gets its alias in the folder
+// list, when it has more than one SPECIAL-USE attribute. Trash comes first: the
+// service looks for the Trash folder in the list to stop a plain move to Trash,
+// so a folder that is Trash must show as Trash.
+var aliasPriority = []string{
+	mail.AliasTrash, mail.AliasInbox, mail.AliasJunk, mail.AliasDrafts, mail.AliasSent, mail.AliasArchive,
+}
+
+// folderAliases turns the folder of each alias (see aliasFolders) into the alias
+// of each folder. A folder that has several aliases gets the first one in
+// aliasPriority, so the result does not depend on the order of a map.
+func folderAliases(folderOf map[string]string) map[string]string {
+	aliasOf := make(map[string]string, len(folderOf))
+	for _, alias := range aliasPriority {
+		name, ok := folderOf[alias]
+		if !ok {
+			continue
+		}
+		if _, taken := aliasOf[name]; !taken {
+			aliasOf[name] = alias
+		}
+	}
+	return aliasOf
 }
 
 // hasAttr reports whether attrs has attr. Attributes are not case sensitive.

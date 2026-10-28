@@ -1318,3 +1318,31 @@ func TestCursorBindings(t *testing.T) {
 		require.ErrorIs(t, err, mail.ErrNotFound)
 	})
 }
+
+// A folder can have more than one SPECIAL-USE attribute, but it has one alias in
+// the folder list. The alias must not depend on the order of a Go map, and Trash
+// must win: the service finds the Trash folder in this list to stop a move to
+// Trash, and the backend's own Trash uses the same folder.
+func TestListFoldersPrefersTrashForAFolderWithTwoAttributes(t *testing.T) {
+	srv := imaptest.New(t)
+	srv.Create("Bin", imap.MailboxAttrJunk, imap.MailboxAttrTrash)
+	srv.Create("Archive", imap.MailboxAttrArchive, imap.MailboxAttrSent)
+	b := newTestBackend(t, srv)
+
+	trash, err := b.resolveFolder(t.Context(), mail.AliasTrash)
+	require.NoError(t, err)
+	require.Equal(t, "Bin", trash)
+
+	// Many runs, because a map gives a new order on each run.
+	for range 50 {
+		folders, err := b.ListFolders(t.Context())
+		require.NoError(t, err)
+		aliasOf := map[string]string{}
+		for _, f := range folders {
+			aliasOf[f.Name] = f.Alias
+		}
+		require.Equal(t, mail.AliasTrash, aliasOf["Bin"])
+		require.Equal(t, mail.AliasSent, aliasOf["Archive"], "the order is fixed for the other aliases too")
+		require.Equal(t, mail.AliasInbox, aliasOf["INBOX"])
+	}
+}

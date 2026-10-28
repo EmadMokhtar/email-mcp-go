@@ -152,12 +152,30 @@ func uidsExist(c *imapclient.Client, uids []imap.UID) error {
 
 // changed adds to an error what a person needs to know when a call failed
 // after it had changed messages in earlier folders: the batch is not all or
-// nothing from there on. Before that point it is (see check).
+// nothing from there on. Before that point it is (see check). The error is then
+// partial (see partial).
 func changed(err error, done, total int, verb string) error {
 	if done == 0 || err == nil {
 		return err
 	}
-	return fmt.Errorf("imap: %d of %d messages were already %s when this error happened: %w", done, total, verb, err)
+	return partial(fmt.Errorf("imap: %d of %d messages were already %s when this error happened: %w", done, total, verb, err))
+}
+
+// partialError is an error after which the change was made in part or in full.
+// It has the text of its cause. errors.Is finds mail.ErrPartial and the causes.
+type partialError struct{ err error }
+
+func (e *partialError) Error() string   { return e.err.Error() }
+func (e *partialError) Unwrap() []error { return []error{e.err, mail.ErrPartial} }
+
+// partial marks err as an error after which the change was made in part or in
+// full, so the caller does not repeat the call (see mail.ErrPartial).
+// partial(nil) is nil.
+func partial(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &partialError{err: err}
 }
 
 // ---------------------------------------------------------------- flags and tags

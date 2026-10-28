@@ -21,6 +21,13 @@ var (
 	// ErrConflict means the change conflicts with the current state, for
 	// example creating a folder or tag that already exists.
 	ErrConflict = errors.New("mail: conflicting change")
+	// ErrPartial means a call that changes mail failed after it had made some
+	// or all of its change: for example some messages were moved, or the
+	// messages were moved and their new refs are not known. The old refs may be
+	// stale. The caller must not repeat the call, because a second try can make
+	// copies or change other messages. It should search again to see the state.
+	// A backend wraps the error with the cause, so errors.Is finds both.
+	ErrPartial = errors.New("mail: the change was made in part or in full before the error")
 )
 
 // Backend is the interface that every mail provider implements. It uses no

@@ -47,7 +47,9 @@ func (b *Backend) Trash(ctx context.Context, refs []mail.Ref) error {
 // and without UIDPLUS), the messages are moved, and the error says so.
 //
 // The change is made once: a dropped connection is not retried, because the
-// command may have worked, and a second copy would make duplicates.
+// command may have worked, and a second copy would make duplicates. An error
+// after a change was made (some messages moved, copies made, or new refs not
+// known) wraps mail.ErrPartial.
 func (b *Backend) Move(ctx context.Context, refs []mail.Ref, folder string) ([]mail.Ref, error) {
 	if err := checkFolderName(folder); err != nil {
 		return nil, err
@@ -102,7 +104,7 @@ func (b *Backend) Move(ctx context.Context, refs []mail.Ref, folder string) ([]m
 		}
 		out[i] = item.group.newRefs[item.uid]
 		if out[i] == "" {
-			return nil, fmt.Errorf("imap: the messages were moved, but the new reference of message %d is not known", i+1)
+			return nil, partial(fmt.Errorf("imap: the messages were moved, but the new reference of message %d is not known", i+1))
 		}
 	}
 	return out, nil
@@ -147,7 +149,7 @@ func (b *Backend) moveGroup(c *imapclient.Client, g *refGroup, target string, ha
 		}
 		g.newRefs, err = copiedRefs(target, g.uids, data.UIDValidity, data.SourceUIDs, data.DestUIDs)
 		if err != nil {
-			return fmt.Errorf("the messages were moved to %q, but their new references are not known: %w", target, err)
+			return partial(fmt.Errorf("the messages were moved to %q, but their new references are not known: %w", target, err))
 		}
 		return nil
 	}
@@ -160,15 +162,15 @@ func (b *Backend) moveGroup(c *imapclient.Client, g *refGroup, target string, ha
 	if err != nil {
 		// Stop before the source is touched. The copy stays, and so does the
 		// original.
-		return fmt.Errorf("the messages were copied to %q but not removed from the folder, because their new references are not known: %w", target, err)
+		return partial(fmt.Errorf("the messages were copied to %q but not removed from the folder, because their new references are not known: %w", target, err))
 	}
 	// Mark only the messages that were copied, and expunge only them.
 	del := c.Store(set, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Silent: true, Flags: []imap.Flag{imap.FlagDeleted}}, nil)
 	if err := del.Close(); err != nil {
-		return fmt.Errorf("the messages were copied to %q but could not be marked as deleted in the folder: %w", target, err)
+		return partial(fmt.Errorf("the messages were copied to %q but could not be marked as deleted in the folder: %w", target, err))
 	}
 	if err := c.UIDExpunge(set).Close(); err != nil {
-		return fmt.Errorf("the messages were copied to %q and marked as deleted in the folder, but the server did not remove them: %w", target, err)
+		return partial(fmt.Errorf("the messages were copied to %q and marked as deleted in the folder, but the server did not remove them: %w", target, err))
 	}
 	g.newRefs = newRefs
 	return nil

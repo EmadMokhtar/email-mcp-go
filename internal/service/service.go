@@ -6,16 +6,20 @@
 // handler never reaches the store or a backend without passing through here.
 //
 // This file holds the Service type, its dependencies and its errors. The read
-// use cases are in read.go. The backend cache is in backends.go.
+// use cases are in read.go. The write use cases are in write.go, and sending is
+// in send.go. The backend cache is in backends.go.
 //
-// The package writes no log lines. A log line could carry a subject, an
-// address, a name or a token, and the rules of this project forbid that.
+// The package logs only fixed codes (for example "audit_write_failed"), with
+// the name of the tool and the outcome at most. It never logs an error text, a
+// subject, an address, a name, a body or a token, because the rules of this
+// project forbid that and an error text can hold any of them.
 package service
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/audit"
@@ -100,6 +104,10 @@ type Deps struct {
 	Links    Links
 	// Now returns the current time. A nil Now means time.Now.
 	Now func() time.Time
+	// Logger gets a line with a fixed code when the service cannot do a step
+	// that does not change the answer, for example when an audit entry cannot be
+	// written. A nil Logger logs nothing.
+	Logger *slog.Logger
 }
 
 // Service runs the use cases. It is safe for use by many goroutines.
@@ -124,6 +132,9 @@ func New(d Deps) *Service {
 	}
 	if d.Now == nil {
 		d.Now = time.Now
+	}
+	if d.Logger == nil {
+		d.Logger = slog.New(slog.DiscardHandler)
 	}
 	return &Service{d: d, capabilitiesBudget: capabilitiesBudget}
 }

@@ -1,0 +1,967 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/EmadMokhtar/email-mcp-go/internal/audit"
+	"github.com/EmadMokhtar/email-mcp-go/internal/confirm"
+	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
+	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
+	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
+	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
+	"github.com/EmadMokhtar/email-mcp-go/internal/store"
+)
+
+// ---------------------------------------------------------------- helpers
+
+// testClock is a clock that a test moves by hand. Every part of a writeEnv uses
+// it.
+type testClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *testClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *testClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+// sentCall is one call of the fake sender of the outbox.
+type sentCall struct {
+	Account account.AccountID
+	Msg     *mail.RawMessage
+	Draft   mail.Ref
+}
+
+// fakeSender is the Sender of the outbox in the tests. It records each message.
+type fakeSender struct {
+	mu    sync.Mutex
+	calls []sentCall
+	err   error
+}
+
+func (s *fakeSender) Send(_ context.Context, _ account.TenantID, acct account.AccountID, msg *mail.RawMessage, draft mail.Ref) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, sentCall{Account: acct, Msg: msg, Draft: draft})
+	return s.err
+}
+
+func (s *fakeSender) sent() []sentCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.calls)
+}
+
+// moveCall is one call of recBackend.Move.
+type moveCall struct {
+	Refs   []mail.Ref
+	Folder string
+}
+
+// recBackend is a mail backend for the write tests. It records the calls that
+// change mail. A method that it does not define panics (the embedded interface
+// is nil), so a test sees at once a call that the service should not make.
+type recBackend struct {
+	mail.Backend
+
+	mu      sync.Mutex
+	folders []mail.Folder
+	// originals are the messages that GetMessage returns. A test that needs a
+	// message to change between two calls sets nextOriginal.
+	originals    map[mail.Ref]*mail.Message
+	nextOriginal func(ref mail.Ref, call int) *mail.Message
+	getCalls     int
+	raws         map[mail.Ref][]byte
+	rawMax       int64
+	errs         map[string]error // the error of a method, by name
+
+	flags     []mail.FlagChange
+	tagged    [][]string
+	moved     []moveCall
+	trashed   [][]mail.Ref
+	saved     []*mail.RawMessage
+	discarded []mail.Ref
+	created   []string
+}
+
+// newRecBackend returns a backend with the usual folders. The Trash folder has
+// a name that is not "Trash", as on many servers.
+func newRecBackend() *recBackend {
+	return &recBackend{
+		folders: []mail.Folder{
+			{Name: "INBOX", Alias: mail.AliasInbox},
+			{Name: "Archive", Alias: mail.AliasArchive},
+			{Name: "Deleted Items", Alias: mail.AliasTrash},
+			{Name: "Drafts", Alias: mail.AliasDrafts},
+			{Name: "Projects"},
+		},
+		originals: map[mail.Ref]*mail.Message{},
+		raws:      map[mail.Ref][]byte{},
+		errs:      map[string]error{},
+	}
+}
+
+func (b *recBackend) setErr(method string, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.errs[method] = err
+}
+
+func (b *recBackend) ListFolders(context.Context) ([]mail.Folder, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.folders), b.errs["ListFolders"]
+}
+
+func (b *recBackend) GetMessage(_ context.Context, ref mail.Ref, _ mail.BodyOptions) (*mail.Message, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.getCalls++
+	if b.nextOriginal != nil {
+		return b.nextOriginal(ref, b.getCalls), nil
+	}
+	m, ok := b.originals[ref]
+	if !ok {
+		return nil, mail.ErrNotFound
+	}
+	return m, nil
+}
+
+func (b *recBackend) GetRaw(_ context.Context, ref mail.Ref, maxBytes int64) ([]byte, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.rawMax = maxBytes
+	raw, ok := b.raws[ref]
+	if !ok {
+		return nil, mail.ErrNotFound
+	}
+	return raw, nil
+}
+
+func (b *recBackend) SetFlags(_ context.Context, _ []mail.Ref, change mail.FlagChange) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.flags = append(b.flags, change)
+	return b.errs["SetFlags"]
+}
+
+func (b *recBackend) Tag(_ context.Context, _ []mail.Ref, add, remove []string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.tagged = append(b.tagged, append(slices.Clone(add), remove...))
+	return b.errs["Tag"]
+}
+
+func (b *recBackend) CreateFolder(_ context.Context, name, parent string) (mail.Folder, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.created = append(b.created, "folder:"+name)
+	if err := b.errs["CreateFolder"]; err != nil {
+		return mail.Folder{}, err
+	}
+	if parent != "" {
+		name = parent + "/" + name
+	}
+	return mail.Folder{Name: name}, nil
+}
+
+func (b *recBackend) CreateTag(_ context.Context, name string) (mail.Tag, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.created = append(b.created, "tag:"+name)
+	return mail.Tag{Name: name}, b.errs["CreateTag"]
+}
+
+func (b *recBackend) Move(_ context.Context, refs []mail.Ref, folder string) ([]mail.Ref, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.moved = append(b.moved, moveCall{Refs: slices.Clone(refs), Folder: folder})
+	if err := b.errs["Move"]; err != nil {
+		return nil, err
+	}
+	out := make([]mail.Ref, len(refs))
+	for i, r := range refs {
+		out[i] = mail.Ref(folder + ":" + string(r))
+	}
+	return out, nil
+}
+
+func (b *recBackend) Trash(_ context.Context, refs []mail.Ref) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.trashed = append(b.trashed, slices.Clone(refs))
+	return b.errs["Trash"]
+}
+
+func (b *recBackend) SaveDraft(_ context.Context, msg *mail.RawMessage) (mail.Ref, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.saved = append(b.saved, msg)
+	if err := b.errs["SaveDraft"]; err != nil {
+		return "", err
+	}
+	return mail.Ref(fmt.Sprintf("draft-%d", len(b.saved))), nil
+}
+
+func (b *recBackend) DiscardDraft(_ context.Context, ref mail.Ref) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.discarded = append(b.discarded, ref)
+	return b.errs["DiscardDraft"]
+}
+
+func (b *recBackend) trashCalls() [][]mail.Ref {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.trashed)
+}
+
+func (b *recBackend) moveCalls() []moveCall {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.moved)
+}
+
+// failingAuditStore is an audit store whose writes fail.
+type failingAuditStore struct{}
+
+func (failingAuditStore) CreateAudit(context.Context, *store.AuditRow) error {
+	return errors.New("disk full")
+}
+
+func (failingAuditStore) ListAudit(context.Context, account.TenantID, store.AuditFilter) ([]*store.AuditRow, error) {
+	return nil, nil
+}
+
+func (failingAuditStore) PruneAudit(context.Context, time.Time) (int, error) { return 0, nil }
+
+// rawDB opens the database file of the fixture on its own connection, for a
+// test that reads a table that the store has no call for. It is closed when the
+// test ends.
+func (f *fixture) rawDB() *sql.DB {
+	f.t.Helper()
+	uriPath := filepath.ToSlash(filepath.Join(f.dir, "email-mcp.db"))
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	db, err := sql.Open("sqlite", "file:"+uriPath+"?_pragma=busy_timeout(5000)")
+	require.NoError(f.t, err)
+	f.t.Cleanup(func() { require.NoError(f.t, db.Close()) })
+	return db
+}
+
+// syncBuffer is a bytes.Buffer that many goroutines may write to.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// writeEnv is a service with every part that the write use cases need: the real
+// store, vault, limiter, confirm manager, outbox and audit log of a fixture, a
+// recording backend, a fake sender and a clock that the test moves.
+type writeEnv struct {
+	t       *testing.T
+	f       *fixture
+	svc     *Service
+	backend *recBackend
+	sender  *fakeSender
+	outbox  *outbox.Outbox
+	confirm *confirm.Manager
+	audit   *audit.Log
+	links   *fakeLinks
+	clock   *testClock
+	logs    *syncBuffer
+}
+
+// envOption changes the parts of a writeEnv before the service is built.
+type envOption func(*Deps)
+
+// newWriteEnv builds a writeEnv. Accounts are added with env.account.
+func newWriteEnv(t *testing.T, opts ...envOption) *writeEnv {
+	t.Helper()
+	f := newFixture(t)
+	clock := &testClock{now: testStart}
+	sender := &fakeSender{}
+	ob := outbox.New(f.store, f.vault, sender.Send, clock.Now)
+	cm := confirm.NewManager(f.store, f.vault, f.signer, clock.Now)
+	log := audit.New(f.store, f.vault, clock.Now)
+	links := &fakeLinks{}
+	backend := newRecBackend()
+	logs := &syncBuffer{}
+	d := Deps{
+		Store:    f.store,
+		Vault:    f.vault,
+		Signer:   f.signer,
+		Backends: &fakeFactory{backend: backend},
+		Limiter:  &policy.Limiter{Store: f.store, Now: clock.Now},
+		Confirm:  cm,
+		Outbox:   ob,
+		Audit:    log,
+		Links:    links,
+		Now:      clock.Now,
+		Logger:   slog.New(slog.NewTextHandler(logs, nil)),
+	}
+	for _, o := range opts {
+		o(&d)
+	}
+	return &writeEnv{
+		t: t, f: f, svc: New(d), backend: backend, sender: sender, outbox: ob,
+		confirm: cm, audit: log, links: links, clock: clock, logs: logs,
+	}
+}
+
+// account adds an account of the local tenant with the address
+// me@example.com. With no change, it has the defaults of a new account: Mail 4,
+// both confirmations on, the default limits.
+func (e *writeEnv) account(change ...func(*account.Account)) *account.Account {
+	e.t.Helper()
+	return e.f.addAccount(e.f.tenant, "me@example.com", offlineSettings(), "pw", change...)
+}
+
+// level returns a change that sets the mail level.
+func level(l account.Level) func(*account.Account) {
+	return func(a *account.Account) { a.Levels[account.AreaMail] = l }
+}
+
+// autonomy returns a change that turns both confirmations off.
+func autonomy(a *account.Account) {
+	a.ConfirmSends = false
+	a.ConfirmDeletes = false
+}
+
+// ctx returns a context with the principal of the local tenant.
+func (e *writeEnv) ctx() context.Context { return e.f.ctx() }
+
+// entries returns the audit entries of the tenant, newest first.
+func (e *writeEnv) entries() []audit.Entry {
+	e.t.Helper()
+	list, err := e.audit.List(context.Background(), e.f.tenant, audit.Filter{Limit: 1000})
+	require.NoError(e.t, err)
+	return list
+}
+
+// lastEntry returns the newest audit entry.
+func (e *writeEnv) lastEntry() audit.Entry {
+	e.t.Helper()
+	list := e.entries()
+	require.NotEmpty(e.t, list, "an audit entry was expected")
+	return list[0]
+}
+
+// pending returns a pending action of the tenant.
+func (e *writeEnv) pending(id string) *confirm.Pending {
+	e.t.Helper()
+	p, _, err := e.confirm.Get(context.Background(), e.f.tenant, id)
+	require.NoError(e.t, err)
+	return p
+}
+
+// waitingActions returns the actions of the tenant that wait for the user.
+func (e *writeEnv) waitingActions() []*confirm.Pending {
+	e.t.Helper()
+	list, err := e.confirm.ListPending(context.Background(), e.f.tenant)
+	require.NoError(e.t, err)
+	return list
+}
+
+// requireEntry checks the fields of an audit entry that the tests care about.
+func requireEntry(t *testing.T, e audit.Entry, tool string, outcome audit.Outcome, detail string) {
+	t.Helper()
+	require.Equal(t, tool, e.Tool, "tool")
+	require.Equal(t, outcome, e.Outcome, "outcome of %s", e.Tool)
+	require.Equal(t, detail, e.Detail, "detail of %s", e.Tool)
+}
+
+// writeUses lists every write use case of one account, so a test can check
+// them all with the same account.
+func writeUses(svc *Service, id account.AccountID) map[string]func(ctx context.Context) error {
+	refs := []mail.Ref{"r1"}
+	c := mail.Compose{To: []string{"bob@example.com"}, Subject: "Hi", Body: "Hello"}
+	return map[string]func(ctx context.Context) error{
+		"SetFlags": func(ctx context.Context) error {
+			return svc.SetFlags(ctx, id, refs, mail.FlagChange{Seen: new(true)})
+		},
+		"CreateFolder": func(ctx context.Context) error { _, err := svc.CreateFolder(ctx, id, "New", ""); return err },
+		"CreateTag":    func(ctx context.Context) error { _, err := svc.CreateTag(ctx, id, "urgent"); return err },
+		"Tag":          func(ctx context.Context) error { return svc.Tag(ctx, id, refs, []string{"urgent"}, nil) },
+		"Move":         func(ctx context.Context) error { _, err := svc.Move(ctx, id, refs, "Archive"); return err },
+		"CreateDraft":  func(ctx context.Context) error { _, err := svc.CreateDraft(ctx, id, c); return err },
+		"DiscardDraft": func(ctx context.Context) error { return svc.DiscardDraft(ctx, id, "d1") },
+		"Send": func(ctx context.Context) error {
+			_, _, err := svc.Send(ctx, id, &c, nil, ConfirmInBand, nil)
+			return err
+		},
+		"CancelSend": func(ctx context.Context) error { return svc.CancelSend(ctx, id, "s1") },
+		"Trash": func(ctx context.Context) error {
+			_, _, err := svc.Trash(ctx, id, refs, ConfirmInBand, nil)
+			return err
+		},
+	}
+}
+
+// ---------------------------------------------------------------- access
+
+func TestWriteRefusedAtLevel0(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailOff))
+	factory := env.svc.d.Backends.(*fakeFactory)
+
+	for name, use := range writeUses(env.svc, a.ID) {
+		t.Run(name, func(t *testing.T) {
+			err := use(env.ctx())
+			var perm *PermissionError
+			require.ErrorAs(t, err, &perm)
+			require.False(t, perm.Decision.Allowed)
+		})
+	}
+	require.Zero(t, factory.calls(), "a refused write must not reach a backend")
+	require.Empty(t, env.sender.sent())
+	require.Empty(t, env.waitingActions())
+	for _, e := range env.entries() {
+		require.Equal(t, audit.OutcomeRefused, e.Outcome, e.Tool)
+		require.Equal(t, "level_too_low", e.Detail, e.Tool)
+		require.Equal(t, a.ID, e.Account)
+	}
+	require.Len(t, env.entries(), len(writeUses(env.svc, a.ID)), "every refused write is audited")
+}
+
+func TestWriteOnAccountOfOtherTenantNotFound(t *testing.T) {
+	env := newWriteEnv(t)
+	env.f.addTenant("other")
+	theirs := env.f.addAccount("other", "them@example.com", offlineSettings(), "pw", level(account.MailDelete))
+	factory := env.svc.d.Backends.(*fakeFactory)
+
+	for name, use := range writeUses(env.svc, theirs.ID) {
+		t.Run(name, func(t *testing.T) {
+			require.ErrorIs(t, use(env.ctx()), ErrAccountNotFound)
+		})
+	}
+	require.Zero(t, factory.calls())
+	for _, e := range env.entries() {
+		require.Empty(t, e.Account, "the entry must not name the account of another tenant")
+		require.Equal(t, "account_not_found", e.Detail)
+	}
+}
+
+func TestWriteWithoutPrincipalRefused(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete))
+	for name, use := range writeUses(env.svc, a.ID) {
+		t.Run(name, func(t *testing.T) {
+			require.ErrorIs(t, use(context.Background()), ErrNoPrincipal)
+		})
+	}
+}
+
+// ---------------------------------------------------------------- organize
+
+func TestOrganizeNeedsLevel2(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailRead))
+
+	err := env.svc.SetFlags(env.ctx(), a.ID, []mail.Ref{"r1"}, mail.FlagChange{Seen: new(true)})
+	var perm *PermissionError
+	require.ErrorAs(t, err, &perm)
+	require.Equal(t, account.MailOrganize, perm.Decision.Required)
+	requireEntry(t, env.lastEntry(), "set_flags", audit.OutcomeRefused, "level_too_low")
+}
+
+func TestOrganizeCallsTheBackendAndAudits(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailOrganize))
+	ctx := env.ctx()
+	refs := []mail.Ref{"r1", "r2"}
+
+	require.NoError(t, env.svc.SetFlags(ctx, a.ID, refs, mail.FlagChange{Flagged: new(true)}))
+	requireEntry(t, env.lastEntry(), "set_flags", audit.OutcomeOK, "")
+	require.Equal(t, 2, env.lastEntry().Count)
+
+	folder, err := env.svc.CreateFolder(ctx, a.ID, "Taxes", "Projects")
+	require.NoError(t, err)
+	require.Equal(t, "Projects/Taxes", folder.Name)
+	requireEntry(t, env.lastEntry(), "create_folder", audit.OutcomeOK, "")
+
+	tag, err := env.svc.CreateTag(ctx, a.ID, "urgent")
+	require.NoError(t, err)
+	require.Equal(t, "urgent", tag.Name)
+	requireEntry(t, env.lastEntry(), "create_tag", audit.OutcomeOK, "")
+
+	require.NoError(t, env.svc.Tag(ctx, a.ID, refs, []string{"urgent"}, []string{"later"}))
+	requireEntry(t, env.lastEntry(), "tag_messages", audit.OutcomeOK, "")
+
+	moved, err := env.svc.Move(ctx, a.ID, refs, "Archive")
+	require.NoError(t, err)
+	require.Equal(t, []mail.Ref{"Archive:r1", "Archive:r2"}, moved)
+	requireEntry(t, env.lastEntry(), "move_messages", audit.OutcomeOK, "")
+	require.Equal(t, []moveCall{{Refs: refs, Folder: "Archive"}}, env.backend.moveCalls(),
+		"the folder goes to the backend as the agent gave it")
+
+	env.backend.setErr("CreateFolder", fmt.Errorf("%w: exists", mail.ErrConflict))
+	_, err = env.svc.CreateFolder(ctx, a.ID, "Taxes", "")
+	require.ErrorIs(t, err, mail.ErrConflict)
+	requireEntry(t, env.lastEntry(), "create_folder", audit.OutcomeError, "conflict")
+}
+
+// A flag change can only say "seen" and "flagged". There is no way to ask for
+// \Deleted or any other flag that removes mail, so SetFlags at level 2 cannot
+// delete. If someone adds a field to mail.FlagChange, this test fails and makes
+// them check that the new flag cannot delete mail.
+func TestSetFlagsCannotDelete(t *testing.T) {
+	typ := reflect.TypeFor[mail.FlagChange]()
+	var fields []string
+	for i := range typ.NumField() {
+		f := typ.Field(i)
+		require.Equal(t, reflect.TypeFor[*bool](), f.Type, f.Name)
+		fields = append(fields, f.Name)
+	}
+	require.Equal(t, []string{"Seen", "Flagged"}, fields)
+
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailOrganize))
+	change := mail.FlagChange{Seen: new(false), Flagged: new(true)}
+	require.NoError(t, env.svc.SetFlags(env.ctx(), a.ID, []mail.Ref{"r1"}, change))
+	require.Equal(t, []mail.FlagChange{change}, env.backend.flags, "the change reaches the backend as it is")
+}
+
+func TestOrganizePartialChangeIsReported(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailOrganize))
+	partial := fmt.Errorf("imap: 1 of 2 messages were already moved when this error happened: %w: %w",
+		mail.ErrPartial, errors.New("broken pipe"))
+	env.backend.setErr("Move", partial)
+	env.backend.setErr("SetFlags", partial)
+
+	_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1", "r2"}, "Archive")
+	require.ErrorIs(t, err, mail.ErrPartial)
+	require.Contains(t, err.Error(), "Search again")
+	require.Contains(t, err.Error(), "do not repeat")
+	requireEntry(t, env.lastEntry(), "move_messages", audit.OutcomeError, "partial")
+
+	err = env.svc.SetFlags(env.ctx(), a.ID, []mail.Ref{"r1", "r2"}, mail.FlagChange{Seen: new(true)})
+	require.ErrorIs(t, err, mail.ErrPartial)
+	requireEntry(t, env.lastEntry(), "set_flags", audit.OutcomeError, "partial")
+}
+
+// ---------------------------------------------------------------- move to Trash
+
+func TestMoveToTrashRefusedBelowLevel5(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailOrganize), autonomy)
+
+	_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, mail.AliasTrash)
+
+	require.ErrorIs(t, err, ErrMoveToTrash)
+	require.Contains(t, err.Error(), "trash_messages")
+	require.Empty(t, env.backend.moveCalls())
+	requireEntry(t, env.lastEntry(), "move_messages", audit.OutcomeRefused, "move_to_trash")
+}
+
+// A move to Trash is refused at every level, so the Trash confirmation and the
+// Trash limit cannot be skipped. The Trash folder is found the way the backend
+// finds it for its own Trash: the folder with the Trash alias. Its name, in any
+// case, counts too, because some servers do not care about case.
+func TestMoveToTrashRefusedAtEveryLevel(t *testing.T) {
+	for _, lvl := range []account.Level{account.MailOrganize, account.MailDraft, account.MailSend, account.MailDelete} {
+		for _, target := range []string{mail.AliasTrash, "Deleted Items", "deleted items", "DELETED ITEMS"} {
+			t.Run(fmt.Sprintf("level %d to %q", lvl, target), func(t *testing.T) {
+				env := newWriteEnv(t)
+				a := env.account(level(lvl), autonomy)
+
+				_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, target)
+
+				require.ErrorIs(t, err, ErrMoveToTrash)
+				require.Empty(t, env.backend.moveCalls())
+			})
+		}
+	}
+}
+
+func TestMoveToAnAliasOfTheTrashFolderRefused(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete), autonomy)
+	// One folder is both Junk and Trash on this server. The backend's list
+	// shows it as Trash. A move to @junk must not reach it.
+	env.backend.folders = []mail.Folder{
+		{Name: "INBOX", Alias: mail.AliasInbox},
+		{Name: "Bin", Alias: mail.AliasTrash},
+	}
+
+	_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, mail.AliasJunk)
+
+	require.ErrorIs(t, err, mail.ErrNotFound, "an alias that the list does not show is not passed on")
+	require.Empty(t, env.backend.moveCalls())
+}
+
+func TestMoveToOtherFoldersAllowed(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailOrganize))
+	for _, target := range []string{"", mail.AliasInbox, "inbox", mail.AliasArchive, "Projects", "Deleted Items/Old"} {
+		_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, target)
+		require.NoError(t, err, target)
+	}
+	require.Len(t, env.backend.moveCalls(), 6)
+}
+
+func TestMoveWhenTheAccountHasNoTrashFolder(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailOrganize))
+	env.backend.folders = []mail.Folder{{Name: "INBOX", Alias: mail.AliasInbox}, {Name: "Trash"}}
+
+	_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, mail.AliasTrash)
+	require.ErrorIs(t, err, ErrMoveToTrash, "@trash is refused even when no folder has the alias")
+
+	// A folder that is only called Trash is not the Trash folder: the backend's
+	// Trash would not use it either.
+	_, err = env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, "Trash")
+	require.NoError(t, err)
+}
+
+// ---------------------------------------------------------------- drafts
+
+func TestDraftsNeedLevel3(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailOrganize))
+
+	_, err := env.svc.CreateDraft(env.ctx(), a.ID, mail.Compose{To: []string{"bob@example.com"}, Body: "x"})
+	var perm *PermissionError
+	require.ErrorAs(t, err, &perm)
+	require.Equal(t, account.MailDraft, perm.Decision.Required)
+
+	require.ErrorAs(t, env.svc.DiscardDraft(env.ctx(), a.ID, "d1"), &perm)
+	require.Empty(t, env.backend.saved)
+	require.Empty(t, env.backend.discarded)
+}
+
+func TestCreateAndDiscardDraft(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDraft))
+	ctx := env.ctx()
+
+	ref, err := env.svc.CreateDraft(ctx, a.ID, mail.Compose{
+		To: []string{"bob@example.com"}, Bcc: []string{"carol@example.com"}, Subject: "Plan", Body: "Draft text",
+	})
+	require.NoError(t, err)
+	require.Equal(t, mail.Ref("draft-1"), ref)
+	require.Len(t, env.backend.saved, 1)
+	saved := env.backend.saved[0]
+	require.Equal(t, "me@example.com", saved.From)
+	require.Contains(t, string(saved.Data), "Bcc: carol@example.com", "a draft keeps its Bcc header")
+	requireEntry(t, env.lastEntry(), "create_draft", audit.OutcomeOK, "")
+
+	require.NoError(t, env.svc.DiscardDraft(ctx, a.ID, ref))
+	require.Equal(t, []mail.Ref{ref}, env.backend.discarded)
+	requireEntry(t, env.lastEntry(), "discard_draft", audit.OutcomeOK, "")
+}
+
+// ---------------------------------------------------------------- trash
+
+func TestTrashNeedsLevel5(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailSend), autonomy)
+
+	_, _, err := env.svc.Trash(env.ctx(), a.ID, []mail.Ref{"r1"}, ConfirmInBand, nil)
+	var perm *PermissionError
+	require.ErrorAs(t, err, &perm)
+	require.Equal(t, account.MailDelete, perm.Decision.Required)
+	require.Empty(t, env.backend.trashCalls())
+}
+
+func TestTrashNeedsConfirmation(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete)) // ConfirmDeletes is on
+	ctx := env.ctx()
+	refs := []mail.Ref{"r2", "r1", "r2"}
+
+	res, needs, err := env.svc.Trash(ctx, a.ID, refs, ConfirmInBand, nil)
+	require.NoError(t, err)
+	require.Nil(t, res)
+	require.NotNil(t, needs)
+	require.NotEmpty(t, needs.RequestState)
+	require.Equal(t, confirm.KindTrash, needs.Pending.Kind)
+	require.Equal(t, 2, needs.Pending.Preview.Count, "the same message twice counts once")
+	require.Equal(t, "me@example.com", needs.Pending.Preview.Account)
+	require.Empty(t, env.backend.trashCalls(), "nothing moves before the user confirms")
+	requireEntry(t, env.lastEntry(), "trash_messages", audit.OutcomePendingApproval, "confirm_deletes")
+
+	res, needs, err = env.svc.Trash(ctx, a.ID, refs, ConfirmInBand, &ConfirmAnswer{RequestState: needs.RequestState, Accepted: true})
+	require.NoError(t, err)
+	require.Nil(t, needs)
+	require.Equal(t, &TrashResult{Status: "done", Count: 2}, res)
+	require.Equal(t, [][]mail.Ref{{"r1", "r2"}}, env.backend.trashCalls())
+	requireEntry(t, env.lastEntry(), "trash_messages", audit.OutcomeOK, "confirmed_in_band")
+	require.Equal(t, 2, env.lastEntry().Count)
+}
+
+func TestTrashDeclined(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete))
+	ctx := env.ctx()
+	refs := []mail.Ref{"r1"}
+
+	_, needs, err := env.svc.Trash(ctx, a.ID, refs, ConfirmInBand, nil)
+	require.NoError(t, err)
+	res, _, err := env.svc.Trash(ctx, a.ID, refs, ConfirmInBand, &ConfirmAnswer{RequestState: needs.RequestState})
+	require.NoError(t, err)
+	require.Equal(t, "declined", res.Status)
+	require.Empty(t, env.backend.trashCalls())
+	require.Equal(t, confirm.StateRejected, env.pending(needs.Pending.ID).State)
+	requireEntry(t, env.lastEntry(), "trash_messages", audit.OutcomeDeclined, "declined")
+
+	// The state cannot be used again.
+	_, _, err = env.svc.Trash(ctx, a.ID, refs, ConfirmInBand, &ConfirmAnswer{RequestState: needs.RequestState, Accepted: true})
+	require.ErrorIs(t, err, confirm.ErrNotPending)
+	require.Empty(t, env.backend.trashCalls())
+}
+
+func TestTrashRetryWithOtherRefsRejected(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete))
+	ctx := env.ctx()
+
+	_, needs, err := env.svc.Trash(ctx, a.ID, []mail.Ref{"r1"}, ConfirmInBand, nil)
+	require.NoError(t, err)
+	_, _, err = env.svc.Trash(ctx, a.ID, []mail.Ref{"r1", "r9"}, ConfirmInBand, &ConfirmAnswer{RequestState: needs.RequestState, Accepted: true})
+	require.ErrorIs(t, err, confirm.ErrPayloadChanged)
+	require.Empty(t, env.backend.trashCalls())
+	requireEntry(t, env.lastEntry(), "trash_messages", audit.OutcomeRefused, "payload_changed")
+	require.Equal(t, confirm.StatePending, env.pending(needs.Pending.ID).State, "a changed payload does not use the confirmation up")
+}
+
+func TestTrashWithoutConfirmationActsAtOnce(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete), autonomy)
+
+	res, needs, err := env.svc.Trash(env.ctx(), a.ID, []mail.Ref{"r1"}, ConfirmInBand, nil)
+	require.NoError(t, err)
+	require.Nil(t, needs)
+	require.Equal(t, &TrashResult{Status: "done", Count: 1}, res)
+	require.Len(t, env.backend.trashCalls(), 1)
+	requireEntry(t, env.lastEntry(), "trash_messages", audit.OutcomeOK, "no_confirmation")
+}
+
+// A ref with a line break would split into two refs when an approved payload is
+// read back, so the user would approve one message and lose two.
+func TestTrashRefusesRefsThatCannotBeStoredSafely(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete))
+	for name, refs := range map[string][]mail.Ref{
+		"no refs":    nil,
+		"empty ref":  {""},
+		"line break": {"r1\nr2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := env.svc.Trash(env.ctx(), a.ID, refs, ConfirmInBand, nil)
+			require.ErrorIs(t, err, ErrInvalidRequest)
+		})
+	}
+	require.Empty(t, env.waitingActions())
+	require.Empty(t, env.backend.trashCalls())
+}
+
+func TestTrashFallbackThenApprove(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete))
+	ctx := env.ctx()
+
+	res, needs, err := env.svc.Trash(ctx, a.ID, []mail.Ref{"r1", "r2"}, ConfirmFallback, nil)
+	require.NoError(t, err)
+	require.Nil(t, needs)
+	require.Equal(t, "pending_approval", res.Status)
+	require.Equal(t, 2, res.Count)
+	require.NotEmpty(t, res.ApprovalLink)
+	require.NotContains(t, res.ApprovalLink, "token=")
+	waiting := env.waitingActions()
+	require.Len(t, waiting, 1)
+	requireEntry(t, env.lastEntry(), "trash_messages", audit.OutcomePendingApproval, "confirm_deletes")
+
+	require.NoError(t, env.svc.ApprovePending(ctx, waiting[0].ID))
+	require.Equal(t, [][]mail.Ref{{"r1", "r2"}}, env.backend.trashCalls())
+	require.Equal(t, confirm.StateDone, env.pending(waiting[0].ID).State)
+	requireEntry(t, env.lastEntry(), "trash_messages", audit.OutcomeOK, "approved_on_web")
+
+	require.ErrorIs(t, env.svc.ApprovePending(ctx, waiting[0].ID), confirm.ErrNotPending)
+	require.Len(t, env.backend.trashCalls(), 1, "an approval acts once")
+}
+
+func TestRejectPendingTrash(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete))
+	ctx := env.ctx()
+
+	_, _, err := env.svc.Trash(ctx, a.ID, []mail.Ref{"r1"}, ConfirmFallback, nil)
+	require.NoError(t, err)
+	id := env.waitingActions()[0].ID
+
+	require.NoError(t, env.svc.RejectPending(ctx, id))
+	require.Equal(t, confirm.StateRejected, env.pending(id).State)
+	requireEntry(t, env.lastEntry(), "trash_messages", audit.OutcomeDeclined, "rejected_on_web")
+	require.ErrorIs(t, env.svc.ApprovePending(ctx, id), confirm.ErrNotPending)
+	require.Empty(t, env.backend.trashCalls())
+}
+
+// ---------------------------------------------------------------- trash limits
+
+func TestTrashLimitsAreCheckedBeforeAsking(t *testing.T) {
+	t.Run("a limit of 0 turns Trash off", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account(level(account.MailDelete), func(a *account.Account) { a.Limits.TrashPerDay = 0 })
+
+		_, needs, err := env.svc.Trash(env.ctx(), a.ID, []mail.Ref{"r1"}, ConfirmInBand, nil)
+		require.ErrorIs(t, err, ErrLimit)
+		require.Contains(t, err.Error(), "turned off")
+		require.Nil(t, needs)
+		require.Empty(t, env.waitingActions(), "the user is not asked for something that cannot happen")
+		requireEntry(t, env.lastEntry(), "trash_messages", audit.OutcomeRefused, "limit_disabled")
+	})
+	t.Run("more than the day allows at once", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account(level(account.MailDelete), func(a *account.Account) { a.Limits.TrashPerDay = 2 })
+
+		_, _, err := env.svc.Trash(env.ctx(), a.ID, []mail.Ref{"r1", "r2", "r3"}, ConfirmInBand, nil)
+		require.ErrorIs(t, err, ErrLimit)
+		require.Contains(t, err.Error(), "in one call")
+		var rate *policy.RateLimitError
+		require.NotErrorAs(t, err, &rate, "waiting would not help, so there is no 'try again'")
+		require.Empty(t, env.waitingActions())
+		requireEntry(t, env.lastEntry(), "trash_messages", audit.OutcomeRefused, "too_many_at_once")
+	})
+	t.Run("a full day gives the time to wait", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account(level(account.MailDelete), autonomy, func(a *account.Account) { a.Limits.TrashPerDay = 2 })
+
+		_, _, err := env.svc.Trash(env.ctx(), a.ID, []mail.Ref{"r1", "r2"}, ConfirmInBand, nil)
+		require.NoError(t, err)
+		_, _, err = env.svc.Trash(env.ctx(), a.ID, []mail.Ref{"r3"}, ConfirmInBand, nil)
+		var rate *policy.RateLimitError
+		require.ErrorAs(t, err, &rate)
+		require.Contains(t, err.Error(), "Try again in")
+		require.Len(t, env.backend.trashCalls(), 1)
+		requireEntry(t, env.lastEntry(), "trash_messages", audit.OutcomeRefused, "rate_limited")
+	})
+}
+
+func TestDeclinedTrashUsesNoQuota(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete), func(a *account.Account) { a.Limits.TrashPerDay = 1 })
+	ctx := env.ctx()
+	refs := []mail.Ref{"r1"}
+
+	_, needs, err := env.svc.Trash(ctx, a.ID, refs, ConfirmInBand, nil)
+	require.NoError(t, err)
+	_, _, err = env.svc.Trash(ctx, a.ID, refs, ConfirmInBand, &ConfirmAnswer{RequestState: needs.RequestState})
+	require.NoError(t, err)
+
+	_, needs, err = env.svc.Trash(ctx, a.ID, refs, ConfirmInBand, nil)
+	require.NoError(t, err)
+	res, _, err := env.svc.Trash(ctx, a.ID, refs, ConfirmInBand, &ConfirmAnswer{RequestState: needs.RequestState, Accepted: true})
+	require.NoError(t, err, "the declined call must not have used the only Trash of the day")
+	require.Equal(t, "done", res.Status)
+}
+
+// When the backend fails after it moved some or all of the messages, the agent
+// learns that the change happened in part, and the attempt counts toward the
+// Trash limit.
+func TestTrashPartialIsReportedAndCounted(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete), autonomy, func(a *account.Account) { a.Limits.TrashPerDay = 3 })
+	env.backend.setErr("Trash", fmt.Errorf("imap: the messages were moved, but the new reference of message 1 is not known: %w", mail.ErrPartial))
+
+	_, _, err := env.svc.Trash(env.ctx(), a.ID, []mail.Ref{"r1", "r2"}, ConfirmInBand, nil)
+	require.ErrorIs(t, err, mail.ErrPartial)
+	require.Contains(t, err.Error(), "Search again")
+	requireEntry(t, env.lastEntry(), "trash_messages", audit.OutcomeError, "partial")
+	require.Equal(t, 2, env.lastEntry().Count)
+
+	env.backend.setErr("Trash", nil)
+	_, _, err = env.svc.Trash(env.ctx(), a.ID, []mail.Ref{"r3", "r4"}, ConfirmInBand, nil)
+	var rate *policy.RateLimitError
+	require.ErrorAs(t, err, &rate, "the two messages of the failed call count: 2 + 2 is more than 3")
+}
+
+// A partial Trash after an approval ends the action: it must not run again.
+func TestApprovedTrashThatFailsInPartEnds(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete))
+	env.backend.setErr("Trash", fmt.Errorf("imap: 1 of 2 messages were already moved: %w", mail.ErrPartial))
+	_, _, err := env.svc.Trash(env.ctx(), a.ID, []mail.Ref{"r1", "r2"}, ConfirmFallback, nil)
+	require.NoError(t, err)
+	id := env.waitingActions()[0].ID
+
+	err = env.svc.ApprovePending(env.ctx(), id)
+	require.ErrorIs(t, err, mail.ErrPartial)
+	require.Equal(t, confirm.StateDone, env.pending(id).State)
+}
+
+// ---------------------------------------------------------------- audit failure
+
+// A write that was done stays done when its audit entry cannot be written. The
+// failure goes to the log as a code, with no mail data.
+func TestAuditFailureDoesNotFailADoneAction(t *testing.T) {
+	env := newWriteEnv(t, func(d *Deps) {
+		d.Audit = audit.New(failingAuditStore{}, d.Vault, d.Now)
+	})
+	a := env.account(level(account.MailSend), autonomy, func(a *account.Account) { a.Limits.UndoWindowAuto = 0 })
+	ctx := env.ctx()
+
+	require.NoError(t, env.svc.SetFlags(ctx, a.ID, []mail.Ref{"secret-ref"}, mail.FlagChange{Seen: new(true)}))
+
+	c := mail.Compose{To: []string{"bob@example.com"}, Subject: "Quarterly numbers", Body: "Body text"}
+	res, _, err := env.svc.Send(ctx, a.ID, &c, nil, ConfirmInBand, nil)
+	require.NoError(t, err)
+	require.Equal(t, "sent", res.Status)
+	require.Len(t, env.sender.sent(), 1)
+
+	logs := env.logs.String()
+	require.Contains(t, logs, "audit_write_failed")
+	require.Equal(t, 2, strings.Count(logs, "audit_write_failed"), "one line for each write")
+	for _, secret := range []string{"bob@example.com", "me@example.com", "Quarterly", "Body text", "secret-ref", "disk full"} {
+		require.NotContains(t, logs, secret)
+	}
+}
+
+func TestWritesRefusedWithoutAnAuditLog(t *testing.T) {
+	env := newWriteEnv(t, func(d *Deps) { d.Audit = nil })
+	a := env.account(level(account.MailDelete), autonomy)
+	for name, use := range writeUses(env.svc, a.ID) {
+		t.Run(name, func(t *testing.T) {
+			require.Error(t, use(env.ctx()))
+		})
+	}
+	require.Empty(t, env.backend.trashCalls())
+	require.Empty(t, env.backend.moveCalls())
+	require.Empty(t, env.sender.sent())
+}
