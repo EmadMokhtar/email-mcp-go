@@ -1,0 +1,441 @@
+package mime
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/base64"
+	"io"
+	"math"
+	stdmime "mime"
+	"mime/quotedprintable"
+	"regexp"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/emersion/go-message"
+	"github.com/emersion/go-message/charset"
+	gomail "github.com/emersion/go-message/mail"
+	"github.com/emersion/go-message/textproto"
+
+	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
+)
+
+// The decoders in this file read mail written by other people. Real mail is
+// often damaged: it names a wrong or unknown charset, it breaks base64, or it
+// leaves out the closing boundary of a multipart body. The rule is to decode
+// as much as possible and to return it. A damaged part never makes the whole
+// message fail.
+//
+// The text these functions return is valid UTF-8. It is not cleaned. Callers
+// pass it to CleanUntrusted or HTMLToText.
+
+const (
+	// maxParts is the most parts ParseMessage reads. A message with more
+	// parts is cut off, and the parts read so far are returned.
+	maxParts = 10000
+	// maxDepth is the deepest multipart nesting that ParseMessage follows.
+	maxDepth = 32
+	// maxHeaderBytes is the size limit of the header block of the message.
+	maxHeaderBytes = 1 << 20
+)
+
+// DecodeText decodes the body of one text part into a string.
+//
+// transferEncoding is the Content-Transfer-Encoding of the part. It is
+// matched without regard to case: "base64", "quoted-printable", "7bit",
+// "8bit" and "binary" are known. An empty or unknown value means that the
+// body is not encoded.
+//
+// params holds the parameters of the Content-Type header. The "charset"
+// parameter says how the bytes map to characters. Charset names are matched
+// without regard to case. The charset is used only when contentType is empty
+// or a text type. If the charset is missing or unknown, the bytes are used as
+// they are, and each byte that is not valid UTF-8 becomes U+FFFD.
+//
+// A part that is damaged half way (for example bad base64) gives the text
+// decoded up to that point, and no error. The error is not nil only when
+// reading r fails. The text read before the failure is returned with it.
+func DecodeText(contentType string, params map[string]string, transferEncoding string, r io.Reader) (string, error) {
+	return decodeText(contentType, params, transferEncoding, r, 0)
+}
+
+// decodeText is DecodeText with a limit. When maxRunes is above zero, the
+// result has at most maxRunes characters, and not much more than that is
+// read.
+func decodeText(contentType string, params map[string]string, transferEncoding string, r io.Reader, maxRunes int) (string, error) {
+	src := &errTracker{r: r}
+	body := transferDecoder(transferEncoding, src)
+	if isTextOrEmpty(contentType) {
+		body = charsetDecoder(params["charset"], body)
+	}
+	if n := byteLimit(maxRunes); n > 0 {
+		body = io.LimitReader(body, n)
+	}
+
+	// An error here comes from damaged data. Keep what was decoded.
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(body)
+
+	text := strings.ToValidUTF8(buf.String(), string(utf8.RuneError))
+	return truncateRunes(text, maxRunes), src.err
+}
+
+// errTracker remembers the first read error of a reader that is a real
+// failure. End of input, and input that ends early (io.ErrUnexpectedEOF, which
+// the multipart reader reports for a part without a closing boundary), are
+// damaged mail, not failures.
+type errTracker struct {
+	r   io.Reader
+	err error
+}
+
+func (t *errTracker) Read(p []byte) (int, error) {
+	n, err := t.r.Read(p)
+	if err != nil && t.err == nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		t.err = err
+	}
+	return n, err
+}
+
+// transferDecoder undoes the Content-Transfer-Encoding of a body.
+func transferDecoder(encoding string, r io.Reader) io.Reader {
+	switch strings.ToLower(strings.TrimSpace(encoding)) {
+	case "base64":
+		return base64.NewDecoder(base64.RawStdEncoding, base64Cleaner{r})
+	case "quoted-printable":
+		return quotedprintable.NewReader(r)
+	default:
+		// 7bit, 8bit, binary, empty and unknown values: not encoded.
+		return r
+	}
+}
+
+// base64Cleaner removes the bytes that mail puts into base64 but that are
+// not part of the data: spaces, tabs, line breaks and the "=" padding. The
+// decoder that follows does not need padding. This way, data whose padding is
+// missing or wrong still decodes.
+type base64Cleaner struct{ r io.Reader }
+
+func (c base64Cleaner) Read(p []byte) (int, error) {
+	for {
+		n, err := c.r.Read(p)
+		kept := 0
+		for _, b := range p[:n] {
+			switch b {
+			case ' ', '\t', '\r', '\n', '=':
+			default:
+				p[kept] = b
+				kept++
+			}
+		}
+		if kept > 0 || err != nil || n == 0 {
+			return kept, err
+		}
+	}
+}
+
+// charsetDecoder converts a body from the named charset to UTF-8. When the
+// charset is unknown, the body is returned as it is.
+func charsetDecoder(label string, r io.Reader) io.Reader {
+	label = strings.TrimSpace(label)
+	switch strings.ToLower(label) {
+	case "", "utf-8", "utf8", "us-ascii", "ascii":
+		// No conversion. Mail that says "us-ascii" often holds UTF-8, and
+		// this way it is not damaged.
+		return r
+	}
+	converted, err := charset.Reader(label, r)
+	if err != nil {
+		return r
+	}
+	return converted
+}
+
+func isTextOrEmpty(contentType string) bool {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	return contentType == "" || strings.HasPrefix(contentType, "text/")
+}
+
+// byteLimit returns how many bytes are enough to hold maxRunes characters.
+// It returns 0 when there is no limit.
+func byteLimit(maxRunes int) int64 {
+	if maxRunes <= 0 || int64(maxRunes) > math.MaxInt64/utf8.UTFMax {
+		return 0
+	}
+	return int64(maxRunes) * utf8.UTFMax
+}
+
+// truncateRunes cuts s to at most n characters. It does nothing when n is
+// zero or negative. s must be valid UTF-8.
+func truncateRunes(s string, n int) string {
+	if n <= 0 {
+		return s
+	}
+	end := 0
+	for i := 0; i < n && end < len(s); i++ {
+		_, size := utf8.DecodeRuneInString(s[end:])
+		end += size
+	}
+	return s[:end]
+}
+
+// headerDecoder decodes RFC 2047 encoded words ("=?UTF-8?B?...?=").
+var headerDecoder = &stdmime.WordDecoder{CharsetReader: charset.Reader}
+
+// DecodeHeaderValue decodes the RFC 2047 encoded words in a header value. For
+// example, "=?UTF-8?B?w5xiZXI=?=" is the UTF-8 bytes of a word that starts
+// with a U with a diaeresis (two dots above). When the value cannot be
+// decoded (for example its charset is unknown), the raw value is returned.
+// The result is always valid UTF-8. It is not cleaned.
+func DecodeHeaderValue(v string) string {
+	decoded, err := headerDecoder.DecodeHeader(v)
+	if err != nil {
+		decoded = v
+	}
+	return strings.ToValidUTF8(decoded, string(utf8.RuneError))
+}
+
+// Parsed is the content of a whole message.
+type Parsed struct {
+	// Text is the first text/plain part that is not an attachment, and HTML
+	// is the first text/html part that is not an attachment. Each is cut to
+	// the maxText argument of ParseMessage. They are decoded, but not
+	// cleaned.
+	Text, HTML string
+	// Attachments describes the parts that are attachments, without their
+	// data. The ID of each is its MIME part path, as IMAP numbers parts: "2"
+	// is the second part, and "1.3" is the third part of the first part. The
+	// only part of a message that is not multipart is "1".
+	Attachments []mail.AttachmentInfo
+	// HasInvite is true when a part is text/calendar, or has a "method"
+	// parameter in its Content-Type.
+	HasInvite bool
+}
+
+// ParseMessage reads a whole message (header and body) and finds its text,
+// its HTML and its attachments.
+//
+// A part is an attachment when its Content-Disposition is "attachment", or
+// when it is not multipart and not text (an image, a PDF), or when it is a
+// text part with a file name that is not the text or the HTML of the message.
+// A text/plain part is Text if it is the first one and its Content-Disposition
+// is not "attachment". The same holds for text/html and HTML. This means that
+// a text part with a file name is the body when no body came before it. Names
+// of attachments are cleaned with CleanUntrusted. The size of an attachment
+// is its size after the transfer encoding is removed.
+//
+// maxText limits Text and HTML to that many characters. Zero or less means no
+// limit.
+//
+// The work is bounded. ParseMessage reads at most 10000 parts and follows
+// multipart nesting to a fixed depth. Damaged mail does not make it fail, and
+// it does not panic: it returns what it decoded. The error is not nil only
+// when reading r fails. The Parsed value is then still returned, with what
+// was decoded before the failure.
+func ParseMessage(r io.Reader, maxText int) (*Parsed, error) {
+	parsed, _, err := parseMessage(r, maxText)
+	return parsed, err
+}
+
+// parseMessage is ParseMessage. It also returns the value of a panic that it
+// recovered from, or nil. Tests use this to see panics that ParseMessage
+// hides on purpose.
+func parseMessage(r io.Reader, maxText int) (parsed *Parsed, recovered any, err error) {
+	src := &errTracker{r: r}
+	w := &walker{maxText: maxText, out: &Parsed{}}
+	func() {
+		defer func() { recovered = recover() }()
+		w.run(src)
+	}()
+	return w.out, recovered, src.err
+}
+
+// walker goes through the parts of one message and fills out.
+type walker struct {
+	maxText int
+	out     *Parsed
+	// parts counts the parts read, not counting the message itself.
+	parts            int
+	hasText, hasHTML bool
+}
+
+func (w *walker) run(src io.Reader) {
+	// The limit protects against a header that never ends. It is lifted when
+	// the header is read. The body has no limit.
+	limited := &io.LimitedReader{R: src, N: maxHeaderBytes}
+	br := bufio.NewReader(limited)
+	h := readHeader(br)
+	limited.N = math.MaxInt64
+	w.part(h, br, "", 0)
+}
+
+// readHeader reads the header block of the message. A line that is not a
+// valid header field (for example the "From " line of a mbox file) makes the
+// reader of the library fail. That line is skipped and the reading goes on,
+// so one bad line does not hide the fields after it.
+func readHeader(br *bufio.Reader) textproto.Header {
+	fields := map[string][]string{}
+	for {
+		h, err := textproto.ReadHeader(br)
+		for key, values := range h.Map() {
+			fields[key] = append(fields[key], values...)
+		}
+		if err == nil {
+			break
+		}
+		if _, peekErr := br.Peek(1); peekErr != nil {
+			break // nothing more to read
+		}
+	}
+	return textproto.HeaderFromMap(fields)
+}
+
+// part handles one part. id is its part path, empty for the message itself.
+// It returns false when the whole walk must stop.
+func (w *walker) part(h textproto.Header, body io.Reader, id string, depth int) bool {
+	if depth > 0 {
+		w.parts++
+		if w.parts > maxParts {
+			return false
+		}
+	}
+
+	mediaType, params := contentTypeOf(h)
+	if _, hasMethod := params["method"]; hasMethod || mediaType == "text/calendar" {
+		w.out.HasInvite = true
+	}
+
+	if strings.HasPrefix(mediaType, "multipart/") {
+		return w.multipart(params["boundary"], body, id, depth)
+	}
+	w.leaf(h, mediaType, params, body, id)
+	return true
+}
+
+func (w *walker) multipart(boundary string, body io.Reader, id string, depth int) bool {
+	if depth >= maxDepth {
+		return true
+	}
+	mr := textproto.NewMultipartReader(body, boundary)
+	for i := 1; ; i++ {
+		p, err := mr.NextPart()
+		if err != nil {
+			// The end of the parts, or damaged data. Keep what was read.
+			return true
+		}
+		childID := strconv.Itoa(i)
+		if id != "" {
+			childID = id + "." + childID
+		}
+		if !w.part(p.Header, p, childID, depth+1) {
+			return false
+		}
+	}
+}
+
+// leaf handles a part that is not multipart.
+func (w *walker) leaf(h textproto.Header, mediaType string, params map[string]string, body io.Reader, id string) {
+	if id == "" {
+		id = "1"
+	}
+	encoding := h.Get("Content-Transfer-Encoding")
+	disposition, _ := parseMedia(h.Get("Content-Disposition"))
+	filename := filenameOf(h)
+
+	if disposition != "attachment" {
+		switch {
+		case mediaType == "text/plain" && !w.hasText:
+			w.hasText = true
+			w.out.Text, _ = decodeText(mediaType, params, encoding, body, w.maxText)
+			return
+		case mediaType == "text/html" && !w.hasHTML:
+			w.hasHTML = true
+			w.out.HTML, _ = decodeText(mediaType, params, encoding, body, w.maxText)
+			return
+		}
+	}
+
+	if disposition == "attachment" || !strings.HasPrefix(mediaType, "text/") || filename != "" {
+		// Count the bytes without keeping them.
+		size, _ := io.Copy(io.Discard, transferDecoder(encoding, body))
+		w.out.Attachments = append(w.out.Attachments, mail.AttachmentInfo{
+			ID:          id,
+			Filename:    CleanUntrusted(filename),
+			ContentType: mediaType,
+			Size:        size,
+		})
+	}
+	// Any other part is a second text or HTML alternative, or a text part
+	// without a name. It is not used.
+}
+
+// filenameOf returns the decoded file name of a part, or an empty string.
+// The library reads RFC 2231 and RFC 2047 names, and falls back to the "name"
+// parameter of the Content-Type.
+func filenameOf(h textproto.Header) string {
+	ah := gomail.AttachmentHeader{Header: message.Header{Header: h}}
+	name, _ := ah.Filename()
+	return strings.ToValidUTF8(name, string(utf8.RuneError))
+}
+
+// mediaTypePattern is what a media type may look like (RFC 6838). A media
+// type goes back to the caller, and it comes from a third party. This keeps
+// everything else out.
+var mediaTypePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$`)
+
+// contentTypeOf returns the lower case media type of a part and its
+// parameters. A part without a Content-Type is text/plain (RFC 2045). A media
+// type that is not valid becomes application/octet-stream.
+func contentTypeOf(h textproto.Header) (string, map[string]string) {
+	value := h.Get("Content-Type")
+	if strings.TrimSpace(value) == "" {
+		return "text/plain", nil
+	}
+	mediaType, params := parseMedia(value)
+	if !mediaTypePattern.MatchString(mediaType) {
+		mediaType = "application/octet-stream"
+	}
+	return mediaType, params
+}
+
+// parseMedia splits a header value such as "text/plain; charset=utf-8" into
+// the lower case first word and the parameters. When the value is damaged
+// (a missing semicolon, an unquoted boundary with an "=" in it), it still
+// returns the first word and the parameters that can be read.
+func parseMedia(value string) (string, map[string]string) {
+	mediaType, params, err := stdmime.ParseMediaType(value)
+	if err == nil {
+		return mediaType, params
+	}
+	first := value
+	if i := strings.IndexAny(first, "; \t"); i >= 0 {
+		first = first[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(first)), lenientParams(value)
+}
+
+// lenientParams reads the "name=value" parameters of a header value without
+// the strict rules of the standard library. It splits at semicolons, so it
+// does not handle a quoted value that holds a semicolon.
+func lenientParams(value string) map[string]string {
+	params := map[string]string{}
+	_, rest, _ := strings.Cut(value, ";")
+	for _, field := range strings.Split(rest, ";") {
+		name, val, ok := strings.Cut(field, "=")
+		name = strings.ToLower(strings.TrimSpace(name))
+		if !ok || name == "" {
+			continue
+		}
+		val = strings.TrimSpace(val)
+		if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+			val = val[1 : len(val)-1]
+		} else if i := strings.IndexAny(val, " \t"); i >= 0 {
+			val = val[:i]
+		}
+		if _, seen := params[name]; !seen {
+			params[name] = val
+		}
+	}
+	return params
+}

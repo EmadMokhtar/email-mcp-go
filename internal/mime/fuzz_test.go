@@ -1,6 +1,7 @@
 package mime
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -103,5 +104,73 @@ func FuzzHTMLToText(f *testing.F) {
 		for _, line := range strings.Split(out, "\n") {
 			require.Equal(t, strings.TrimSpace(line), line)
 		}
+	})
+}
+
+func FuzzDecodeMessage(f *testing.F) {
+	seeds := []string{
+		"",
+		"plain text, no headers",
+		"Subject: x\r\n\r\nbody",
+		"Content-Type: text/plain; charset=iso-8859-1\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\ncaf=E9",
+		"Content-Type: text/plain; charset=x-unknown\r\nContent-Transfer-Encoding: base64\r\n\r\nSGVsbG8gd29y!!!!bGQ=",
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nfirst\r\n--b\r\nContent-Type: text/html\r\n\r\n<p>x</p>",
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: image/png; name=\"a.png\"\r\nContent-Transfer-Encoding: base64\r\n\r\nSGVsbG8=\r\n--b--\r\n",
+		"Content-Type: multipart/mixed; boundary=a\r\n\r\n--a\r\nContent-Type: multipart/alternative; boundary=b\r\n\r\n--b\r\nContent-Type: text/calendar; method=REQUEST\r\n\r\nBEGIN:VCALENDAR\r\n--b--\r\n--a--\r\n",
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Disposition: attachment; filename*=UTF-8''a%E2%80%AEb.txt\r\n\r\nx\r\n--b--",
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Disposition: attachment; filename=\"=?UTF-8?B?w5xiZXIucGRm?=\"\r\n\r\nx",
+		"From sender@example.test Sat Jan  1 00:00:00 2000\r\nno colon here\r\nContent-Type: text/html\r\n\r\n<p>x</p>",
+		"Content-Type: multipart/mixed\r\n\r\n--x\r\n\r\ntext",
+		"Content-Type: multipart/mixed; boundary=\"\"\r\n\r\nx",
+		"Content-Type: ;;;==\r\nContent-Transfer-Encoding: \xff\r\n\r\n\xff\xfe",
+		"Content-Type: text/plain; charset=utf-16\r\n\r\n\xff\xfea\x00",
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: multipart/mixed; boundary=c\r\n\r\n--c\r\nContent-Type: multipart/mixed; boundary=d\r\n\r\n--d\r\n\r\nx",
+		"Content-Type: image/png; x=\x00\r\nContent-Disposition: \r\n\r\n",
+	}
+	for _, s := range seeds {
+		f.Add([]byte(s), 0)
+		f.Add([]byte(s), 3)
+	}
+	f.Fuzz(func(t *testing.T, in []byte, maxText int) {
+		p, recovered, err := parseMessage(bytes.NewReader(in), maxText)
+
+		// ParseMessage hides library panics, so look at them here.
+		require.Nil(t, recovered, "the parser panicked")
+		require.NoError(t, err)
+		require.NotNil(t, p)
+
+		require.True(t, utf8.ValidString(p.Text), "Text must be valid UTF-8")
+		require.True(t, utf8.ValidString(p.HTML), "HTML must be valid UTF-8")
+		if maxText > 0 {
+			require.LessOrEqual(t, utf8.RuneCountInString(p.Text), maxText)
+			require.LessOrEqual(t, utf8.RuneCountInString(p.HTML), maxText)
+		}
+		require.LessOrEqual(t, len(p.Attachments), maxParts)
+		for _, a := range p.Attachments {
+			require.NotEmpty(t, a.ID)
+			require.GreaterOrEqual(t, a.Size, int64(0))
+			require.True(t, utf8.ValidString(a.Filename), "Filename must be valid UTF-8")
+			require.Equal(t, CleanUntrusted(a.Filename), a.Filename, "Filename must be clean")
+			require.True(t, utf8.ValidString(a.ContentType))
+			require.Regexp(t, `^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$`, a.ContentType)
+		}
+	})
+}
+
+func FuzzDecodeText(f *testing.F) {
+	f.Add([]byte("caf=E9"), "iso-8859-1", "quoted-printable")
+	f.Add([]byte("SGVsbG8gd29y!!!!bGQ="), "utf-8", "base64")
+	f.Add([]byte("k/qWe4zq"), "Shift_JIS", "base64")
+	f.Add([]byte("\xff\xfea\x00"), "utf-16", "")
+	f.Add([]byte("caf\xe9"), "x-unknown", "7bit")
+	f.Add([]byte("\x1b$B$3$s$K$A$O\x1b(B"), "iso-2022-jp", "8bit")
+	f.Add([]byte("=?UTF-8?B?w5xiZXI=?= =?x-unknown?Q?a?= =?ISO-8859-1?Q?caf=E9?="), "", "")
+	f.Fuzz(func(t *testing.T, body []byte, label, enc string) {
+		got, err := DecodeText("text/plain", map[string]string{"charset": label}, enc, bytes.NewReader(body))
+		require.NoError(t, err)
+		require.True(t, utf8.ValidString(got), "DecodeText must return valid UTF-8")
+
+		hdr := DecodeHeaderValue(string(body))
+		require.True(t, utf8.ValidString(hdr), "DecodeHeaderValue must return valid UTF-8")
 	})
 }
