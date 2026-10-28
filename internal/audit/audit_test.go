@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite" // the driver that the store uses, for the second connection
@@ -22,12 +25,17 @@ import (
 // testStart is the time at which most tests start.
 var testStart = time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)
 
-// Characters that must not be in a client name. They are built here and not
+// Characters that Record replaces in a client name. They are built here and not
 // written in the source, so that the source itself holds no hidden characters.
 var (
 	rtlOverride   = string(rune(0x202e)) // right-to-left override (reverses text)
 	lineSeparator = string(rune(0x2028))
-	nextLine      = string(rune(0x85)) // a C1 control character
+	nextLine      = string(rune(0x85))   // a C1 control character
+	softHyphen    = string(rune(0xad))   // a format character (Cf)
+	joiner        = string(rune(0x200d)) // zero width joiner, used inside emoji
+	replacement   = string(rune(0xfffd))
+	manEmoji      = string(rune(0x1f468))
+	womanEmoji    = string(rune(0x1f469))
 )
 
 // clock is a time source that a test can move. It is safe for use by many
@@ -612,6 +620,9 @@ func TestPruneRejectsNegativeAge(t *testing.T) {
 	require.Equal(t, 1, f.rows())
 }
 
+// manyR returns a string of n letters "r".
+func manyR(n int) string { return strings.Repeat("r", n) }
+
 func TestRecordValidation(t *testing.T) {
 	long := strings.Repeat("a", 65)
 	// 65 characters of two bytes each are 130 bytes: the limit is in bytes.
@@ -634,16 +645,6 @@ func TestRecordValidation(t *testing.T) {
 		{"tool of more than 128 bytes in 65 characters", func(e *Entry) { e.Tool = wide }, wide},
 		{"tool that is not UTF-8", func(e *Entry) { e.Tool = "send\xff" }, "send\xff"},
 		{"tool with a newline", func(e *Entry) { e.Tool = "send\nemail" }, "send\nemail"},
-		{"client of 129 bytes", func(e *Entry) { e.Client = strings.Repeat("c", 129) }, strings.Repeat("c", 129)},
-		{"client of more than 128 bytes in 65 characters", func(e *Entry) { e.Client = wide }, wide},
-		{"client that is not UTF-8", func(e *Entry) { e.Client = "x\xc3(" }, "x\xc3("},
-		{"client with a NUL", func(e *Entry) { e.Client = "x\x00y" }, "x\x00y"},
-		{"client with a DEL", func(e *Entry) { e.Client = "x\x7fy" }, "x\x7fy"},
-		{"client with a C1 control", func(e *Entry) { e.Client = "x" + nextLine + "y" }, "x" + nextLine + "y"},
-		{"client with an escape sequence", func(e *Entry) { e.Client = "\x1b[31mred" }, "\x1b[31mred"},
-		{"client with a carriage return", func(e *Entry) { e.Client = "ok\rEVIL" }, "ok\rEVIL"},
-		{"client that reverses the text", func(e *Entry) { e.Client = "x" + rtlOverride + "y" }, "x" + rtlOverride + "y"},
-		{"client with a line separator", func(e *Entry) { e.Client = "x" + lineSeparator + "y" }, "x" + lineSeparator + "y"},
 		{"empty outcome", func(e *Entry) { e.Outcome = "" }, ""},
 		{"unknown outcome", func(e *Entry) { e.Outcome = "success" }, "success"},
 		{"outcome in another case", func(e *Entry) { e.Outcome = "OK" }, ""},
@@ -652,6 +653,10 @@ func TestRecordValidation(t *testing.T) {
 		{"tenant with a bar", func(e *Entry) { e.Tenant = "a|b" }, "a|b"},
 		{"account with a bar", func(e *Entry) { e.Account = "a|b" }, "a|b"},
 		{"no area for an account", func(e *Entry) { e.Area = "" }, ""},
+		{"empty tool", func(e *Entry) { e.Tool = "" }, ""},
+		{"201 recipients", func(e *Entry) { e.Recipients = slices.Repeat([]string{"bob@example.org"}, 201) }, "bob@example.org"},
+		{"a recipient of 513 bytes", func(e *Entry) { e.Recipients = []string{"bob@example.org", manyR(513)} }, manyR(513)},
+		{"a recipient that is not UTF-8", func(e *Entry) { e.Recipients = []string{"bob@example.org", "x\xff@example.org"} }, "x\xff@example.org"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -662,6 +667,8 @@ func TestRecordValidation(t *testing.T) {
 			err := f.log.Record(context.Background(), e)
 
 			require.Error(t, err)
+			// A caller can tell a bad entry from a failure of the database.
+			require.ErrorIs(t, err, ErrInvalidEntry)
 			if tc.leak != "" {
 				require.NotContains(t, err.Error(), tc.leak)
 			}
@@ -682,9 +689,11 @@ func TestRecordAcceptsTheLimits(t *testing.T) {
 		{"empty detail", func(e *Entry) { e.Detail = "" }},
 		{"tool of 128 bytes", func(e *Entry) { e.Tool = strings.Repeat("t", 128) }},
 		{"tool of 128 bytes in 64 characters", func(e *Entry) { e.Tool = strings.Repeat("é", 64) }},
-		{"client of 128 bytes", func(e *Entry) { e.Client = strings.Repeat("c", 128) }},
-		{"client with spaces and non-ASCII letters", func(e *Entry) { e.Client = "Claude für Mac (1.2.3)" }},
 		{"empty client", func(e *Entry) { e.Client = "" }},
+		{"tool of 1 byte", func(e *Entry) { e.Tool = "t" }},
+		{"200 recipients", func(e *Entry) { e.Recipients = distinctRecipients(200) }},
+		{"a recipient of 512 bytes", func(e *Entry) { e.Recipients = []string{"bob@example.org", manyR(512)} }},
+		{"a recipient of 512 bytes in 256 characters", func(e *Entry) { e.Recipients = []string{strings.Repeat("é", 256)} }},
 		{"count 0", func(e *Entry) { e.Count = 0 }},
 		{"a large count", func(e *Entry) { e.Count = 1 << 30 }},
 	}
@@ -702,6 +711,66 @@ func TestRecordAcceptsTheLimits(t *testing.T) {
 			require.Equal(t, e.Tool, got[0].Tool)
 			require.Equal(t, e.Client, got[0].Client)
 			require.Equal(t, e.Count, got[0].Count)
+			require.Equal(t, e.Recipients, got[0].Recipients)
+		})
+	}
+}
+
+// distinctRecipients returns n different addresses.
+func distinctRecipients(n int) []string {
+	list := make([]string, n)
+	for i := range list {
+		list[i] = fmt.Sprintf("user%03d@example.org", i)
+	}
+	return list
+}
+
+// TestRecordSanitizesTheClient: the client name comes from the audited party, so
+// a bad name must never hide the action. Record cleans it and writes the entry.
+func TestRecordSanitizesTheClient(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"a clean name is kept", "Claude für Mac (1.2.3)", "Claude für Mac (1.2.3)"},
+		{"an empty name is kept", "", ""},
+		{"128 bytes are kept", strings.Repeat("c", 128), strings.Repeat("c", 128)},
+		{"129 bytes are cut to 128", strings.Repeat("c", 129), strings.Repeat("c", 128)},
+		{"a very long name is cut to 128", strings.Repeat("c", 100_000), strings.Repeat("c", 128)},
+		{"two-byte letters are cut on a character", strings.Repeat("é", 65), strings.Repeat("é", 64)},
+		{"a cut never splits a character", strings.Repeat("c", 127) + "é", strings.Repeat("c", 127)},
+		{"a soft hyphen", "x" + softHyphen + "y", "x" + replacement + "y"},
+		{"a right-to-left override", "x" + rtlOverride + "y", "x" + replacement + "y"},
+		{"a joiner inside an emoji sequence", manEmoji + joiner + womanEmoji, manEmoji + replacement + womanEmoji},
+		{"a line separator", "x" + lineSeparator + "y", "x" + replacement + "y"},
+		{"a C1 control", "x" + nextLine + "y", "x" + replacement + "y"},
+		{"a NUL", "x\x00y", "x" + replacement + "y"},
+		{"a DEL", "x\x7fy", "x" + replacement + "y"},
+		{"a tab", "x\ty", "x" + replacement + "y"},
+		{"a carriage return and a line feed", "ok\r\nEVIL", "ok" + replacement + replacement + "EVIL"},
+		{"an escape sequence", "\x1b[31mred", replacement + "[31mred"},
+		{"invalid UTF-8 inside the name", "x\xc3(", "x" + replacement + "("},
+		{"invalid UTF-8 at the end", "x\xff", "x" + replacement},
+		{"a cut after the replacement", strings.Repeat("\xff", 50), strings.Repeat(replacement, 42)},
+		{"a replacement that is in the name already", "x" + replacement + "y", "x" + replacement + "y"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			e := f.entry()
+			e.Client = tc.input
+
+			require.NoError(t, f.log.Record(context.Background(), e))
+
+			got := f.list(Filter{})
+			require.Len(t, got, 1, "the action must be in the log")
+			require.Equal(t, tc.want, got[0].Client)
+			require.True(t, utf8.ValidString(got[0].Client))
+			require.LessOrEqual(t, len(got[0].Client), 128)
+			// The rest of the entry is as it was.
+			require.Equal(t, e.Tool, got[0].Tool)
+			require.Equal(t, e.Recipients, got[0].Recipients)
 		})
 	}
 }
@@ -745,7 +814,11 @@ func TestRecordNeedsAnExistingTenantAndAccount(t *testing.T) {
 			e := f.entry()
 			tc.mutate(&e)
 
-			require.Error(t, f.log.Record(context.Background(), e))
+			err := f.log.Record(context.Background(), e)
+
+			require.Error(t, err)
+			// The entry is well formed. The failure is in the data, not in the entry.
+			require.NotErrorIs(t, err, ErrInvalidEntry)
 			require.Zero(t, f.rows())
 		})
 	}

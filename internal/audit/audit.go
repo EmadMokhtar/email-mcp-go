@@ -4,9 +4,13 @@
 //
 // The log holds no mail content. The one personal field is the list of
 // recipients, and it is stored encrypted (sealed) with the key of the tenant.
-// The other fields are checked on the way in: Detail is a short code, and Tool
-// and Client are short text without control characters. Nothing in this package
-// writes recipients, details or mail content to a log or into an error.
+// The other fields are checked on the way in. Detail is a short code, and Tool
+// is short text without control characters. Both come from the server, so Record
+// refuses an entry with a bad one. Client is the name that the MCP client gave
+// for itself. The client is the party that the log watches, so it can choose a bad
+// name on purpose. Record cleans that name and does not refuse the entry: a bad
+// name must never hide an action. Nothing in this package writes recipients,
+// details or mail content to a log or into an error.
 package audit
 
 import (
@@ -56,6 +60,10 @@ func (o Outcome) valid() bool {
 const (
 	// maxText is the most bytes of a Tool or a Client.
 	maxText = 128
+	// maxRecipients is the most recipients of one entry.
+	maxRecipients = 200
+	// maxRecipientBytes is the most bytes of one recipient.
+	maxRecipientBytes = 512
 	// defaultLimit is the number of entries that List returns when the filter
 	// has no limit.
 	defaultLimit = 100
@@ -65,6 +73,18 @@ const (
 	// does not use the context of the caller for it. See detached.
 	storeTimeout = 30 * time.Second
 )
+
+// ErrInvalidEntry means that Record refused an entry because the entry is not
+// valid: a field that comes from the server is wrong. The text after it says
+// which rule, and never shows a value. A failure of the database or of the vault
+// does not match it, so a caller can tell a bad entry from a service that is down.
+var ErrInvalidEntry = errors.New("audit: the entry is not valid")
+
+// invalid returns an error that matches ErrInvalidEntry. The reason must not hold
+// a value of the entry.
+func invalid(reason string) error {
+	return fmt.Errorf("%w: %s", ErrInvalidEntry, reason)
+}
 
 // recipientsField is the field name of the recipients in the associated data of
 // the encryption.
@@ -87,15 +107,22 @@ type Entry struct {
 	// be empty too.
 	Account account.AccountID
 	Area    account.Area
-	// Client is the name that the MCP client gave for itself. It is not trusted:
-	// Record accepts at most 128 bytes of valid UTF-8 without control characters.
+	// Client is the name that the MCP client gave for itself. It is not trusted,
+	// and Record never refuses an entry because of it. Record cleans the name
+	// instead: invalid UTF-8 and control, format, line-separator and
+	// paragraph-separator characters become U+FFFD, and the result is cut to at
+	// most 128 bytes at the end of a character.
 	Client string
-	// Tool is the name of the tool, with the same rules as Client.
+	// Tool is the name of the tool. It comes from the server. It must not be
+	// empty, and it must be at most 128 bytes of valid UTF-8 without control
+	// characters (see validText).
 	Tool string
 	// Count is the number of items the call affected. It is not negative.
 	Count int
 	// Recipients are the addresses the call sent to or acted on. They are stored
-	// encrypted. A call without recipients has none.
+	// encrypted. A call without recipients has none. There are at most 200
+	// recipients, and each one is at most 512 bytes of valid UTF-8. Record refuses
+	// an entry with more.
 	Recipients []string
 	Outcome    Outcome
 	// Detail is a short code that says more about the outcome, such as
@@ -144,9 +171,12 @@ func New(st AuditStore, v *secrets.Vault, now func() time.Time) *Log {
 	return &Log{st: st, vault: v, now: now}
 }
 
-// Record adds an entry. It returns an error and stores nothing if the entry is
-// not valid: see the fields of Entry. The account of the entry must belong to
-// the tenant.
+// Record adds an entry. It returns an error that matches ErrInvalidEntry and
+// stores nothing if the entry is not valid: see the fields of Entry. The account
+// of the entry must belong to the tenant.
+//
+// A bad Client does not make the entry invalid. Record cleans the name (see
+// Entry), so the action is always in the log.
 //
 // The time of the entry is the time of the clock of the log. The time and the ID
 // that the caller set are ignored.
@@ -164,7 +194,7 @@ func (l *Log) Record(ctx context.Context, e Entry) error {
 		Tenant:  e.Tenant,
 		Account: e.Account,
 		Area:    e.Area,
-		Client:  e.Client,
+		Client:  cleanClient(e.Client),
 		Tool:    e.Tool,
 		Count:   e.Count,
 		Outcome: string(e.Outcome),
@@ -289,52 +319,89 @@ func recipientsAAD(tenant account.TenantID, acct account.AccountID) string {
 	return secrets.AAD(string(tenant), string(acct), recipientsField)
 }
 
-// validate checks an entry. The errors do not hold the values of the fields: the
-// client is not trusted, and the other fields may hold personal data.
+// validate checks the fields of an entry that come from the server. The errors
+// match ErrInvalidEntry and do not hold the values of the fields: some of them
+// hold personal data. Client is not checked here, because Record cleans it.
 func validate(e Entry) error {
 	if e.Tenant == "" {
-		return errors.New("audit: the tenant is required")
+		return invalid("the tenant is required")
 	}
 	// The associated data has no escaping, so an id with "|" is not allowed.
 	if strings.Contains(string(e.Tenant), "|") || strings.Contains(string(e.Account), "|") {
-		return errors.New("audit: the tenant id and the account id must not contain '|'")
+		return invalid("the tenant id and the account id must not contain '|'")
 	}
 	if e.Account != "" && e.Area == "" {
-		return errors.New("audit: the area is required when the entry has an account")
+		return invalid("the area is required when the entry has an account")
 	}
 	if !e.Outcome.valid() {
-		return errors.New("audit: the outcome is not one of the known outcomes")
+		return invalid("the outcome is not one of the known outcomes")
 	}
 	if e.Count < 0 {
-		return errors.New("audit: the count must not be negative")
+		return invalid("the count must not be negative")
 	}
 	if !detailPattern.MatchString(e.Detail) {
-		return errors.New("audit: the detail must be a code of at most 64 characters from a-z, 0-9 and _")
+		return invalid("the detail must be a code of at most 64 characters from a-z, 0-9 and _")
 	}
-	if !validText(e.Tool) {
-		return errors.New("audit: the tool must be at most 128 bytes of valid UTF-8 without control characters")
+	if e.Tool == "" || !validText(e.Tool) {
+		return invalid("the tool must be 1 to 128 bytes of valid UTF-8 without control characters")
 	}
-	if !validText(e.Client) {
-		return errors.New("audit: the client must be at most 128 bytes of valid UTF-8 without control characters")
+	if len(e.Recipients) > maxRecipients {
+		return invalid("there are too many recipients")
+	}
+	for _, r := range e.Recipients {
+		// json.Marshal would replace invalid UTF-8 with U+FFFD, and so it would
+		// change an address without a sign. Refuse it before the encoding.
+		if len(r) > maxRecipientBytes || !utf8.ValidString(r) {
+			return invalid("a recipient is too long or is not valid UTF-8")
+		}
 	}
 	return nil
 }
 
-// validText reports whether s is at most 128 bytes of valid UTF-8 without
-// control characters. Besides the control characters (Cc), it refuses the
-// format characters (Cf, such as the right-to-left override, which makes a name
-// read backwards) and the line and paragraph separators (Zl and Zp). A name with
-// these characters can change how a line of the log looks on a page.
+// unsafeRune reports whether r is a control character (Cc), a format character
+// (Cf, such as the right-to-left override, which makes a name read backwards or
+// the soft hyphen, which is invisible), or a line or paragraph separator (Zl and
+// Zp). A name with these characters can change how a line of the log looks on a
+// page.
+func unsafeRune(r rune) bool {
+	return unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp)
+}
+
+// validText reports whether s is at most 128 bytes of valid UTF-8 without unsafe
+// characters (see unsafeRune).
 func validText(s string) bool {
 	if len(s) > maxText || !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {
-		if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) {
+		if unsafeRune(r) {
 			return false
 		}
 	}
 	return true
+}
+
+// cleanClient returns the client name in a form that is safe to store and to
+// show. Each byte of invalid UTF-8 and each unsafe character (see unsafeRune)
+// becomes U+FFFD. The result is cut to at most 128 bytes, at the end of a
+// character: it is a prefix of the cleaned name. The cut happens after the
+// replacement, because a replacement is longer than an invalid byte.
+//
+// The loop stops at the 128th byte, so a very long name costs no more than a
+// short one.
+func cleanClient(s string) string {
+	var b strings.Builder
+	// Ranging over a string gives U+FFFD, one byte wide, for invalid UTF-8.
+	for _, r := range s {
+		if unsafeRune(r) {
+			r = utf8.RuneError
+		}
+		if b.Len()+utf8.RuneLen(r) > maxText {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // detached returns a context that ctx cannot cancel, with a time limit. It keeps

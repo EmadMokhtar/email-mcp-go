@@ -179,6 +179,11 @@ func TestAuditTableRules(t *testing.T) {
 		return err
 	}
 	require.NoError(t, run(valid), "the valid row must be accepted, or the cases below prove nothing")
+	// The case "an empty recipients value" needs the driver to bind an empty slice
+	// as an empty blob. If it bound NULL, the case would fail for another reason.
+	var bound string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT typeof(?)`, []byte{}).Scan(&bound))
+	require.Equal(t, "blob", bound)
 
 	cases := map[string]func(v *values){
 		"outcome that is unknown":            func(v *values) { v.outcome = "success" },
@@ -193,6 +198,10 @@ func TestAuditTableRules(t *testing.T) {
 		"tool of 129 bytes":                  func(v *values) { v.tool = strings.Repeat("t", 129) },
 		"tool of 130 bytes in 65 characters": func(v *values) { v.tool = strings.Repeat("é", 65) },
 		"client of 129 bytes":                func(v *values) { v.client = strings.Repeat("c", 129) },
+		"empty tool":                         func(v *values) { v.tool = "" },
+		"a key version of 0":                 func(v *values) { v.version = 0 },
+		"a negative key version":             func(v *values) { v.version = -1 },
+		"an empty recipients value":          func(v *values) { v.recipients = []byte{} },
 		"recipients without a key version":   func(v *values) { v.version = nil },
 		"a key version without recipients":   func(v *values) { v.recipients = nil },
 		"no area for an account":             func(v *values) { v.area = "" },
@@ -211,6 +220,8 @@ func TestAuditTableRules(t *testing.T) {
 		"detail of 64 characters":          func(v *values) { v.detail = strings.Repeat("a", 64) },
 		"empty detail":                     func(v *values) { v.detail = "" },
 		"tool of 128 bytes":                func(v *values) { v.tool = strings.Repeat("é", 64) },
+		"tool of 1 byte":                   func(v *values) { v.tool = "t" },
+		"a recipients value of 1 byte":     func(v *values) { v.recipients = []byte{0} },
 		"count 0":                          func(v *values) { v.count = 0 },
 		"no recipients and no key version": func(v *values) { v.recipients, v.version = nil, nil },
 		"a tenant-level row":               func(v *values) { v.account, v.area, v.recipients, v.version = nil, "", nil, nil },
@@ -240,4 +251,26 @@ func TestAuditIDsAreNotReused(t *testing.T) {
 	var second int64
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT max(id) FROM audit_log`).Scan(&second))
 	require.Greater(t, second, first)
+}
+
+// TestAuditAccountIndex: deleting an account deletes its entries (a foreign key
+// action). SQLite finds them by the account columns. Without an index on them,
+// each delete would scan the whole history of the tenant.
+func TestAuditAccountIndex(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	rows, err := s.db.QueryContext(ctx,
+		`EXPLAIN QUERY PLAN SELECT id FROM audit_log WHERE tenant_id = ? AND account_id = ?`, "t", "a")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		plan = append(plan, detail)
+	}
+	require.NoError(t, rows.Err())
+	require.Contains(t, strings.Join(plan, "\n"), "audit_log_by_account")
 }
