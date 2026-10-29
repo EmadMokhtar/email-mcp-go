@@ -303,16 +303,3 @@ func reauthFailure(link string) *toolFailure {
 	}
 	return failure(codeNeedsReauth, text+". "+noRetryUntilUser)
 }
-
-// errorTypes returns the Go types of an error and of the errors it wraps, for
-// example "*fmt.wrapError>*errors.errorString". It is for the log. A type name
-// holds no text from the error itself.
-func errorTypes(err error) string {
-	const maxDepth = 6
-	var types []string
-	for i := 0; err != nil && i < maxDepth; i++ {
-		types = append(types, fmt.Sprintf("%T", err))
-		err = errors.Unwrap(err)
-	}
-	return strings.Join(types, ">")
-}

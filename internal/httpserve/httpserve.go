@@ -8,7 +8,11 @@
 //     the attacker that points to 127.0.0.1). Refused with 403.
 //  2. Origin: a request with an Origin header comes from a browser. It is
 //     refused with 403 unless its origin is in the allow-list, which is empty by
-//     default. A request without Origin (a program, not a browser) passes.
+//     default. A request without Origin passes. Programs send no Origin, but a
+//     browser also leaves it out of a GET navigation and of some "no-cors"
+//     loads. Such a request is still harmless here: a browser cannot add an
+//     Authorization header to it, and the stateless SDK handler answers only
+//     POST.
 //  3. Body size: a body of more than 15 MB is refused with 413.
 //  4. Bearer token: the Authorization header must carry a valid token of the
 //     tokens package. Refused with 401.
@@ -18,8 +22,11 @@
 // mode: the server keeps no session between requests.
 //
 // Answers to refused requests have fixed texts. They never repeat a value of the
-// request. The log gets a fixed code for each refusal. It never gets a token,
-// the Authorization header or a request body.
+// request. The log gets a fixed code for each refusal by this package and for
+// each token that the token check refused. A request without an Authorization
+// header, or with one that is not "Bearer <token>", gets the SDK's own 401 and
+// is not logged. The log never gets a token, the Authorization header or a
+// request body.
 package httpserve
 
 import (
@@ -32,6 +39,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -39,6 +47,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
+	"github.com/EmadMokhtar/email-mcp-go/internal/errtype"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/tokens"
@@ -99,8 +108,9 @@ type handler struct {
 // newServer returns the MCP server for a request. The SDK may call it more than
 // once for one request, so it should return a server that already exists. tm
 // checks the tokens. allowedOrigins lists the browser origins that may call
-// the server, written exactly as a browser sends them, such as
-// "http://localhost:5173". It is usually empty.
+// the server, such as "http://localhost:5173". It is usually empty. Each entry
+// must pass NormalizeOrigin, and is compared in its normalized form with the
+// Origin header.
 //
 // The port in the Host header is compared with the port of the connection's
 // local address, which net/http puts in the request context
@@ -108,11 +118,15 @@ type handler struct {
 // refuses every request that did not come through an http.Server on a
 // loopback address.
 //
-// The handler sends no CORS headers. A browser page from an allowed origin is
-// not refused, but the browser may still hide the answers from it.
+// The handler sends no CORS headers. A page on another origin must first send
+// a CORS preflight (an OPTIONS request without the Authorization header). The
+// preflight gets 401, so the browser never sends the real request. Only a page
+// of the same origin as the server can use an allow-listed origin.
 //
-// It panics when newServer or tm is nil: both are mistakes in the code that
-// sets the program up.
+// It panics when newServer or tm is nil, or when an entry of allowedOrigins is
+// not valid (see NormalizeOrigin). All are mistakes in the code or the settings
+// that set the program up, and the program must not start with them. A caller
+// that reads origins from the user can check them with NormalizeOrigin first.
 func Handler(newServer func() *mcp.Server, tm *tokens.Manager, allowedOrigins []string, opts ...Option) http.Handler {
 	if newServer == nil {
 		panic("httpserve: Handler needs newServer")
@@ -125,10 +139,12 @@ func Handler(newServer func() *mcp.Server, tm *tokens.Manager, allowedOrigins []
 		opt(&cfg)
 	}
 	origins := make(map[string]bool, len(allowedOrigins))
-	for _, o := range allowedOrigins {
-		if o != "" {
-			origins[o] = true
+	for i, o := range allowedOrigins {
+		origin, err := NormalizeOrigin(o)
+		if err != nil {
+			panic(fmt.Sprintf("httpserve: allowed origin %d: %v", i, err))
 		}
+		origins[origin] = true
 	}
 
 	// The logger of the SDK is not set: the SDK writes texts of errors to it,
@@ -170,9 +186,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // hostAllowed reports whether the request came in on a loopback address and
-// its Host header names that server: localhost, 127.0.0.1 or [::1], with the
-// port of the connection. Names and ports are compared exactly, so
-// "LOCALHOST", "localhost." and a port with a leading zero are refused.
+// its Host header is exactly "localhost:<port>", "127.0.0.1:<port>" or
+// "[::1]:<port>", where <port> is the port of the connection. The whole header
+// is compared as it is, so "LOCALHOST", "localhost.", "[localhost]",
+// "[127.0.0.1]", a zone and a port with a leading zero are all refused.
 func hostAllowed(r *http.Request) bool {
 	local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
 	if !ok || local == nil {
@@ -182,16 +199,13 @@ func hostAllowed(r *http.Request) bool {
 	if err != nil || !isLoopback(localAddr.Addr()) {
 		return false
 	}
-	host, port, err := net.SplitHostPort(r.Host)
-	if err != nil {
-		return false
-	}
-	switch host {
-	case "localhost", "127.0.0.1", "::1":
+	port := strconv.Itoa(int(localAddr.Port()))
+	switch r.Host {
+	case "localhost:" + port, "127.0.0.1:" + port, "[::1]:" + port:
+		return true
 	default:
 		return false
 	}
-	return port == strconv.Itoa(int(localAddr.Port()))
 }
 
 // originAllowed reports whether the request has no Origin header, or exactly one
@@ -207,6 +221,26 @@ func (h *handler) originAllowed(r *http.Request) bool {
 	default:
 		return false
 	}
+}
+
+// NormalizeOrigin checks an entry of the origin allow-list and returns it in the
+// form that a browser sends: "scheme://host" or "scheme://host:port", with the
+// scheme and the host in lower case. It returns an error for "null", for an
+// entry without a scheme or a host, and for an entry with a user, a path (even
+// "/"), a query, a fragment, a port that is not a number, or white space. The
+// error repeats the entry: it is a setting of the operator, not a value of a
+// request.
+func NormalizeOrigin(origin string) (string, error) {
+	if strings.EqualFold(origin, "null") {
+		return "", fmt.Errorf("the origin %q is not allowed: any sandboxed page can send it", origin)
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme == "" || u.Host == "" || u.Opaque != "" || u.User != nil ||
+		u.Path != "" || u.RawPath != "" || strings.ContainsAny(origin, "?# \t\r\n") {
+		return "", fmt.Errorf("the origin %q must be scheme://host or scheme://host:port, "+
+			"with no path, query or fragment", origin)
+	}
+	return u.Scheme + "://" + strings.ToLower(u.Host), nil
 }
 
 // readBody reads the whole body before next runs. A body over the limit of
@@ -253,7 +287,7 @@ func verifier(tm *tokens.Manager, log *slog.Logger) auth.TokenVerifier {
 			log.Warn("http request refused", "code", codeInvalidToken, "status", http.StatusUnauthorized)
 			return nil, auth.ErrInvalidToken
 		default:
-			log.Error("token check failed", "code", codeTokenCheck, "error_types", errorTypes(err))
+			log.Error("token check failed", "code", codeTokenCheck, "error_types", errtype.Chain(err))
 			return nil, errTokenCheck
 		}
 	}
@@ -286,10 +320,16 @@ func Principal(_ context.Context, req *mcp.CallToolRequest) (service.Principal, 
 // CheckLoopbackAddr returns an error unless addr is a loopback address with a
 // port: an IPv4 address in 127.0.0.0/8, [::1] or localhost, then a port from 0
 // to 65535. The HTTP server must not listen on any other address, such as
-// 0.0.0.0, so "serve --http" calls this before it listens.
+// 0.0.0.0, so "serve --http" calls this before it listens. The address must be
+// written exactly: brackets only around an IPv6 address (so "[127.0.0.1]:8080"
+// and "[localhost]:8080" are refused), and an IP address in its usual short
+// form (so "[0:0:0:0:0:0:0:1]:8080" is refused).
 func CheckLoopbackAddr(addr string) error {
 	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
+	// SplitHostPort takes away the brackets of "[127.0.0.1]:8080". Joining the
+	// parts again puts brackets only around an IPv6 address, so the address is
+	// exact only when the joined text is the same.
+	if err != nil || net.JoinHostPort(host, port) != addr {
 		return fmt.Errorf("httpserve: the address %q must be host:port", addr)
 	}
 	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
@@ -298,8 +338,10 @@ func CheckLoopbackAddr(addr string) error {
 	if host == "localhost" {
 		return nil
 	}
+	// The address must be in its usual short form, so "0:0:0:0:0:0:0:1" is
+	// refused like any other spelling that is not exact.
 	ip, err := netip.ParseAddr(host)
-	if err != nil || !isLoopback(ip) {
+	if err != nil || !isLoopback(ip) || ip.String() != host {
 		return fmt.Errorf("httpserve: %q is not a loopback address: the HTTP server listens only on "+
 			"127.0.0.1, [::1] or localhost", addr)
 	}
@@ -310,17 +352,4 @@ func CheckLoopbackAddr(addr string) error {
 // without a zone. An IPv4 address inside an IPv6 address is not accepted.
 func isLoopback(ip netip.Addr) bool {
 	return (ip.Is4() && ip.IsLoopback()) || ip == netip.IPv6Loopback()
-}
-
-// errorTypes returns the Go types of an error and of the errors it wraps, for
-// example "*fmt.wrapError>*errors.errorString". It is for the log. A type name
-// holds no text from the error itself.
-func errorTypes(err error) string {
-	const maxDepth = 6
-	var types []string
-	for i := 0; err != nil && i < maxDepth; i++ {
-		types = append(types, fmt.Sprintf("%T", err))
-		err = errors.Unwrap(err)
-	}
-	return strings.Join(types, ">")
 }

@@ -369,6 +369,27 @@ func TestHTTPRejectsMissingToken(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "the valid token works")
 }
 
+// A malformed, an unknown and a revoked token get the same answer, so the answer
+// does not tell a caller which one it had.
+func TestHTTPBadTokensGetTheSameAnswer(t *testing.T) {
+	h := newHTTPEnv(t, nil)
+	revoked := h.token("email:read")
+	list, err := h.tokens.List(context.Background(), h.tenant)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	require.NoError(t, h.tokens.Revoke(context.Background(), h.tenant, list[0].ID))
+
+	malformedStatus, malformedBody := h.post(listBody, withToken("emcp_not-a-token"))
+	unknownStatus, unknownBody := h.post(listBody, withToken("emcp_"+strings.Repeat("a", 52)))
+	revokedStatus, revokedBody := h.post(listBody, withToken(revoked))
+
+	require.Equal(t, http.StatusUnauthorized, malformedStatus)
+	require.Equal(t, malformedStatus, unknownStatus)
+	require.Equal(t, malformedStatus, revokedStatus)
+	require.Equal(t, malformedBody, unknownBody)
+	require.Equal(t, malformedBody, revokedBody)
+}
+
 func TestHTTPRejectsRevokedToken(t *testing.T) {
 	h := newHTTPEnv(t, nil)
 	token := h.token("email:read")
@@ -420,7 +441,9 @@ func TestHTTPRejectsForeignOrigin(t *testing.T) {
 }
 
 func TestHTTPAllowsListedOrigin(t *testing.T) {
-	h := newHTTPEnv(t, []string{"http://localhost:5173"})
+	// The entry is written in another case: it is compared after it is made
+	// lower case, as a browser sends an origin.
+	h := newHTTPEnv(t, []string{"HTTP://LocalHost:5173"})
 	token := h.token("email:read")
 	origin := func(value string) func(r *http.Request) {
 		return func(r *http.Request) { r.Header.Set("Origin", value) }
@@ -442,12 +465,54 @@ func TestHTTPAllowsListedOrigin(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, status, "two Origin headers are refused")
 }
 
+func TestNormalizeOrigin(t *testing.T) {
+	for in, want := range map[string]string{
+		"http://localhost:5173":   "http://localhost:5173",
+		"HTTP://LocalHost:5173":   "http://localhost:5173",
+		"https://app.example":     "https://app.example",
+		"http://[::1]:8080":       "http://[::1]:8080",
+		"vscode-webview://abc123": "vscode-webview://abc123",
+	} {
+		got, err := NormalizeOrigin(in)
+		require.NoError(t, err, in)
+		require.Equal(t, want, got, in)
+	}
+	for _, in := range []string{
+		"", "null", "NULL", "*", "localhost:5173", "//localhost:5173", "http://", "http:///path",
+		"http://localhost:5173/", "http://localhost:5173/app", "http://localhost:5173?x=1",
+		"http://localhost:5173?", "http://localhost:5173#top", "http://localhost:5173#",
+		"http://user@localhost:5173", "http://localhost:port", " http://localhost:5173",
+		"http://localhost:5173 ", "mailto:me@example.com",
+	} {
+		_, err := NormalizeOrigin(in)
+		require.Error(t, err, "%q", in)
+	}
+}
+
+func TestHandlerRefusesABadAllowedOrigin(t *testing.T) {
+	st, err := store.Open(context.Background(), t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	tm := tokens.New(st, nil)
+	newServer := func() *mcp.Server { return nil }
+
+	for _, origin := range []string{"null", "", "http://localhost:5173/", "localhost"} {
+		require.Panics(t, func() { Handler(newServer, tm, []string{"http://ok.example", origin}) }, "%q", origin)
+	}
+	require.NotPanics(t, func() { Handler(newServer, tm, nil) })
+}
+
 func TestHTTPRejectsBadHost(t *testing.T) {
 	h := newHTTPEnv(t, nil)
 	token := h.token("email:read")
 	port := h.port()
 	otherPort := strconv.Itoa(mustAtoi(t, port) + 1)
 
+	// The requests go over raw TCP: the HTTP client of Go would rewrite some of
+	// these Host values (for example "[localhost]:1" becomes "localhost:1")
+	// before it sends them.
+	headers := append([]string{"Authorization: Bearer " + token, fmt.Sprintf("Content-Length: %d", len(listBody))}, jsonHeaders...)
+	writeList := func(w io.Writer) { _, _ = io.WriteString(w, listBody) }
 	for _, host := range []string{
 		"evil.test",
 		"evil.test:" + port,
@@ -457,24 +522,36 @@ func TestHTTPRejectsBadHost(t *testing.T) {
 		"127.0.0.2:" + port,
 		"LOCALHOST:" + port,
 		"localhost.:" + port,
+		"127.0.0.1.:" + port,
+		"2130706433:" + port,
 		"0.0.0.0:" + port,
 		"[::ffff:127.0.0.1]:" + port,
 		"localhost:0" + port,
+		"[localhost]:" + port,
+		"[127.0.0.1]:" + port,
+		"[::1%25lo0]:" + port,
+		"[::1%lo0]:" + port,
+		"[0:0:0:0:0:0:0:1]:" + port,
 	} {
 		t.Run(host, func(t *testing.T) {
-			status, body := h.post(listBody, both(withToken(token), func(r *http.Request) { r.Host = host }))
-			require.Equal(t, http.StatusForbidden, status)
-			require.NotContains(t, body, "evil.test", "the answer does not repeat the host")
+			require.Equal(t, http.StatusForbidden, h.rawPost(host, headers, writeList))
 		})
 	}
 	require.Zero(t, h.servers.Load())
 
 	for _, host := range []string{"127.0.0.1:" + port, "localhost:" + port, "[::1]:" + port} {
 		t.Run(host, func(t *testing.T) {
-			status, _ := h.post(listBody, both(withToken(token), func(r *http.Request) { r.Host = host }))
-			require.Equal(t, http.StatusOK, status)
+			require.Equal(t, http.StatusOK, h.rawPost(host, headers, writeList))
 		})
 	}
+}
+
+// The answer to a refused Host repeats nothing of the request.
+func TestHTTPBadHostAnswerIsFixed(t *testing.T) {
+	h := newHTTPEnv(t, nil)
+	status, body := h.post(listBody, both(withToken(h.token("email:read")), func(r *http.Request) { r.Host = "evil.test" }))
+	require.Equal(t, http.StatusForbidden, status)
+	require.Equal(t, "Forbidden\n", body)
 }
 
 func mustAtoi(t *testing.T, s string) int {
@@ -781,6 +858,7 @@ func TestCheckLoopbackAddr(t *testing.T) {
 		"0.0.0.0:1", "[::]:1", ":8080", "192.168.1.10:8080", "example.com:8080", "localhost", "127.0.0.1",
 		"127.0.0.1:", "127.0.0.1:http", "127.0.0.1:65536", "127.0.0.1:-1", "[::ffff:127.0.0.1]:8080",
 		"[::1%lo0]:8080", "LOCALHOST:8080", "localhost.:8080", "127.1:8080", "", "[::1]",
+		"[127.0.0.1]:8080", "[localhost]:8080", "[0:0:0:0:0:0:0:1]:8080", "127.0.0.1.:8080", "2130706433:8080",
 	} {
 		require.Error(t, CheckLoopbackAddr(addr), addr)
 	}

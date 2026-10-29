@@ -23,6 +23,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/EmadMokhtar/email-mcp-go/internal/errtype"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 )
 
@@ -141,9 +142,9 @@ func safe[In, Out any](d *deps, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFo
 func (d *deps) logFailure(tool string, fail *toolFailure, err error) {
 	switch fail.code {
 	case codeInternal:
-		d.log.Error("tool call failed", "tool", tool, "code", fail.code, "error_types", errorTypes(err))
+		d.log.Error("tool call failed", "tool", tool, "code", fail.code, "error_types", errtype.Chain(err))
 	case codeTimeout:
-		d.log.Warn("tool call failed", "tool", tool, "code", fail.code, "error_types", errorTypes(err))
+		d.log.Warn("tool call failed", "tool", tool, "code", fail.code, "error_types", errtype.Chain(err))
 	case codeCanceled:
 		d.log.Debug("tool call ended", "tool", tool, "code", fail.code)
 	}
