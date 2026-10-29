@@ -17,8 +17,8 @@
 // APPENDUID code out of APPEND answers (see WithoutAppendUID), make APPEND
 // fail (see WithAppendError and WithAppendLimit), add messages with a given
 // date (see AppendAt), choose the login (see WithLogin) and read the server
-// state (see Unseen, SelectCounts, FetchedSections, WriteCommands and
-// BytesSent).
+// state (see Unseen, SelectCounts, FetchedSections, Commands, WriteCommands
+// and BytesSent).
 //
 // This package is for tests only. Do not import it from production code.
 package imaptest
@@ -197,9 +197,11 @@ type Server struct {
 	selects    int // SELECT commands
 	examines   int // EXAMINE commands
 	fetched    []string
-	// writes are the names of the commands of clients that change the
-	// mailboxes, in order (see WriteCommands).
-	writes []string
+	// commands are the names of the commands of clients, in order (see
+	// Commands). writes are the ones that change the mailboxes (see
+	// WriteCommands).
+	commands []string
+	writes   []string
 
 	// sent counts the bytes that the server wrote to its connections.
 	sent atomic.Int64
@@ -432,10 +434,32 @@ func (s *Server) WriteCommands() []string {
 	return append([]string(nil), s.writes...)
 }
 
-// recordWrite adds a command to the list of WriteCommands.
+// Commands returns the names of the commands of clients, in the order that the
+// server got them: LOGIN, and every command that reads or changes the
+// mailboxes (LIST, STATUS, SELECT, EXAMINE, SEARCH, FETCH, NAMESPACE,
+// UNSELECT, IDLE, and the commands of WriteCommands). A command is recorded
+// when it arrives, also when it then fails. Commands that do not reach the
+// mailboxes (CAPABILITY, NOOP, LOGOUT, STARTTLS) are not recorded, so a pooled
+// connection that is kept alive adds nothing. A test uses it to show that a
+// refused request never reached the mail server at all.
+func (s *Server) Commands() []string {
+	s.boxMu.Lock()
+	defer s.boxMu.Unlock()
+	return append([]string(nil), s.commands...)
+}
+
+// record adds a command to the list of Commands.
+func (s *Server) record(name string) {
+	s.boxMu.Lock()
+	defer s.boxMu.Unlock()
+	s.commands = append(s.commands, name)
+}
+
+// recordWrite adds a command to the lists of Commands and WriteCommands.
 func (s *Server) recordWrite(name string) {
 	s.boxMu.Lock()
 	defer s.boxMu.Unlock()
+	s.commands = append(s.commands, name)
 	s.writes = append(s.writes, name)
 }
 
@@ -602,8 +626,10 @@ func (ss *session) Select(mailbox string, options *imap.SelectOptions) (*imap.Se
 	ss.s.boxMu.Lock()
 	if readOnly {
 		ss.s.examines++
+		ss.s.commands = append(ss.s.commands, "EXAMINE")
 	} else {
 		ss.s.selects++
+		ss.s.commands = append(ss.s.commands, "SELECT")
 	}
 	ss.s.boxMu.Unlock()
 	data, err := ss.SessionIMAP4rev2.Select(mailbox, options)
@@ -657,13 +683,12 @@ func (ls *limitedSession) AppendLimit() uint32 { return ls.limit }
 // Fetch records the body sections of the command, then lets imapmemserver
 // answer it.
 func (ss *session) Fetch(w *imapserver.FetchWriter, numSet imap.NumSet, options *imap.FetchOptions) error {
-	if len(options.BodySection) > 0 {
-		ss.s.boxMu.Lock()
-		for _, sec := range options.BodySection {
-			ss.s.fetched = append(ss.s.fetched, sectionString(sec))
-		}
-		ss.s.boxMu.Unlock()
+	ss.s.boxMu.Lock()
+	ss.s.commands = append(ss.s.commands, "FETCH")
+	for _, sec := range options.BodySection {
+		ss.s.fetched = append(ss.s.fetched, sectionString(sec))
 	}
+	ss.s.boxMu.Unlock()
 	return ss.SessionIMAP4rev2.Fetch(w, numSet, options)
 }
 
@@ -741,6 +766,42 @@ func (ss *session) Rename(mailbox, newName string, options *imap.RenameOptions) 
 	return nil
 }
 
+// Login logs in like imapmemserver, and records the command.
+func (ss *session) Login(username, password string) error {
+	ss.s.record("LOGIN")
+	return ss.SessionIMAP4rev2.Login(username, password)
+}
+
+// Status answers like imapmemserver, and records the command.
+func (ss *session) Status(mailbox string, options *imap.StatusOptions) (*imap.StatusData, error) {
+	ss.s.record("STATUS")
+	return ss.SessionIMAP4rev2.Status(mailbox, options)
+}
+
+// Search searches like imapmemserver, and records the command.
+func (ss *session) Search(kind imapserver.NumKind, criteria *imap.SearchCriteria, options *imap.SearchOptions) (*imap.SearchData, error) {
+	ss.s.record("SEARCH")
+	return ss.SessionIMAP4rev2.Search(kind, criteria, options)
+}
+
+// Namespace answers like imapmemserver, and records the command.
+func (ss *session) Namespace() (*imap.NamespaceData, error) {
+	ss.s.record("NAMESPACE")
+	return ss.SessionIMAP4rev2.Namespace()
+}
+
+// Unselect closes the mailbox like imapmemserver, and records the command.
+func (ss *session) Unselect() error {
+	ss.s.record("UNSELECT")
+	return ss.SessionIMAP4rev2.Unselect()
+}
+
+// Idle waits like imapmemserver, and records the command.
+func (ss *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
+	ss.s.record("IDLE")
+	return ss.SessionIMAP4rev2.Idle(w, stop)
+}
+
 // Store changes flags like imapmemserver, and records the command.
 func (ss *session) Store(w *imapserver.FetchWriter, numSet imap.NumSet, flags *imap.StoreFlags, options *imap.StoreOptions) error {
 	ss.s.recordWrite("STORE")
@@ -779,6 +840,7 @@ const listDelim = '/'
 // attributes.
 func (ss *session) List(w *imapserver.ListWriter, ref string, patterns []string, options *imap.ListOptions) error {
 	ss.s.boxMu.Lock()
+	ss.s.commands = append(ss.s.commands, "LIST")
 	custom := len(ss.s.specialUse) > 0
 	names := make([]string, 0, len(ss.s.boxes))
 	for name := range ss.s.boxes {

@@ -170,6 +170,8 @@ type Server struct {
 	closeOnce sync.Once
 	auths     atomic.Int64
 	resets    atomic.Int64
+	// conns counts the connections that the server accepted.
+	conns atomic.Int64
 
 	mu       sync.Mutex
 	messages []Message
@@ -239,6 +241,9 @@ func New(t testing.TB, opts ...Option) *Server {
 	if err != nil {
 		t.Fatalf("smtptest: parse port: %v", err)
 	}
+	// The counting listener sits under the TLS listener, so it counts every
+	// connection, also one that fails the handshake or never says anything.
+	ln = &countingListener{Listener: ln, n: &s.conns}
 	if o.mode == ModeTLS {
 		ln = tls.NewListener(ln, tlsConfig)
 	}
@@ -270,6 +275,25 @@ func (s *Server) Messages() []Message {
 // AuthAttempts returns how many AUTH commands reached the server. A client
 // that must not send AUTH (for example before TLS) leaves this at zero.
 func (s *Server) AuthAttempts() int { return int(s.auths.Load()) }
+
+// Connections returns how many connections the server has accepted since it
+// started, also the ones that failed the TLS handshake or never sent a
+// command. A test uses it to show that nothing connected to the server.
+func (s *Server) Connections() int { return int(s.conns.Load()) }
+
+// countingListener counts the connections that it accepts.
+type countingListener struct {
+	net.Listener
+	n *atomic.Int64
+}
+
+func (l *countingListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err == nil {
+		l.n.Add(1)
+	}
+	return c, err
+}
 
 // Resets returns how many times the server reset a mail transaction: for an
 // RSET command, and also after each message it read.

@@ -77,3 +77,35 @@ func TestWithLoginAndWriteCommands(t *testing.T) {
 	require.Equal(t, []string{"STORE", "CREATE", "COPY", "MOVE", "EXPUNGE", "SUBSCRIBE", "UNSUBSCRIBE", "RENAME", "DELETE", "APPEND"},
 		srv.WriteCommands())
 }
+
+// TestCommandsRecordsEveryCommand checks that Commands has every command of a
+// client that reaches the mailboxes, reads too, in order, and that a
+// connection without a login records nothing.
+func TestCommandsRecordsEveryCommand(t *testing.T) {
+	srv := imaptest.New(t)
+	srv.Append("INBOX", []byte("Subject: one\r\n\r\nbody\r\n"))
+
+	c, err := imapclient.DialTLS(srv.Addr, &imapclient.Options{TLSConfig: &tls.Config{RootCAs: srv.CertPool, MinVersion: tls.VersionTLS12}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+	require.Empty(t, srv.Commands(), "a connection alone is not a command")
+
+	require.NoError(t, c.Login(srv.User, srv.Pass).Wait())
+	_, err = c.List("", "*", nil).Collect()
+	require.NoError(t, err)
+	_, err = c.Status("INBOX", &imap.StatusOptions{NumMessages: true}).Wait()
+	require.NoError(t, err)
+	_, err = c.Select("INBOX", &imap.SelectOptions{ReadOnly: true}).Wait()
+	require.NoError(t, err)
+	_, err = c.UIDSearch(&imap.SearchCriteria{}, nil).Wait()
+	require.NoError(t, err)
+	_, err = c.Fetch(imap.SeqSetNum(1), &imap.FetchOptions{Flags: true}).Collect()
+	require.NoError(t, err)
+	require.NoError(t, c.Unselect().Wait())
+	_, err = c.Select("INBOX", nil).Wait()
+	require.NoError(t, err)
+	require.NoError(t, c.Store(imap.SeqSetNum(1), &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagSeen}}, nil).Close())
+
+	require.Equal(t, []string{"LOGIN", "LIST", "STATUS", "EXAMINE", "SEARCH", "FETCH", "UNSELECT", "SELECT", "STORE"}, srv.Commands())
+	require.Equal(t, []string{"STORE"}, srv.WriteCommands())
+}
