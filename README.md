@@ -185,8 +185,8 @@ level when the agent calls a tool.
 | `search_messages`, `list_new_messages` | 1 | Finds messages. At most 100 per page, with a snippet of at most 200 characters. |
 | `get_message`, `get_attachment` | 1 | Reads one message or one attachment (at most 10 MB). |
 | `get_send_status` | 1 | Shows whether a send is queued, sent, or waiting for approval. |
-| `set_flags`, `tag_messages`, `move_messages` | 2 | Marks as read or unread, flags, tags and moves messages. `move_messages` never moves mail to the Trash, at any level: use `trash_messages` (level 5). |
-| `create_folder`, `create_tag` | 2 | Makes a folder or a tag. There is no tool that deletes a folder. |
+| `set_flags`, `tag_messages`, `move_messages` | 2 | Marks as read or unread, flags, tags and moves messages. `move_messages` never moves mail to the Trash or to a folder inside it, at any level: use `trash_messages` (level 5). |
+| `create_folder`, `create_tag` | 2 | Makes a folder or a tag. There is no tool that deletes a folder. `create_folder` never makes a folder inside the Trash. |
 | `create_draft`, `discard_draft` | 3 | Writes a draft, or moves a draft to the Trash. |
 | `send_message`, `cancel_send` | 4 | Sends a new message, a reply or a forward, and cancels a send during its undo window. |
 | `trash_messages` | 5 | Moves messages to the Trash. It never deletes mail for good. |

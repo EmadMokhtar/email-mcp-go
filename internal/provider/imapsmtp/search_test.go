@@ -1369,6 +1369,9 @@ func TestListFoldersMarksEveryTrashFolder(t *testing.T) {
 	require.True(t, byName["Trash"].Trash)
 	require.False(t, byName["Projects"].Trash)
 	require.False(t, byName["INBOX"].Trash)
+	// The service needs the delimiter to see a folder inside Trash.
+	require.Equal(t, '/', byName["Deleted Items"].Delimiter)
+	require.Equal(t, '/', byName["Projects"].Delimiter)
 	require.Equal(t, mail.AliasTrash, byName[trash].Alias, "the folder of the backend's Trash has the alias")
 	other := "Trash"
 	if trash == "Trash" {

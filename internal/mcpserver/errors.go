@@ -206,8 +206,7 @@ func toolError(tool string, err error) *toolFailure {
 			"one message, more messages than the Trash limit of a day, or a limit of 0. Use fewer recipients or messages, "+
 			"or ask the user to change the limits in the email-mcp settings. "+noRepeat)
 	case errors.Is(err, service.ErrMoveToTrash):
-		return failure(codeMoveToTrash, "move_messages cannot move mail to Trash. Use trash_messages, which asks the user "+
-			"when the account wants it. "+noRepeat)
+		return moveToTrashFailure(tool)
 	case errors.Is(err, service.ErrDraftNotFromAccount):
 		return failure(codeDraftFrom, "The draft is not from the address of this account, so it is not sent. "+
 			"Send a draft that this account saved, or write a new message. "+noRepeat)
@@ -257,6 +256,19 @@ func tooLargeFailure(tool string) *toolFailure {
 	}
 	return failure(codeTooLarge, "The content is too large to return. An attachment may be at most 10 MB. "+
 		`For a message, ask for body_format "none", or read the body in parts with max_chars and offset. `+noRepeat)
+}
+
+// moveToTrashFailure builds the text for service.ErrMoveToTrash. create_folder
+// gets it for a parent that is Trash or inside Trash, and a move for a target
+// that is Trash or inside Trash.
+func moveToTrashFailure(tool string) *toolFailure {
+	if tool == toolCreateFolder {
+		return failure(codeMoveToTrash, "create_folder cannot make a folder inside Trash: mail in it is deleted "+
+			"when Trash is emptied. Choose another parent. To delete mail, use trash_messages, which asks the user "+
+			"when the account wants it. "+noRepeat)
+	}
+	return failure(codeMoveToTrash, "move_messages cannot move mail to Trash or to a folder inside Trash. "+
+		"Use trash_messages, which asks the user when the account wants it. "+noRepeat)
 }
 
 // buildsMessage reports whether a tool builds a message from a Compose input.

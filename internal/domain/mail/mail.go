@@ -66,6 +66,10 @@ type Folder struct {
 	// with the \Trash attribute). More than one folder can have it, while only
 	// one has the alias AliasTrash. A move to any of them is a move to Trash.
 	Trash bool
+	// Delimiter is the hierarchy delimiter of the folder: the character between
+	// the name of the folder and the name of a folder inside it, such as '/' or
+	// '.'. It is 0 when the server has no folder hierarchy.
+	Delimiter rune
 }
 
 // Tag is a label on messages. A backend that supports tags reports it in

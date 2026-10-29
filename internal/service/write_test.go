@@ -123,11 +123,11 @@ type recBackend struct {
 func newRecBackend() *recBackend {
 	return &recBackend{
 		folders: []mail.Folder{
-			{Name: "INBOX", Alias: mail.AliasInbox},
-			{Name: "Archive", Alias: mail.AliasArchive},
-			{Name: "Deleted Items", Alias: mail.AliasTrash, Trash: true},
-			{Name: "Drafts", Alias: mail.AliasDrafts},
-			{Name: "Projects"},
+			{Name: "INBOX", Alias: mail.AliasInbox, Delimiter: '/'},
+			{Name: "Archive", Alias: mail.AliasArchive, Delimiter: '/'},
+			{Name: "Deleted Items", Alias: mail.AliasTrash, Trash: true, Delimiter: '/'},
+			{Name: "Drafts", Alias: mail.AliasDrafts, Delimiter: '/'},
+			{Name: "Projects", Delimiter: '/'},
 		},
 		originals:   map[mail.Ref]*mail.Message{},
 		raws:        map[mail.Ref][]byte{},
@@ -687,11 +687,66 @@ func TestMoveToAnyTrashFolderRefused(t *testing.T) {
 func TestMoveToOtherFoldersAllowed(t *testing.T) {
 	env := newWriteEnv(t)
 	a := env.account(level(account.MailOrganize))
-	for _, target := range []string{"", mail.AliasInbox, "inbox", mail.AliasArchive, "Projects", "Deleted Items/Old"} {
+	// "Deleted Items.Old" and "Deleted ItemsOld" are not inside Trash: the
+	// delimiter of this server is "/".
+	for _, target := range []string{"", mail.AliasInbox, "inbox", mail.AliasArchive, "Projects", "Projects/Deleted Items",
+		"Deleted Items.Old", "Deleted ItemsOld"} {
 		_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, target)
 		require.NoError(t, err, target)
 	}
-	require.Len(t, env.backend.moveCalls(), 6)
+	require.Len(t, env.backend.moveCalls(), 8)
+}
+
+// A folder inside Trash is Trash too: mail clients (Thunderbird, for example)
+// and server purge rules empty Trash with its sub-folders. So a move there is a
+// delete in disguise, and it would skip the Trash confirmation and the Trash
+// limit. Controller ruling for the final review of M0a (spec section 7.2: delete
+// needs Mail 5): it is refused at every level, like a move to Trash itself. This
+// reverses the earlier test row that allowed "Deleted Items/Old" at Mail 2.
+func TestMoveIntoAFolderInsideTrashRefused(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete), autonomy)
+	for _, target := range []string{"Deleted Items/Old", "deleted items/Old/Deeper", "DELETED ITEMS/x"} {
+		_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, target)
+		require.ErrorIs(t, err, ErrMoveToTrash, target)
+	}
+
+	// Every Trash folder counts, with its own delimiter, also one inside INBOX.
+	env.backend.folders = []mail.Folder{
+		{Name: "INBOX", Alias: mail.AliasInbox, Delimiter: '.'},
+		{Name: "INBOX.Trash", Alias: mail.AliasTrash, Trash: true, Delimiter: '.'},
+		{Name: "Bin", Trash: true, Delimiter: '.'},
+	}
+	for _, target := range []string{"INBOX.Trash.x", "inbox.trash.x.y", "Bin.Old"} {
+		_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, target)
+		require.ErrorIs(t, err, ErrMoveToTrash, target)
+	}
+	require.Empty(t, env.backend.moveCalls())
+
+	_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, "INBOX.Trashcan")
+	require.NoError(t, err, "a folder whose name only starts with the name of Trash is not inside it")
+}
+
+// A folder made inside Trash would be a place to move mail into Trash with
+// move_messages. So create_folder refuses a parent that is a Trash folder or a
+// folder inside one, before the backend is called (same ruling as above).
+func TestCreateFolderInsideTrashRefused(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete), autonomy)
+	for _, parent := range []string{mail.AliasTrash, "Deleted Items", "deleted items", "Deleted Items/Old"} {
+		_, err := env.svc.CreateFolder(env.ctx(), a.ID, "x", parent)
+		require.ErrorIs(t, err, ErrMoveToTrash, parent)
+		requireEntry(t, env.lastEntry(), "create_folder", audit.OutcomeRefused, "move_to_trash")
+	}
+	env.backend.mu.Lock()
+	created := slices.Clone(env.backend.created)
+	env.backend.mu.Unlock()
+	require.Empty(t, created, "the backend is not called")
+
+	for _, parent := range []string{"", "Projects", mail.AliasArchive} {
+		_, err := env.svc.CreateFolder(env.ctx(), a.ID, "x", parent)
+		require.NoError(t, err, parent)
+	}
 }
 
 func TestMoveWhenTheAccountHasNoTrashFolder(t *testing.T) {

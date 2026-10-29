@@ -36,7 +36,9 @@ var aliasAttrs = []struct {
 // folder alias comes from the SPECIAL-USE attribute of the folder. A folder with
 // more than one such attribute gets one alias, chosen by aliasPriority, and the
 // alias of the backend's own Trash folder is always "@trash". Every folder with
-// the \Trash attribute has Trash set, also one that has no alias.
+// the \Trash attribute has Trash set, also one that has no alias. Each folder
+// has the hierarchy delimiter that the server lists for it, so the service can
+// tell a folder inside Trash.
 //
 // The counts (Unread and Total) are set when the server supports LIST-STATUS,
 // because then the server sends them with the list in one command. Without
@@ -53,9 +55,10 @@ func (b *Backend) ListFolders(ctx context.Context) ([]mail.Folder, error) {
 		folders = make([]mail.Folder, 0, len(list))
 		for _, data := range list {
 			f := mail.Folder{
-				Name:  data.Mailbox,
-				Alias: aliasOf[data.Mailbox],
-				Trash: hasAttr(data.Attrs, imap.MailboxAttrTrash),
+				Name:      data.Mailbox,
+				Alias:     aliasOf[data.Mailbox],
+				Trash:     hasAttr(data.Attrs, imap.MailboxAttrTrash),
+				Delimiter: data.Delim,
 			}
 			if st := data.Status; st != nil {
 				if st.NumMessages != nil {

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/audit"
 	"github.com/EmadMokhtar/email-mcp-go/internal/confirm"
@@ -116,10 +117,12 @@ var (
 	// instead, which says how long to wait.
 	ErrLimit = errors.New("service: a limit of the account does not allow this")
 
-	// ErrMoveToTrash means that a move would put mail into the Trash folder. A
-	// move is organizing, and it would skip the Trash confirmation and the Trash
-	// limit, so it is refused at every level.
-	ErrMoveToTrash = errors.New("service: move_messages cannot move mail to the Trash folder. " +
+	// ErrMoveToTrash means that a move would put mail into the Trash folder or
+	// into a folder inside it, or that create_folder would make a folder inside
+	// Trash. A move is organizing, and it would skip the Trash confirmation and
+	// the Trash limit, so it is refused at every level. A folder inside Trash is
+	// Trash too: mail clients and server rules empty Trash with its sub-folders.
+	ErrMoveToTrash = errors.New("service: move_messages cannot move mail to the Trash folder or a folder inside it. " +
 		"Use trash_messages, which asks the user when the account wants it and counts toward the Trash limit")
 
 	// ErrAnswerInBand means that the action waits for the answer of the user in
@@ -433,10 +436,20 @@ func (s *Service) SetFlags(ctx context.Context, id account.AccountID, refs []mai
 }
 
 // CreateFolder creates a folder. It needs Mail 2.
+//
+// A parent that is a Trash folder, or a folder inside one, is refused at every
+// level with ErrMoveToTrash (see Move): the new folder would be a place where
+// move_messages could put mail into Trash.
 func (s *Service) CreateFolder(ctx context.Context, id account.AccountID, name, parent string) (mail.Folder, error) {
 	acc, b, err := s.begin(ctx, id, policy.ActOrganize, toolCreateFolder)
 	if err != nil {
 		return mail.Folder{}, err
+	}
+	if parent != "" {
+		if err := refuseTrashTarget(ctx, b, parent); err != nil {
+			s.finish(ctx, acc, toolCreateFolder, 1, nil, "", err)
+			return mail.Folder{}, err
+		}
 	}
 	folder, err := b.CreateFolder(ctx, name, parent)
 	s.finish(ctx, acc, toolCreateFolder, 1, nil, "", err)
@@ -468,13 +481,13 @@ func (s *Service) Tag(ctx context.Context, id account.AccountID, refs []mail.Ref
 
 // Move moves messages to a folder and returns their new refs. It needs Mail 2.
 //
-// A move to the Trash folder is refused at every level with ErrMoveToTrash: the
-// agent must use Trash, which asks the user when the account wants it and counts
-// toward the Trash limit. The Trash folder is the one that the backend's own
-// Trash uses (the folder with the alias "@trash"), and every other folder that
-// the backend marks as Trash. The target is resolved the way the backend
-// resolves it, and its name is compared without regard to case, because some
-// servers do not care about case.
+// A move to the Trash folder, or to a folder inside it, is refused at every
+// level with ErrMoveToTrash: the agent must use Trash, which asks the user when
+// the account wants it and counts toward the Trash limit. The Trash folder is
+// the one that the backend's own Trash uses (the folder with the alias
+// "@trash"), and every other folder that the backend marks as Trash. The target
+// is resolved the way the backend resolves it, and its name is compared without
+// regard to case, because some servers do not care about case (see inTrash).
 func (s *Service) Move(ctx context.Context, id account.AccountID, refs []mail.Ref, folder string) ([]mail.Ref, error) {
 	acc, b, err := s.begin(ctx, id, policy.ActOrganize, toolMove)
 	if err != nil {
@@ -489,8 +502,8 @@ func (s *Service) Move(ctx context.Context, id account.AccountID, refs []mail.Re
 	return moved, agentError(err)
 }
 
-// refuseTrashTarget returns ErrMoveToTrash when folder is the Trash folder of the
-// account.
+// refuseTrashTarget returns ErrMoveToTrash when folder is a Trash folder of the
+// account or a folder inside one.
 func refuseTrashTarget(ctx context.Context, b mail.Backend, folder string) error {
 	if folder == mail.AliasTrash {
 		return ErrMoveToTrash
@@ -503,14 +516,51 @@ func refuseTrashTarget(ctx context.Context, b mail.Backend, folder string) error
 	if err != nil {
 		return err
 	}
-	// Every folder that holds deleted mail counts, not only the one with the
-	// alias. policy.IsTrashTarget compares exactly. Here case does not count.
-	for _, f := range folders {
-		if (f.Trash || f.Alias == mail.AliasTrash) && strings.EqualFold(target, f.Name) {
-			return ErrMoveToTrash
-		}
+	if inTrash(folders, target) {
+		return ErrMoveToTrash
 	}
 	return nil
+}
+
+// inTrash reports whether the folder name is a Trash folder of the list or a
+// folder inside one.
+//
+// Every folder that holds deleted mail counts, not only the one with the alias.
+// A folder inside a Trash folder has a name that starts with the name of that
+// folder and its hierarchy delimiter, such as "Trash/Old" for "Trash" and "/".
+// A server with no hierarchy (delimiter 0) has no folder inside another.
+//
+// Case does not count, in the whole name and in the prefix. IMAP says that only
+// INBOX ignores case, and other names are exact. But some servers ignore case
+// in every name, and policy.IsTrashTarget compares exactly, so here the safe
+// side is to refuse more: a name that differs from Trash only in case is
+// refused too.
+func inTrash(folders []mail.Folder, name string) bool {
+	for _, f := range folders {
+		if !f.Trash && f.Alias != mail.AliasTrash {
+			continue
+		}
+		if strings.EqualFold(name, f.Name) {
+			return true
+		}
+		if f.Delimiter != 0 && hasPrefixFold(name, f.Name+string(f.Delimiter)) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasPrefixFold reports whether s starts with prefix, without regard to case.
+// It compares character by character, as strings.EqualFold does.
+func hasPrefixFold(s, prefix string) bool {
+	for _, p := range prefix {
+		r, size := utf8.DecodeRuneInString(s)
+		if size == 0 || !strings.EqualFold(string(r), string(p)) {
+			return false
+		}
+		s = s[size:]
+	}
+	return true
 }
 
 // resolveFolder returns the name of the folder that nameOrAlias means, the way

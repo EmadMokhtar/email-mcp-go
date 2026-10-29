@@ -234,7 +234,7 @@ func registerWriteTools(srv *mcp.Server, d *deps) {
 	}, d.setFlags)
 	addTool(srv, d, &mcp.Tool{
 		Name:        toolCreateFolder,
-		Description: "Create a folder. There is no tool to delete a folder. Needs Mail 2 (organize).",
+		Description: "Create a folder. There is no tool to delete a folder. A parent that is Trash or inside Trash is refused. Needs Mail 2 (organize).",
 		Annotations: organize,
 	}, d.createFolder)
 	addTool(srv, d, &mcp.Tool{
@@ -250,7 +250,7 @@ func registerWriteTools(srv *mcp.Server, d *deps) {
 	addTool(srv, d, &mcp.Tool{
 		Name: toolMoveMessages,
 		Description: "Move messages to a folder. Returns the new refs; the old refs no longer work. " +
-			"A move to Trash is refused: use trash_messages. Needs Mail 2 (organize).",
+			"A move to Trash or to a folder inside Trash is refused: use trash_messages. Needs Mail 2 (organize).",
 		Annotations: organize,
 	}, d.moveMessages)
 	addTool(srv, d, &mcp.Tool{
