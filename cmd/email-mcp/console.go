@@ -269,16 +269,8 @@ func (c *cli) newFlags(name string) *flag.FlagSet {
 // user typed.
 func (c *cli) parseFlags(cmd string, fs *flag.FlagSet, args []string) (rest []string, code int, ok bool) {
 	for {
-		if err := fs.Parse(args); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				c.printf("Usage of email-mcp %s:\n", cmd)
-				fs.SetOutput(c.stdout)
-				fs.PrintDefaults()
-				fs.SetOutput(io.Discard)
-				return nil, exitOK, false
-			}
-			c.errorf("%s: %s. Run \"email-mcp %s -h\" to see the flags.\n", cmd, flagProblem(fs, err), cmd)
-			return nil, exitUsage, false
+		if code, ok := c.parseOnce(cmd, fs, args, c.stdout); !ok {
+			return nil, code, false
 		}
 		left := fs.Args()
 		if len(left) == 0 {
@@ -289,6 +281,28 @@ func (c *cli) parseFlags(cmd string, fs *flag.FlagSet, args []string) (rest []st
 		}
 		rest = append(rest, left[0])
 		args = left[1:]
+	}
+}
+
+// parseOnce runs fs.Parse(args) with the rules of parseFlags: fs writes
+// nothing; -h prints the flags to help (exitOK); a bad flag prints a fixed text
+// on standard error (exitUsage). ok is false when the command must stop.
+// "serve" gives standard error as help, because on stdio standard output
+// carries only the protocol.
+func (c *cli) parseOnce(cmd string, fs *flag.FlagSet, args []string, help io.Writer) (code int, ok bool) {
+	err := fs.Parse(args)
+	switch {
+	case err == nil:
+		return exitOK, true
+	case errors.Is(err, flag.ErrHelp):
+		_, _ = fmt.Fprintf(help, "Usage of email-mcp %s:\n", cmd)
+		fs.SetOutput(help)
+		fs.PrintDefaults()
+		fs.SetOutput(io.Discard)
+		return exitOK, false
+	default:
+		c.errorf("%s: %s. Run \"email-mcp %s -h\" to see the flags.\n", cmd, flagProblem(fs, err), cmd)
+		return exitUsage, false
 	}
 }
 

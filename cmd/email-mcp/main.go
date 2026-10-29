@@ -3,8 +3,6 @@ package main
 
 import (
 	"context"
-	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -106,22 +104,16 @@ func printUsage(w io.Writer) {
 }
 
 func runVersion(_ context.Context, c *cli, args []string) int {
-	stdout, stderr := c.stdout, c.stderr
-	fs := flag.NewFlagSet("version", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	if err := fs.Parse(args); err != nil {
-		// The flag package has already printed the problem or the help text.
-		if errors.Is(err, flag.ErrHelp) {
-			return exitOK
-		}
-		return exitUsage
+	// A bad flag gets a fixed text, never the text that was typed (see
+	// parseOnce).
+	fs := c.newFlags("version")
+	if code, ok := c.parseOnce("version", fs, args, c.stderr); !ok {
+		return code
 	}
 	if fs.NArg() > 0 {
-		// The argument is not repeated: the user may have typed a password.
-		_, _ = fmt.Fprintln(stderr, "version: unexpected argument 1: this command takes no arguments")
-		return exitUsage
+		return c.unexpected("version")
 	}
 
-	_, _ = fmt.Fprintf(stdout, "email-mcp %s\n", version.Version)
+	_, _ = fmt.Fprintf(c.stdout, "email-mcp %s\n", version.Version)
 	return exitOK
 }

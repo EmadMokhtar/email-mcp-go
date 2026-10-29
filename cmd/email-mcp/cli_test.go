@@ -1583,3 +1583,47 @@ func TestReadTerminalPasswordRestoresOnCtrlC(t *testing.T) {
 	require.Equal(t, []byte("pw-typed-9a"), line)
 	require.Empty(t, g.restored)
 }
+
+// A --to path with a ".." part is refused before anything is opened: after a
+// folder that is a symbolic link, ".." does not go where the text says.
+func TestKeyRotateRefusesDotDotInTheTarget(t *testing.T) {
+	dir, _, _ := rotateFixture(t)
+	ids := kekIDs(t, dir)
+	keys := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(keys, "sub"), 0o700))
+	target := keys + "/sub/../new.key"
+
+	r := runCLI(t, nil, "", "key", "rotate", "--yes", "--to", "file:"+target, "--data-dir", dir)
+
+	require.Equal(t, exitUsage, r.code)
+	require.Contains(t, r.stderr, `".."`)
+	require.NotContains(t, r.stderr, target)
+	_, err := os.Stat(filepath.Join(keys, "new.key"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.Equal(t, ids, kekIDs(t, dir))
+}
+
+// serve and version never echo a bad flag either: an MCP client starts serve
+// from its config, and its standard error goes to the log of the client.
+func TestServeAndVersionNeverEchoABadFlag(t *testing.T) {
+	const secret = "pw-flag-41b7" //nolint:gosec // G101: a test value, used to check that it is never shown
+	dir, _ := newCLIEnv(t)
+	for name, args := range map[string][]string{
+		"serve, unknown flag":       {"serve", "-" + secret},
+		"serve, unknown with value": {"serve", "--" + secret + "=x"},
+		"serve, bad syntax":         {"serve", "-=" + secret},
+		"version, unknown flag":     {"version", "-" + secret},
+		"version, bad syntax":       {"version", "-=" + secret},
+	} {
+		r := runCLI(t, nil, "", append(args, "--data-dir", dir)...)
+		require.Equal(t, exitUsage, r.code, name)
+		require.NotEmpty(t, r.stderr, name)
+		requireNoLeak(t, r, secret)
+	}
+	requireNoData(t, dir)
+
+	r := runCLI(t, nil, "", "serve", "-h")
+	require.Equal(t, exitOK, r.code)
+	require.Contains(t, r.stderr, "-http", "the help of serve goes to standard error: standard output carries the protocol")
+	require.Empty(t, r.stdout)
+}

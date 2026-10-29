@@ -26,7 +26,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -124,23 +123,18 @@ func (o *originList) Set(v string) error {
 
 func runServe(ctx context.Context, c *cli, args []string) int {
 	stdin, stdout, stderr := c.stdin, c.stdout, c.stderr
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := c.newFlags("serve")
 	dataDir := fs.String("data-dir", "", "the data directory (default: $EMAIL_MCP_DATA_DIR, or the data directory of the platform)")
 	httpAddr := fs.String("http", "", "serve MCP over local HTTP on this loopback address, such as 127.0.0.1:8765, instead of stdio")
 	var origins originList
 	fs.Var(&origins, "allow-origin", "a browser origin that may call the HTTP server, such as http://localhost:5173 (repeat the flag for more)")
-	if err := fs.Parse(args); err != nil {
-		// The flag package has already printed the problem or the help text.
-		if errors.Is(err, flag.ErrHelp) {
-			return exitOK
-		}
-		return exitUsage
+	// A bad flag gets a fixed text, never the text that was typed (see
+	// parseOnce). The help goes to standard error.
+	if code, ok := c.parseOnce("serve", fs, args, stderr); !ok {
+		return code
 	}
 	if fs.NArg() > 0 {
-		// The argument is not repeated: the user may have typed a password.
-		_, _ = fmt.Fprintln(stderr, "serve: unexpected argument 1: this command takes no arguments that are not flags")
-		return exitUsage
+		return c.unexpected("serve")
 	}
 	// The settings are checked before anything is opened.
 	allowed, err := checkServeFlags(*httpAddr, origins)

@@ -13,6 +13,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/app"
@@ -42,6 +44,10 @@ func runKeyRotate(ctx context.Context, c *cli, args []string) int {
 	}
 	if app.CheckKEKSource(*to) != nil {
 		return c.usage(cmd, "--to must be file:<absolute path> or keychain")
+	}
+	if path, isFile := strings.CutPrefix(*to, "file:"); isFile && hasDotDot(path) {
+		return c.usage(cmd, `--to must not have a ".." part: after a folder that is a symbolic link, ".." does `+
+			`not go where the text says. Give the path without it`)
 	}
 
 	// Another program that runs now keeps the old master key in memory. A key
@@ -118,6 +124,12 @@ func (c *cli) printRotation(rot app.Rotation) {
 	// says to delete it.
 	c.printf("The old master key stays in the keychain (service \"email-mcp\", account \"master-key\"), unchanged. " +
 		"Other data directories may use it.\n")
+}
+
+// hasDotDot reports whether path has a ".." part.
+func hasDotDot(path string) bool {
+	parts := strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == filepath.Separator })
+	return slices.Contains(parts, "..")
 }
 
 // shellQuote quotes s for a POSIX shell: in single quotes, with each single
