@@ -1,246 +1,66 @@
-# Docker Quick Reference - Email MCP Server
+# email-mcp in a container
 
-## 🚀 Quick Start
+**Short version: for use on your own computer, do not use the container.
+Install the binary instead (see the [README](README.md#install)).**
 
-### Build and Run (Stdio Mode)
-```bash
-make docker/build
-make docker/run
+The container image exists as groundwork for hosted mode. Hosted mode lets many
+people use one server on Linux, with TLS (encrypted connections) and sign-in.
+It comes in milestone M3. Until then, the image is useful for testing and for
+building on, not for daily use.
+
+## Why the container does not work for local use
+
+1. **No keychain.** By default, email-mcp keeps its master key (the key that
+   protects the stored passwords) in the keychain of your operating system. A
+   container cannot reach the keychain of your computer. Inside the container
+   you must use a key file instead, with `EMAIL_MCP_KEK=file:<path>`. Without
+   it, `serve` stops with an error about the keychain.
+2. **127.0.0.1 inside the container is not your computer.** Every container has
+   its own network. Its loopback address (127.0.0.1) is reachable only from
+   inside that container. The default command of the image is
+   `email-mcp serve --http 127.0.0.1:8765`, so nothing outside the container can
+   connect to it.
+3. **Publishing the port does not help.** `docker run -p 8765:8765` forwards to
+   the network interface of the container, not to its loopback address. And
+   email-mcp refuses to listen on any address that is not a loopback address:
+   `serve --http 0.0.0.0:8765` stops at once. This is on purpose: local HTTP
+   mode has no TLS, so it must never be open to a network.
+4. **The web interface is not reachable either.** `email-mcp setup` and the
+   approval links open a page on 127.0.0.1 inside the container. Your browser
+   cannot open it.
+
+## What the image is
+
+- It is built from `gcr.io/distroless/static-debian12:nonroot`: no shell, no
+  package manager, and it runs as the user `nonroot` (UID 65532).
+- Both base images are pinned by digest (a hash of the exact image), so a
+  build always uses the same files.
+- `ENTRYPOINT` is `/email-mcp`. `CMD` is `serve --http 127.0.0.1:8765`.
+- The release workflow publishes it as `ghcr.io/emadmokhtar/email-mcp` for
+  `linux/amd64` and `linux/arm64`. The image has the same binary as the signed
+  release archives, an SBOM from Docker, and a GitHub build-provenance
+  attestation. The README shows how to verify it.
+
+## Build it yourself
+
+```sh
+docker build -t email-mcp:dev .
+docker run --rm email-mcp:dev version
 ```
 
-### Build and Run (HTTP Mode)
-```bash
-make docker/build
-make docker/run-http
-# Access at http://localhost:8080 (needs MCP_AUTH_TOKEN in .env)
+The Dockerfile compiles the binary from the source code by default. The
+release uses the same Dockerfile with `--build-arg BINARY_FROM=release`: then
+it copies the binary that GoReleaser built, instead of compiling a new one.
+
+## Try it
+
+This starts the server inside the container with a key file in the home
+folder of the container. It is reachable only from inside the container, so it
+is only a smoke test:
+
+```sh
+docker run --rm -e EMAIL_MCP_KEK=file:/home/nonroot/kek.key email-mcp:dev
 ```
 
-### Using Docker Compose
-Uses `compose.yaml` in the repository root. Copy `.env.example` to `.env` first.
-```bash
-docker compose up
-```
-
-## 📋 Common Commands
-
-### Building
-| Command                                 | Description            |
-|-----------------------------------------|------------------------|
-| `make docker/build`                     | Build the Docker image |
-| `docker build -t email-mcp-go:latest .` | Build manually         |
-
-### Running
-| Command                                                                                                  | Description                     |
-|----------------------------------------------------------------------------------------------------------|---------------------------------|
-| `make docker/run`                                                                                        | Run in stdio mode (interactive) |
-| `make docker/run-http`                                                                                   | Run in HTTP mode on port 8080   |
-| `docker run -it --rm --env-file .env email-mcp-go:latest`                                                | Run stdio mode manually         |
-| `docker run -d -p 8080:8080 --env-file .env email-mcp-go:latest /app/email-mcp -http -addr 0.0.0.0:8080` | Run HTTP mode manually          |
-
-
-### Management
-| Command                             | Description                  |
-|-------------------------------------|------------------------------|
-| `make docker/clean`                 | Remove images and containers |
-| `make docker/test`                  | Run Docker tests             |
-| `docker images email-mcp-go`        | List built images            |
-| `docker ps`                         | List running containers      |
-| `docker logs <container-id>`        | View container logs          |
-| `docker exec -it <container-id> sh` | Shell into container         |
-
-## 🔧 Configuration
-
-### Environment File (.env)
-```env
-IMAP_HOST=imap.gmail.com
-IMAP_PORT=993
-IMAP_USERNAME=your-email@gmail.com
-IMAP_PASSWORD=your-app-password
-IMAP_TLS=true
-
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USERNAME=your-email@gmail.com
-SMTP_PASSWORD=your-app-password
-SMTP_TLS=true
-```
-
-### Modes
-
-#### Stdio Mode (Default)
-```bash
-# Docker
-docker run -it --rm --env-file .env email-mcp-go:latest
-```
-
-#### HTTP Mode
-```bash
-# Docker
-docker run -d -p 8080:8080 --env-file .env \
-  email-mcp-go:latest /app/email-mcp -http -addr 0.0.0.0:8080
-```
-
-## 🐛 Troubleshooting
-
-### View Logs
-```bash
-# Docker
-docker logs <container-name>
-docker logs -f <container-name>  # Follow logs
-```
-
-### Debug in Container
-```bash
-# Docker
-docker exec -it <container-name> sh
-
-# Docker Compose
-docker compose exec email-mcp sh
-```
-
-### Common Issues
-
-**Permission denied (logs)**
-```bash
-# Check .env file permissions
-chmod 600 .env
-```
-
-**Port already in use**
-```bash
-# Change port mapping
-docker run -p 8081:8080 ...
-
-# Or in docker/compose.yml
-ports:
-  - "8081:8080"
-```
-
-**Container exits immediately**
-```bash
-# Check logs for errors
-docker logs <container-name>
-
-# Verify .env file
-docker run --rm -it --env-file .env email-mcp-go:latest sh -c 'env | grep IMAP'
-```
-
-## 📦 Registry Operations
-
-### Tag Image
-```bash
-docker tag email-mcp-go:latest yourusername/email-mcp-go:latest
-docker tag email-mcp-go:latest yourusername/email-mcp-go:v1.0.0
-```
-
-### Push to Registry
-```bash
-docker push yourusername/email-mcp-go:latest
-docker push yourusername/email-mcp-go:v1.0.0
-```
-
-### Pull from Registry
-```bash
-docker pull yourusername/email-mcp-go:latest
-docker run -it --rm --env-file .env yourusername/email-mcp-go:latest
-```
-
-## 🎯 Best Practices
-
-### Security
-1. **Never commit .env file**
-   ```bash
-   # It's already in .gitignore
-   git status  # Verify .env is not tracked
-   ```
-
-2. **Use read-only filesystem** (optional)
-   ```bash
-   docker run --read-only --tmpfs /tmp --env-file .env email-mcp-go:latest
-   ```
-
-3. **Limit resources**
-   ```bash
-   docker run --memory="256m" --cpus="0.5" --env-file .env email-mcp-go:latest
-   ```
-
-### Production
-1. **Use specific tags** (not `latest`)
-   ```bash
-   docker tag email-mcp-go:latest email-mcp-go:1.0.0
-   ```
-
-2. **Health checks** (HTTP mode)
-   ```yaml
-   healthcheck:
-     test: ["CMD", "wget", "--spider", "http://localhost:8080/health"]
-     interval: 30s
-     timeout: 10s
-     retries: 3
-   ```
-
-3. **Restart policy**
-   ```bash
-   docker run -d --restart=unless-stopped --env-file .env email-mcp-go:latest
-   ```
-
-## 🔄 Development Workflow
-
-### Make Changes and Rebuild
-```bash
-# Edit code
-vim cmd/email-mcp/main.go
-
-# Rebuild and run
-make docker/build docker/run
-```
-
-### Test Changes
-```bash
-make docker/test
-```
-
-### View Image Size
-```bash
-docker images email-mcp-go:latest
-```
-
-### Clean Up Development Artifacts
-```bash
-make docker/clean
-docker system prune -a  # Clean all unused images
-```
-
-## 📚 Additional Resources
-
-- **Main Documentation**: [README.md](README.md)
-
-## 💡 Tips
-
-### Speed Up Builds
-```bash
-# Use BuildKit
-DOCKER_BUILDKIT=1 docker build -t email-mcp-go:latest .
-```
-
-### Multi-Architecture Builds
-```bash
-docker buildx create --use
-docker buildx build --platform linux/amd64,linux/arm64 -t email-mcp-go:latest .
-```
-
-### Inspect Image
-```bash
-docker inspect email-mcp-go:latest
-docker history email-mcp-go:latest
-```
-
-### Container Stats
-```bash
-docker stats <container-name>
-```
-
----
-
-For the project overview and configuration reference, see [README.md](README.md)
-
+The data (the database and the key file) is lost when the container stops,
+because it is not on a volume.
