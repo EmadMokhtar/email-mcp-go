@@ -10,13 +10,16 @@
 # Both use the certificate that gencerts makes. Every port is published on
 # 127.0.0.1 only.
 #
-# The images are pinned by digest. The comment above each one is its tag.
+# The Dovecot image is pinned as tag@digest. Docker pulls it by the digest (a
+# hash of the exact image), so the tag cannot change what runs. The tag is there
+# so that Dependabot can find newer versions. The Postfix image is built here,
+# from postfix/Dockerfile, which pins its own base image.
 name: email-mcp-interop
 
 services:
   dovecot:
-    # dovecot/dovecot:2.4.5 (the image of the Dovecot project)
-    image: dovecot/dovecot@sha256:43c14def08a57f25107593cbcf64a0a6fbae84a7b9de7aa038513c9b21e91914
+    # The image of the Dovecot project.
+    image: dovecot/dovecot:2.4.5@sha256:43c14def08a57f25107593cbcf64a0a6fbae84a7b9de7aa038513c9b21e91914
     environment:
       # The password of the one test user, interop@example.test. It is a test
       # value. interop_test.go has the same value.

@@ -10,7 +10,11 @@
 #     (driver-opts);
 #   - the docker/buildkit-syft-scanner image in .goreleaser.yaml;
 #   - the tool versions that "go run" uses (staticcheck, govulncheck,
-#     GoReleaser) in the Makefile and the workflows.
+#     GoReleaser) in the Makefile and the workflows;
+#   - the versions that release.yml gives to two installer actions:
+#     cosign-release (sigstore/cosign-installer) and syft-version
+#     (anchore/sbom-action/download-syft). Dependabot updates the actions, not
+#     these inputs.
 version: 2
 updates:
   - package-ecosystem: gomod
@@ -56,7 +60,9 @@ updates:
         patterns:
           - "*"
 
-  # The Dovecot image of the interop test (test/interop/compose.yaml).
+  # The Dovecot image of the interop test (test/interop/compose.yaml). It is
+  # written as tag@digest, so Dependabot can see the tag and find newer ones.
+  # The Postfix image there is built from test/interop/postfix (see above).
   - package-ecosystem: docker-compose
     directory: /test/interop
     schedule:
