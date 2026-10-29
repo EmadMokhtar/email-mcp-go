@@ -103,6 +103,9 @@ func (s *Server) NewSetupURL(ctx context.Context) (string, error) {
 // bar and the history entry of the page. A missing, malformed, used, expired or
 // unknown token gets the no-session page, the same for all.
 //
+// It runs for GET and for HEAD, so a HEAD request also uses up the token. This
+// is the one place where a safe method changes state (see the package doc).
+//
 // The guard has already set "Cache-Control: no-store" and
 // "Referrer-Policy: no-referrer", so the browser neither keeps this answer nor
 // sends the address with the token to another page.

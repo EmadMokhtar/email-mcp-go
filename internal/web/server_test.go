@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -739,8 +740,23 @@ func TestServeFailureStartsANewListener(t *testing.T) {
 		return ln, err
 	}
 	ctx := context.Background()
-	_, err := s.EnsureStarted(ctx)
+	first, err := s.EnsureStarted(ctx)
 	require.NoError(t, err)
+
+	// A browser keeps an idle connection open to the first server.
+	addr := strings.TrimPrefix(first, "http://")
+	conn, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	_, err = io.WriteString(conn, "GET /approvals/p1 HTTP/1.1\r\nHost: "+addr+"\r\n\r\n")
+	require.NoError(t, err)
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err)
+	_, err = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 	// Closing the listener under the server makes Serve fail with an error that
 	// is not http.ErrServerClosed.
@@ -754,6 +770,12 @@ func TestServeFailureStartsANewListener(t *testing.T) {
 		return s.baseURL == "" && s.srv == nil
 	}, 5*time.Second, 5*time.Millisecond, "a failed server is forgotten")
 
+	// The failed server is closed too: it ends its open connections, so
+	// nothing of it runs on after Shutdown.
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, err = reader.ReadByte()
+	require.ErrorIs(t, err, io.EOF, "the failed server closed its idle connection")
+
 	// The next call starts a new listener, and it serves.
 	base, err := s.EnsureStarted(ctx)
 	require.NoError(t, err)
@@ -761,7 +783,8 @@ func TestServeFailureStartsANewListener(t *testing.T) {
 	mu.Lock()
 	require.Len(t, listeners, 2)
 	mu.Unlock()
-	resp, body := do(t, newBrowser(t), newRequest(t, http.MethodGet, base+"/approvals/p1", nil))
+	var body string
+	resp, body = do(t, newBrowser(t), newRequest(t, http.MethodGet, base+"/approvals/p1", nil))
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	require.Equal(t, instruction, visibleText(t, body))
 	require.Contains(t, f.logs.String(), "code=serve_failed")

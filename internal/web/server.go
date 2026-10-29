@@ -28,7 +28,10 @@
 //  5. Form token: every request that is not GET or HEAD needs the CSRF token of
 //     its session in the url-encoded form body. Refused with 403. HEAD is a
 //     safe method like GET, and the routes answer it with their GET page, so
-//     no route may change anything on GET.
+//     no route may change anything on GET. The one exception is the setup
+//     link: GET and also HEAD on /setup use up its single-use token and set the
+//     session cookie, so a HEAD request on the link signs the browser in like a
+//     GET does. The link goes only to the browser of the user (NewSetupURL).
 //
 // The pages are plain HTML forms, with no JavaScript. The log gets the route
 // pattern, the status and a fixed code, never a token, a cookie, a session id,
@@ -182,8 +185,8 @@ func (s *Server) Attach(svc *service.Service) {
 //
 // ctx limits only the start. The server runs until Shutdown. After Shutdown it
 // returns ErrClosed. When the listen fails, it returns the error, and the next
-// call tries again. When the server stops by itself (its listener fails), the
-// next call starts a new listener, maybe on another port.
+// call tries again. When the server stops by itself (its listener fails), it is
+// closed, and the next call starts a new listener, maybe on another port.
 func (s *Server) EnsureStarted(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -222,11 +225,14 @@ func (s *Server) EnsureStarted(ctx context.Context) (string, error) {
 		// The listener is gone. Forget this server, so the next EnsureStarted
 		// starts a new listener and does not give out a dead address.
 		s.mu.Lock()
-		defer s.mu.Unlock()
 		if s.srv == srv {
 			s.srv = nil
 			s.baseURL = ""
 		}
+		s.mu.Unlock()
+		// Close it too. Shutdown no longer knows it, so without this its open
+		// connections would keep running after Shutdown.
+		_ = srv.Close()
 	}()
 	s.srv = srv
 	s.baseURL = "http://127.0.0.1:" + strconv.Itoa(addr.Port)
