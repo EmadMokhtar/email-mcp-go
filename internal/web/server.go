@@ -154,7 +154,16 @@ func New(d Deps) *Server {
 
 // routes adds the routes of the pages to the mux. The checks of guard.go run
 // before any of them. /setup is not here: the guard answers it (see serve).
+//
+// Every pattern has its method. A GET route only reads, and every change is a
+// POST of a url-encoded form with the CSRF token. "GET /{$}" is the page "/"
+// alone, not every path.
 func (s *Server) routes() {
+	s.mux.HandleFunc("GET /{$}", s.handleAccounts)
+	s.mux.HandleFunc("GET /connect", s.handleConnect)
+	s.mux.HandleFunc("POST /connect/discover", s.handleDiscover)
+	s.mux.HandleFunc("POST /connect/settings", s.handleSettings)
+	s.mux.HandleFunc("POST /connect/save", s.handleSave)
 }
 
 // Attach gives the server the service that the pages use. The service needs the

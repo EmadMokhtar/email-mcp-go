@@ -7,7 +7,8 @@
 //
 // This file holds the Service type, its dependencies and its errors. The read
 // use cases are in read.go. The write use cases are in write.go, and sending is
-// in send.go. The backend cache is in backends.go.
+// in send.go. Connecting a new account is in accounts.go. The backend cache is
+// in backends.go.
 //
 // The package logs only fixed codes (for example "audit_write_failed"), with
 // the name of the tool and the outcome at most. It never logs an error text, a
@@ -29,6 +30,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/inflight"
 	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
+	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
 	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
@@ -130,6 +132,13 @@ type Deps struct {
 	Outbox   *outbox.Outbox
 	Audit    *audit.Log
 	Links    Links
+	// Local is true for a local install. Only then may a new account use a
+	// plain (unencrypted) connection, and only to a loopback host.
+	Local bool
+	// Probe tests the settings and the password of a new account before it is
+	// saved (see CreateIMAPAccount). A nil Probe means imapsmtp.Probe. Tests
+	// replace it.
+	Probe func(ctx context.Context, cfg imapsmtp.Config) (*imapsmtp.ProbeResult, error)
 	// Now returns the current time. A nil Now means time.Now.
 	Now func() time.Time
 	// Logger gets a line with a fixed code when the service cannot do a step
@@ -166,6 +175,9 @@ func New(d Deps) *Service {
 	}
 	if d.Logger == nil {
 		d.Logger = slog.New(slog.DiscardHandler)
+	}
+	if d.Probe == nil {
+		d.Probe = imapsmtp.Probe
 	}
 	return &Service{d: d, capabilitiesBudget: capabilitiesBudget}
 }

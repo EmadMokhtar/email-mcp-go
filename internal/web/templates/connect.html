@@ -1,0 +1,121 @@
+{{/*
+  The connect page, in three steps (see accounts.go): "email" asks for the
+  address, "choose" shows the suggested servers, and "settings" is the form
+  that tests and saves the account.
+
+  The page data has no password field, so no step can show the password. The
+  password input never gets a value attribute.
+*/}}
+{{define "title"}}Connect an account · email-mcp{{end}}
+{{define "content"}}
+{{$csrf := .CSRFToken}}
+<h1>Connect an account</h1>
+<p><a href="/">Back to the accounts</a></p>
+{{with .Data}}
+{{$email := .Email}}
+{{if .Error}}<p role="alert"><strong>{{.Error}}</strong></p>{{end}}
+
+{{if eq .Step "email"}}
+<form method="post" action="/connect/discover">
+{{template "csrf_field" $csrf}}
+<p><label for="email">Email address</label><br>
+<input id="email" name="email" type="email" value="{{.Email}}" autocomplete="email" required></p>
+<p><button type="submit">Find the server settings</button>
+<button type="submit" formaction="/connect/settings" formnovalidate>Enter the settings yourself</button></p>
+</form>
+
+{{else if eq .Step "choose"}}
+<h2>Server settings for {{.Email}}</h2>
+{{if .NotFound}}
+<p>No server settings were found for this address. Enter them yourself.</p>
+{{else}}
+<p>These settings were found for your address. They are only suggestions. Check that each host name belongs to your mail provider: your password will be sent to the servers that you choose.</p>
+{{range .Suggestions}}
+<form method="post" action="/connect/settings">
+{{template "csrf_field" $csrf}}
+<input type="hidden" name="email" value="{{$email}}">
+<input type="hidden" name="imap_host" value="{{.IMAPHost}}">
+<input type="hidden" name="imap_port" value="{{.IMAPPort}}">
+<input type="hidden" name="imap_security" value="{{.IMAPSecurity}}">
+<input type="hidden" name="smtp_host" value="{{.SMTPHost}}">
+<input type="hidden" name="smtp_port" value="{{.SMTPPort}}">
+<input type="hidden" name="smtp_security" value="{{.SMTPSecurity}}">
+<input type="hidden" name="username" value="{{.Username}}">
+<dl>
+<dt>Incoming mail (IMAP)</dt><dd>{{.IMAPHost}}, port {{.IMAPPort}}, {{.SecurityLabel .IMAPSecurity}}</dd>
+<dt>Outgoing mail (SMTP)</dt><dd>{{.SMTPHost}}, port {{.SMTPPort}}, {{.SecurityLabel .SMTPSecurity}}</dd>
+<dt>User name</dt><dd>{{.Username}}</dd>
+</dl>
+<p><button type="submit">Use these settings</button></p>
+</form>
+{{end}}
+{{end}}
+<form method="post" action="/connect/settings">
+{{template "csrf_field" $csrf}}
+<input type="hidden" name="email" value="{{.Email}}">
+<p><button type="submit">Enter the settings yourself</button></p>
+</form>
+
+{{else}}
+<form method="post" action="/connect/save">
+{{template "csrf_field" $csrf}}
+<p><label for="email">Email address</label><br>
+<input id="email" name="email" type="email" value="{{.Email}}" autocomplete="email" required></p>
+{{with .Server}}
+<fieldset>
+<legend>Incoming mail (IMAP)</legend>
+<p><label for="imap_host">Server</label><br>
+<input id="imap_host" name="imap_host" value="{{.IMAPHost}}" autocomplete="off" spellcheck="false" required></p>
+<p><label for="imap_port">Port</label><br>
+<input id="imap_port" name="imap_port" value="{{.IMAPPort}}" inputmode="numeric" required></p>
+<p><label for="imap_security">Security</label><br>
+<select id="imap_security" name="imap_security">
+<option value="tls"{{if eq .IMAPSecurity "tls"}} selected{{end}}>TLS</option>
+<option value="starttls"{{if eq .IMAPSecurity "starttls"}} selected{{end}}>STARTTLS</option>
+<option value="plain"{{if eq .IMAPSecurity "plain"}} selected{{end}}>None: not encrypted, only for a server on this computer</option>
+</select></p>
+</fieldset>
+<fieldset>
+<legend>Outgoing mail (SMTP)</legend>
+<p><label for="smtp_host">Server</label><br>
+<input id="smtp_host" name="smtp_host" value="{{.SMTPHost}}" autocomplete="off" spellcheck="false" required></p>
+<p><label for="smtp_port">Port</label><br>
+<input id="smtp_port" name="smtp_port" value="{{.SMTPPort}}" inputmode="numeric" required></p>
+<p><label for="smtp_security">Security</label><br>
+<select id="smtp_security" name="smtp_security">
+<option value="tls"{{if eq .SMTPSecurity "tls"}} selected{{end}}>TLS</option>
+<option value="starttls"{{if eq .SMTPSecurity "starttls"}} selected{{end}}>STARTTLS</option>
+<option value="plain"{{if eq .SMTPSecurity "plain"}} selected{{end}}>None: not encrypted, only for a server on this computer</option>
+</select></p>
+</fieldset>
+<p><label for="username">User name</label><br>
+<input id="username" name="username" value="{{.Username}}" autocomplete="off" spellcheck="false" required></p>
+{{end}}
+<p><label for="password">Password or app password</label><br>
+<input id="password" name="password" type="password" autocomplete="off" required></p>
+<p>The password is saved, encrypted, only after the test passes. This page never keeps it, so type it again each time you test.</p>
+{{if .Certs}}
+<fieldset>
+<legend>Certificates</legend>
+{{range .Certs}}
+<section>
+<h2>{{.Name}} server {{.Host}}</h2>
+<p>{{.Problem}}</p>
+{{if .Fingerprint}}<p>SHA-256 fingerprint: <code>{{.Fingerprint}}</code></p>{{end}}
+{{if .CanTrust}}
+<input type="hidden" name="{{.Field}}_pin" value="{{.Pin}}">
+<p><label><input type="checkbox" name="trust_{{.Field}}" value="1"{{if .Checked}} checked{{end}}> Trust this certificate</label></p>
+{{end}}
+</section>
+{{end}}
+{{if .Understand}}
+<p>A server that is not on this computer should have a certificate that an authority signed. A certificate that no authority signed can mean that someone on the network reads your mail and your password. Trust it only if your provider gave you this fingerprint.</p>
+<p><label><input type="checkbox" name="understand" value="1"{{if .UnderstandChecked}} checked{{end}}> I understand the risk</label></p>
+{{end}}
+</fieldset>
+{{end}}
+<p><button type="submit">Test the connection and save</button></p>
+</form>
+{{end}}
+{{end}}
+{{end}}

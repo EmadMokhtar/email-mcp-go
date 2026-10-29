@@ -308,6 +308,7 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 		Outbox:   ob,
 		Audit:    auditLog,
 		Links:    webServer.Links(),
+		Local:    cfg.Local,
 		Logger:   log,
 	})
 	webServer.Attach(svc)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
@@ -36,6 +37,78 @@ func (s *Store) CreateAccount(ctx context.Context, a *account.Account) error {
 		return fmt.Errorf("store: create account: %w", err)
 	}
 	return nil
+}
+
+// CreateAccountWithSecret adds an account and one sealed secret of it (such as
+// the password) in one transaction: both are stored, or neither is.
+//
+// It returns ErrExists, and stores nothing, when the tenant already has an
+// account with the same address. Addresses are compared without regard to case
+// (strings.EqualFold, so letters outside ASCII count too). The transaction takes
+// the write lock when it starts, so two callers with the same address, also in
+// two programs that use the same database file, cannot both pass the check.
+//
+// Like CreateAccount, it fails if the tenant does not exist or if the tenant
+// already has an account with the same id.
+func (s *Store) CreateAccountWithSecret(ctx context.Context, a *account.Account, kind string, keyVersion int, sealed []byte) error {
+	if err := validateAccountIDs(a.TenantID, a.ID); err != nil {
+		return err
+	}
+	c, err := encodeAccount(a)
+	if err != nil {
+		return err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: create account: %w", err)
+	}
+	// Rollback after a successful Commit does nothing.
+	defer func() { _ = tx.Rollback() }()
+
+	taken, err := addressTaken(ctx, tx, a.TenantID, a.Address)
+	if err != nil {
+		return fmt.Errorf("store: create account: %w", err)
+	}
+	if taken {
+		return ErrExists
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO accounts (`+accountColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		string(a.TenantID), string(a.ID), string(a.Provider), a.Address, a.DisplayName, c.mail, c.levels,
+		a.ConfirmSends, a.ConfirmDeletes, c.autonomyAcceptedAt, c.limits, string(a.Status), c.createdAt); err != nil {
+		return fmt.Errorf("store: create account: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO account_secrets (tenant_id, account_id, kind, key_version, sealed, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		string(a.TenantID), string(a.ID), kind, keyVersion, sealed, time.Now().UnixMilli()); err != nil {
+		return fmt.Errorf("store: create account secret: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: create account: %w", err)
+	}
+	return nil
+}
+
+// addressTaken reports whether the tenant has an account with this address, in
+// any case. SQLite folds only ASCII letters, so the compare is done here.
+func addressTaken(ctx context.Context, tx *sql.Tx, tenant account.TenantID, address string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT address FROM accounts WHERE tenant_id = ?`, string(tenant))
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var other string
+		if err := rows.Scan(&other); err != nil {
+			return false, err
+		}
+		if strings.EqualFold(other, address) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // GetAccount returns one account of a tenant. It returns ErrNotFound if the
