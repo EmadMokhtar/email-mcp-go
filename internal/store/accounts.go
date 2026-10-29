@@ -29,14 +29,26 @@ func (s *Store) CreateAccount(ctx context.Context, a *account.Account) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO accounts (`+accountColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		string(a.TenantID), string(a.ID), string(a.Provider), a.Address, a.DisplayName, c.mail, c.levels,
-		a.ConfirmSends, a.ConfirmDeletes, c.autonomyAcceptedAt, c.limits, string(a.Status), c.createdAt)
-	if err != nil {
+	if err := insertAccount(ctx, s.db, a, c); err != nil {
 		return fmt.Errorf("store: create account: %w", err)
 	}
 	return nil
+}
+
+// execer runs a statement. Both *sql.DB and *sql.Tx have this method.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// insertAccount adds the row of an account, with the fields that encodeAccount
+// converted. CreateAccount and CreateAccountWithSecret share it, so the list
+// of columns and the list of values exist once.
+func insertAccount(ctx context.Context, ex execer, a *account.Account, c accountColumnValues) error {
+	_, err := ex.ExecContext(ctx,
+		`INSERT INTO accounts (`+accountColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		string(a.TenantID), string(a.ID), string(a.Provider), a.Address, a.DisplayName, c.mail, c.levels,
+		a.ConfirmSends, a.ConfirmDeletes, c.autonomyAcceptedAt, c.limits, string(a.Status), c.createdAt)
+	return err
 }
 
 // CreateAccountWithSecret adds an account and one sealed secret of it (such as
@@ -73,10 +85,7 @@ func (s *Store) CreateAccountWithSecret(ctx context.Context, a *account.Account,
 	if taken {
 		return ErrExists
 	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO accounts (`+accountColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		string(a.TenantID), string(a.ID), string(a.Provider), a.Address, a.DisplayName, c.mail, c.levels,
-		a.ConfirmSends, a.ConfirmDeletes, c.autonomyAcceptedAt, c.limits, string(a.Status), c.createdAt); err != nil {
+	if err := insertAccount(ctx, tx, a, c); err != nil {
 		return fmt.Errorf("store: create account: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
