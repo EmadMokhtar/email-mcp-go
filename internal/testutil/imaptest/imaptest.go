@@ -16,8 +16,9 @@
 // leave the COPYUID code out of COPY answers (see WithoutCopyUID), leave the
 // APPENDUID code out of APPEND answers (see WithoutAppendUID), make APPEND
 // fail (see WithAppendError and WithAppendLimit), add messages with a given
-// date (see AppendAt) and read the server state (see Unseen, SelectCounts,
-// FetchedSections and BytesSent).
+// date (see AppendAt), choose the login (see WithLogin) and read the server
+// state (see Unseen, SelectCounts, FetchedSections, WriteCommands and
+// BytesSent).
 //
 // This package is for tests only. Do not import it from production code.
 package imaptest
@@ -67,6 +68,7 @@ type Option func(*options)
 
 type options struct {
 	mode           Mode
+	user, pass     string
 	caps           imap.CapSet
 	permanentFlags func(mailbox string, readOnly bool, flags []imap.Flag) []imap.Flag
 	noCopyUID      bool
@@ -78,6 +80,13 @@ type options struct {
 // WithMode sets the server mode. The default is ModeTLS.
 func WithMode(m Mode) Option {
 	return func(o *options) { o.mode = m }
+}
+
+// WithLogin sets the user name and the password that the server accepts. The
+// default is "tester" and "s3cret-pass". A test that looks for the password in
+// a log or a file uses it to choose a password that cannot match by chance.
+func WithLogin(user, pass string) Option {
+	return func(o *options) { o.user, o.pass = user, pass }
 }
 
 // WithCaps sets the capabilities that the server advertises, instead of the
@@ -188,6 +197,9 @@ type Server struct {
 	selects    int // SELECT commands
 	examines   int // EXAMINE commands
 	fetched    []string
+	// writes are the names of the commands of clients that change the
+	// mailboxes, in order (see WriteCommands).
+	writes []string
 
 	// sent counts the bytes that the server wrote to its connections.
 	sent atomic.Int64
@@ -214,11 +226,14 @@ func New(t testing.TB, opts ...Option) *Server {
 	pool.AddCert(leaf)
 	sum := sha256.Sum256(der)
 
+	if o.user == "" {
+		o.user, o.pass = "tester", "s3cret-pass"
+	}
 	s := &Server{
 		CertSHA256: hex.EncodeToString(sum[:]),
 		CertPool:   pool,
-		User:       "tester",
-		Pass:       "s3cret-pass",
+		User:       o.user,
+		Pass:       o.pass,
 		t:          t,
 		live:       make(map[*trackedConn]struct{}),
 		boxes:      make(map[string]struct{}),
@@ -404,6 +419,26 @@ func (s *Server) FetchedSections() []string {
 	return append([]string(nil), s.fetched...)
 }
 
+// WriteCommands returns the names of the commands of clients that change the
+// mailboxes, in the order that the server got them: APPEND, COPY, CREATE,
+// DELETE, EXPUNGE, MOVE, RENAME, STORE, SUBSCRIBE and UNSUBSCRIBE. A command
+// is recorded when it arrives, also when it then fails. The methods of Server
+// that set up a test (Append, Create, Delete) are not commands of a client and
+// are not recorded. A test uses it to show that a refused request never
+// changed the mail server.
+func (s *Server) WriteCommands() []string {
+	s.boxMu.Lock()
+	defer s.boxMu.Unlock()
+	return append([]string(nil), s.writes...)
+}
+
+// recordWrite adds a command to the list of WriteCommands.
+func (s *Server) recordWrite(name string) {
+	s.boxMu.Lock()
+	defer s.boxMu.Unlock()
+	s.writes = append(s.writes, name)
+}
+
 // BytesSent returns how many bytes the server has written to its client
 // connections so far. The count is taken under TLS, so it is a little larger
 // than the IMAP data alone. A test uses the difference between two calls to
@@ -581,6 +616,7 @@ func (ss *session) Select(mailbox string, options *imap.SelectOptions) (*imap.Se
 // Copy copies the messages like imapmemserver. When the server was made
 // WithoutCopyUID, it does not report the new UIDs.
 func (ss *session) Copy(numSet imap.NumSet, dest string) (*imap.CopyData, error) {
+	ss.s.recordWrite("COPY")
 	data, err := ss.SessionIMAP4rev2.Copy(numSet, dest)
 	if ss.s.noCopyUID {
 		return nil, err
@@ -591,6 +627,7 @@ func (ss *session) Copy(numSet imap.NumSet, dest string) (*imap.CopyData, error)
 // Append stores the message like imapmemserver. A server made WithAppendError
 // may refuse it. A server made WithoutAppendUID does not report the new UID.
 func (ss *session) Append(mailbox string, r imap.LiteralReader, options *imap.AppendOptions) (*imap.AppendData, error) {
+	ss.s.recordWrite("APPEND")
 	if fn := ss.s.appendErr; fn != nil {
 		if err := fn(mailbox); err != nil {
 			var imapErr *imap.Error
@@ -664,6 +701,7 @@ func sectionString(sec *imap.FetchItemBodySection) string {
 }
 
 func (ss *session) Create(mailbox string, options *imap.CreateOptions) error {
+	ss.s.recordWrite("CREATE")
 	if err := ss.SessionIMAP4rev2.Create(mailbox, options); err != nil {
 		return err
 	}
@@ -678,6 +716,7 @@ func (ss *session) Create(mailbox string, options *imap.CreateOptions) error {
 }
 
 func (ss *session) Delete(mailbox string) error {
+	ss.s.recordWrite("DELETE")
 	if err := ss.SessionIMAP4rev2.Delete(mailbox); err != nil {
 		return err
 	}
@@ -686,6 +725,7 @@ func (ss *session) Delete(mailbox string) error {
 }
 
 func (ss *session) Rename(mailbox, newName string, options *imap.RenameOptions) error {
+	ss.s.recordWrite("RENAME")
 	if err := ss.SessionIMAP4rev2.Rename(mailbox, newName, options); err != nil {
 		return err
 	}
@@ -699,6 +739,36 @@ func (ss *session) Rename(mailbox, newName string, options *imap.RenameOptions) 
 		ss.s.specialUse[newName] = attrs
 	}
 	return nil
+}
+
+// Store changes flags like imapmemserver, and records the command.
+func (ss *session) Store(w *imapserver.FetchWriter, numSet imap.NumSet, flags *imap.StoreFlags, options *imap.StoreOptions) error {
+	ss.s.recordWrite("STORE")
+	return ss.SessionIMAP4rev2.Store(w, numSet, flags, options)
+}
+
+// Move moves messages like imapmemserver, and records the command.
+func (ss *session) Move(w *imapserver.MoveWriter, numSet imap.NumSet, dest string) error {
+	ss.s.recordWrite("MOVE")
+	return ss.SessionIMAP4rev2.Move(w, numSet, dest)
+}
+
+// Expunge removes messages like imapmemserver, and records the command.
+func (ss *session) Expunge(w *imapserver.ExpungeWriter, uids *imap.UIDSet) error {
+	ss.s.recordWrite("EXPUNGE")
+	return ss.SessionIMAP4rev2.Expunge(w, uids)
+}
+
+// Subscribe subscribes like imapmemserver, and records the command.
+func (ss *session) Subscribe(mailbox string) error {
+	ss.s.recordWrite("SUBSCRIBE")
+	return ss.SessionIMAP4rev2.Subscribe(mailbox)
+}
+
+// Unsubscribe unsubscribes like imapmemserver, and records the command.
+func (ss *session) Unsubscribe(mailbox string) error {
+	ss.s.recordWrite("UNSUBSCRIBE")
+	return ss.SessionIMAP4rev2.Unsubscribe(mailbox)
 }
 
 // listDelim is the hierarchy delimiter of imapmemserver.
