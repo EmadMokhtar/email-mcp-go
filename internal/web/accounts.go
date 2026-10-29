@@ -32,16 +32,14 @@ package web
 import (
 	"context"
 	"crypto/subtle"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/EmadMokhtar/email-mcp-go/internal/connect"
 	"github.com/EmadMokhtar/email-mcp-go/internal/discovery"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/errtype"
@@ -119,28 +117,13 @@ const (
 	defaultSMTPPort = "465"
 )
 
-// The fixed texts of the connect pages.
+// The fixed texts of the connect pages that only the web interface uses. The
+// texts that the command line tool shares are in the connect package.
 const (
-	msgAddress        = "This email address is not valid."
-	msgNoPassword     = "Type the password."
-	msgExists         = "An account with this address is already connected."
-	msgSettings       = "The server settings are not valid. Check the host names (without a port or a scheme), the ports (1 to 65535) and the security settings. A connection without encryption is allowed only to a server on this computer."
-	msgTestFailed     = "The connection test failed. Check the user name, the password and the server settings. Some providers need an app password."
-	msgAuthFailed     = "The server refused the user name or the password. Some providers need an app password, or IMAP access turned on in their settings."
-	msgCannotConnect  = "Could not connect to the server. Check the host names and the ports."
-	msgHostNotFound   = "A server name was not found. Check the host names."
-	msgTimeout        = "A server did not answer in time. Check the host names and the ports, then try again."
-	msgTLSFailed      = "A secure connection could not be made. Check the ports and the security settings."
-	msgCertificate    = "A server showed a certificate that this computer does not trust. Nothing was saved."
-	msgUnderstand     = "To trust the certificate of a server that is not on this computer, also tick “I understand the risk”."
-	msgBadTrust       = "The choice to trust a certificate is not valid: the server settings changed after the offer, or the offer is older than 10 minutes. Test the connection again to see the certificate."
-	msgPlain          = "You chose a connection without encryption. To use it, also tick “I understand that this connection is not encrypted”."
-	msgCertUnknown    = "No authority that this computer trusts signed this certificate. A local bridge (such as Proton Mail Bridge) uses such a certificate. Trust it only if you expect it."
-	msgCertWrongHost  = "The certificate is not for this host name. Check the host name. This certificate cannot be trusted here."
-	msgCertExpired    = "The certificate has expired or is not valid yet. This certificate cannot be trusted here."
-	msgCertPinChanged = "The certificate is not the one you chose to trust. Someone on the network may have changed it. This certificate cannot be trusted here."
-	msgCertInvalid    = "The certificate is not valid. This certificate cannot be trusted here."
-	msgTrusted        = "You chose to trust this certificate."
+	msgUnderstand = "To trust the certificate of a server that is not on this computer, also tick “I understand the risk”."
+	msgBadTrust   = "The choice to trust a certificate is not valid: the server settings changed after the offer, or the offer is older than 10 minutes. Test the connection again to see the certificate."
+	msgPlain      = "You chose a connection without encryption. To use it, also tick “I understand that this connection is not encrypted”."
+	msgTrusted    = "You chose to trust this certificate."
 )
 
 // accountsPage is the data of the accounts page. It holds no secret, no server
@@ -327,7 +310,7 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	servers, err := s.d.Discovery.Mail(r.Context(), page.Email)
 	switch {
 	case errors.Is(err, discovery.ErrInvalidAddress):
-		page.Step, page.Error = stepEmail, msgAddress
+		page.Step, page.Error = stepEmail, connect.TextAddress
 		s.render(w, r, http.StatusUnprocessableEntity, pageConnect, page)
 		return
 	case err != nil:
@@ -364,7 +347,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if f.Username == "" {
 		f.Username = page.Email
 	}
-	page.Plain = plainOnThisComputer(mailServerOf(*f))
+	page.Plain = connect.PlainOnThisComputer(mailServerOf(*f))
 	s.render(w, r, http.StatusOK, pageConnect, page)
 }
 
@@ -391,7 +374,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	understand := r.PostForm.Get("understand") == "1"
 	page.UnderstandChecked = understand
 
-	page.Plain = plainOnThisComputer(server)
+	page.Plain = connect.PlainOnThisComputer(server)
 	page.PlainChecked = page.Plain && r.PostForm.Get("plain_understand") == "1"
 
 	// The certificates that the user chose to trust become pins, but only from
@@ -410,7 +393,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		host := p.host(&server)
 		*p.pin(&server) = offer.Fingerprint
 		page.Certs = append(page.Certs, certPrompt{
-			Name: p.name, Field: p.field, Host: host, Fingerprint: groupFingerprint(offer.Fingerprint),
+			Name: p.name, Field: p.field, Host: host, Fingerprint: connect.GroupFingerprint(offer.Fingerprint),
 			Problem: msgTrusted, CanTrust: true, Offer: token, Checked: true,
 		})
 		if !account.IsLoopbackHost(host) {
@@ -433,7 +416,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	}
 	password := r.PostForm.Get("password")
 	if password == "" {
-		page.Error = msgNoPassword
+		page.Error = connect.TextNoPassword
 		s.render(w, r, http.StatusUnprocessableEntity, pageConnect, page)
 		return
 	}
@@ -447,7 +430,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	var certErr *service.CertificateError
 	if errors.As(err, &certErr) {
 		s.log.Info("connect refused", "code", codeConnectRefused, "reason", "certificate")
-		page.Error = msgCertificate
+		page.Error = connect.TextCertificate
 		page.Certs, page.Understand, err = s.certPrompts(sess, page.Certs, certErr, server)
 		if err != nil {
 			s.fail(w, r, codeConnectFailed, err)
@@ -459,7 +442,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusOK, pageConnect, page)
 		return
 	}
-	text, known := saveErrorText(err)
+	text, known := connect.ErrorText(err)
 	if !known {
 		s.fail(w, r, codeConnectFailed, err)
 		return
@@ -504,44 +487,29 @@ func (s *Server) certPrompts(sess session, trusted []certPrompt, certErr *servic
 }
 
 // promptFor describes a certificate that the test did not accept. It offers to
-// trust it in one case only: no pin was set, the only problem is that no known
-// authority signed it, and the fingerprint is a SHA-256. The name and the time
-// of the certificate are checked before the authority, so then they are right.
-// A host name that does not match, a certificate out of its time, and a pin that
-// did not match are never offered.
+// trust it only when connect.CheckCertificate allows it: no pin was set, the
+// only problem is that no known authority signed it, and the fingerprint is a
+// SHA-256. A host name that does not match, a certificate out of its time, and a
+// pin that did not match are never offered.
 //
 // The offer is a signed token for this session, protocol, host, port and
 // fingerprint (see certOffer). The save accepts the trust only with it.
 func (s *Server) promptFor(sess session, p protocol, server account.MailServer, c *imapsmtp.CertificateUnknownError) (certPrompt, error) {
 	host := p.host(&server)
-	prompt := certPrompt{Name: p.name, Field: p.field, Host: host}
-	if account.IsFingerprint(c.FingerprintSHA256) {
-		prompt.Fingerprint = groupFingerprint(c.FingerprintSHA256)
+	check := connect.CheckCertificate(c)
+	prompt := certPrompt{Name: p.name, Field: p.field, Host: host, Problem: check.Problem}
+	if check.Fingerprint != "" {
+		prompt.Fingerprint = connect.GroupFingerprint(check.Fingerprint)
 	}
-	var (
-		unknownAuthority x509.UnknownAuthorityError
-		hostname         x509.HostnameError
-		invalid          x509.CertificateInvalidError
-	)
-	switch {
-	case c.Pinned:
-		prompt.Problem = msgCertPinChanged
-	case errors.As(c.Reason, &hostname):
-		prompt.Problem = msgCertWrongHost
-	case errors.As(c.Reason, &invalid) && invalid.Reason == x509.Expired:
-		prompt.Problem = msgCertExpired
-	case errors.As(c.Reason, &unknownAuthority) && prompt.Fingerprint != "":
+	if check.CanTrust {
 		token, err := s.d.Signer.Seal(purposeCertOffer, certOffer{
-			Session: sess.hash, Protocol: p.field, Host: host, Port: p.port(&server), Fingerprint: c.FingerprintSHA256,
+			Session: sess.hash, Protocol: p.field, Host: host, Port: p.port(&server), Fingerprint: check.Fingerprint,
 		}, certOfferTTL)
 		if err != nil {
 			return certPrompt{}, fmt.Errorf("web: seal a certificate offer: %w", err)
 		}
-		prompt.Problem = msgCertUnknown
 		prompt.CanTrust = true
 		prompt.Offer = token
-	default:
-		prompt.Problem = msgCertInvalid
 	}
 	return prompt, nil
 }
@@ -566,65 +534,6 @@ func (s *Server) openOffer(sess session, p protocol, server account.MailServer, 
 		return certOffer{}, false
 	}
 	return o, true
-}
-
-// plainOnThisComputer reports whether a server on this computer is set to a
-// plain (unencrypted) connection. Such a connection needs the explicit consent
-// of the user. A plain connection to another host is refused by the service,
-// so no consent can allow it.
-func plainOnThisComputer(server account.MailServer) bool {
-	for _, p := range protocols {
-		if p.security(&server) == account.SecurityPlain && account.IsLoopbackHost(p.host(&server)) {
-			return true
-		}
-	}
-	return false
-}
-
-// saveErrorText returns the fixed text for an error of CreateIMAPAccount. known
-// is false for an error that is not about the input or the test, such as a
-// failure of the database.
-func saveErrorText(err error) (text string, known bool) {
-	var testErr *service.ConnectionTestError
-	switch {
-	case errors.Is(err, service.ErrInvalidAddress):
-		return msgAddress, true
-	case errors.Is(err, service.ErrNoPassword):
-		return msgNoPassword, true
-	case errors.Is(err, service.ErrInvalidSettings):
-		return msgSettings, true
-	case errors.Is(err, service.ErrAccountExists):
-		return msgExists, true
-	case errors.As(err, &testErr):
-		return testFailureText(testErr.Err), true
-	}
-	return "", false
-}
-
-// testFailureText returns the fixed text for a failed connection test, by the
-// type of the error. It never uses the text of the error.
-func testFailureText(err error) string {
-	var (
-		dnsErr    *net.DNSError
-		netErr    net.Error
-		recordErr tls.RecordHeaderError
-		alertErr  tls.AlertError
-		opErr     *net.OpError
-	)
-	switch {
-	case errors.Is(err, imapsmtp.ErrAuthFailed):
-		return msgAuthFailed
-	case errors.As(err, &dnsErr):
-		return msgHostNotFound
-	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
-		return msgTimeout
-	case errors.As(err, &recordErr), errors.As(err, &alertErr):
-		return msgTLSFailed
-	case errors.As(err, &opErr):
-		return msgCannotConnect
-	default:
-		return msgTestFailed
-	}
 }
 
 // readFields reads the settings of the posted form. Outer spaces go, and host
@@ -674,18 +583,4 @@ func mailServerOf(f serverFields) account.MailServer {
 		SMTPSecurity: account.Security(f.SMTPSecurity),
 		Username:     f.Username,
 	}
-}
-
-// groupFingerprint writes a fingerprint in upper-case pairs with a colon
-// between them, such as "AB:CD:EF", as browsers show one.
-func groupFingerprint(hexText string) string {
-	upper := strings.ToUpper(hexText)
-	var b strings.Builder
-	for i := 0; i+1 < len(upper); i += 2 {
-		if i > 0 {
-			b.WriteByte(':')
-		}
-		b.WriteString(upper[i : i+2])
-	}
-	return b.String()
 }
