@@ -17,9 +17,11 @@ building on, not for daily use.
    it, `serve` stops with an error about the keychain.
 2. **127.0.0.1 inside the container is not your computer.** Every container has
    its own network. Its loopback address (127.0.0.1) is reachable only from
-   inside that container. The default command of the image is
-   `email-mcp serve --http 127.0.0.1:8765`, so nothing outside the container can
-   connect to it.
+   inside that container. So `email-mcp serve --http 127.0.0.1:8765` inside the
+   container is a server that nothing outside the container can connect to.
+   That is why the default command of the image is `email-mcp serve`, which
+   uses stdio (standard input and output) and needs no network. HTTP inside a
+   container waits for hosted mode (M3).
 3. **Publishing the port does not help.** `docker run -p 8765:8765` forwards to
    the network interface of the container, not to its loopback address. And
    email-mcp refuses to listen on any address that is not a loopback address:
@@ -42,7 +44,9 @@ building on, not for daily use.
 - In the release, the BuildKit builder image (in
   `.github/workflows/release.yml`) and the Syft scanner image that makes the
   SBOM of the image (in `.goreleaser.yaml`) are pinned by digest too.
-- `ENTRYPOINT` is `/email-mcp`. `CMD` is `serve --http 127.0.0.1:8765`.
+- `ENTRYPOINT` is `/email-mcp`. `CMD` is `serve`: MCP over stdio. An MCP
+  client runs the image with `docker run -i` (`-i` keeps standard input open),
+  as it would run a local binary.
 - The release workflow publishes it as `ghcr.io/emadmokhtar/email-mcp` for
   `linux/amd64` and `linux/arm64`. The image has the same binary as the signed
   release archives, an SBOM from Docker, and a GitHub build-provenance
@@ -62,11 +66,12 @@ it copies the binary that GoReleaser built, instead of compiling a new one.
 ## Try it
 
 This starts the server inside the container with a key file in the home
-folder of the container. It is reachable only from inside the container, so it
-is only a smoke test:
+folder of the container. It serves MCP over stdio, so it reads MCP messages
+from standard input (`-i`) and waits for them. It has no account, so it is only
+a smoke test:
 
 ```sh
-docker run --rm -e EMAIL_MCP_KEK=file:/home/nonroot/kek.key email-mcp:dev
+docker run --rm -i -e EMAIL_MCP_KEK=file:/home/nonroot/kek.key email-mcp:dev
 ```
 
 The data (the database and the key file) is lost when the container stops,

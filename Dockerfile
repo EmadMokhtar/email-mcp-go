@@ -8,10 +8,11 @@
 # For local use, install the binary instead (see the README). In a container,
 # email-mcp cannot reach the keychain of your computer, and the address
 # 127.0.0.1 inside the container is the container itself: the computer that runs
-# the container cannot reach a server that listens there. So the default
-# command below is reachable only from inside the container. This image is
-# groundwork for hosted mode, which comes in milestone M3. DOCKER.md explains
-# this in more detail.
+# the container cannot reach a server that listens there. So local HTTP mode and
+# the web interface are reachable only from inside the container. The default
+# command below serves MCP over standard input and output (stdio), which an MCP
+# client can use with "docker run -i". This image is groundwork for hosted mode,
+# which comes in milestone M3. DOCKER.md explains this in more detail.
 #
 # One Dockerfile serves two builds. The build argument BINARY_FROM chooses
 # where the binary comes from:
@@ -59,9 +60,11 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c
 COPY --from=binary /out/email-mcp /email-mcp
 USER nonroot:nonroot
 ENTRYPOINT ["/email-mcp"]
-# 127.0.0.1 here is the loopback address of the container, not of your
-# computer: nothing outside the container can connect to it. email-mcp refuses
-# to listen on any address that is not a loopback address, so publishing the
-# port with "docker run -p" does not help either. Hosted mode (M3) adds a
-# server that may listen on other addresses, behind TLS and sign-in.
-CMD ["serve", "--http", "127.0.0.1:8765"]
+# The default command serves MCP over stdio. An MCP client starts the container
+# with "docker run -i" (-i keeps standard input open) and talks to it as it
+# talks to a local binary. HTTP inside a container waits for hosted mode (M3):
+# local HTTP mode listens only on a loopback address, and 127.0.0.1 here is the
+# loopback address of the container, not of your computer. Publishing the port
+# with "docker run -p" does not help either. Hosted mode adds a server that may
+# listen on other addresses, behind TLS and sign-in.
+CMD ["serve"]
