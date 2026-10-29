@@ -119,3 +119,43 @@ func TestRevokeToken(t *testing.T) {
 	require.Contains(t, visibleText(t, body), "Revoked")
 	require.NotContains(t, body, "/connections/"+list[0].ID+"/revoke", "a revoked token has no revoke button")
 }
+
+// Making and revoking a token are in the activity log, as entries of the
+// tenant with a fixed code. The entries never hold the token or its name.
+func TestTokenChangesAreAudited(t *testing.T) {
+	p := newPageFixture(t)
+
+	_, body := p.post("/connections", url.Values{"name": {"my-laptop"}, "scope": {"email:read"}})
+	token := tokenPattern.FindString(body)
+	require.NotEmpty(t, token)
+	list, err := p.tokens.List(context.Background(), p.tenant)
+	require.NoError(t, err)
+	resp, _ := p.post("/connections/"+list[0].ID+"/revoke", nil)
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+
+	entries := p.entries()
+	require.Len(t, entries, 2)
+	require.Equal(t, "revoke_token", entries[0].Tool)
+	require.Equal(t, "token_revoked", entries[0].Detail)
+	require.Equal(t, "create_token", entries[1].Tool)
+	require.Equal(t, "token_created", entries[1].Detail)
+	for _, e := range entries {
+		require.Empty(t, e.Account)
+		require.Equal(t, "web", e.Client)
+		for _, field := range append([]string{e.Tool, e.Detail, e.Client}, e.Recipients...) {
+			require.NotContains(t, field, token)
+			require.NotContains(t, field, "my-laptop")
+			require.NotContains(t, field, list[0].ID)
+		}
+	}
+
+	// A refused token writes no entry.
+	resp, _ = p.post("/connections", url.Values{"name": {"x"}})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	require.Len(t, p.entries(), 2)
+
+	// The activity page offers both as a filter.
+	_, body = p.get("/activity?tool=create_token")
+	require.Equal(t, 1, tableRows(t, body))
+	require.Contains(t, body, `value="revoke_token"`)
+}

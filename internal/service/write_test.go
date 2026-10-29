@@ -171,6 +171,9 @@ func (b *recBackend) GetMessage(_ context.Context, ref mail.Ref, _ mail.BodyOpti
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.getCalls++
+	if err := b.errs["GetMessage"]; err != nil {
+		return nil, err
+	}
 	if b.nextOriginal != nil {
 		return b.nextOriginal(ref, b.getCalls), nil
 	}

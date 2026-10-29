@@ -10,6 +10,7 @@ import (
 	"errors"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/confirm"
+	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/errtype"
 	"github.com/EmadMokhtar/email-mcp-go/internal/mime"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
@@ -74,11 +75,13 @@ func (s *Service) PendingApprovals(ctx context.Context) ([]*confirm.Pending, err
 // with its state and without its preview.
 //
 // For a send that still waits, it also returns the whole message (see
-// SendDetail). The service builds the message again from the stored request, as
-// the approval does, and returns it only when it is still the message of the
-// preview. When it cannot build it (for example the mail server does not answer
-// for a reply), the detail is nil and the page shows the stored preview. The
-// texts of the preview are cleaned with mime.CleanUntrusted too.
+// SendDetail). The service builds the message again from the stored request
+// with the function that Approve uses, and returns it only when it is still the
+// message of the stored preview. When it cannot build it (for example the mail
+// server does not answer for a reply, or a recipient cannot be shown exactly),
+// the detail is nil: the page then shows the stored preview, and Approve fails
+// in the same way, so nothing is approved from a partial view. The texts of the
+// preview are cleaned with mime.CleanUntrusted too.
 //
 // Only the web page may call it. No MCP tool may show the detail to the agent.
 func (s *Service) PendingDetail(ctx context.Context, id string) (*confirm.Pending, *SendDetail, error) {
@@ -96,11 +99,14 @@ func (s *Service) PendingDetail(ctx context.Context, id string) (*confirm.Pendin
 	if pending.Mode != confirm.ModeApproval {
 		return nil, nil, confirm.ErrNotFound
 	}
-	pending.Preview = cleanPreview(pending.Preview)
+	// The message built again is compared with the preview as it was stored.
+	// Only the copy for the page is cleaned.
+	stored := pending.Preview
+	pending.Preview = cleanPreview(stored)
 	if pending.Kind != confirm.KindSend || pending.State != confirm.StatePending || payload == nil {
 		return pending, nil, nil
 	}
-	detail, err := s.sendDetail(ctx, pending, payload)
+	detail, err := s.sendDetail(ctx, pending.Account, stored, payload)
 	clear(payload)
 	if err != nil {
 		// The page still shows the stored preview, so the user can reject the
@@ -112,15 +118,13 @@ func (s *Service) PendingDetail(ctx context.Context, id string) (*confirm.Pendin
 	return pending, detail, nil
 }
 
-// errDetailChanged means that the message, built again, is not the one of the
-// preview. The approval would refuse it, so the page shows only the preview.
-var errDetailChanged = errors.New("service: built again, the message is not the one of the preview")
-
-// sendDetail builds the message of a send action again and returns what the
-// approval page shows of it. It needs the account to allow reading, because a
-// reply or a forward reads the original, and a draft is read in full.
-func (s *Service) sendDetail(ctx context.Context, pending *confirm.Pending, payload []byte) (*SendDetail, error) {
-	acc, err := s.authorize(ctx, pending.Account, policy.ActRead)
+// sendDetail builds the message of a send action again with rebuildApproval,
+// the function that Approve uses too, and returns what the approval page shows
+// of it. stored is the preview as it was stored. It needs the account to allow
+// reading, because a reply or a forward reads the original, and a draft is read
+// in full.
+func (s *Service) sendDetail(ctx context.Context, id account.AccountID, stored confirm.Preview, payload []byte) (*SendDetail, error) {
+	acc, err := s.authorize(ctx, id, policy.ActRead)
 	if err != nil {
 		return nil, err
 	}
@@ -128,34 +132,27 @@ func (s *Service) sendDetail(ctx context.Context, pending *confirm.Pending, payl
 	if err != nil {
 		return nil, err
 	}
-	req, err := decodeSendPayload(payload)
-	if err != nil {
-		return nil, err
-	}
-	msg, content, err := s.buildSend(ctx, b, acc.Account, req)
-	if err != nil {
-		return nil, err
-	}
-	if !samePreview(pending.Preview, previewOf(acc.Account, msg, content)) {
-		return nil, errDetailChanged
-	}
-	body := content.body
+	_, _, detail, err := s.rebuildApproval(ctx, b, acc.Account, stored, payload)
+	return detail, err
+}
+
+// detailOf returns what the approval page shows of a built message: every text
+// cleaned with mime.CleanUntrusted.
+func detailOf(req *sendRequest, built *builtSend) *SendDetail {
+	msg := built.msg
+	body := built.content.body
 	if req.compose != nil {
 		// The preview reads only the start of the text. The page shows all of
 		// it.
 		body = composedText(msg.Data, 0)
 	}
-	recipients := make([]string, len(msg.Recipients))
-	for i, r := range msg.Recipients {
-		recipients[i] = mime.CleanUntrusted(r)
-	}
 	return &SendDetail{
 		From:        mime.CleanUntrusted(msg.From),
-		Recipients:  recipients,
+		Recipients:  cleanAll(msg.Recipients),
 		Subject:     previewSubject(msg.Data),
-		Attachments: cleanAll(content.attachments),
+		Attachments: cleanAll(built.content.attachments),
 		Body:        mime.CleanUntrusted(body),
-	}, nil
+	}
 }
 
 // composedText returns the cleaned text part of a message that mime.Build made,

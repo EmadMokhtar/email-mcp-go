@@ -37,8 +37,8 @@ const (
 // activity page offers them as a filter.
 var auditTools = []string{
 	toolApprovePending, toolCancelSend, toolConnectAccount, toolCreateDraft, toolCreateFolder,
-	toolCreateTag, toolDiscardDraft, toolMove, toolRejectPending, toolRemoveAccount, toolSend,
-	toolSetFlags, toolTag, toolTrash, toolUpdateSettings,
+	toolCreateTag, toolCreateToken, toolDiscardDraft, toolMove, toolRejectPending, toolRemoveAccount,
+	toolRevokeToken, toolSend, toolSetFlags, toolTag, toolTrash, toolUpdateSettings,
 }
 
 // AuditTools returns the names of the tools that the service writes in the

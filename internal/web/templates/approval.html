@@ -1,6 +1,7 @@
 {{/*
   The page of one action that waits for the user (see approvals.go), with its
-  Approve and Reject buttons while it waits.
+  Reject button while it waits, and its Approve button only when the page
+  shows the whole action (.CanApprove).
 
   Every text of the message is cleaned by the service and written here as
   text. The HTML of a message is never put in this page: Body is the text that
@@ -33,11 +34,11 @@
 {{end}}
 {{if .Waiting}}
 <p>This request expires on {{.Expires}}.</p>
-<form method="post" action="/approvals/{{.ID}}/approve">
+{{if .CanApprove}}<form method="post" action="/approvals/{{.ID}}/approve">
 {{template "csrf_field" $csrf}}
 <p><button type="submit">Approve</button></p>
 </form>
-<form method="post" action="/approvals/{{.ID}}/reject">
+{{end}}<form method="post" action="/approvals/{{.ID}}/reject">
 {{template "csrf_field" $csrf}}
 <p><button type="submit">Reject</button></p>
 </form>

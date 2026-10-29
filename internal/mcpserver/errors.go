@@ -82,6 +82,7 @@ const (
 	codeTooLate             = "too_late"
 	codeBodyAndHTML         = "body_and_html"
 	codeDraftUnreadable     = "draft_unreadable"
+	codeHiddenAddress       = "hidden_address"
 )
 
 // toolFailure is the error that a handler wrapper gives to the SDK. The SDK
@@ -168,8 +169,13 @@ func toolError(tool string, err error) *toolFailure {
 	// tool must give the advice for a read (body_format "none").
 	case isMsg:
 		return msgFail
-	// ErrNotADraft, ErrBodyAndHTML and ErrDraftUnreadable match ErrInvalidRequest
-	// too, so they come first.
+	// ErrNotADraft, ErrBodyAndHTML, ErrDraftUnreadable and ErrHiddenAddress
+	// match ErrInvalidRequest too, so they come first.
+	case errors.Is(err, service.ErrHiddenAddress):
+		return failure(codeHiddenAddress, "An address in to, cc or bcc (or an address that a reply adds from the "+
+			"original message) has a character that is hidden or changes how text is shown, for example U+3164 or a "+
+			"zero width space. The user could not see the exact address, so nothing was sent and the user was not "+
+			"asked. Use the plain address. "+noRepeat)
 	case errors.Is(err, service.ErrBodyAndHTML):
 		return failure(codeBodyAndHTML, "Give body or html_body, not both: the text part of the message is made from "+
 			"the HTML. "+noRepeat)

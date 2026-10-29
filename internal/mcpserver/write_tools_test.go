@@ -1195,6 +1195,8 @@ func TestWriteToolErrorMapping(t *testing.T) {
 		{"a hidden character in a file name", "send_message", fmt.Errorf("%w: attachment file name", mime.ErrInvalidFilename),
 			"bad_message", []string{"file name", "U+202E"}, nil, endNoRepeat},
 		{"body and html body", "send_message", service.ErrBodyAndHTML, "body_and_html", []string{"body or html_body"}, nil, endNoRepeat},
+		{"an address that cannot be shown", "send_message", service.ErrHiddenAddress, "hidden_address",
+			[]string{"address", "hidden", "nothing was sent"}, nil, endNoRepeat},
 		{"a draft that cannot be read", "send_message", service.ErrDraftUnreadable, "draft_unreadable",
 			[]string{"draft", "new message"}, nil, endNoRepeat},
 		{"html too complex", "send_message", fmt.Errorf("%w: 100000 nodes", mime.ErrHTMLTooComplex), "bad_message",

@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -60,7 +61,8 @@ const (
 	msgInvalidRequest    = "The stored request cannot be carried out. Reject it, and ask the agent again."
 	msgPartial           = "Some of the change was made before an error. Check the mailbox."
 	msgMailServer        = "The mail server could not do this. Try again later."
-	msgDetailUnavailable = "The whole message could not be loaded now. This is the start of the message that was stored when the agent asked."
+	msgDetailUnavailable = "The whole message cannot be shown now, so it cannot be approved. This is the start of the message " +
+		"that was stored when the agent asked. Reload this page when the mail server answers, or reject the action."
 )
 
 // The text of each state of an action that has ended or is running.
@@ -91,8 +93,13 @@ type approvalRow struct {
 type approvalPage struct {
 	ID    string
 	Error string
-	// Waiting is true while the action waits: the page then has the buttons.
+	// Waiting is true while the action waits: the page then has the Reject
+	// button.
 	Waiting bool
+	// CanApprove is true when the page also has the Approve button: the action
+	// waits, and the page shows all of it. A send whose whole message cannot be
+	// built now is never approved from the stored start alone.
+	CanApprove bool
 	// State says what happened to an action that does not wait.
 	State   string
 	Send    bool
@@ -229,13 +236,17 @@ func approvalOf(svc *service.Service, ctx context.Context, id string) (approvalP
 		Expires: formatTime(p.ExpiresAt),
 	}
 	if !page.Waiting || !page.Send {
+		page.CanApprove = page.Waiting
 		return page, true, nil
 	}
 	if detail != nil {
 		page.From, page.Recipients, page.Subject = detail.From, detail.Recipients, detail.Subject
 		page.Attachments, page.Body = detail.Attachments, detail.Body
+		page.CanApprove = true
 		return page, true, nil
 	}
+	// The service refuses Approve in this case too (it builds the message in
+	// the same way), so the page offers only Reject.
 	page.From, page.Recipients, page.Subject = p.Preview.From, p.Preview.To, p.Preview.Subject
 	page.Attachments, page.Body, page.BodyNote = p.Preview.Attachments, p.Preview.BodyStart, msgDetailUnavailable
 	return page, true, nil
@@ -246,8 +257,9 @@ func approvalOf(svc *service.Service, ctx context.Context, id string) (approvalP
 // that is not about the action, such as a failure of the database.
 func answerErrorText(err error) (status int, text string, known bool) {
 	var (
-		perm *service.PermissionError
-		rate *policy.RateLimitError
+		perm   *service.PermissionError
+		rate   *policy.RateLimitError
+		netErr net.Error
 	)
 	switch {
 	case errors.Is(err, confirm.ErrNotFound):
@@ -275,7 +287,8 @@ func answerErrorText(err error) (status int, text string, known bool) {
 	case errors.Is(err, mail.ErrPartial):
 		return http.StatusBadGateway, msgPartial, true
 	case errors.Is(err, mail.ErrNotFound), errors.Is(err, mail.ErrRefStale), errors.Is(err, mail.ErrConflict),
-		errors.Is(err, mail.ErrTooLarge), errors.Is(err, mail.ErrUnsupported), errors.Is(err, outbox.ErrTooLate):
+		errors.Is(err, mail.ErrTooLarge), errors.Is(err, mail.ErrUnsupported), errors.Is(err, outbox.ErrTooLate),
+		errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr):
 		return http.StatusBadGateway, msgMailServer, true
 	}
 	return 0, "", false

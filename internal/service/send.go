@@ -112,6 +112,14 @@ var (
 
 	// ErrSendNotFound means that the account has no send with this id.
 	ErrSendNotFound = errors.New("service: no send with this id for this account")
+
+	// ErrHiddenAddress means that an envelope recipient (to, cc, bcc, or an
+	// address that a reply adds) has a character that mime.CleanUntrusted
+	// removes or changes: one that is hidden or changes how text is shown. A
+	// confirmation shows cleaned text, so the user could not see the exact
+	// address. Such a message is not sent. It matches ErrInvalidRequest.
+	ErrHiddenAddress = fmt.Errorf("%w: an address has a character that is hidden or changes how text is shown, "+
+		"so the user could not see the exact address. Use the plain address", ErrInvalidRequest)
 )
 
 // sendDeps checks that every part that a send needs is set up (see confirmDeps).
@@ -251,30 +259,34 @@ func (s *Service) answerSend(ctx context.Context, acc access, req *sendRequest, 
 }
 
 // approveSend is ApprovePending for a send.
+//
+// It builds the message again with rebuildApproval, the function that makes the
+// approval page. So Approve sends only a message that the page can show in
+// full: when the page cannot build the whole message, Approve fails too (fail
+// closed). pending.Preview must be the preview as it was stored.
 func (s *Service) approveSend(ctx context.Context, pending *confirm.Pending, payload []byte) error {
 	acc, b, err := s.begin(ctx, pending.Account, policy.ActSend, toolSend)
 	if err != nil {
 		return err
 	}
 	t := acc.Principal.Tenant
-	req, err := decodeSendPayload(payload)
-	if err != nil {
-		s.finish(ctx, acc, toolSend, 1, nil, "", err)
-		return err
-	}
-	msg, preview, err := s.prepareSend(ctx, b, acc.Account, req)
-	if err != nil {
-		// The action keeps waiting: the problem may pass (a server that does not
-		// answer), or the user may change a limit.
-		s.finish(ctx, acc, toolSend, 1, auditRecipients(msg), "", err)
-		return err
-	}
-	recipients := auditRecipients(msg)
-	if !samePreview(pending.Preview, preview) {
+	req, built, _, err := s.rebuildApproval(ctx, b, acc.Account, pending.Preview, payload)
+	recipients := built.auditRecipients()
+	switch {
+	case errors.Is(err, confirm.ErrPayloadChanged):
 		// The same payload will not give the message that the user saw, so the
 		// action can never be carried out.
 		s.endWaiting(ctx, t, pending.ID)
-		err := errMessageChanged()
+		s.finish(ctx, acc, toolSend, 1, recipients, "", err)
+		return err
+	case err != nil:
+		// The action keeps waiting: the problem may pass (a server that does not
+		// answer), and the user can still reject it.
+		s.finish(ctx, acc, toolSend, 1, recipients, "", err)
+		return err
+	}
+	if err := checkSendLimits(acc.Account.Limits, built.msg); err != nil {
+		// The action keeps waiting: the user may change a limit.
 		s.finish(ctx, acc, toolSend, 1, recipients, "", err)
 		return err
 	}
@@ -282,8 +294,40 @@ func (s *Service) approveSend(ctx context.Context, pending *confirm.Pending, pay
 		s.finish(ctx, acc, toolSend, 1, recipients, "", err)
 		return err
 	}
-	_, err = s.deliver(ctx, acc, msg, req.draft, acc.Account.Limits.UndoWindowConfirmed, pending.ID, detailOnWeb)
+	_, err = s.deliver(ctx, acc, built.msg, req.draft, acc.Account.Limits.UndoWindowConfirmed, pending.ID, detailOnWeb)
 	return err
+}
+
+// rebuildApproval builds the message of a send action that waits for the web
+// page again, from its stored request, and returns what the approval page shows
+// of it. Approve and the page both use it, so the page shows in full exactly
+// the message that Approve sends.
+//
+// It fails when the message cannot be built now (for example the mail server
+// does not answer for a reply), when an envelope recipient cannot be shown
+// exactly (ErrHiddenAddress), or when the message is not the one of the stored
+// preview (an error that matches confirm.ErrPayloadChanged).
+//
+// stored must be the preview as it was stored, not cleaned for the page: the
+// comparison is between the raw values on both sides. A cleaned copy would not
+// match a recipient with a hidden character, and the page would fall back while
+// Approve still sent the message.
+//
+// When the message was built, it is returned with an error too, for the audit
+// entry. The request is returned when the payload could be read.
+func (s *Service) rebuildApproval(ctx context.Context, b mail.Backend, a *account.Account, stored confirm.Preview, payload []byte) (*sendRequest, *builtSend, *SendDetail, error) {
+	req, err := decodeSendPayload(payload)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	built, err := s.buildForConfirmation(ctx, b, a, req)
+	if err != nil {
+		return req, built, nil, err
+	}
+	if !samePreview(stored, built.preview) {
+		return req, built, nil, errMessageChanged()
+	}
+	return req, built, detailOf(req, built), nil
 }
 
 // errMessageChanged is the error for a message that, built again, is not the one
@@ -348,21 +392,85 @@ func auditRecipients(msg *mail.RawMessage) []string {
 
 // ---------------------------------------------------------------- building
 
-// prepareSend builds the message of a request, checks the limits that can never
-// allow it, and makes its preview. When the message was built and a limit
-// refuses it, the message is returned with the error, for the audit entry.
+// prepareSend builds the message of a request, refuses an envelope recipient
+// that a confirmation could not show exactly (ErrHiddenAddress), checks the
+// limits that can never allow it, and makes its preview. When the message was
+// built and is refused, the message is returned with the error, for the audit
+// entry.
+//
+// It runs before the user is asked, and again when the answer comes in band,
+// so no action ever waits for a message with such a recipient.
 func (s *Service) prepareSend(ctx context.Context, b mail.Backend, a *account.Account, req *sendRequest) (*mail.RawMessage, confirm.Preview, error) {
+	built, err := s.buildForConfirmation(ctx, b, a, req)
+	if err == nil {
+		err = checkSendLimits(a.Limits, built.msg)
+	}
+	if err != nil {
+		return built.message(), confirm.Preview{}, err
+	}
+	return built.msg, built.preview, nil
+}
+
+// checkSendLimits refuses a message that the limits of the account can never
+// allow: more recipients than one message may have, or a send limit of 0.
+func checkSendLimits(lim account.Limits, msg *mail.RawMessage) error {
+	if err := checkLimit(policy.CountRecipients, lim, len(msg.Recipients)); err != nil {
+		return err
+	}
+	return checkLimit(policy.CountSend, lim, 1)
+}
+
+// builtSend is a send request built into its message, with what a confirmation
+// shows of it.
+type builtSend struct {
+	msg     *mail.RawMessage
+	content sendContent
+	// preview is set only when the message may be shown to the user.
+	preview confirm.Preview
+}
+
+// message returns the built message, or nil when nothing was built.
+func (b *builtSend) message() *mail.RawMessage {
+	if b == nil {
+		return nil
+	}
+	return b.msg
+}
+
+// auditRecipients returns the recipients of the built message for the audit
+// log, or nil when nothing was built.
+func (b *builtSend) auditRecipients() []string {
+	return auditRecipients(b.message())
+}
+
+// buildForConfirmation builds the message of a request and makes its preview.
+// It refuses with ErrHiddenAddress a message with an envelope recipient that
+// mime.CleanUntrusted would change: a confirmation shows cleaned text, so the
+// user would not see the exact address. When the message was built and is
+// refused, it is returned with the error, for the audit entry.
+func (s *Service) buildForConfirmation(ctx context.Context, b mail.Backend, a *account.Account, req *sendRequest) (*builtSend, error) {
 	msg, content, err := s.buildSend(ctx, b, a, req)
 	if err != nil {
-		return nil, confirm.Preview{}, err
+		return nil, err
 	}
-	if err := checkLimit(policy.CountRecipients, a.Limits, len(msg.Recipients)); err != nil {
-		return msg, confirm.Preview{}, err
+	built := &builtSend{msg: msg, content: content}
+	if err := checkShownAddresses(msg); err != nil {
+		return built, err
 	}
-	if err := checkLimit(policy.CountSend, a.Limits, 1); err != nil {
-		return msg, confirm.Preview{}, err
+	built.preview = previewOf(a, msg, content)
+	return built, nil
+}
+
+// checkShownAddresses returns ErrHiddenAddress when an envelope recipient of the
+// message is not exactly the text that a confirmation shows of it. The sender
+// is the address of the account, which the agent cannot choose.
+func checkShownAddresses(msg *mail.RawMessage) error {
+	for _, r := range msg.Recipients {
+		if mime.CleanUntrusted(r) != r {
+			return ErrHiddenAddress
+		}
 	}
-	return msg, previewOf(a, msg, content), nil
+	return nil
 }
 
 // sendContent is what the preview shows of the content of a message.

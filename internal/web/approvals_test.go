@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -276,4 +278,107 @@ func TestApprovalOfAnotherTenantIsNotFound(t *testing.T) {
 	require.Empty(t, p.sender.sent())
 	resp, _ = p.post("/approvals/no-such-action/approve", url.Values{})
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+// textCannotShow is the note of the approval page when the whole message
+// cannot be built now.
+const textCannotShow = "The whole message cannot be shown now, so it cannot be approved."
+
+// requireOnlyReject checks that the page has the Reject form and no Approve
+// form.
+func requireOnlyReject(t *testing.T, page, id string) {
+	t.Helper()
+	require.Contains(t, page, `action="/approvals/`+id+`/reject"`)
+	require.NotContains(t, page, `action="/approvals/`+id+`/approve"`)
+}
+
+// When the whole message cannot be built (the mail server does not answer for
+// a reply), the page shows the stored start and a note, and offers only
+// Reject. Approve is refused on the server too. When the server answers again,
+// the page shows all of it and offers Approve.
+func TestApprovalPageWithoutTheWholeMessageOffersOnlyReject(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	c := mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Body: strings.Repeat("w", 600) + " THE-END"}
+	id := p.fallbackSend(p.tenant, a, c)
+	p.backends.backend.setGetErr(&net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset")})
+
+	resp, body := p.get(approvalPath(id))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	text := visibleText(t, body)
+	require.Contains(t, text, textCannotShow)
+	require.Contains(t, text, "alice@example.com")
+	require.NotContains(t, text, "THE-END", "only the stored start is shown")
+	requireOnlyReject(t, body, id)
+
+	resp, body = p.post(approvalPath(id)+"/approve", nil)
+	require.Equal(t, http.StatusBadGateway, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), "The mail server could not do this.")
+	requireOnlyReject(t, body, id)
+	require.Empty(t, p.sender.sent())
+	require.Equal(t, confirm.StatePending, p.pending(id).State)
+
+	p.backends.backend.setGetErr(nil)
+	resp, body = p.get(approvalPath(id))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), "THE-END")
+	requireButtons(t, body, id)
+	resp, _ = p.post(approvalPath(id)+"/approve", nil)
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	require.Len(t, p.sender.sent(), 1)
+	require.Contains(t, string(p.sender.sent()[0].Data), "THE-END")
+}
+
+// trashApproval asks to move messages to Trash for the web page, and returns
+// the id of the action.
+func (p *pageFixture) trashApproval(a *account.Account, refs ...mail.Ref) string {
+	p.t.Helper()
+	res, _, err := p.svc.Trash(agent(p.tenant), a.ID, refs, service.ConfirmFallback, nil)
+	require.NoError(p.t, err)
+	require.Equal(p.t, service.TrashPendingApproval, res.Status)
+	list, err := p.svc.PendingApprovals(service.WithPrincipal(context.Background(), service.Principal{Tenant: p.tenant}))
+	require.NoError(p.t, err)
+	for _, pending := range list {
+		if pending.Kind == confirm.KindTrash {
+			return pending.ID
+		}
+	}
+	p.t.Fatal("the Trash action is not waiting")
+	return ""
+}
+
+func TestTrashApprovalPage(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account(func(a *account.Account) { a.Levels[account.AreaMail] = account.MailDelete })
+
+	id := p.trashApproval(a, "r1", "r2")
+	resp, body := p.get(approvalPath(id))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), "Move 2 messages of me@example.com to Trash")
+	requireButtons(t, body, id)
+	require.Empty(t, p.backends.backend.trashCalls(), "showing the page moves nothing")
+
+	resp, _ = p.post(approvalPath(id)+"/approve", nil)
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	require.Equal(t, [][]mail.Ref{{"r1", "r2"}}, p.backends.backend.trashCalls())
+	require.Equal(t, confirm.StateDone, p.pending(id).State)
+	last := p.entries()[0]
+	require.Equal(t, "trash_messages", last.Tool)
+	require.Equal(t, "approved_on_web", last.Detail)
+	require.Equal(t, a.ID, last.Account)
+	_, body = p.get(approvalPath(id))
+	require.Contains(t, visibleText(t, body), textApproved)
+	require.NotContains(t, body, "/approve")
+
+	other := p.trashApproval(a, "r3")
+	resp, _ = p.post(approvalPath(other)+"/reject", nil)
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	require.Equal(t, confirm.StateRejected, p.pending(other).State)
+	last = p.entries()[0]
+	require.Equal(t, "trash_messages", last.Tool)
+	require.Equal(t, audit.OutcomeDeclined, last.Outcome)
+	require.Equal(t, "rejected_on_web", last.Detail)
+	require.Len(t, p.backends.backend.trashCalls(), 1, "a rejected action moves nothing")
+	_, body = p.get(approvalPath(other))
+	require.Contains(t, visibleText(t, body), textRejected)
 }

@@ -5,7 +5,9 @@ package web
 //
 // A new token is shown once, on the answer to the POST that makes it, with
 // "Cache-Control: no-store". It is never put in an address, a redirect or the
-// log, and the store keeps only its hash. A token always has an explicit list
+// log, and the store keeps only its hash. Making and revoking go through the
+// service, which writes an audit entry of the tenant without the token or its
+// name. A token always has an explicit list
 // of known scopes. The form offers each known scope and "all", which stands for
 // the whole list. Revoking is a POST with the CSRF token, for a token of the
 // tenant of the session only.
@@ -67,12 +69,12 @@ func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
 	s.renderConnections(w, r, http.StatusOK, page)
 }
 
-// handleCreateToken makes a token with the posted name and scopes, and shows it
-// once on the answer. It does not redirect, so the token is never in an
-// address.
+// handleCreateToken makes a token with the posted name and scopes with
+// Service.CreateToken (which writes the audit entry), and shows it once on the
+// answer. It does not redirect, so the token is never in an address.
 func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
-	sess, ok := sessionFrom(r.Context())
-	if !ok || s.d.Tokens == nil {
+	svc, _, ctx, ok := s.userCall(r)
+	if !ok {
 		s.fail(w, r, codeConnectionsFailed, errNoService)
 		return
 	}
@@ -83,7 +85,7 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		s.renderConnections(w, r, http.StatusUnprocessableEntity, page)
 		return
 	}
-	token, err := s.d.Tokens.Create(r.Context(), sess.tenant, page.Name, scopes)
+	token, err := svc.CreateToken(ctx, page.Name, scopes)
 	switch {
 	case errors.Is(err, tokens.ErrInvalidName):
 		page.Error = msgBadTokenName
@@ -105,15 +107,16 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleRevokeToken revokes a token of the tenant of the session, and then
-// redirects to the page. A token of another tenant is not found.
+// handleRevokeToken revokes a token of the tenant of the session with
+// Service.RevokeToken (which writes the audit entry), and then redirects to the
+// page. A token of another tenant is not found.
 func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
-	sess, ok := sessionFrom(r.Context())
-	if !ok || s.d.Tokens == nil {
+	svc, _, ctx, ok := s.userCall(r)
+	if !ok {
 		s.fail(w, r, codeConnectionsFailed, errNoService)
 		return
 	}
-	err := s.d.Tokens.Revoke(r.Context(), sess.tenant, r.PathValue("id"))
+	err := svc.RevokeToken(ctx, r.PathValue("id"))
 	switch {
 	case err == nil:
 		http.Redirect(w, r, "/connections", http.StatusSeeOther)

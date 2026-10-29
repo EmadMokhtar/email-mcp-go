@@ -315,6 +315,9 @@ func auditCode(err error) (audit.Outcome, string) {
 		return refused("draft_from_mismatch")
 	case errors.Is(err, ErrSendNotFound):
 		return refused("send_not_found")
+	// ErrHiddenAddress also matches ErrInvalidRequest, so it comes first.
+	case errors.Is(err, ErrHiddenAddress):
+		return refused("hidden_address")
 	case errors.Is(err, ErrInvalidRequest), isMessageError(err):
 		return refused("invalid_request")
 	case errors.Is(err, confirm.ErrPayloadChanged):
@@ -874,9 +877,14 @@ func trashRefs(payload []byte) []mail.Ref {
 // confirm.ErrNotPending. A send uses the confirmed undo window. The action then
 // moves to "done", with the id of the outbox item for a send.
 //
-// A send is built again from its payload. When the message would not be the one
-// that the preview showed (other recipients, sender, subject or body start), the
-// action is rejected and the error wraps confirm.ErrPayloadChanged.
+// A send is built again from its payload, with the function that makes the
+// approval page (see PendingDetail). When the message would not be the one that
+// the preview showed (other recipients, sender, subject or body start), the
+// action is rejected and the error wraps confirm.ErrPayloadChanged. When the
+// whole message cannot be built now (a mail server that does not answer, or a
+// recipient that cannot be shown exactly, ErrHiddenAddress), nothing is sent
+// and the action keeps waiting: the page cannot show it in full either, so it
+// is never approved from a partial view.
 //
 // An approval that cannot be carried out (no such action, or it does not wait
 // any more) is in the audit log as "refused". A Trash approval needs no outbox.

@@ -132,6 +132,9 @@ type Deps struct {
 	Outbox   *outbox.Outbox
 	Audit    *audit.Log
 	Links    Links
+	// Tokens makes and revokes the access tokens of the local HTTP server. It is
+	// needed only by CreateToken and RevokeToken.
+	Tokens TokenMaker
 	// Local is true for a local install. Only then may a new account use a
 	// plain (unencrypted) connection, and only to a loopback host.
 	Local bool

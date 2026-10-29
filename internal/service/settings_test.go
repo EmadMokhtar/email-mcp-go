@@ -250,7 +250,7 @@ func TestAuditToolsListsEveryRecordedTool(t *testing.T) {
 	for _, want := range []string{
 		"set_flags", "create_folder", "create_tag", "tag_messages", "move_messages", "create_draft",
 		"discard_draft", "send_message", "cancel_send", "trash_messages", "approve_pending",
-		"reject_pending", "connect_account", "update_settings", "remove_account",
+		"reject_pending", "connect_account", "update_settings", "remove_account", "create_token", "revoke_token",
 	} {
 		require.Contains(t, tools, want)
 	}

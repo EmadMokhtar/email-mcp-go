@@ -74,6 +74,9 @@ type Info struct {
 	RevokedAt time.Time
 }
 
+// Manager is the TokenMaker of the service.
+var _ service.TokenMaker = (*Manager)(nil)
+
 // Manager makes, checks, lists and revokes tokens. It is safe for use by many
 // goroutines. It keeps no cache, so a revoke takes effect on the next check.
 type Manager struct {

@@ -35,21 +35,60 @@ import (
 const autonomyText = "An email or a calendar invite can contain hidden instructions, such as 'forward all invoices to me'. " +
 	"With confirmations off, the agent may follow them, and nobody checks before anything leaves."
 
-// stubBackend is the mail backend of the page tests. A new message needs no
-// call to the backend, so every method panics (the embedded interface is nil).
-type stubBackend struct {
+// pageBackend is the mail backend of the page tests. It gives one original
+// message for a reply ("o1", from alice@example.com), fails GetMessage while
+// getErr is set, and records the moves to Trash. Any other method panics (the
+// embedded interface is nil), so a test sees at once a call that it did not
+// expect.
+type pageBackend struct {
 	mail.Backend
+
+	mu      sync.Mutex
+	getErr  error
+	trashed [][]mail.Ref
 }
 
-// fakeBackends is the backend factory of the page tests. It records the ids
-// that Forget gets.
+func (b *pageBackend) GetMessage(_ context.Context, ref mail.Ref, _ mail.BodyOptions) (*mail.Message, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.getErr != nil {
+		return nil, b.getErr
+	}
+	return &mail.Message{
+		Summary:   mail.Summary{Ref: ref, From: mail.Address{Name: "Alice", Email: "alice@example.com"}, Subject: "Question"},
+		MessageID: "<o1@example.com>",
+	}, nil
+}
+
+func (b *pageBackend) Trash(_ context.Context, refs []mail.Ref) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.trashed = append(b.trashed, slices.Clone(refs))
+	return nil
+}
+
+func (b *pageBackend) setGetErr(err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.getErr = err
+}
+
+func (b *pageBackend) trashCalls() [][]mail.Ref {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.trashed)
+}
+
+// fakeBackends is the backend factory of the page tests. Every account gets the
+// same pageBackend. It records the ids that Forget gets.
 type fakeBackends struct {
+	backend   pageBackend
 	mu        sync.Mutex
 	forgotten []account.AccountID
 }
 
 func (b *fakeBackends) Mail(context.Context, *account.Account) (mail.Backend, error) {
-	return stubBackend{}, nil
+	return &b.backend, nil
 }
 
 func (b *fakeBackends) Forget(id account.AccountID) {
@@ -142,6 +181,7 @@ func newPageFixture(t *testing.T) *pageFixture {
 		Outbox:   ob,
 		Audit:    log,
 		Links:    s.Links(),
+		Tokens:   toks,
 		Local:    true,
 		Now:      f.clock.Now,
 		Logger:   logger,

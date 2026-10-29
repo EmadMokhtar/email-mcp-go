@@ -30,7 +30,7 @@ func TestActivityShowsTheLog(t *testing.T) {
 	a := p.account()
 	p.record(audit.Entry{Account: a.ID, Client: "<b>Claude</b>", Tool: "send_message", Count: 1,
 		Recipients: []string{"bob@example.com", "carol@example.com"}, Outcome: audit.OutcomePendingApproval, Detail: "confirm_sends"})
-	p.record(audit.Entry{Client: "ㅤㅤ", Tool: "remove_account", Detail: "account_removed"})
+	p.record(audit.Entry{Client: "\u3164\u3164", Tool: "remove_account", Detail: "account_removed"})
 
 	resp, body := p.get("/activity")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -43,7 +43,7 @@ func TestActivityShowsTheLog(t *testing.T) {
 		require.Contains(t, text, want)
 	}
 	require.NotContains(t, body, "<b>Claude</b>", "the client name is escaped")
-	require.NotContains(t, body, "ㅤ")
+	require.NotContains(t, body, "\u3164")
 }
 
 // The filters are exact matches from fixed lists. A value that is not in the
