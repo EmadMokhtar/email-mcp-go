@@ -1264,7 +1264,8 @@ func (b *syncBuffer) String() string {
 }
 
 // A database error in one pass of Run is logged and does not stop the worker.
-// The log has no mail content.
+// The log has a fixed code and the Go types of the error, never its text, as in
+// every other package: a store error can quote a value.
 func TestRunLogsAPassErrorAndGoesOn(t *testing.T) {
 	f := newFixture(t)
 	item := f.enqueue("private body text", 10*time.Second)
@@ -1277,7 +1278,9 @@ func TestRunLogsAPassErrorAndGoesOn(t *testing.T) {
 
 	require.Eventually(t, func() bool { return f.status(item.ID) == StatusSent }, 5*time.Second, 5*time.Millisecond)
 	require.Contains(t, logs.String(), "a pass failed")
-	require.Contains(t, logs.String(), "database is locked")
+	require.Contains(t, logs.String(), "code=pass_failed")
+	require.Contains(t, logs.String(), "error_types=")
+	require.NotContains(t, logs.String(), "database is locked", "the text of the error is never logged")
 	for _, secret := range []string{"private body text", "bob@example.org", "Zebra"} {
 		require.NotContains(t, logs.String(), secret)
 	}

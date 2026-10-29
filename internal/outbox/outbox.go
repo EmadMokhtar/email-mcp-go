@@ -41,6 +41,7 @@ import (
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
+	"github.com/EmadMokhtar/email-mcp-go/internal/errtype"
 	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 )
@@ -411,7 +412,7 @@ func (o *Outbox) insert(ctx context.Context, create func(context.Context) error)
 // the message is stored already.
 func (o *Outbox) sendInline(ctx context.Context, row *store.OutboxRow, msg *mail.RawMessage) *Item {
 	if err := o.deliver(ctx, row, msg); err != nil {
-		o.warn("outbox: could not finish an inline send", "id", row.ID, "error", err)
+		o.warn("outbox: could not finish an inline send", "id", row.ID, "code", "inline_finish_failed", "error_types", errtype.Chain(err))
 	}
 
 	// Read the result without the context of the caller, which may have ended.
@@ -419,7 +420,7 @@ func (o *Outbox) sendInline(ctx context.Context, row *store.OutboxRow, msg *mail
 	defer cancel()
 	got, err := o.Get(rctx, row.Tenant, row.ID)
 	if err != nil {
-		o.warn("outbox: could not read an item after an inline send", "id", row.ID, "error", err)
+		o.warn("outbox: could not read an item after an inline send", "id", row.ID, "code", "inline_read_failed", "error_types", errtype.Chain(err))
 		return itemFromRow(row)
 	}
 	return got
@@ -514,14 +515,14 @@ func (o *Outbox) Run(ctx context.Context, tick time.Duration) error {
 			lastRecover = now
 			if n, err := o.RecoverInterrupted(ctx); err != nil {
 				if ctx.Err() == nil {
-					o.warn("outbox: could not look for interrupted items", "error", err)
+					o.warn("outbox: could not look for interrupted items", "code", "recover_failed", "error_types", errtype.Chain(err))
 				}
 			} else if n > 0 {
 				o.warn("outbox: marked interrupted sends as failed", "count", n)
 			}
 		}
 		if _, err := o.sendDue(ctx); err != nil && ctx.Err() == nil {
-			o.warn("outbox: a pass failed", "error", err)
+			o.warn("outbox: a pass failed", "code", "pass_failed", "error_types", errtype.Chain(err))
 		}
 		select {
 		case <-ctx.Done():
@@ -621,7 +622,7 @@ func (o *Outbox) sendDue(ctx context.Context) (int, error) {
 			}
 			claimedNow++
 			if err := o.deliver(ctx, claimed, nil); err != nil {
-				o.warn("outbox: could not finish a send", "id", row.ID, "error", err)
+				o.warn("outbox: could not finish a send", "id", row.ID, "code", "finish_failed", "error_types", errtype.Chain(err))
 			}
 		}
 		total += claimedNow
@@ -671,7 +672,7 @@ func (o *Outbox) deliver(ctx context.Context, row *store.OutboxRow, msg *mail.Ra
 		var err error
 		msg, err = o.open(ctx, row)
 		if err != nil {
-			o.warn("outbox: could not open a stored message", "id", row.ID, "error", err)
+			o.warn("outbox: could not open a stored message", "id", row.ID, "code", "open_failed", "error_types", errtype.Chain(err))
 			// Nothing was sent, and a new try may work: the key service may be
 			// down for a short time. The usual retry steps apply. The message is
 			// deleted only if the fourth try fails.
@@ -850,7 +851,9 @@ func checkIDs(tenant account.TenantID, acct account.AccountID) error {
 	return nil
 }
 
-// warn logs a line if the Outbox has a Logger.
+// warn logs a line if the Outbox has a Logger. A caller passes a fixed code and
+// errtype.Chain of an error, never the error itself: its text can quote a
+// value.
 func (o *Outbox) warn(msg string, args ...any) {
 	if o.Logger != nil {
 		o.Logger.Warn(msg, args...)
