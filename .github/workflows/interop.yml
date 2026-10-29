@@ -28,13 +28,15 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: stable
       - name: make the test certificates
         run: go run ./test/interop/gencerts test/interop/certs
       - name: start the mail servers
         run: docker compose -f test/interop/compose.yaml up -d --wait
       - name: interop test
-        run: go test -tags interop ./test/interop/ -v
+        # -count=1: never take a cached result, because the cache cannot see
+        # the servers.
+        run: go test -race -count=1 -tags interop ./test/interop/ -v
       - name: server logs
         if: always()
         run: docker compose -f test/interop/compose.yaml logs --no-color

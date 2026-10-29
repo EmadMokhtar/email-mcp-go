@@ -1,8 +1,8 @@
-# Mail servers for the interop test (go test -tags interop ./test/interop/).
+# Mail servers for the interop test (go test -count=1 -tags interop ./test/interop/).
 #
 #   go run ./test/interop/gencerts test/interop/certs
 #   docker compose -f test/interop/compose.yaml up -d --wait
-#   go test -tags interop ./test/interop/ -v
+#   go test -count=1 -tags interop ./test/interop/ -v
 #   docker compose -f test/interop/compose.yaml down -v
 #
 # Dovecot serves IMAP and stores the mail. Postfix takes mail by SMTP

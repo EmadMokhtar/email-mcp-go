@@ -1,6 +1,12 @@
 # golangci-lint v2 configuration.
 version: "2"
 
+run:
+  # Also lint the interop test (test/interop), which has this build tag. It
+  # is linted only: it runs nightly against Docker servers (interop.yml).
+  build-tags:
+    - interop
+
 linters:
   # The standard set is errcheck, govet, ineffassign, staticcheck and unused.
   default: standard

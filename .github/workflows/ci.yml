@@ -26,6 +26,11 @@ jobs:
           go-version: stable
       - name: go vet
         run: go vet ./...
+      # The interop test needs Docker to run, so it runs nightly in
+      # interop.yml. Here it is only vetted, so a change that breaks it shows
+      # up at once.
+      - name: go vet (interop tag)
+        run: go vet -tags interop ./test/interop/
       - name: go test
         run: go test -race ./...
 
@@ -40,7 +45,7 @@ jobs:
         with:
           go-version: stable
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags interop ./...
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:

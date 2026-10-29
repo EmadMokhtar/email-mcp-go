@@ -11,10 +11,12 @@
 //
 //	go run ./test/interop/gencerts test/interop/certs
 //	docker compose -f test/interop/compose.yaml up -d --wait
-//	go test -tags interop ./test/interop/ -v
+//	go test -count=1 -tags interop ./test/interop/ -v
 //	docker compose -f test/interop/compose.yaml down -v
 //
-// The build tag keeps the test out of a plain "go test ./...".
+// -count=1 makes Go run the test every time. Without it, Go can print a
+// cached PASS also when the servers are down, because the test cache does not
+// see the network. The build tag keeps the test out of a plain "go test ./...".
 package interop
 
 import (

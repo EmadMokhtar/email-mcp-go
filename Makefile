@@ -21,10 +21,13 @@ build:
 test:
 	go test -race ./...
 
-# lint: run go vet, staticcheck and golangci-lint (install golangci-lint v2 first)
+# lint: run go vet, staticcheck and golangci-lint (install golangci-lint v2 first).
+# The interop test (build tag "interop") is checked too, but not run: it needs
+# the Docker servers of test/interop/compose.yaml.
 lint:
 	go vet ./...
-	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
+	go vet -tags interop ./test/interop/
+	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) -tags interop ./...
 	golangci-lint run
 
 # vuln: check dependencies and code for known vulnerabilities
