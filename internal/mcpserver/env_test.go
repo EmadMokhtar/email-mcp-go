@@ -28,6 +28,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/imaptest"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/smtptest"
 )
 
 // testStart is the time at which the test accounts are created.
@@ -123,6 +124,9 @@ func (f *countingFactory) Forget(account.AccountID) {}
 
 // env is a service with a real store, vault, outbox and confirm manager, and an
 // MCP server and client that talk over an in-memory connection.
+//
+// The outbox sends through the backend of the account (see newEnv), so a send
+// to an account of mailAccount reaches the smtptest server.
 type env struct {
 	t      *testing.T
 	store  *store.Store
@@ -130,6 +134,7 @@ type env struct {
 	tenant account.TenantID
 	outbox *outbox.Outbox
 	svc    *service.Service
+	server *mcp.Server
 	cs     *mcp.ClientSession
 	logs   *syncBuffer
 
@@ -143,6 +148,12 @@ type envOptions struct {
 	// principal decides the caller of a tool call. A nil value gives the local
 	// tenant with no scope limit.
 	principal func(tenant account.TenantID, req *mcp.CallToolRequest) (service.Principal, error)
+	// client and session set up the client of e.cs. Nil values give a client
+	// without elicitation on the newest protocol version.
+	client  *mcp.ClientOptions
+	session *mcp.ClientSessionOptions
+	// legacyElicitation is Options.InBandLegacyElicitation.
+	legacyElicitation bool
 }
 
 // newEnv builds the env. With no backends in opts, the service uses the real
@@ -171,9 +182,20 @@ func newEnv(t *testing.T, opts envOptions) *env {
 		backends = cache
 	}
 	clock := func() time.Time { return testStart }
-	ob := outbox.New(st, vault, func(context.Context, account.TenantID, account.AccountID, *mail.RawMessage, mail.Ref) error {
-		return nil
-	}, clock)
+	// The sender sends through the backend of the account, as the real sender
+	// does. A test that sends must use an account whose backend can send.
+	send := func(ctx context.Context, tenant account.TenantID, id account.AccountID, msg *mail.RawMessage, _ mail.Ref) error {
+		a, err := st.GetAccount(ctx, tenant, id)
+		if err != nil {
+			return err
+		}
+		b, err := backends.Mail(ctx, a)
+		if err != nil {
+			return err
+		}
+		return b.Send(ctx, msg)
+	}
+	ob := outbox.New(st, vault, send, clock)
 	svc := service.New(service.Deps{
 		Store:    st,
 		Vault:    vault,
@@ -194,27 +216,34 @@ func newEnv(t *testing.T, opts envOptions) *env {
 			return service.Principal{Tenant: tenant, Client: "test-client"}, nil
 		}
 	}
-	server := New(svc, Options{
-		Version: "test",
+	e.server = New(svc, Options{
+		Version:                 "test",
+		InBandLegacyElicitation: opts.legacyElicitation,
 		Principal: func(_ context.Context, req *mcp.CallToolRequest) (service.Principal, error) {
 			e.principals.Add(1)
 			return principal(tenant, req)
 		},
 		Logger: slog.New(slog.NewTextHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
+	e.cs = e.connect(opts.client, opts.session)
+	return e
+}
 
+// connect connects one more client to the server of the env.
+func (e *env) connect(client *mcp.ClientOptions, session *mcp.ClientSessionOptions) *mcp.ClientSession {
+	e.t.Helper()
+	ctx := context.Background()
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
-	ss, err := server.Connect(ctx, serverTransport, nil)
-	require.NoError(t, err)
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
-	cs, err := client.Connect(ctx, clientTransport, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() {
+	ss, err := e.server.Connect(ctx, serverTransport, nil)
+	require.NoError(e.t, err)
+	c := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, client)
+	cs, err := c.Connect(ctx, clientTransport, session)
+	require.NoError(e.t, err)
+	e.t.Cleanup(func() {
 		_ = cs.Close()
 		_ = ss.Wait()
 	})
-	e.cs = cs
-	return e
+	return cs
 }
 
 // addAccount stores an account of the local tenant and its sealed password.
@@ -254,12 +283,29 @@ func (e *env) imapAccount(srv *imaptest.Server) *account.Account {
 	}, srv.Pass)
 }
 
+// mailAccount adds an account that logs in to the test IMAP server and sends
+// through the test SMTP server. Both servers use the same login by default.
+func (e *env) mailAccount(imapSrv *imaptest.Server, smtpSrv *smtptest.Server, change ...func(*account.Account)) *account.Account {
+	e.t.Helper()
+	return e.addAccount("me@example.com", account.MailServer{
+		IMAPHost: imapSrv.Host, IMAPPort: imapSrv.Port, IMAPSecurity: account.SecurityTLS,
+		SMTPHost: smtpSrv.Host, SMTPPort: smtpSrv.Port, SMTPSecurity: account.SecurityTLS,
+		Username: imapSrv.User, PinnedIMAPCert: imapSrv.CertSHA256, PinnedSMTPCert: smtpSrv.CertSHA256,
+	}, imapSrv.Pass, change...)
+}
+
 // call calls a tool and returns the result. A protocol error fails the test:
 // every problem that the tools report must be a tool result.
 func (e *env) call(tool string, args map[string]any) *mcp.CallToolResult {
 	e.t.Helper()
-	res, err := e.cs.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: args})
-	require.NoError(e.t, err, "tool %s must answer with a result, not a protocol error", tool)
+	return callOn(e.t, e.cs, &mcp.CallToolParams{Name: tool, Arguments: args})
+}
+
+// callOn calls a tool on a client session. A protocol error fails the test.
+func callOn(t *testing.T, cs *mcp.ClientSession, params *mcp.CallToolParams) *mcp.CallToolResult {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), params)
+	require.NoError(t, err, "tool %s must answer with a result, not a protocol error", params.Name)
 	return res
 }
 

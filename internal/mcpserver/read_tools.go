@@ -152,11 +152,11 @@ type SendStatusOut struct {
 }
 
 // readOnly returns the annotations of a tool that changes nothing and talks only
-// to the mail account of the user. MCP reads a missing openWorldHint as true, so
-// it is set to false.
+// to the mail account of the user. MCP reads a missing openWorldHint and a
+// missing destructiveHint as true, so both are set to false.
 func readOnly() *mcp.ToolAnnotations {
-	closedWorld := false
-	return &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &closedWorld}
+	closedWorld, destructive := false, false
+	return &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &destructive, OpenWorldHint: &closedWorld}
 }
 
 // registerReadTools adds the read tools to the server, with addTool. The SDK
