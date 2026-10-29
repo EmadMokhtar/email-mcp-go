@@ -5,13 +5,14 @@ package e2e
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
-	"log/slog"
+	"html/template"
 	"maps"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -22,22 +23,35 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
-	"github.com/EmadMokhtar/email-mcp-go/internal/audit"
 	"github.com/EmadMokhtar/email-mcp-go/internal/confirm"
+	"github.com/EmadMokhtar/email-mcp-go/internal/connect"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
-	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
 	"github.com/EmadMokhtar/email-mcp-go/internal/mcpserver"
-	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
+	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
 	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
-	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/imaptest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/smtptest"
 )
 
 // ---------------------------------------------------------------- helpers of the tests
+
+// The exact texts that the agent gets when a confirmation is refused
+// (internal/mcpserver/errors.go). Each refusal has its own text, so a test can
+// tell which check refused.
+const (
+	textStateInvalid = "The confirmation is not valid: its request state was changed, or it belongs to " +
+		"another request. Nothing was done. Call the tool again to ask the user again. Do not repeat the same call."
+	textStateExpired = "The confirmation has expired: the user must answer within 10 minutes. " +
+		"Nothing was done. Call the tool again to ask the user again. Do not repeat the same call."
+	textPayloadChanged = "The request is not the one that the user was asked about: the arguments " +
+		"changed, or the message built again is different. Nothing was done. Call the tool again to ask the user again. " +
+		"Do not repeat the same call."
+	textNotPending = "The action no longer waits for the user: it was carried out, declined or cancelled, " +
+		"or it expired. Check a send with get_send_status. Do not repeat the same call."
+)
 
 // crlf turns the line breaks of a test message into CRLF, as mail has them.
 func crlf(s string) []byte { return []byte(strings.ReplaceAll(s, "\n", "\r\n")) }
@@ -48,7 +62,7 @@ func crlf(s string) []byte { return []byte(strings.ReplaceAll(s, "\n", "\r\n")) 
 func incomingMail() []byte {
 	return crlf("From: " + inSenderName + " <" + inSenderAddress + ">\n" +
 		"To: " + accountAddress + "\n" +
-		"Subject: " + inSubject + "\n" +
+		"Subject: " + markedSubject(inSubject) + "\n" +
 		"Date: Tue, 10 Mar 2026 10:00:00 +0000\n" +
 		"Message-ID: <in-1@example.org>\n" +
 		"MIME-Version: 1.0\n" +
@@ -57,7 +71,7 @@ func incomingMail() []byte {
 		"--B\n" +
 		"Content-Type: text/plain; charset=utf-8\n" +
 		"\n" +
-		inBody + "\n" +
+		markedBody(inBody) +
 		"--B\n" +
 		"Content-Type: text/plain; name=\"" + inAttachName + "\"\n" +
 		"Content-Disposition: attachment; filename=\"" + inAttachName + "\"\n" +
@@ -282,7 +296,7 @@ func TestNoSecretsInLogs(t *testing.T) {
 	// It drafts, and sends with an in-band confirmation: a new message, the
 	// draft, and a message to a recipient that the server refuses.
 	draft := mustOK(t, cs, "create_draft", map[string]any{
-		"account": acct, "to": []any{rcptName + " <" + rcptAddress + ">"}, "subject": draftSubject, "body": draftBody,
+		"account": acct, "to": []any{rcptName + " <" + rcptAddress + ">"}, "subject": markedSubject(draftSubject), "body": markedBody(draftBody),
 	})["ref"]
 	sent := mustOK(t, cs, "send_message", sendArgs(id))
 	require.Equal(t, "sent", sent["status"])
@@ -383,13 +397,18 @@ func TestNoSecretsInLogs(t *testing.T) {
 	resp, _ = b.do(req)
 	require.Equal(t, http.StatusForbidden, resp.StatusCode)
 
+	// The background work logs too: the daily jobs run when Run starts, in a
+	// goroutine of their own.
+	require.Eventually(t, func() bool { return strings.Contains(h.logs.String(), "app: daily jobs done") },
+		15*time.Second, 50*time.Millisecond, "the daily jobs log their line")
+
 	// The whole stop of the program.
 	stopRun()
 	h.close()
 
 	logs := h.logs.String()
 	require.Contains(t, logs, "e2e: the log has Debug lines", "the log is captured at Debug level")
-	for _, line := range []string{"web request refused", "http request refused", "app: daily jobs done"} {
+	for _, line := range []string{"web request refused", "http request refused"} {
 		require.Contains(t, logs, line, "the log has the lines of all parts")
 	}
 	requireNoSecrets(t, "the log", []byte(logs), secretsToFind)
@@ -435,7 +454,7 @@ func TestNoPlaintextSecretsInDB(t *testing.T) {
 	cs := h.client(opts)
 	ref := refsIn(t, cs, a.ID, "@inbox")[0]
 	mustOK(t, cs, "get_message", map[string]any{"account": acct, "ref": ref})
-	mustOK(t, cs, "create_draft", map[string]any{"account": acct, "to": []any{rcptAddress}, "subject": draftSubject, "body": draftBody})
+	mustOK(t, cs, "create_draft", map[string]any{"account": acct, "to": []any{rcptAddress}, "subject": markedSubject(draftSubject), "body": markedBody(draftBody)})
 	require.Equal(t, "sent", mustOK(t, cs, "send_message", sendArgs(a.ID))["status"])
 
 	// A send that waits in band: the agent holds its request state.
@@ -476,7 +495,7 @@ func TestNoPlaintextSecretsInDB(t *testing.T) {
 			all = append(all, data...)
 		}
 		// The scan reads the right bytes: the address of the account is there.
-		require.Equal(t, "plain text", findSecret(all, accountAddress), "%s: the scan finds the address of the account", stage)
+		require.Equal(t, "plain text", findSecret(t, all, accountAddress), "%s: the scan finds the address of the account", stage)
 	}
 	require.NotEmpty(t, h.dataFiles()[store.DBFileName+"-wal"], "the log has the recent writes")
 	scan("while sends wait, before a checkpoint")
@@ -532,13 +551,17 @@ var requiredLevel = map[string]account.Level{
 	"trash_messages":            account.MailDelete,
 }
 
-// sideEffects is what a refused call must leave unchanged: the commands that
-// change mail on the IMAP server, the SELECT commands (a write opens the
-// folder read-write), the messages of the SMTP server, the pending actions and
-// the outbox.
+// sideEffects is what a refused call must leave unchanged:
+//   - every command that reached the IMAP server, reads and logins too (a
+//     refused call must not touch the mail server at all), and the SELECT and
+//     EXAMINE counts;
+//   - the connections and the messages of the SMTP server;
+//   - the pending actions and the outbox.
 type sideEffects struct {
-	writes    []string
+	commands  []string
 	readWrite int
+	readOnly  int
+	smtpConns int
 	smtp      int
 	pending   int
 	outbox    string
@@ -546,7 +569,7 @@ type sideEffects struct {
 
 func snapshotEffects(t *testing.T, h *harness, m mailServers) sideEffects {
 	t.Helper()
-	rw, _ := m.imap.SelectCounts()
+	rw, ro := m.imap.SelectCounts()
 	db := h.sqlDB()
 	rows, err := db.Query(`SELECT id, status FROM outbox ORDER BY id`)
 	require.NoError(t, err)
@@ -559,8 +582,10 @@ func snapshotEffects(t *testing.T, h *harness, m mailServers) sideEffects {
 	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
 	return sideEffects{
-		writes:    m.imap.WriteCommands(),
+		commands:  m.imap.Commands(),
 		readWrite: rw,
+		readOnly:  ro,
+		smtpConns: m.smtp.Connections(),
 		smtp:      len(m.smtp.Messages()),
 		pending:   count(t, db, `SELECT COUNT(*) FROM pending_actions`),
 		outbox:    strings.Join(outboxRows, ","),
@@ -599,7 +624,7 @@ func TestEveryWriteToolRefusedBelowItsLevel(t *testing.T) {
 		}
 	}
 	require.NotNil(t, attachmentID)
-	draftRef := mustOK(t, cs, "create_draft", map[string]any{"account": acct, "subject": draftSubject, "body": draftBody})["ref"]
+	draftRef := mustOK(t, cs, "create_draft", map[string]any{"account": acct, "subject": markedSubject(draftSubject), "body": markedBody(draftBody)})["ref"]
 	queued := mustOK(t, cs, "send_message", sendArgs(a.ID))
 	require.Equal(t, "queued", queued["status"])
 
@@ -619,7 +644,7 @@ func TestEveryWriteToolRefusedBelowItsLevel(t *testing.T) {
 		"create_tag":                {"account": acct, "name": "newtag"},
 		"tag_messages":              {"account": acct, "refs": refs, "add": []any{"newtag"}},
 		"move_messages":             {"account": acct, "refs": refs, "folder": "Archive"},
-		"create_draft":              {"account": acct, "to": []any{rcptAddress}, "subject": draftSubject, "body": draftBody},
+		"create_draft":              {"account": acct, "to": []any{rcptAddress}, "subject": markedSubject(draftSubject), "body": markedBody(draftBody)},
 		"discard_draft":             {"account": acct, "ref": draftRef},
 		"send_message":              sendArgs(a.ID),
 		"cancel_send":               {"account": acct, "send_id": queued["send_id"]},
@@ -657,24 +682,26 @@ func TestEveryWriteToolRefusedBelowItsLevel(t *testing.T) {
 				text := textOf(t, res)
 				require.Contains(t, text, fmt.Sprintf("/accounts/%s/settings?area=mail&level=%d", acct, need),
 					"the refusal is the permission error, with the link to raise the level: %s", text)
-				require.Equal(t, before, snapshotEffects(t, h, m), "a refused call changes nothing")
+				after := snapshotEffects(t, h, m)
+				require.Equal(t, before.commands, after.commands, "a refused call sends no command to the IMAP server, not even a read")
+				require.Zero(t, after.readOnly-before.readOnly, "a refused call opens no folder to read")
+				require.Equal(t, before, after, "a refused call changes nothing")
 			})
 		}
 	}
 
 	t.Run("the tools that need no level change nothing", func(t *testing.T) {
 		h.update(a.ID, settingsOf(account.MailOff))
-		before := snapshotEffects(t, h, m)
-		stored, err := h.app.Service.ListAccounts(localCtx())
-		require.NoError(t, err)
+		db := h.sqlDB()
+		before, effects := dump(t, db), snapshotEffects(t, h, m)
 		for _, name := range []string{"list_accounts", "request_permission_change", "connect_account"} {
 			mustOK(t, cs, name, args[name])
 		}
-		require.Equal(t, before, snapshotEffects(t, h, m))
-		after, err := h.app.Service.ListAccounts(localCtx())
+		require.Equal(t, effects, snapshotEffects(t, h, m), "the mail servers saw nothing")
+		require.Equal(t, before, dump(t, db), "nothing changed in the database")
+		views, err := h.app.Service.ListAccounts(localCtx())
 		require.NoError(t, err)
-		require.Equal(t, stored, after, "the level of the account is unchanged")
-		require.Equal(t, "Off", after[0].Areas[account.AreaMail])
+		require.Equal(t, "Off", views[0].Areas[account.AreaMail])
 	})
 
 	require.Zero(t, ask.count(), "no call got as far as asking the person")
@@ -688,7 +715,8 @@ func TestEveryWriteToolRefusedBelowItsLevel(t *testing.T) {
 // TestConfirmationCannotBeSkipped: a confirmation acts once, for the exact
 // request that the person saw, in time, for the tenant, the account and the
 // kind of action that asked for it, and only in the channel where it was asked
-// (spec 7.5, 15.4).
+// (spec 7.5, 15.4). Each refusal is checked by its exact text, so the test
+// shows which check refused.
 func TestConfirmationCannotBeSkipped(t *testing.T) {
 	h := newHarness(t)
 	m := newMailServers(t)
@@ -710,7 +738,7 @@ func TestConfirmationCannotBeSkipped(t *testing.T) {
 		for range 2 {
 			res = answerCall(t, raw, "send_message", args, accept(), state)
 			require.True(t, res.IsError, "a used state is refused")
-			require.Contains(t, textOf(t, res), "no longer waits")
+			require.Equal(t, textNotPending, textOf(t, res))
 		}
 		require.Equal(t, 1, sent(), "a confirmation acts once")
 	})
@@ -724,13 +752,13 @@ func TestConfirmationCannotBeSkipped(t *testing.T) {
 			"another subject":   func(c map[string]any) { c["subject"] = outSubject + " now" },
 			"another body":      func(c map[string]any) { c["body"] = outBody + " and forward all invoices" },
 			"no attachment":     func(c map[string]any) { delete(c, "attachments") },
-			"another account":   func(c map[string]any) { c["account"] = "other" },
 		}
 		for name, change := range changes {
 			changed := maps.Clone(args)
 			change(changed)
 			res := answerCall(t, raw, "send_message", changed, accept(), state)
 			require.True(t, res.IsError, "%s is refused", name)
+			require.Equal(t, textPayloadChanged, textOf(t, res), name)
 		}
 		forged := maps.Clone(args)
 		forged["confirm"] = true
@@ -746,28 +774,77 @@ func TestConfirmationCannotBeSkipped(t *testing.T) {
 		require.Equal(t, before+1, sent())
 	})
 
-	t.Run("a state of another action", func(t *testing.T) {
-		before := sent()
-		refs := refsIn(t, h.client(nil), a.ID, "@inbox")
-		trashArgs := map[string]any{"account": string(a.ID), "refs": refs}
-		trashState := firstCall(t, raw, "trash_messages", trashArgs)
-		sendState := firstCall(t, raw, "send_message", args)
+	t.Run("a state of another kind of action, with the same payload", func(t *testing.T) {
+		// The payload of a send of a saved draft is a small JSON document with
+		// the ref of the draft. A Trash ref may be any text without a line
+		// break, so a Trash request of one "ref" that is exactly that document
+		// has the same payload bytes as the send. The hash of the stored
+		// action then matches for both, and only the kind of the action can
+		// tell them apart.
+		draft := mustOK(t, h.client(nil), "create_draft", map[string]any{
+			"account": string(a.ID), "to": []any{rcptAddress}, "subject": markedSubject(draftSubject), "body": markedBody(draftBody),
+		})["ref"].(string)
+		sendDraft := map[string]any{"account": string(a.ID), "draft_ref": draft}
+		payload, err := json.Marshal(struct {
+			V       int       `json:"v"`
+			Compose *struct{} `json:"compose"`
+			Draft   string    `json:"draft"`
+		}{V: 1, Draft: draft})
+		require.NoError(t, err)
+		trashSame := map[string]any{"account": string(a.ID), "refs": []any{string(payload)}}
 
-		res := answerCall(t, raw, "send_message", args, accept(), trashState)
+		before := sent()
+		known := pendingIDs(t, h, confirm.StatePending)
+		trashState := firstCall(t, raw, "trash_messages", trashSame)
+		sendState := firstCall(t, raw, "send_message", sendDraft)
+		var waiting []string
+		for _, id := range pendingIDs(t, h, confirm.StatePending) {
+			if !slices.Contains(known, id) {
+				waiting = append(waiting, id)
+			}
+		}
+		require.Len(t, waiting, 2)
+
+		// The text is the one of a state that belongs to another request, not
+		// the one of a changed payload: the payload hash matched.
+		res := answerCall(t, raw, "send_message", sendDraft, accept(), trashState)
 		require.True(t, res.IsError, "a Trash confirmation cannot send")
-		res = answerCall(t, raw, "trash_messages", trashArgs, accept(), sendState)
+		require.Equal(t, textStateInvalid, textOf(t, res))
+		res = answerCall(t, raw, "trash_messages", trashSame, accept(), sendState)
 		require.True(t, res.IsError, "a send confirmation cannot move mail to Trash")
+		require.Equal(t, textStateInvalid, textOf(t, res))
+		for _, id := range waiting {
+			require.Equal(t, string(confirm.StatePending), stateOf(t, h, id), "a refused try does not use up the action")
+		}
 		require.Equal(t, before, sent())
 		require.Len(t, refsIn(t, h.client(nil), a.ID, "@inbox"), 1, "nothing moved")
 
-		// A state of another account of the same tenant.
+		// The send state still sends the draft that the person saw.
+		res = answerCall(t, raw, "send_message", sendDraft, accept(), sendState)
+		require.False(t, res.IsError, textOf(t, res))
+		require.Equal(t, before+1, sent())
+	})
+
+	t.Run("a state of another account, with the same payload", func(t *testing.T) {
+		// The payload of a send holds the message, not the account, so the
+		// same message for another account of the tenant has the same payload
+		// hash. Only the account of the action can tell them apart.
+		before := sent()
 		m2 := newMailServers(t)
 		other := h.connect(localCtx(), "other-q4z8@example.net", m2)
 		h.update(other.ID, u)
-		res = answerCall(t, raw, "send_message", sendArgs(other.ID), accept(), sendState)
+		state := firstCall(t, raw, "send_message", args)
+
+		res := answerCall(t, raw, "send_message", sendArgs(other.ID), accept(), state)
 		require.True(t, res.IsError, "a confirmation of one account cannot send from another")
+		require.Equal(t, textStateInvalid, textOf(t, res), "the payload hash matched; the account refused")
 		require.Empty(t, m2.smtp.Messages())
 		require.Equal(t, before, sent())
+
+		// The refused try did not use the confirmation.
+		res = answerCall(t, raw, "send_message", args, accept(), state)
+		require.False(t, res.IsError, textOf(t, res))
+		require.Equal(t, before+1, sent())
 	})
 
 	t.Run("a state of another tenant", func(t *testing.T) {
@@ -790,7 +867,7 @@ func TestConfirmationCannotBeSkipped(t *testing.T) {
 
 		res := answerCall(t, raw, "send_message", args, accept(), stateB)
 		require.True(t, res.IsError, "a state of tenant B cannot confirm a send of the local tenant")
-		require.Contains(t, textOf(t, res), "not valid")
+		require.Equal(t, textStateInvalid, textOf(t, res))
 		res = answerCall(t, raw, "send_message", argsB, accept(), stateB)
 		require.True(t, res.IsError, "the local tenant cannot use the account or the state of tenant B")
 		require.Equal(t, before, sent())
@@ -836,7 +913,28 @@ func TestConfirmationCannotBeSkipped(t *testing.T) {
 	})
 
 	t.Run("an expired request state", func(t *testing.T) {
-		testExpiredState(t)
+		// The same program as above, with a clock that the test moves
+		// (app.Config.Now), so the test does not wait 10 minutes.
+		clock := &fakeClock{now: time.Now()}
+		hc := newHarnessWith(t, harnessOptions{now: clock.Now})
+		mc := newMailServers(t)
+		ac := hc.connect(localCtx(), accountAddress, mc)
+		rawC := hc.client(rawClient(t))
+		argsC := sendArgs(ac.ID)
+
+		state := firstCall(t, rawC, "send_message", argsC)
+		clock.Advance(confirm.InBandLifetime + time.Second)
+		res := answerCall(t, rawC, "send_message", argsC, accept(), state)
+		require.True(t, res.IsError, "an expired state is refused")
+		require.Equal(t, textStateExpired, textOf(t, res), "the request state itself has expired")
+		require.Empty(t, mc.smtp.Messages())
+
+		state = firstCall(t, rawC, "send_message", argsC)
+		clock.Advance(confirm.InBandLifetime - time.Minute)
+		res = answerCall(t, rawC, "send_message", argsC, accept(), state)
+		require.False(t, res.IsError, textOf(t, res))
+		require.Equal(t, "sent", structured(t, res)["status"])
+		require.Len(t, mc.smtp.Messages(), 1)
 	})
 }
 
@@ -856,79 +954,6 @@ func (c *fakeClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.now = c.now.Add(d)
-}
-
-// testExpiredState checks that a request state stops working after
-// confirm.InBandLifetime (10 minutes), and works just before.
-//
-// app.Open has no clock, and the test must not wait 10 minutes. So this test
-// builds the same parts as app.Open, with the same constructors, and gives the
-// clock hooks that they have (confirm.NewManager and the other "now"
-// arguments) one clock that the test moves. The mail servers are real.
-func testExpiredState(t *testing.T) {
-	ctx := context.Background()
-	m := newMailServers(t)
-	st, err := store.Open(ctx, t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = st.Close() })
-	_, err = st.EnsureLocalTenant(ctx)
-	require.NoError(t, err)
-	keyPath := filepath.Join(t.TempDir(), "master.key")
-	require.NoError(t, secrets.GenerateKeyFile(keyPath))
-	kek, err := secrets.NewFileKEK(keyPath)
-	require.NoError(t, err)
-	vault := secrets.NewVault(st, kek)
-	serverKey, err := vault.ServerKey(ctx)
-	require.NoError(t, err)
-	signer := signing.New(serverKey)
-	clock := &fakeClock{now: time.Now()}
-	log := slog.New(slog.DiscardHandler)
-	backends := service.NewBackendFactory(st, vault, signer, true, log)
-	t.Cleanup(backends.Close)
-	sender := func(ctx context.Context, tenant account.TenantID, id account.AccountID, msg *mail.RawMessage, _ mail.Ref) error {
-		a, err := st.GetAccount(ctx, tenant, id)
-		if err != nil {
-			return err
-		}
-		b, err := backends.Mail(ctx, a)
-		if err != nil {
-			return err
-		}
-		return b.Send(ctx, msg)
-	}
-	ob := outbox.New(st, vault, sender, clock.Now)
-	svc := service.New(service.Deps{
-		Store:    st,
-		Vault:    vault,
-		Signer:   signer,
-		Backends: backends,
-		Limiter:  &policy.Limiter{Store: st, Now: clock.Now},
-		Confirm:  confirm.NewManager(st, vault, signer, clock.Now),
-		Outbox:   ob,
-		Audit:    audit.New(st, vault, clock.Now),
-		Local:    true,
-		Now:      clock.Now,
-		Logger:   log,
-	})
-	a, err := svc.CreateIMAPAccount(localCtx(), accountAddress, m.settings(), secrets.Secret(secretPassword))
-	require.NoError(t, err)
-	srv := mcpserver.New(svc, mcpserver.Options{InBandLegacyElicitation: true, Principal: localPrincipal})
-	raw := connectClient(t, srv, rawClient(t))
-	args := sendArgs(a.ID)
-
-	state := firstCall(t, raw, "send_message", args)
-	clock.Advance(confirm.InBandLifetime + time.Second)
-	res := answerCall(t, raw, "send_message", args, accept(), state)
-	require.True(t, res.IsError, "an expired state is refused")
-	require.Contains(t, textOf(t, res), "expired")
-	require.Empty(t, m.smtp.Messages())
-
-	state = firstCall(t, raw, "send_message", args)
-	clock.Advance(confirm.InBandLifetime - time.Minute)
-	res = answerCall(t, raw, "send_message", args, accept(), state)
-	require.False(t, res.IsError, textOf(t, res))
-	require.Equal(t, "sent", structured(t, res)["status"])
-	require.Len(t, m.smtp.Messages(), 1)
 }
 
 // ---------------------------------------------------------------- Trash
@@ -1015,9 +1040,12 @@ func TestTrashMoveBlockedBelowLevel5(t *testing.T) {
 // service and on the web page) and when a stored account is used. A server that
 // does not offer STARTTLS never gets the password (spec 8.5, 10.2, 15.4).
 //
-// The refused hosts are names and TEST-NET addresses (RFC 2606, RFC 5737). The
-// checks never resolve a name, and they refuse before they dial, so no packet
-// leaves this computer. Each call also has a short deadline.
+// The refused remote hosts are names and TEST-NET addresses (RFC 2606, RFC
+// 5737). The checks never resolve a name, and they refuse before they dial, so
+// no packet leaves this computer. Each call also has a short deadline. Where a
+// test must prove that nothing was dialled, it uses a plain-text server on this
+// computer that the rule refuses (a hosted install refuses plain text even
+// there), and counts the connections that reach it.
 func TestPlainTextToRemoteRefused(t *testing.T) {
 	h := newHarness(t)
 	m := newMailServers(t)
@@ -1054,44 +1082,61 @@ func TestPlainTextToRemoteRefused(t *testing.T) {
 
 	t.Run("on the web page", func(t *testing.T) {
 		b, _ := h.signIn()
-		form := connectForm("plain-web@example.net", m, secretPassword)
-		form.Set("imap_host", "192.0.2.10")
-		form.Set("imap_port", "143")
-		form.Set("imap_security", string(account.SecurityPlain))
-		form.Set("plain_understand", "1")
-		status, page := b.post("/connect/save", form)
-		require.Equal(t, http.StatusUnprocessableEntity, status)
-		require.NotContains(t, page, secretPassword, "the page never shows the password again")
+		// One server is remote in plain text. The other one is a test server on
+		// this computer: a connection test that ran anyway would reach it.
+		for _, plain := range []string{"imap", "smtp"} {
+			form := connectForm("plain-web@example.net", m, secretPassword)
+			form.Set(plain+"_host", "192.0.2.10")
+			form.Set(plain+"_port", "143")
+			form.Set(plain+"_security", string(account.SecurityPlain))
+			form.Set("plain_understand", "1")
+			imapConns, smtpConns := m.imap.TotalConns(), m.smtp.Connections()
+
+			status, page := b.post("/connect/save", form)
+
+			require.Equal(t, http.StatusUnprocessableEntity, status, plain)
+			require.Contains(t, page, template.HTMLEscapeString(connect.TextSettings),
+				"%s: the page says that the settings are refused, not that a test failed", plain)
+			require.NotContains(t, page, secretPassword, "the page never shows the password again")
+			require.Equal(t, imapConns, m.imap.TotalConns(), "%s: nothing connected to the IMAP server", plain)
+			require.Equal(t, smtpConns, m.smtp.Connections(), "%s: nothing connected to the SMTP server", plain)
+		}
 		views, err := h.app.Service.ListAccounts(localCtx())
 		require.NoError(t, err)
 		require.Empty(t, views)
 	})
 
-	t.Run("a stored account changed to plain text", func(t *testing.T) {
-		a := h.connect(localCtx(), accountAddress, m)
+	t.Run("a stored account changed to plain text is never dialled", func(t *testing.T) {
+		// A hosted install refuses plain text to every host. Its account is
+		// connected with TLS, and then someone with access to the database
+		// points it at plain-text servers on this computer. Those servers count
+		// every connection, so the test proves that the program never dials.
+		hosted := newHarnessWith(t, harnessOptions{hosted: true})
+		a := hosted.connect(localCtx(), accountAddress, m)
+		imapPlain := imaptest.New(t, imaptest.WithMode(imaptest.ModePlain), imaptest.WithLogin(testUser, secretPassword))
+		smtpPlain := smtptest.New(t, smtptest.WithMode(smtptest.ModePlain), smtptest.WithLogin(testUser, secretPassword))
+		_, err := hosted.sqlDB().Exec(`UPDATE accounts SET mail = json_set(mail,
+			'$.IMAPHost', ?, '$.IMAPPort', ?, '$.IMAPSecurity', 'plain', '$.PinnedIMAPCert', '',
+			'$.SMTPHost', ?, '$.SMTPPort', ?, '$.SMTPSecurity', 'plain', '$.PinnedSMTPCert', '')
+			WHERE id = ?`, imapPlain.Host, imapPlain.Port, smtpPlain.Host, smtpPlain.Port, string(a.ID))
+		require.NoError(t, err)
+		// Saving the settings drops any backend that the program keeps, so the
+		// next call reads the changed settings.
 		u := settingsOf(account.MailSend)
 		u.ConfirmSends = false
 		u.Limits.UndoWindowAuto = 0
-		h.update(a.ID, u)
-		logins := m.smtp.AuthAttempts() // the test of the connect logged in once
-		imapConns := m.imap.TotalConns()
-		// Someone with access to the database changes the settings. The program
-		// must still refuse plain text to another computer.
-		_, err := h.sqlDB().Exec(`UPDATE accounts SET mail = json_set(mail,
-			'$.IMAPHost', '192.0.2.10', '$.IMAPSecurity', 'plain', '$.PinnedIMAPCert', '',
-			'$.SMTPHost', '192.0.2.10', '$.SMTPSecurity', 'plain', '$.PinnedSMTPCert', '')
-			WHERE id = ?`, string(a.ID))
-		require.NoError(t, err)
-		cs := h.client(nil)
+		hosted.update(a.ID, u)
+
+		cs := hosted.client(nil)
 		res := call(t, cs, "list_folders", map[string]any{"account": string(a.ID)})
 		require.True(t, res.IsError, "the IMAP connection is refused")
 		res = call(t, cs, "send_message", sendArgs(a.ID))
 		if !res.IsError {
 			require.NotEqual(t, "sent", structured(t, res)["status"], "the SMTP connection is refused")
 		}
-		require.Empty(t, m.smtp.Messages())
-		require.Equal(t, logins, m.smtp.AuthAttempts(), "the SMTP server got no login")
-		require.Equal(t, imapConns, m.imap.TotalConns(), "the IMAP server got no connection")
+		require.Zero(t, imapPlain.TotalConns(), "nothing connected to the plain-text IMAP server")
+		require.Zero(t, smtpPlain.Connections(), "nothing connected to the plain-text SMTP server")
+		require.Empty(t, smtpPlain.Messages())
 	})
 
 	t.Run("a server without STARTTLS never gets the password", func(t *testing.T) {
@@ -1117,14 +1162,168 @@ func TestPlainTextToRemoteRefused(t *testing.T) {
 	})
 
 	t.Run("a hosted install refuses plain text to this computer too", func(t *testing.T) {
-		hosted := newHarnessWith(t, false)
+		hosted := newHarnessWith(t, harnessOptions{hosted: true})
 		imapPlain := imaptest.New(t, imaptest.WithMode(imaptest.ModePlain), imaptest.WithLogin(testUser, secretPassword))
+		smtpConns := m.smtp.Connections()
 		_, err := hosted.app.Service.CreateIMAPAccount(localCtx(), "hosted@example.net", account.MailServer{
 			IMAPHost: imapPlain.Host, IMAPPort: imapPlain.Port, IMAPSecurity: account.SecurityPlain,
 			SMTPHost: m.smtp.Host, SMTPPort: m.smtp.Port, SMTPSecurity: account.SecurityTLS,
 			Username: testUser, PinnedSMTPCert: m.smtp.CertSHA256,
 		}, secrets.Secret(secretPassword))
 		require.ErrorIs(t, err, service.ErrInvalidSettings)
+		require.Zero(t, imapPlain.TotalConns(), "nothing connected to the plain-text server")
+		require.Equal(t, smtpConns, m.smtp.Connections(), "the test of the settings did not run")
+	})
+}
+
+// ---------------------------------------------------------------- certificates
+
+// loginsOn counts the logins that reached the two servers: the IMAP LOGIN
+// commands and the SMTP AUTH attempts.
+func loginsOn(m mailServers) [2]int {
+	n := 0
+	for _, c := range m.imap.Commands() {
+		if c == "LOGIN" {
+			n++
+		}
+	}
+	return [2]int{n, m.smtp.AuthAttempts()}
+}
+
+// TestTLSCertificateChecksEnforced: TLS is enforced with the certificate
+// checks, so a server in the middle cannot get the password (spec 8.5, 10.2,
+// 15.4). A pinned account is refused when the server shows another
+// certificate. Without a pin, a certificate that no trusted authority signed
+// is refused, and so is a certificate for another host name; the connect page
+// never offers to trust a certificate for another host name, and an offer
+// that it made for one host cannot pin the certificate for another. In every
+// case no login reaches the server and no tool succeeds.
+//
+// The test servers each make their own self-signed certificate for 127.0.0.1.
+// The "decoy" servers stand for the certificate that the user trusted; the
+// servers of the account then show a different one, as an attacker would.
+func TestTLSCertificateChecksEnforced(t *testing.T) {
+	h := newHarness(t)
+	m := newMailServers(t)
+	decoy := newMailServers(t)
+	n := 0
+	tryConnect := func(t *testing.T, change func(*account.MailServer)) *service.CertificateError {
+		t.Helper()
+		settings := m.settings()
+		change(&settings)
+		n++
+		ctx, cancel := context.WithTimeout(localCtx(), 15*time.Second)
+		defer cancel()
+		_, err := h.app.Service.CreateIMAPAccount(ctx, fmt.Sprintf("tls-%d@example.net", n), settings, secrets.Secret(secretPassword))
+		var certErr *service.CertificateError
+		require.ErrorAs(t, err, &certErr, "the connect is refused for the certificate")
+		return certErr
+	}
+
+	t.Run("connect: the IMAP server shows another certificate than the pin", func(t *testing.T) {
+		before := loginsOn(m)
+		certErr := tryConnect(t, func(s *account.MailServer) { s.PinnedIMAPCert = decoy.imap.CertSHA256 })
+		require.NotNil(t, certErr.IMAP)
+		require.True(t, certErr.IMAP.Pinned, "the certificate does not match the pin")
+		require.Equal(t, before[0], loginsOn(m)[0], "no LOGIN reached the IMAP server")
+	})
+
+	t.Run("connect: the SMTP server shows another certificate than the pin", func(t *testing.T) {
+		before := loginsOn(m)
+		certErr := tryConnect(t, func(s *account.MailServer) { s.PinnedSMTPCert = decoy.smtp.CertSHA256 })
+		require.NotNil(t, certErr.SMTP)
+		require.True(t, certErr.SMTP.Pinned, "the certificate does not match the pin")
+		require.Equal(t, before[1], loginsOn(m)[1], "no AUTH reached the SMTP server")
+	})
+
+	t.Run("connect: no pin, and no trusted authority signed the certificate", func(t *testing.T) {
+		before := loginsOn(m)
+		certErr := tryConnect(t, func(s *account.MailServer) { s.PinnedIMAPCert, s.PinnedSMTPCert = "", "" })
+		for name, c := range map[string]*imapsmtp.CertificateUnknownError{"imap": certErr.IMAP, "smtp": certErr.SMTP} {
+			require.NotNil(t, c, name)
+			require.False(t, c.Pinned, name)
+			var unknown x509.UnknownAuthorityError
+			require.ErrorAs(t, c.Reason, &unknown, name)
+		}
+		require.Equal(t, before, loginsOn(m), "no login reached the servers")
+	})
+
+	t.Run("connect: a certificate for another host name", func(t *testing.T) {
+		// The certificates are for 127.0.0.1. The name localhost reaches the
+		// same servers on this computer, but the certificates are not for it.
+		before := loginsOn(m)
+		certErr := tryConnect(t, func(s *account.MailServer) {
+			s.IMAPHost, s.SMTPHost, s.PinnedIMAPCert, s.PinnedSMTPCert = "localhost", "localhost", "", ""
+		})
+		for name, c := range map[string]*imapsmtp.CertificateUnknownError{"imap": certErr.IMAP, "smtp": certErr.SMTP} {
+			require.NotNil(t, c, name)
+			var hostname x509.HostnameError
+			require.ErrorAs(t, c.Reason, &hostname, name)
+		}
+		require.Equal(t, before, loginsOn(m), "no login reached the servers")
+	})
+
+	t.Run("on the web page: no trust for another host name", func(t *testing.T) {
+		b, _ := h.signIn()
+		before := loginsOn(m)
+		form := connectForm("tls-web@example.net", m, secretPassword)
+		form.Set("imap_host", "localhost")
+		form.Set("smtp_host", "localhost")
+		status, page := b.post("/connect/save", form)
+		require.Equal(t, http.StatusOK, status, "the page shows the certificates")
+		require.Contains(t, page, template.HTMLEscapeString(connect.TextCertWrongHost))
+		require.Empty(t, offerPattern.FindAllStringSubmatch(page, -1), "no offer to trust a certificate for another host name")
+
+		// The page offers to trust the certificates for 127.0.0.1 ...
+		_, page = b.post("/connect/save", connectForm("tls-web@example.net", m, secretPassword))
+		offers := offerPattern.FindAllStringSubmatch(page, -1)
+		require.Len(t, offers, 2)
+		// ... and those offers cannot pin the certificates for localhost.
+		for _, o := range offers {
+			form.Set("trust_"+o[1], "1")
+			form.Set(o[1]+"_offer", o[2])
+		}
+		status, page = b.post("/connect/save", form)
+		require.Equal(t, http.StatusUnprocessableEntity, status)
+		require.Contains(t, page, "The choice to trust a certificate is not valid")
+		require.Equal(t, before, loginsOn(m), "no login reached the servers")
+	})
+
+	t.Run("no account was connected", func(t *testing.T) {
+		views, err := h.app.Service.ListAccounts(localCtx())
+		require.NoError(t, err)
+		require.Empty(t, views)
+	})
+
+	t.Run("a stored account whose certificate check fails", func(t *testing.T) {
+		a := h.connect(localCtx(), accountAddress, m)
+		u := settingsOf(account.MailSend)
+		u.ConfirmSends = false
+		u.Limits.UndoWindowAuto = 0
+		cs := h.client(nil)
+		for name, pins := range map[string][2]string{
+			"another certificate than the pin": {decoy.imap.CertSHA256, decoy.smtp.CertSHA256},
+			"no pin, no trusted authority":     {"", ""},
+		} {
+			t.Run(name, func(t *testing.T) {
+				// Someone with access to the database changes the pins. Saving the
+				// settings then drops the backend that the program keeps.
+				_, err := h.sqlDB().Exec(`UPDATE accounts SET mail = json_set(mail, '$.PinnedIMAPCert', ?, '$.PinnedSMTPCert', ?)
+					WHERE id = ?`, pins[0], pins[1], string(a.ID))
+				require.NoError(t, err)
+				h.update(a.ID, u)
+				before, messages := loginsOn(m), len(m.smtp.Messages())
+
+				res := call(t, cs, "list_folders", map[string]any{"account": string(a.ID)})
+				require.True(t, res.IsError, "the IMAP connection is refused")
+				res = call(t, cs, "send_message", sendArgs(a.ID))
+				if !res.IsError {
+					require.NotEqual(t, "sent", structured(t, res)["status"], "the SMTP connection is refused")
+				}
+				require.Equal(t, before, loginsOn(m), "no login reached the servers")
+				require.Equal(t, messages, len(m.smtp.Messages()), "nothing was sent")
+			})
+		}
 	})
 }
 
@@ -1352,9 +1551,10 @@ func TestLocalUIRefusesWrongHost(t *testing.T) {
 		require.NoError(t, err)
 		u, err := url.Parse(ts.URL)
 		require.NoError(t, err)
-		body := toolCallBody("request_permission_change", map[string]any{"account": string(f.a.ID), "area": "mail"})
-		sendBody := fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"send_message",`+
-			`"arguments":{"account":%q,"to":[%q],"subject":%q,"body":%q}}}`, string(f.a.ID), rcptAddress, outSubject, outBody)
+		body := toolCallBody(t, "request_permission_change", map[string]any{"account": string(f.a.ID), "area": "mail", "level": 5})
+		sendBody := toolCallBody(t, "send_message", map[string]any{
+			"account": string(f.a.ID), "to": []any{rcptAddress}, "subject": outSubject, "body": outBody,
+		})
 		pending := count(t, db, `SELECT COUNT(*) FROM pending_actions`)
 		for _, host := range []string{"evil.example:" + u.Port(), "localhost.:" + u.Port(), "127.0.0.2:" + u.Port()} {
 			for _, payload := range []string{body, sendBody} {
@@ -1429,8 +1629,9 @@ func TestLocalUIRefusesCrossOriginPost(t *testing.T) {
 		ts := h.httpEndpoint()
 		token, err := h.app.Service.CreateToken(localCtx(), "e2e", policy.Scopes{"email:read", "email:send"})
 		require.NoError(t, err)
-		sendBody := fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"send_message",`+
-			`"arguments":{"account":%q,"to":[%q],"subject":%q,"body":%q}}}`, string(f.a.ID), rcptAddress, outSubject, outBody)
+		sendBody := toolCallBody(t, "send_message", map[string]any{
+			"account": string(f.a.ID), "to": []any{rcptAddress}, "subject": outSubject, "body": outBody,
+		})
 		pending := count(t, db, `SELECT COUNT(*) FROM pending_actions`)
 		for _, origin := range []string{"http://evil.example", "null", b.base, ts.URL} {
 			status, answer := postMCP(t, ts, sendBody, func(r *http.Request) {

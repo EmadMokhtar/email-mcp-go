@@ -15,9 +15,11 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -89,6 +91,22 @@ const (
 	draftBody     = "DraftBodyMarkerN9b5"
 )
 
+// markedSubject is a subject with the marker three times. The tests look for
+// the marker alone, so the copies must not hide each other.
+func markedSubject(marker string) string {
+	return marker + " re " + marker + " fw " + marker
+}
+
+// markedBody is a body with the marker three times, about 700 and 1900 bytes
+// apart. A large value in SQLite is split over overflow pages, and each page
+// starts with a 4-byte pointer, so the split can cut a marker in two. The
+// pages are 4096 bytes, so a split can cut at most one copy, and a scan of the
+// raw bytes still finds another one when the body is stored in plain text.
+func markedBody(marker string) string {
+	filler := strings.Repeat("words that move the next copy along ", 60)
+	return marker + "\n" + filler[:700] + "\n" + marker + "\n" + filler[:1900] + "\n" + marker + "\n"
+}
+
 // localPrincipal is the caller of a tool call on stdio, as "serve" sets it: the
 // local tenant, with no scope limit, and the name that the client gave.
 func localPrincipal(_ context.Context, req *mcp.CallToolRequest) (service.Principal, error) {
@@ -152,11 +170,21 @@ type harness struct {
 // test up. A test that wants the whole stop calls close.
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	return newHarnessWith(t, true)
+	return newHarnessWith(t, harnessOptions{})
 }
 
-// newHarnessWith opens a program, local or hosted.
-func newHarnessWith(t *testing.T, local bool) *harness {
+// harnessOptions change how newHarnessWith opens the program.
+type harnessOptions struct {
+	// hosted opens a hosted install (app.Config.Local is false): plain text is
+	// refused even to a server on this computer.
+	hosted bool
+	// now is the clock of the program (app.Config.Now). Nil means the real
+	// clock.
+	now func() time.Time
+}
+
+// newHarnessWith opens a program with options.
+func newHarnessWith(t *testing.T, opts harnessOptions) *harness {
 	t.Helper()
 	h := &harness{
 		t:       t,
@@ -169,9 +197,10 @@ func newHarnessWith(t *testing.T, local bool) *harness {
 	a, err := app.Open(context.Background(), app.Config{
 		DataDir:   h.dataDir,
 		KEKSource: "file:" + h.keyPath,
-		Local:     local,
+		Local:     !opts.hosted,
 		LogOutput: h.logs,
 		LogLevel:  slog.LevelDebug,
+		Now:       opts.now,
 	})
 	require.NoError(t, err)
 	h.app = a
@@ -430,8 +459,8 @@ func sendArgs(id account.AccountID) map[string]any {
 		"to":      []any{rcptName + " <" + rcptAddress + ">"},
 		"cc":      []any{ccAddress},
 		"bcc":     []any{bccAddress},
-		"subject": outSubject,
-		"body":    outBody,
+		"subject": markedSubject(outSubject),
+		"body":    markedBody(outBody),
 		"attachments": []any{map[string]any{
 			"filename":     outAttachName,
 			"content_type": "text/plain",
@@ -481,14 +510,16 @@ func httpClient(t *testing.T, ts *httptest.Server, token string) *mcp.ClientSess
 
 // toolCallBody is a JSON-RPC tools/call request in the oldest protocol, which
 // a stateless server answers without a session.
-func toolCallBody(tool string, args map[string]any) string {
-	var parts []string
-	for k, v := range args {
-		parts = append(parts, fmt.Sprintf("%q:%q", k, v))
-	}
-	sort.Strings(parts)
-	return fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":%q,"arguments":{%s}}}`,
-		tool, strings.Join(parts, ","))
+func toolCallBody(t *testing.T, tool string, args map[string]any) string {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params":  map[string]any{"name": tool, "arguments": args},
+	})
+	require.NoError(t, err)
+	return string(body)
 }
 
 // postMCP sends a raw JSON-RPC request to the HTTP endpoint. change can set the
@@ -774,59 +805,115 @@ func (h *harness) dataFiles() map[string][]byte {
 
 // ---------------------------------------------------------------- finding secrets
 
-// secretForms returns the forms of a secret to look for: the text itself, its
-// hex form, and the parts of its base64 forms (standard and URL alphabets) that
-// do not depend on the bytes around it. A JSON encoding of []byte is base64, so
-// a message body inside a JSON document would show only that way.
-func secretForms(secret string) []string {
-	forms := []string{secret, hex.EncodeToString([]byte(secret))}
+// minCore is the shortest base64 part that the search uses: 16 characters.
+// The search ignores case, so each character still carries more than 5 bits,
+// more than 80 bits in all. A random match in a few megabytes of ciphertext is
+// then out of reach.
+const minCore = 16
+
+// base64Cores returns the parts of the base64 forms of text (standard and URL
+// alphabets) that do not depend on the bytes around it: groups of 3 bytes that
+// are all bytes of text encode to the same 4 characters wherever text starts,
+// once for each of the 3 ways that text can sit in the groups.
+func base64Cores(text string) []string {
+	var cores []string
 	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding} {
 		for shift := 0; shift < 3; shift++ {
-			padded := append(make([]byte, shift), secret...)
-			text := enc.EncodeToString(padded)
-			// Groups of 3 bytes that are all bytes of the secret encode to the
-			// same 4 characters wherever the secret starts.
-			first, last := (shift+2)/3, (shift+len(secret))/3
-			if last-first >= 3 {
-				forms = append(forms, text[4*first:4*last])
+			padded := append(make([]byte, shift), text...)
+			encoded := enc.EncodeToString(padded)
+			first, last := (shift+2)/3, (shift+len(text))/3
+			if 4*(last-first) >= minCore {
+				cores = append(cores, encoded[4*first:4*last])
 			}
 		}
 	}
-	return forms
+	return cores
+}
+
+// secretForms returns the forms of a secret to look for:
+//   - the text itself;
+//   - its hex form (the search ignores case, so upper-case hex too);
+//   - its percent-encoded form, as in a URL query or a form body;
+//   - its base64 forms (base64Cores). A JSON encoding of []byte is base64, so a
+//     message inside a JSON document shows only that way;
+//   - the base64 forms of those: base64 inside base64, such as an attachment
+//     of a message that is itself in a JSON document.
+func secretForms(secret string) []string {
+	forms := []string{secret, hex.EncodeToString([]byte(secret)), url.QueryEscape(secret)}
+	first := base64Cores(secret)
+	forms = append(forms, first...)
+	for _, core := range first {
+		forms = append(forms, base64Cores(core)...)
+	}
+	slices.Sort(forms)
+	return slices.Compact(forms)
+}
+
+// secretForm is one form of one secret, in lower case.
+type secretForm struct {
+	name  string
+	plain bool
+	form  string
+}
+
+// secretFinder looks for many secrets in all their forms in one pass over the
+// data. It compares without regard to case. Each form is at least 8 bytes, so
+// the forms are indexed by their first 8 bytes.
+type secretFinder struct {
+	byPrefix map[string][]secretForm
+}
+
+func newSecretFinder(t *testing.T, secrets map[string]string) *secretFinder {
+	t.Helper()
+	f := &secretFinder{byPrefix: map[string][]secretForm{}}
+	for name, secret := range secrets {
+		require.GreaterOrEqual(t, len(secret), 8, "secret %s is too short to look for", name)
+		for _, form := range secretForms(secret) {
+			lower := strings.ToLower(form)
+			f.byPrefix[lower[:8]] = append(f.byPrefix[lower[:8]], secretForm{name: name, plain: form == secret, form: lower})
+		}
+	}
+	return f
+}
+
+// find returns the names of the secrets that are in data, with the form in
+// which each one was found.
+func (f *secretFinder) find(data []byte) map[string]string {
+	found := map[string]string{}
+	lower := bytes.ToLower(data)
+	for i := 0; i+8 <= len(lower); i++ {
+		forms, ok := f.byPrefix[string(lower[i:i+8])]
+		if !ok {
+			continue
+		}
+		for _, sf := range forms {
+			if _, seen := found[sf.name]; seen || !bytes.HasPrefix(lower[i:], []byte(sf.form)) {
+				continue
+			}
+			if sf.plain {
+				found[sf.name] = "plain text"
+			} else {
+				found[sf.name] = fmt.Sprintf("encoded as %q", sf.form)
+			}
+		}
+	}
+	return found
 }
 
 // findSecret reports the form in which a secret is in data, or "" when it is
-// not there. The plain text is compared without regard to case.
-func findSecret(data []byte, secret string) string {
-	lower := bytes.ToLower(data)
-	for i, form := range secretForms(secret) {
-		if i == 0 {
-			if bytes.Contains(lower, []byte(strings.ToLower(form))) {
-				return "plain text"
-			}
-			continue
-		}
-		if bytes.Contains(data, []byte(form)) {
-			return fmt.Sprintf("encoded as %q", form)
-		}
-	}
-	return ""
+// not there.
+func findSecret(t *testing.T, data []byte, secret string) string {
+	t.Helper()
+	return newSecretFinder(t, map[string]string{"secret": secret}).find(data)["secret"]
 }
 
 // requireNoSecrets fails for each secret that is in data, in any form of
 // secretForms.
 func requireNoSecrets(t *testing.T, where string, data []byte, secrets map[string]string) {
 	t.Helper()
-	names := make([]string, 0, len(secrets))
-	for name := range secrets {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	found := newSecretFinder(t, secrets).find(data)
+	names := slices.Sorted(maps.Keys(found))
 	for _, name := range names {
-		secret := secrets[name]
-		require.NotEmpty(t, secret, "secret %s", name)
-		if form := findSecret(data, secret); form != "" {
-			t.Errorf("%s holds the %s (%s)", where, name, form)
-		}
+		t.Errorf("%s holds the %s (%s)", where, name, found[name])
 	}
 }
