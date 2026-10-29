@@ -640,7 +640,7 @@ func TestCheckpointWALTruncatesTheLog(t *testing.T) {
 	}
 	require.Positive(t, walSize(), "the writes are in the log")
 
-	complete, err := s.CheckpointWAL(ctx)
+	complete, err := s.CheckpointWAL(ctx, CheckpointTruncate)
 	require.NoError(t, err)
 	require.True(t, complete)
 	require.Zero(t, walSize())
@@ -648,4 +648,37 @@ func TestCheckpointWALTruncatesTheLog(t *testing.T) {
 	got, err := s.GetAccount(ctx, tenant, "a1")
 	require.NoError(t, err, "the data is in the database file")
 	require.Equal(t, account.AccountID("a1"), got.ID)
+}
+
+// A passive checkpoint copies what it can into the database file without
+// waiting for other connections, and leaves the size of the log file as it is.
+// The program uses it at start-up, where a TRUNCATE checkpoint could hold up
+// the writes of other programs for the busy timeout.
+func TestCheckpointWALPassiveKeepsTheLogFile(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	s, err := Open(ctx, dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	require.NoError(t, s.CreateAccount(ctx, testAccount(tenant, "a1", testNow)))
+	walPath := filepath.Join(dir, dbFileName+"-wal")
+	before, err := os.Stat(walPath)
+	require.NoError(t, err)
+
+	complete, err := s.CheckpointWAL(ctx, CheckpointPassive)
+	require.NoError(t, err)
+	require.True(t, complete, "no other connection reads, so every frame is copied")
+
+	after, err := os.Stat(walPath)
+	require.NoError(t, err)
+	require.Equal(t, before.Size(), after.Size(), "a passive checkpoint does not cut the log")
+	require.Positive(t, after.Size())
+}
+
+func TestCheckpointWALRefusesAnUnknownMode(t *testing.T) {
+	s := newTestStore(t)
+	_, err := s.CheckpointWAL(context.Background(), CheckpointMode("RESTART; DROP TABLE accounts"))
+	require.Error(t, err)
 }

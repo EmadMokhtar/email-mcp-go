@@ -155,11 +155,20 @@ func (s *Service) sendDeps() error {
 // still matches the preview that the user saw. Otherwise the error wraps
 // confirm.ErrPayloadChanged.
 //
+// While the program stops (see Stop), Send returns ErrStopping before step 1
+// and changes nothing.
+//
 // Every call is in the audit log, with the envelope recipients.
 func (s *Service) Send(ctx context.Context, id account.AccountID, c *mail.Compose, draft *mail.Ref, mode ConfirmMode, ans *ConfirmAnswer) (*SendResult, *NeedsConfirmation, error) {
 	if err := s.sendDeps(); err != nil {
 		return nil, nil, err
 	}
+	end, err := s.beginAction()
+	if err != nil {
+		s.recordRefusal(ctx, id, toolSend, err)
+		return nil, nil, err
+	}
+	defer end()
 	acc, b, err := s.begin(ctx, id, policy.ActSend, toolSend)
 	if err != nil {
 		return nil, nil, err

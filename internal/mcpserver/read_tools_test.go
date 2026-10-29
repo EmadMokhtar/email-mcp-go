@@ -592,6 +592,12 @@ func TestToolErrorMapping(t *testing.T) {
 			ends:     endNoRepeat, wantsCode: "send_not_found",
 		},
 		{
+			name:     "the server is stopping",
+			err:      service.ErrStopping,
+			contains: []string{"stopping", "nothing was sent or changed", "still waits"},
+			ends:     endUntilUser, wantsCode: "stopping",
+		},
+		{
 			name:     "bad page token",
 			err:      fmt.Errorf("search: %w", signing.ErrExpired),
 			contains: []string{"page token or cursor"},

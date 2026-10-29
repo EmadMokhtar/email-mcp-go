@@ -178,6 +178,18 @@ type OutboxStore interface {
 
 var _ OutboxStore = (*store.Store)(nil)
 
+// SendDeadline is the time that a send may take, counted from the claim of the
+// item (not from the start of the Sender). Reading the message, the send and the
+// write of the result must all end before an item counts as interrupted (15
+// minutes), or another program could fail the item of a send that is still
+// running. The steps around the send are short: reading the message and writing
+// the result each have at most 30 seconds. So the limit is 15 minutes less two
+// minutes.
+//
+// A program that stops uses it too: a send that has started can run this long,
+// and the stop waits for it.
+const SendDeadline = 13 * time.Minute
+
 // The limits and times of this package.
 const (
 	// maxErrorText is the most characters of an error text that the outbox keeps.
@@ -204,13 +216,8 @@ const (
 	// detached.
 	storeTimeout = 30 * time.Second
 
-	// sendDeadline is the time that a send may take, counted from the claim of the
-	// item (not from the start of the Sender). Reading the message, the send and
-	// the write of the result must all end before recoverAfter, or another
-	// program could fail the item of a send that is still running. The steps
-	// around the send are short: reading the message and writing the result each
-	// have at most storeTimeout. So the limit is recoverAfter less two minutes.
-	sendDeadline = 13 * time.Minute
+	// sendDeadline is SendDeadline. The code of this package uses this name.
+	sendDeadline = SendDeadline
 
 	// minSendBudget is the least time that must be left for a send, after the
 	// steps before it. With less, the item is released and nothing is sent. The

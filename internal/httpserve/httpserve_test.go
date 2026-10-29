@@ -888,3 +888,19 @@ func TestCheckLoopbackAddr(t *testing.T) {
 		require.Error(t, CheckLoopbackAddr(addr), addr)
 	}
 }
+
+// net/http writes some of its own errors to the ErrorLog of a server, and such a
+// text can hold a part of a request. ErrorLog turns every line into one log line
+// with a fixed code and drops the text.
+func TestErrorLogWritesOnlyAFixedCode(t *testing.T) {
+	logs := &syncBuffer{}
+	l := ErrorLog(slog.New(slog.NewTextHandler(logs, nil)), "test server error")
+
+	l.Printf("http: TLS handshake error from 127.0.0.1:5555: Bearer emcp_secret-token")
+
+	out := logs.String()
+	require.Contains(t, out, "test server error")
+	require.Contains(t, out, "code=http_server_error")
+	require.NotContains(t, out, "secret")
+	require.NotContains(t, out, "Bearer")
+}

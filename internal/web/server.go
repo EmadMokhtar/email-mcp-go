@@ -39,7 +39,6 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -53,6 +52,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/audit"
 	"github.com/EmadMokhtar/email-mcp-go/internal/discovery"
 	"github.com/EmadMokhtar/email-mcp-go/internal/errtype"
+	"github.com/EmadMokhtar/email-mcp-go/internal/httpserve"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
@@ -71,7 +71,6 @@ const (
 // Fixed codes for the log.
 const (
 	codeServeFailed  = "serve_failed"
-	codeServerError  = "http_server_error"
 	codeRenderFailed = "render_failed"
 )
 
@@ -196,7 +195,7 @@ func (s *Server) EnsureStarted(ctx context.Context) (string, error) {
 		MaxHeaderBytes:    64 << 10,
 		// net/http writes some of its own errors to this logger, and such a text
 		// can hold a part of a request. Each line becomes a fixed code.
-		ErrorLog: log.New(fixedCodeWriter{log: s.log}, "", 0),
+		ErrorLog: httpserve.ErrorLog(s.log, "web server error"),
 	}
 	go func() {
 		if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
@@ -229,17 +228,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("web: shut down: %w", err)
 	}
 	return nil
-}
-
-// fixedCodeWriter is the writer of the error log of the http.Server. It logs a
-// fixed code for each line and drops the text.
-type fixedCodeWriter struct {
-	log *slog.Logger
-}
-
-func (w fixedCodeWriter) Write(p []byte) (int, error) {
-	w.log.Warn("web server error", "code", codeServerError)
-	return len(p), nil
 }
 
 // view is the data of every page template.

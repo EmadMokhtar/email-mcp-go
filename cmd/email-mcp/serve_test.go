@@ -23,6 +23,7 @@ import (
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/app"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
+	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
@@ -317,7 +318,9 @@ func startHTTP(t *testing.T, dir, keyPath string) *httpServe {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &httpServe{app: a, base: "http://" + ln.Addr().String(), cancel: cancel, done: make(chan error, 1)}
 	h.url = h.base + mcpPath
-	go func() { h.done <- serveHTTP(ctx, a, ln, nil) }()
+	budget := newStopBudget(ctx)
+	t.Cleanup(budget.release)
+	go func() { h.done <- serveHTTP(ctx, a, ln, nil, budget) }()
 	t.Cleanup(cancel)
 	return h
 }
@@ -447,10 +450,32 @@ func TestHTTPServerHasLimits(t *testing.T) {
 	require.Positive(t, srv.ReadTimeout)
 	require.Positive(t, srv.IdleTimeout)
 	require.Positive(t, srv.MaxHeaderBytes)
-	// A send without an undo window runs inside the request for up to 13
-	// minutes, and its answer must still go out.
-	require.GreaterOrEqual(t, srv.WriteTimeout, 14*time.Minute)
+	// The write deadline starts when the request headers are read. Before the
+	// answer, the request may wait for a place, read its body, prepare the
+	// message (mail server calls) and send it without an undo window, for up to
+	// outbox.SendDeadline. A client that never gets the answer of a send that
+	// went out could send it again.
+	require.Equal(t, requestQueueWait+httpReadTimeout+outbox.SendDeadline+httpPrepareMargin, srv.WriteTimeout)
+	require.GreaterOrEqual(t, srv.WriteTimeout, 19*time.Minute)
 	require.NotNil(t, srv.ErrorLog)
+}
+
+// The whole stop of the command has one time budget. It starts with the stop,
+// and every later part of the stop gets the same deadline.
+func TestStopBudgetIsOneForTheWholeStop(t *testing.T) {
+	b := newStopBudget(context.Background())
+	defer b.release()
+	before := time.Now()
+
+	first := b.context()
+	time.Sleep(20 * time.Millisecond)
+	second := b.context()
+
+	deadline, ok := first.Deadline()
+	require.True(t, ok)
+	require.WithinDuration(t, before.Add(app.StopTimeout), deadline, time.Second)
+	again, _ := second.Deadline()
+	require.Equal(t, deadline, again, "a later part of the stop gets no new time")
 }
 
 // At most n requests run at once. Each one can hold its 15 MB body twice. A

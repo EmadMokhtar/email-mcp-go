@@ -287,6 +287,8 @@ func auditCode(err error) (audit.Outcome, string) {
 	refused := func(code string) (audit.Outcome, string) { return audit.OutcomeRefused, code }
 	failed := func(code string) (audit.Outcome, string) { return audit.OutcomeError, code }
 	switch {
+	case errors.Is(err, ErrStopping):
+		return refused("stopping")
 	case errors.As(err, &perm):
 		if perm.TokenLimited {
 			return refused("token_scope")
@@ -717,10 +719,19 @@ func (s *Service) endWaiting(ctx context.Context, t account.TenantID, id string)
 // When the backend moved some or all of the messages and then failed, the error
 // wraps mail.ErrPartial and tells the agent to search again. The messages count
 // toward the limit.
+//
+// While the program stops (see Stop), Trash returns ErrStopping before step 1
+// and changes nothing.
 func (s *Service) Trash(ctx context.Context, id account.AccountID, refs []mail.Ref, mode ConfirmMode, ans *ConfirmAnswer) (*TrashResult, *NeedsConfirmation, error) {
 	if err := s.confirmDeps(); err != nil {
 		return nil, nil, err
 	}
+	end, err := s.beginAction()
+	if err != nil {
+		s.recordRefusal(ctx, id, toolTrash, err)
+		return nil, nil, err
+	}
+	defer end()
 	acc, b, err := s.begin(ctx, id, policy.ActTrash, toolTrash)
 	if err != nil {
 		return nil, nil, err
@@ -853,6 +864,10 @@ func trashRefs(payload []byte) []mail.Ref {
 //
 // An approval that cannot be carried out (no such action, or it does not wait
 // any more) is in the audit log as "refused". A Trash approval needs no outbox.
+//
+// While the program stops (see Stop), it returns ErrStopping and changes
+// nothing: the action keeps waiting, and the user can approve it after the
+// restart.
 func (s *Service) ApprovePending(ctx context.Context, pendingID string) error {
 	if err := s.confirmDeps(); err != nil {
 		return err
@@ -861,6 +876,12 @@ func (s *Service) ApprovePending(ctx context.Context, pendingID string) error {
 	if err != nil {
 		return err
 	}
+	end, err := s.beginAction()
+	if err != nil {
+		s.recordPendingRefusal(ctx, p, nil, toolApprovePending, err)
+		return err
+	}
+	defer end()
 	pending, payload, err := s.d.Confirm.Get(ctx, p.Tenant, pendingID)
 	if err != nil {
 		s.recordPendingRefusal(ctx, p, nil, toolApprovePending, err)

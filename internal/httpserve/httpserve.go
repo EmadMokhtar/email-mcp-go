@@ -35,6 +35,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -362,6 +363,30 @@ func CheckLoopbackAddr(addr string) error {
 			"127.0.0.1, [::1] or localhost", addr)
 	}
 	return nil
+}
+
+// codeServerError is the log code of a line that net/http writes to the error
+// log of a server.
+const codeServerError = "http_server_error"
+
+// ErrorLog returns a logger for http.Server.ErrorLog. net/http writes some of its
+// own errors there (for example a broken TLS handshake or a bad request line),
+// and such a text can hold a part of a request. Each line becomes one log line
+// at Warn level with msg and the fixed code "http_server_error". The text is
+// dropped.
+func ErrorLog(l *slog.Logger, msg string) *log.Logger {
+	return log.New(fixedCodeWriter{log: l, msg: msg}, "", 0)
+}
+
+// fixedCodeWriter is the writer of ErrorLog.
+type fixedCodeWriter struct {
+	log *slog.Logger
+	msg string
+}
+
+func (w fixedCodeWriter) Write(p []byte) (int, error) {
+	w.log.Warn(w.msg, "code", codeServerError)
+	return len(p), nil
 }
 
 // isLoopback reports whether ip is an IPv4 address in 127.0.0.0/8, or ::1

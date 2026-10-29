@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/confirm"
 	"github.com/EmadMokhtar/email-mcp-go/internal/discovery"
 	"github.com/EmadMokhtar/email-mcp-go/internal/errtype"
+	"github.com/EmadMokhtar/email-mcp-go/internal/inflight"
 	"github.com/EmadMokhtar/email-mcp-go/internal/mcpserver"
 	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
@@ -64,9 +66,8 @@ const (
 	auditRetention = 90 * 24 * time.Hour
 	// staleApprovedGrace is how long after the end of its approval time an
 	// approved action with no result is expired. It is longer than a send can
-	// run (the outbox gives a send 13 minutes), so a program that still works on
-	// the action can finish it.
-	staleApprovedGrace = 15 * time.Minute
+	// run, so a program that still works on the action can finish it.
+	staleApprovedGrace = outbox.SendDeadline + 2*time.Minute
 	// backendIdle is how long a mail backend may go unused before the sweep
 	// closes it. It is much longer than any use case runs with a backend.
 	backendIdle = 30 * time.Minute
@@ -78,6 +79,16 @@ const (
 	// slowStopNotice is how long Close runs before it logs that it waits.
 	slowStopNotice = time.Second
 )
+
+// StopTimeout is the time budget of a whole stop of the program: give Close a
+// context with this deadline, started when the stop starts.
+//
+// Within it, Close waits for the sends that run (a send has at most
+// outbox.SendDeadline, 13 minutes, and the sends run at the same time), then
+// sends the queued messages that are due within 5 minutes, as long as such a
+// send can still end before the deadline. So a stop takes at most about 20
+// minutes, and usually a few seconds. A send that has started is never cut off.
+const StopTimeout = drainWait + outbox.SendDeadline + 2*time.Minute
 
 // errStopping is the answer to a tool call that comes while the App stops.
 var errStopping = errors.New("email-mcp is stopping and takes no new tool calls")
@@ -180,7 +191,7 @@ type App struct {
 	sweepEvery time.Duration
 
 	// calls counts the tool calls that run, so Close can wait for them.
-	calls callTracker
+	calls inflight.Tracker
 
 	// mu guards started, stopping and runCancel.
 	mu        sync.Mutex
@@ -189,6 +200,12 @@ type App struct {
 	runCancel context.CancelFunc
 	// running counts the goroutines that Run started.
 	running sync.WaitGroup
+
+	// stopOnce runs the work of BeginStop. The fields after it are set there.
+	stopOnce   sync.Once
+	callsIdle  <-chan struct{}
+	actingIdle <-chan struct{}
+	notice     *time.Timer
 
 	closeOnce sync.Once
 	closeErr  error
@@ -346,17 +363,17 @@ func (a *App) trackToolCalls(next mcp.MethodHandler) mcp.MethodHandler {
 		if method != "tools/call" {
 			return next(ctx, method, req)
 		}
-		if !a.calls.begin() {
+		if !a.calls.Begin() {
 			return nil, errStopping
 		}
-		defer a.calls.end()
+		defer a.calls.End()
 		return next(ctx, method, req)
 	}
 }
 
 // Run starts the background work of a long-running process. It does not wait
 // for that work. Close stops it. Run does nothing after the first call, or
-// after Close.
+// after BeginStop.
 //
 // Before anything else, and before Run returns, it cleans up after a program
 // that stopped in the middle of its work:
@@ -369,7 +386,8 @@ func (a *App) trackToolCalls(next mcp.MethodHandler) mcp.MethodHandler {
 //
 // Then it starts, in goroutines:
 //   - the outbox worker (Outbox.Run, every second);
-//   - the daily jobs, now and then once a day (see dailyJobs);
+//   - the daily jobs, now (with a passive checkpoint) and then once a day (see
+//     dailyJobs);
 //   - the sweep of the idle mail backends, every 5 minutes.
 //
 // The work stops when ctx ends, or when Close stops it.
@@ -407,8 +425,11 @@ func (a *App) Run(ctx context.Context) {
 	}()
 	go func() {
 		defer a.running.Done()
-		a.dailyJobs(runCtx)
-		repeat(runCtx, a.jobEvery, a.dailyJobs)
+		// At the start, a passive checkpoint: a TRUNCATE checkpoint would hold up
+		// the writes of the other programs that use the database, and every
+		// program runs this when it starts.
+		a.dailyJobs(runCtx, store.CheckpointPassive)
+		repeat(runCtx, a.jobEvery, func(ctx context.Context) { a.dailyJobs(ctx, store.CheckpointTruncate) })
 	}()
 	go func() {
 		defer a.running.Done()
@@ -434,11 +455,12 @@ func repeat(ctx context.Context, every time.Duration, job func(context.Context))
 //  1. expire the stale approved actions (see Run);
 //  2. delete the ended pending actions older than 30 days;
 //  3. delete the audit entries older than 90 days;
-//  4. cut the write-ahead log (secure_delete does not clear old frames of the
-//     log, so deleted data could stay there).
+//  4. checkpoint the write-ahead log in the given mode. The daily run uses
+//     store.CheckpointTruncate, which cuts the log: secure_delete does not
+//     clear old frames of the log, so deleted data could stay there.
 //
 // A failed step is logged and the next steps still run.
-func (a *App) dailyJobs(ctx context.Context) {
+func (a *App) dailyJobs(ctx context.Context, checkpoint store.CheckpointMode) {
 	a.expireStaleApproved(ctx)
 	pending, err := a.confirm.Prune(ctx, pendingRetention)
 	if err != nil {
@@ -448,12 +470,13 @@ func (a *App) dailyJobs(ctx context.Context) {
 	if err != nil {
 		a.logJobError(ctx, "prune_audit", err)
 	}
-	complete, err := a.store.CheckpointWAL(ctx)
+	complete, err := a.store.CheckpointWAL(ctx, checkpoint)
 	if err != nil {
 		a.logJobError(ctx, "checkpoint", err)
 	}
 	if ctx.Err() == nil {
-		a.log.Info("app: daily jobs done", "pending_deleted", pending, "audit_deleted", entries, "log_cut", complete)
+		a.log.Info("app: daily jobs done", "pending_deleted", pending, "audit_deleted", entries,
+			"checkpoint", strings.ToLower(string(checkpoint)), "checkpoint_complete", complete)
 	}
 }
 
@@ -484,24 +507,50 @@ func (a *App) logJobError(ctx context.Context, job string, err error) {
 	a.log.Error("app: a background job failed", "job", job, "error_types", errtype.Chain(err))
 }
 
+// BeginStop starts the stop of the App and returns at once. From now on:
+//   - the service refuses new sends, Trash moves and approvals
+//     (service.ErrStopping); an action that waits for approval keeps waiting,
+//     and undo (cancel_send) still works;
+//   - new tool calls of the servers of MCPServer are refused;
+//   - Run does nothing;
+//   - if the stop takes longer than a second, one log line says so.
+//
+// Close calls it first. A command calls it earlier when it learns that it must
+// stop (a signal), so that nothing new starts while it waits for its own server
+// to stop. A second call does nothing.
+func (a *App) BeginStop() {
+	a.stopOnce.Do(func() {
+		a.mu.Lock()
+		a.stopping = true
+		a.mu.Unlock()
+		a.actingIdle = a.Service.Stop()
+		a.callsIdle = a.calls.Stop()
+		a.notice = time.AfterFunc(slowStopNotice, func() {
+			a.log.Warn("app: stopping. Waiting for sends in progress, and sending the queued messages that are due " +
+				"within 5 minutes. This takes at most about 20 minutes")
+		})
+	})
+}
+
 // Close stops the App, in this order:
-//  1. It stops the background work of Run and waits for it. The outbox worker
+//  1. BeginStop: no new send, Trash move, approval or tool call starts.
+//  2. It stops the background work of Run and waits for it. The outbox worker
 //     finishes the send that it runs and writes its result.
-//  2. It refuses new tool calls and waits for the ones that run. A send without
-//     an undo window runs inside its tool call.
-//  3. Outbox.Drain(ctx, 5 minutes): it sends the queued messages that are due,
-//     or that become due within 5 minutes. The others stay queued for the next
-//     start.
-//  4. It shuts down the web server.
-//  5. It closes the mail backends and the store.
+//  3. It waits for the tool calls and the service actions that run (a send
+//     without an undo window runs inside its tool call or its web approval).
+//  4. Outbox.Drain for 5 minutes: it sends the queued messages that are due, or
+//     that become due within 5 minutes. The web server is still up, so the user
+//     can still undo a queued send. When ctx has a deadline, the drain starts no
+//     send later than outbox.SendDeadline before it, so every send it starts
+//     ends in time. When that time is over, the messages that are left stay
+//     queued for the next start: the stop is still clean, and Close logs it.
+//  5. It shuts down the web server.
+//  6. It closes the mail backends and the store.
 //
-// Steps 1 and 2 do not stop at the end of ctx: a send that has started must
-// finish and record its result, or it would end as "delivery unknown". A send
-// has at most 13 minutes, so a stop can take up to about 15 minutes. When the
-// stop takes longer than a second, Close logs one line that says so.
-//
-// ctx limits steps 3 and 4. A second call does nothing and returns the result of
-// the first.
+// Steps 2 and 3 do not stop at the end of ctx: a send that has started must
+// finish and record its result, or it would end as "delivery unknown". Give ctx
+// the deadline StopTimeout from the start of the stop. A second call does
+// nothing and returns the result of the first.
 func (a *App) Close(ctx context.Context) error {
 	a.closeOnce.Do(func() { a.closeErr = a.close(ctx) })
 	return a.closeErr
@@ -509,25 +558,22 @@ func (a *App) Close(ctx context.Context) error {
 
 // close is the work of Close.
 func (a *App) close(ctx context.Context) error {
-	notice := time.AfterFunc(slowStopNotice, func() {
-		a.log.Warn("app: stopping; waiting for sends in progress and for queued messages that are due " +
-			"within 5 minutes. This can take up to 15 minutes")
-	})
-	defer notice.Stop()
+	a.BeginStop()
+	defer a.notice.Stop()
 
 	a.mu.Lock()
-	a.stopping = true
 	cancel := a.runCancel
 	a.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
 	a.running.Wait()
-	<-a.calls.stop()
+	<-a.callsIdle
+	<-a.actingIdle
 
 	var errs []error
-	if err := a.Outbox.Drain(ctx, drainWait); err != nil {
-		errs = append(errs, fmt.Errorf("app: drain the outbox: %w", err))
+	if err := a.drain(ctx); err != nil {
+		errs = append(errs, err)
 	}
 	if err := a.Web.Shutdown(ctx); err != nil {
 		errs = append(errs, err)
@@ -539,48 +585,30 @@ func (a *App) close(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// callTracker counts the tool calls that run. After stop it refuses new ones.
-type callTracker struct {
-	mu      sync.Mutex
-	n       int
-	stopped bool
-	// idle is closed when the count reaches zero after stop.
-	idle chan struct{}
-}
-
-// begin counts a new call. It returns false after stop.
-func (t *callTracker) begin() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.stopped {
-		return false
-	}
-	t.n++
-	return true
-}
-
-// end ends a call that begin counted.
-func (t *callTracker) end() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.n--
-	if t.stopped && t.n == 0 && t.idle != nil {
-		close(t.idle)
-		t.idle = nil
+// drain is step 4 of Close. The end of its time is a clean stop: it is logged,
+// and it is no error.
+func (a *App) drain(ctx context.Context) error {
+	dctx, cancel := drainContext(ctx)
+	defer cancel()
+	err := a.Outbox.Drain(dctx, drainWait)
+	switch {
+	case err == nil:
+		return nil
+	case dctx.Err() != nil && errors.Is(err, dctx.Err()):
+		a.log.Warn("app: the time to stop is over. Queued messages that are not sent yet stay queued, "+
+			"and go out at the next start", "code", "drain_stopped")
+		return nil
+	default:
+		return fmt.Errorf("app: drain the outbox: %w", err)
 	}
 }
 
-// stop refuses new calls and returns a channel that is closed when no call runs.
-// It is called once.
-func (t *callTracker) stop() <-chan struct{} {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.stopped = true
-	ch := make(chan struct{})
-	if t.n == 0 {
-		close(ch)
-	} else {
-		t.idle = ch
+// drainContext returns the context of the drain. When ctx has a deadline, the
+// drain stops starting sends outbox.SendDeadline before it: a send that has
+// started runs up to that long, and must end before the deadline.
+func drainContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if deadline, ok := ctx.Deadline(); ok {
+		return context.WithDeadline(ctx, deadline.Add(-outbox.SendDeadline))
 	}
-	return ch
+	return context.WithCancel(ctx)
 }

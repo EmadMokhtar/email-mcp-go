@@ -68,6 +68,7 @@ const (
 	codeBadToken        = "bad_token"
 	codeTimeout         = "timeout"
 	codeCanceled        = "canceled"
+	codeStopping        = "stopping"
 	// The codes of the write tools.
 	codeConfirmation        = "confirmation"
 	codeConfirmationExpired = "confirmation_expired"
@@ -139,6 +140,9 @@ func toolError(tool string, err error) *toolFailure {
 		return reauthFailure("")
 	case errors.Is(err, service.ErrNoPrincipal):
 		return errNotAuthorized
+	case errors.Is(err, service.ErrStopping):
+		return failure(codeStopping, "email-mcp is stopping, so nothing was sent or changed, and an action that waits "+
+			"for approval still waits. The user must start email-mcp again. "+noRetryUntilUser)
 	case errors.Is(err, service.ErrAccountNotFound):
 		return failure(codeAccountNotFound,
 			"There is no such account. Call list_accounts and use one of its account ids. "+noRepeat)

@@ -26,6 +26,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/confirm"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
+	"github.com/EmadMokhtar/email-mcp-go/internal/inflight"
 	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
@@ -45,6 +46,12 @@ var (
 	// example because the mail server refused the stored password). The service
 	// does not call the mail server for such an account.
 	ErrNeedsReauth = errors.New("service: the account needs to be reconnected")
+
+	// ErrStopping means that the program is stopping, so the service starts no
+	// use case that sends mail or moves it to Trash. Nothing was done: an action
+	// that waits for approval still waits. See Stop.
+	ErrStopping = errors.New("service: the server is stopping, so nothing was sent or changed. " +
+		"Approve or send again after it restarts")
 )
 
 // ReauthError is the error for an account that must be reconnected. It matches
@@ -134,6 +141,9 @@ type Deps struct {
 // Service runs the use cases. It is safe for use by many goroutines.
 type Service struct {
 	d Deps
+	// acting counts the use cases that run and may send mail or move it to
+	// Trash: Send, Trash and ApprovePending. Stop refuses new ones.
+	acting inflight.Tracker
 	// capabilitiesBudget is how long ListAccounts waits for the answers of the
 	// backends. A test lowers it.
 	capabilitiesBudget time.Duration
@@ -158,6 +168,32 @@ func New(d Deps) *Service {
 		d.Logger = slog.New(slog.DiscardHandler)
 	}
 	return &Service{d: d, capabilitiesBudget: capabilitiesBudget}
+}
+
+// Stop makes the service refuse the use cases that send mail or move it to
+// Trash: Send, Trash and ApprovePending return ErrStopping, and change nothing.
+// An action that waits for approval keeps waiting. The program calls Stop when
+// it starts to stop, because the store and the mail backends close soon: an
+// approval would send the message inside its web request, and nothing would
+// wait for that send.
+//
+// Reads, CancelSend, SendStatus and RejectPending keep working, so the user can
+// still undo a queued send while the program sends its last queued messages.
+//
+// Stop does not wait. It returns a channel that is closed when the use cases of
+// that kind that run now have ended (a send without an undo window can take some
+// minutes). A second call returns the same channel.
+func (s *Service) Stop() <-chan struct{} {
+	return s.acting.Stop()
+}
+
+// beginAction counts a use case that may send mail or move it to Trash. It
+// returns ErrStopping after Stop. The caller calls end when the use case ends.
+func (s *Service) beginAction() (end func(), err error) {
+	if !s.acting.Begin() {
+		return nil, ErrStopping
+	}
+	return s.acting.End, nil
 }
 
 // AccountView is what a caller may see of an account. It holds no secret and no

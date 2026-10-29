@@ -11,11 +11,13 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+	"github.com/zalando/go-keyring"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/audit"
 	"github.com/EmadMokhtar/email-mcp-go/internal/confirm"
@@ -60,21 +62,41 @@ type fakeBackend struct {
 	discardErr error
 	sent       []*mail.RawMessage
 	discarded  []mail.Ref
-	// started gets a value when Send starts, and Send then waits for release,
-	// when the test set them.
-	started chan struct{}
-	release chan struct{}
+	sendCalls  int
+	// onSend runs at the start of each send, with the number of the send
+	// (1 for the first). A test uses it to hold a send or to look around.
+	onSend func(n int)
 }
 
 func (b *fakeBackend) Send(_ context.Context, msg *mail.RawMessage) error {
-	if b.started != nil {
-		b.started <- struct{}{}
-		<-b.release
+	b.mu.Lock()
+	b.sendCalls++
+	n, hook := b.sendCalls, b.onSend
+	b.mu.Unlock()
+	if hook != nil {
+		hook(n)
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.sent = append(b.sent, msg)
 	return b.sendErr
+}
+
+// holdFirstSend makes the first send wait until the returned release is
+// called. started is closed when the first send has started.
+func (b *fakeBackend) holdFirstSend() (started <-chan struct{}, release func()) {
+	start := make(chan struct{})
+	free := make(chan struct{})
+	b.mu.Lock()
+	b.onSend = func(n int) {
+		if n == 1 {
+			close(start)
+			<-free
+		}
+	}
+	b.mu.Unlock()
+	var once sync.Once
+	return start, func() { once.Do(func() { close(free) }) }
 }
 
 func (b *fakeBackend) DiscardDraft(_ context.Context, ref mail.Ref) error {
@@ -290,12 +312,89 @@ func TestConfigDefaults(t *testing.T) {
 }
 
 func TestOpenRefusesAnUnknownKEKSource(t *testing.T) {
-	for _, source := range []string{"vault", "file:", "keychain:x", "FILE:/a"} {
+	for _, source := range []string{"vault", "file:", "keychain:x", "FILE:/a", "file:relative/master.key"} {
 		t.Run(source, func(t *testing.T) {
 			_, err := Open(context.Background(), Config{DataDir: t.TempDir(), KEKSource: source, LogOutput: &syncBuffer{}})
 			require.Error(t, err)
 		})
 	}
+}
+
+// A relative key file path would depend on the directory that the MCP client
+// starts the server in, so it is refused before anything is made.
+func TestOpenRefusesARelativeKeyFilePath(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+
+	_, err := Open(context.Background(), Config{DataDir: t.TempDir(), KEKSource: "file:master.key", LogOutput: &syncBuffer{}})
+
+	require.ErrorContains(t, err, "absolute")
+	_, statErr := os.Stat(filepath.Join(cwd, "master.key"))
+	require.ErrorIs(t, statErr, os.ErrNotExist, "no key file is made")
+}
+
+// setUserDirs points the user directories of the platform (os.UserConfigDir)
+// at home.
+func setUserDirs(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("AppData", home)
+}
+
+// The keychain entry belongs to the user, not to a data directory. So the
+// first-run lock of the keychain is in a directory of the user, and two data
+// directories cannot each make a keychain key. A key file stays with its data
+// directory.
+func TestKeychainLockIsPerUser(t *testing.T) {
+	setUserDirs(t, t.TempDir())
+	base, err := os.UserConfigDir()
+	require.NoError(t, err)
+	dataDir := t.TempDir()
+
+	dir, err := kekLockDir(kekKeychain, dataDir)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(base, "email-mcp"), dir)
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(dir)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+	}
+
+	dir, err = kekLockDir("file:/keys/master.key", dataDir)
+	require.NoError(t, err)
+	require.Equal(t, dataDir, dir)
+}
+
+// Open with the keychain waits for the lock of the user, also when its data
+// directory is new and has no lock of its own. The keychain is the in-memory
+// mock of go-keyring, so the test never touches the real keychain.
+func TestOpenWithTheKeychainWaitsForTheLockOfTheUser(t *testing.T) {
+	keyring.MockInit()
+	setUserDirs(t, t.TempDir())
+	base, err := os.UserConfigDir()
+	require.NoError(t, err)
+	userDir := filepath.Join(base, "email-mcp")
+	require.NoError(t, os.MkdirAll(userDir, 0o700))
+	unlock, err := lockDir(context.Background(), userDir)
+	require.NoError(t, err)
+
+	done := make(chan error, 1)
+	var a *App
+	go func() {
+		var err error
+		a, err = Open(context.Background(), Config{DataDir: t.TempDir(), KEKSource: kekKeychain, LogOutput: &syncBuffer{}})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("Open finished while another program held the keychain lock of the user: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	unlock()
+	require.NoError(t, <-done)
+	require.NoError(t, a.Close(context.Background()))
 }
 
 // Two programs that start at the same time on a new data directory must end
@@ -341,7 +440,7 @@ func TestConcurrentOpensCreateOneKey(t *testing.T) {
 func TestOpenWaitsForTheKeyLock(t *testing.T) {
 	dir := t.TempDir()
 	keyPath := filepath.Join(t.TempDir(), "master.key")
-	unlock, err := lockDataDir(context.Background(), dir)
+	unlock, err := lockDir(context.Background(), dir)
 	require.NoError(t, err)
 
 	done := make(chan error, 1)
@@ -572,6 +671,24 @@ func TestDailyJobsPruneAndCheckpoint(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "list_accounts", entries[0].Tool, "a recent entry stays")
 	require.Contains(t, ta.logs.String(), "daily jobs done")
+	require.Contains(t, ta.logs.String(), "checkpoint=truncate")
+}
+
+// At start-up the jobs use a passive checkpoint: a TRUNCATE checkpoint waits for
+// the other programs that use the database, and holds up their writes, for up
+// to the busy timeout. Every program runs the jobs when it starts.
+func TestRunStartUsesAPassiveCheckpoint(t *testing.T) {
+	ta := openTest(t)
+	ta.addAccount(t) // a write, so the log is not empty
+
+	ta.Run(context.Background())
+
+	require.Eventually(t, func() bool { return strings.Contains(ta.logs.String(), "daily jobs done") },
+		5*time.Second, 5*time.Millisecond)
+	require.Contains(t, ta.logs.String(), "checkpoint=passive")
+	info, err := os.Stat(filepath.Join(ta.dir, "email-mcp.db-wal"))
+	require.NoError(t, err)
+	require.Positive(t, info.Size(), "the log file is not cut at start-up")
 }
 
 // The backend cache is swept now and then, so the backend of an account that
@@ -611,14 +728,14 @@ func TestCloseDrainsOutbox(t *testing.T) {
 func TestCloseWaitsForTheSendOfTheWorker(t *testing.T) {
 	ta := openTest(t)
 	acct := ta.addAccount(t)
-	ta.factory.backend.started = make(chan struct{}, 1)
-	ta.factory.backend.release = make(chan struct{})
+	started, release := ta.factory.backend.holdFirstSend()
+	defer release()
 
 	item, err := ta.Outbox.Enqueue(context.Background(), store.LocalTenantID, acct.ID, testMessage(), time.Millisecond, "")
 	require.NoError(t, err)
 	time.Sleep(10 * time.Millisecond) // the item is due, so the first pass of the worker takes it
 	ta.Run(context.Background())
-	<-ta.factory.backend.started
+	<-started
 
 	closed := make(chan error, 1)
 	go func() { closed <- ta.Close(context.Background()) }()
@@ -627,8 +744,15 @@ func TestCloseWaitsForTheSendOfTheWorker(t *testing.T) {
 		t.Fatalf("Close returned while a send was running: %v", err)
 	case <-time.After(300 * time.Millisecond):
 	}
+	// Close waits for the worker, and already takes no new tool call.
+	call := ta.trackToolCalls(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		t.Error("a tool call ran while the App stopped")
+		return nil, nil
+	})
+	_, err = call(context.Background(), "tools/call", nil)
+	require.ErrorIs(t, err, errStopping)
 
-	close(ta.factory.backend.release)
+	release()
 	require.NoError(t, <-closed)
 	status, _ := outboxStatus(t, ta.dir, item.ID)
 	require.Equal(t, "sent", status, "the result of the running send is written before the store closes")
@@ -699,4 +823,113 @@ func TestCloseTwice(t *testing.T) {
 
 	// Run after Close does nothing.
 	ta.Run(context.Background())
+}
+
+// A send that waits for approval cannot be approved while the App stops: the
+// approval would send the message inside the web request, and the store and the
+// backends close soon. The action keeps waiting, and the queued message whose
+// undo window ends in the drain window is still sent.
+func TestCloseRefusesNewApprovalsWhileItDrains(t *testing.T) {
+	ta := openTest(t)
+	acct := ta.addAccount(t) // a new account confirms sends
+	ctx := localCtx()
+	c := mail.Compose{To: []string{"bob@example.com"}, Subject: "Plans", Body: "See you at noon."}
+	waiting, _, err := ta.Service.Send(ctx, acct.ID, &c, nil, service.ConfirmFallback, nil)
+	require.NoError(t, err)
+	require.Equal(t, "pending_approval", waiting.Status)
+	queued, err := ta.Outbox.Enqueue(ctx, store.LocalTenantID, acct.ID, testMessage(), 200*time.Millisecond, "")
+	require.NoError(t, err)
+	inDrain, release := ta.factory.backend.holdFirstSend()
+	defer release()
+
+	closed := make(chan error, 1)
+	go func() { closed <- ta.Close(context.Background()) }()
+	<-inDrain // Close is in its drain and sends the queued message now
+
+	err = ta.Service.ApprovePending(ctx, waiting.SendID)
+
+	require.ErrorIs(t, err, service.ErrStopping)
+	p, _, err := ta.confirm.Get(ctx, store.LocalTenantID, waiting.SendID)
+	require.NoError(t, err)
+	require.Equal(t, confirm.StatePending, p.State, "the action still waits")
+	release()
+	require.NoError(t, <-closed)
+	require.Equal(t, 1, ta.factory.backend.sentCount(), "only the queued message was sent")
+	status, _ := outboxStatus(t, ta.dir, queued.ID)
+	require.Equal(t, "sent", status)
+}
+
+// Close waits for a tool call that runs (step 2), then drains the outbox (step
+// 3), which sends what that call queued, and only then shuts down the web
+// server (step 4), which stays up during the drain so the user can still undo.
+func TestCloseSendsWhatARunningToolCallQueued(t *testing.T) {
+	ta := openTest(t)
+	acct := ta.addAccount(t)
+	base, err := ta.Web.EnsureStarted(context.Background())
+	require.NoError(t, err)
+	addr := strings.TrimPrefix(base, "http://")
+	var webUpWhileSending atomic.Bool
+	ta.factory.backend.onSend = func(int) {
+		if conn, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
+			_ = conn.Close()
+			webUpWhileSending.Store(true)
+		}
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var queuedID string
+	call := ta.trackToolCalls(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		close(started)
+		<-release
+		item, err := ta.Outbox.Enqueue(context.Background(), store.LocalTenantID, acct.ID, testMessage(), 200*time.Millisecond, "")
+		if err != nil {
+			return nil, err
+		}
+		queuedID = item.ID
+		return &mcp.CallToolResult{}, nil
+	})
+	callDone := make(chan error, 1)
+	go func() {
+		_, err := call(context.Background(), "tools/call", nil)
+		callDone <- err
+	}()
+	<-started
+
+	closed := make(chan error, 1)
+	go func() { closed <- ta.Close(context.Background()) }()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned while a tool call was running: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+
+	require.NoError(t, <-callDone)
+	require.NoError(t, <-closed)
+	require.Equal(t, 1, ta.factory.backend.sentCount(), "the drain sent what the tool call queued")
+	status, _ := outboxStatus(t, ta.dir, queuedID)
+	require.Equal(t, "sent", status)
+	require.True(t, webUpWhileSending.Load(), "the web server was still up during the drain")
+	_, err = ta.Web.EnsureStarted(context.Background())
+	require.ErrorIs(t, err, web.ErrClosed, "and it is shut down after the drain")
+}
+
+// The stop has one time budget, the deadline of the context of Close. The drain
+// starts no send that could not end before it (a send may take
+// outbox.SendDeadline). When the time is over, the queued messages stay queued
+// for the next start, and that is a clean stop, not an error.
+func TestCloseTreatsTheEndOfTheStopTimeAsACleanStop(t *testing.T) {
+	ta := openTest(t)
+	acct := ta.addAccount(t)
+	item, err := ta.Outbox.Enqueue(context.Background(), store.LocalTenantID, acct.ID, testMessage(), 2*time.Second, "")
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), outbox.SendDeadline+300*time.Millisecond)
+	defer cancel()
+
+	require.NoError(t, ta.Close(ctx))
+
+	require.Zero(t, ta.factory.backend.sentCount())
+	status, _ := outboxStatus(t, ta.dir, item.ID)
+	require.Equal(t, "queued", status, "the message is sent at the next start")
+	require.Contains(t, ta.logs.String(), "drain_stopped")
 }

@@ -137,23 +137,44 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// CheckpointWAL copies the write-ahead log into the database file and cuts the
-// log file to zero bytes (PRAGMA wal_checkpoint(TRUNCATE)).
+// CheckpointMode is the mode of CheckpointWAL.
+type CheckpointMode string
+
+// The modes of CheckpointWAL.
+const (
+	// CheckpointPassive copies as much of the log as it can into the database
+	// file without waiting for other connections, and does not cut the log
+	// file. It never holds up another program.
+	CheckpointPassive CheckpointMode = "PASSIVE"
+	// CheckpointTruncate waits (up to the busy timeout) until no other
+	// connection reads or writes, copies the whole log, and cuts the log file to
+	// zero bytes. Other programs cannot write while it runs.
+	CheckpointTruncate CheckpointMode = "TRUNCATE"
+)
+
+// CheckpointWAL copies the write-ahead log into the database file (PRAGMA
+// wal_checkpoint) in the given mode. See CheckpointMode.
 //
 // secure_delete overwrites deleted content in the database file, but not in old
 // frames of the log. A deleted message body can stay in the log until the log
-// is cut. Run this after a large delete, such as a prune.
+// is cut with CheckpointTruncate. Run that after a large delete, such as a
+// prune.
 //
-// The checkpoint waits for the busy timeout when another connection (also of
-// another program) reads or writes. If it still cannot finish, complete is false
-// and err is nil: the next run tries again.
-func (s *Store) CheckpointWAL(ctx context.Context) (complete bool, err error) {
+// complete is true when every frame of the log was copied (and, for
+// CheckpointTruncate, the log was cut). It is false, with a nil error, when
+// another connection (also of another program) was in the way: the next run
+// tries again.
+func (s *Store) CheckpointWAL(ctx context.Context, mode CheckpointMode) (complete bool, err error) {
+	if mode != CheckpointPassive && mode != CheckpointTruncate {
+		return false, fmt.Errorf("store: unknown checkpoint mode %q", mode)
+	}
 	var busy, logFrames, checkpointed int
-	err = s.db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logFrames, &checkpointed)
+	// The mode is one of the two fixed words above, never input.
+	err = s.db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(`+string(mode)+`)`).Scan(&busy, &logFrames, &checkpointed)
 	if err != nil {
 		return false, fmt.Errorf("store: checkpoint the write-ahead log: %w", err)
 	}
-	return busy == 0, nil
+	return busy == 0 && checkpointed == logFrames, nil
 }
 
 // ensureDir creates dir with mode 0700 if it does not exist. It leaves an

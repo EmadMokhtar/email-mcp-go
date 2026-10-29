@@ -59,9 +59,19 @@ type fakeSender struct {
 	mu    sync.Mutex
 	calls []sentCall
 	err   error
+	// started gets a value when a send starts, and the send then waits until
+	// release is closed, when a test set them.
+	started chan struct{}
+	release chan struct{}
 }
 
 func (s *fakeSender) Send(_ context.Context, _ account.TenantID, acct account.AccountID, msg *mail.RawMessage, draft mail.Ref) error {
+	// A test that sets release holds the send until it closes the channel. It
+	// sets both fields before the first send.
+	if s.release != nil {
+		s.started <- struct{}{}
+		<-s.release
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, sentCall{Account: acct, Msg: msg, Draft: draft})
