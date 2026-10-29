@@ -33,8 +33,6 @@ const (
 	maxHostBytes = 253
 	// maxLabelBytes is the longest part of a host name between two dots.
 	maxLabelBytes = 63
-	// pinHexLen is the length of a pin: a SHA-256 in hex.
-	pinHexLen = 64
 )
 
 // The errors of CreateIMAPAccount. Callers check them with errors.Is. Their
@@ -303,19 +301,7 @@ func validHost(host string) bool {
 	return true
 }
 
-// validPin reports whether pin is empty (no pin) or 64 lower-case hex digits.
+// validPin reports whether pin is empty (no pin) or a fingerprint.
 func validPin(pin string) bool {
-	if pin == "" {
-		return true
-	}
-	if len(pin) != pinHexLen {
-		return false
-	}
-	for i := 0; i < len(pin); i++ {
-		c := pin[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
+	return pin == "" || account.IsFingerprint(pin)
 }

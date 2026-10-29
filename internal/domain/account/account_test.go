@@ -375,3 +375,31 @@ func TestNewAccountIDUnique(t *testing.T) {
 	}
 	require.Len(t, seen, 1000)
 }
+
+func TestIsLoopbackHost(t *testing.T) {
+	for host, want := range map[string]bool{
+		"localhost":        true,
+		"127.0.0.1":        true,
+		"127.1.2.3":        true,
+		"::1":              true,
+		"LOCALHOST":        false, // the caller cleans the host first
+		"localhost.":       false,
+		"imap.localhost":   false,
+		"[::1]":            false,
+		"10.0.0.1":         false,
+		"imap.example.com": false,
+		"":                 false,
+	} {
+		require.Equal(t, want, IsLoopbackHost(host), host)
+	}
+}
+
+func TestIsFingerprint(t *testing.T) {
+	good := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	require.True(t, IsFingerprint(good))
+	for _, bad := range []string{
+		"", "abc", good[:63], good + "0", "0123456789ABCDEF" + good[16:], " " + good[1:], "g" + good[1:],
+	} {
+		require.False(t, IsFingerprint(bad), bad)
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/html"
@@ -26,6 +27,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
 	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
+	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/imaptest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/smtptest"
 )
@@ -36,18 +38,24 @@ const marker = "Pw-marker-9f3k-NEVER-SHOWN"
 
 // The fixed texts that the connect pages show.
 const (
-	textTestFailed    = "The connection test failed. Check the user name, the password and the server settings. Some providers need an app password."
-	textAuthFailed    = "The server refused the user name or the password. Some providers need an app password, or IMAP access turned on in their settings."
-	textCannotConnect = "Could not connect to the server. Check the host names and the ports."
-	textHostNotFound  = "A server name was not found. Check the host names."
-	textTLSFailed     = "A secure connection could not be made. Check the ports and the security settings."
-	textExists        = "An account with this address is already connected."
-	textUnderstand    = "To trust the certificate of a server that is not on this computer, also tick “I understand the risk”."
-	textBadTrust      = "The certificate to trust is not valid. Test the connection again without trusting a certificate."
-	textWrongHost     = "The certificate is not for this host name. Check the host name. This certificate cannot be trusted here."
-	textExpired       = "The certificate has expired or is not valid yet. This certificate cannot be trusted here."
-	textPinChanged    = "The certificate is not the one you chose to trust. Someone on the network may have changed it. This certificate cannot be trusted here."
-	textCertificate   = "A server showed a certificate that this computer does not trust. Nothing was saved."
+	textTestFailed      = "The connection test failed. Check the user name, the password and the server settings. Some providers need an app password."
+	textAuthFailed      = "The server refused the user name or the password. Some providers need an app password, or IMAP access turned on in their settings."
+	textCannotConnect   = "Could not connect to the server. Check the host names and the ports."
+	textHostNotFound    = "A server name was not found. Check the host names."
+	textTLSFailed       = "A secure connection could not be made. Check the ports and the security settings."
+	textExists          = "An account with this address is already connected."
+	textAddress         = "This email address is not valid."
+	textNoPassword      = "Type the password."
+	textSettings        = "The server settings are not valid."
+	textUnderstand      = "To trust the certificate of a server that is not on this computer, also tick “I understand the risk”."
+	textBadTrust        = "The choice to trust a certificate is not valid: the server settings changed after the offer, or the offer is older than 10 minutes. Test the connection again to see the certificate."
+	textPlainUnderstand = "You chose a connection without encryption. To use it, also tick “I understand that this connection is not encrypted”."
+	textPlainWarning    = "Without encryption, your password and your messages travel as plain text."
+	textWrongHost       = "The certificate is not for this host name. Check the host name. This certificate cannot be trusted here."
+	textExpired         = "The certificate has expired or is not valid yet. This certificate cannot be trusted here."
+	textPinChanged      = "The certificate is not the one you chose to trust. Someone on the network may have changed it. This certificate cannot be trusted here."
+	textCertificate     = "A server showed a certificate that this computer does not trust. Nothing was saved."
+	textNothingFound    = "No server settings were found for this address."
 )
 
 // fakeProbe is the Probe of the service in these tests. It records each config,
@@ -92,6 +100,21 @@ func probeOK(context.Context, imapsmtp.Config) (*imapsmtp.ProbeResult, error) {
 	return &imapsmtp.ProbeResult{IMAPOK: true, SMTPOK: true}, nil
 }
 
+// unknownIMAPCert is a probe that shows an IMAP certificate with this
+// fingerprint that no known authority signed, until the IMAP certificate is
+// pinned to it.
+func unknownIMAPCert(fingerprint string) func(context.Context, imapsmtp.Config) (*imapsmtp.ProbeResult, error) {
+	return func(_ context.Context, cfg imapsmtp.Config) (*imapsmtp.ProbeResult, error) {
+		if cfg.Server.PinnedIMAPCert == fingerprint {
+			return &imapsmtp.ProbeResult{IMAPOK: true, SMTPOK: true}, nil
+		}
+		return &imapsmtp.ProbeResult{SMTPOK: true, IMAPCert: &imapsmtp.CertificateUnknownError{
+			Protocol: "imap", Host: cfg.Server.IMAPHost, FingerprintSHA256: fingerprint,
+			Reason: x509.UnknownAuthorityError{},
+		}}, nil
+	}
+}
+
 // fakeDNS answers the lookups of discovery for example.org: SRV records for
 // imap.example.org and smtp.example.org, and an MX record at a filter
 // provider.
@@ -131,9 +154,11 @@ type connectFixture struct {
 	base    string
 	browser *http.Client
 	csrf    string
-	vault   *secrets.Vault
-	audit   *audit.Log
-	probe   *fakeProbe
+	// sessionHash is the SHA-256 of the session id of the browser.
+	sessionHash []byte
+	vault       *secrets.Vault
+	audit       *audit.Log
+	probe       *fakeProbe
 }
 
 func newConnectFixture(t *testing.T) *connectFixture {
@@ -175,8 +200,11 @@ func newConnectFixture(t *testing.T) *connectFixture {
 	base, err := s.EnsureStarted(context.Background())
 	require.NoError(t, err)
 	browser := newBrowser(t)
-	f.signIn(s, browser)
-	c := &connectFixture{fixture: f, s: s, base: base, browser: browser, vault: vault, audit: log, probe: p}
+	cookie := f.signIn(s, browser)
+	c := &connectFixture{
+		fixture: f, s: s, base: base, browser: browser, sessionHash: hashOf(cookie),
+		vault: vault, audit: log, probe: p,
+	}
 	resp, body := do(t, browser, newRequest(t, http.MethodGet, base+"/connect", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	m := csrfPattern.FindStringSubmatch(body)
@@ -196,6 +224,22 @@ func (c *connectFixture) post(path string, form url.Values) (*http.Response, str
 	return do(c.t, c.browser, sameOrigin(newRequest(c.t, http.MethodPost, c.base+path, values), c.base))
 }
 
+// sealOffer makes an offer token as the server makes it, for the session of the
+// browser. It stands for an offer of an earlier page.
+func (c *connectFixture) sealOffer(protocol, host string, port int, fingerprint string) string {
+	c.t.Helper()
+	return sealOfferWith(c.t, c.signer, c.sessionHash, protocol, host, port, fingerprint)
+}
+
+func sealOfferWith(t *testing.T, signer *signing.Signer, session []byte, protocol, host string, port int, fingerprint string) string {
+	t.Helper()
+	token, err := signer.Seal(purposeCertOffer, certOffer{
+		Session: session, Protocol: protocol, Host: host, Port: port, Fingerprint: fingerprint,
+	}, certOfferTTL)
+	require.NoError(t, err)
+	return token
+}
+
 // accounts returns the accounts of the local tenant.
 func (c *connectFixture) accounts() []*account.Account {
 	c.t.Helper()
@@ -206,8 +250,8 @@ func (c *connectFixture) accounts() []*account.Account {
 	return list
 }
 
-// requireNoLeak checks that the password is not in the answer, its headers,
-// the log or a redirect.
+// requireNoLeak checks that the password is not in the answer, its headers
+// (Location too), the log or a redirect.
 func (c *connectFixture) requireNoLeak(resp *http.Response, body, password string) {
 	c.t.Helper()
 	require.NotContains(c.t, body, password)
@@ -326,18 +370,33 @@ func requireSafePasswordFields(t *testing.T, page string) {
 	}
 }
 
-// requireTrustOffered checks that the page offers to trust the certificate of
-// one protocol ("imap" or "smtp") with this fingerprint.
-func requireTrustOffered(t *testing.T, page, protocol, fingerprint string) {
+// offerOf returns the offer token for one protocol ("imap" or "smtp") on the
+// page.
+func offerOf(t *testing.T, page, protocol string) string {
 	t.Helper()
-	boxes := inputNamed(t, page, "trust_"+protocol)
-	require.Len(t, boxes, 1, "a %s trust box", protocol)
-	require.Equal(t, "checkbox", boxes[0].attrs["type"])
-	pins := inputNamed(t, page, protocol+"_pin")
-	require.Len(t, pins, 1)
-	require.Equal(t, "hidden", pins[0].attrs["type"])
-	require.Equal(t, fingerprint, pins[0].attrs["value"])
-	require.Contains(t, visibleText(t, page), grouped(fingerprint))
+	offers := inputNamed(t, page, protocol+"_offer")
+	require.Len(t, offers, 1, "a %s offer", protocol)
+	require.Equal(t, "hidden", offers[0].attrs["type"])
+	return offers[0].attrs["value"]
+}
+
+// requireTrustOffered checks that the page offers to trust the certificate of
+// one protocol with this fingerprint, for this host and port, in a sealed
+// offer of the session. It returns the offer token.
+func (c *connectFixture) requireTrustOffered(page, protocol, host string, port int, fingerprint string) string {
+	c.t.Helper()
+	boxes := inputNamed(c.t, page, "trust_"+protocol)
+	require.Len(c.t, boxes, 1, "a %s trust box", protocol)
+	require.Equal(c.t, "checkbox", boxes[0].attrs["type"])
+	require.Empty(c.t, inputNamed(c.t, page, protocol+"_pin"), "the page has no raw pin")
+	token := offerOf(c.t, page, protocol)
+	var got certOffer
+	require.NoError(c.t, c.signer.Open(purposeCertOffer, token, &got))
+	require.Equal(c.t, certOffer{
+		Session: c.sessionHash, Protocol: protocol, Host: host, Port: port, Fingerprint: fingerprint,
+	}, got)
+	require.Contains(c.t, visibleText(c.t, page), grouped(fingerprint))
+	return token
 }
 
 // requireTrustNotOffered checks that the page has no way to trust the
@@ -345,6 +404,7 @@ func requireTrustOffered(t *testing.T, page, protocol, fingerprint string) {
 func requireTrustNotOffered(t *testing.T, page, protocol string) {
 	t.Helper()
 	require.Empty(t, inputNamed(t, page, "trust_"+protocol))
+	require.Empty(t, inputNamed(t, page, protocol+"_offer"))
 	require.Empty(t, inputNamed(t, page, protocol+"_pin"))
 }
 
@@ -449,16 +509,16 @@ func TestConnectSavesEncryptedPassword(t *testing.T) {
 	resp, body = c.post("/connect/save", form)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, visibleText(t, body), textCertificate)
-	requireTrustOffered(t, body, "imap", imapSrv.CertSHA256)
-	requireTrustOffered(t, body, "smtp", smtpSrv.CertSHA256)
+	imapOffer := c.requireTrustOffered(body, "imap", imapSrv.Host, imapSrv.Port, imapSrv.CertSHA256)
+	smtpOffer := c.requireTrustOffered(body, "smtp", smtpSrv.Host, smtpSrv.Port, smtpSrv.CertSHA256)
 	require.Empty(t, c.accounts())
 	require.Zero(t, smtpSrv.AuthAttempts())
 	c.requireNoLeak(resp, body, imapSrv.Pass)
 
 	// Step 5: the user trusts both certificates and types the password again.
 	resp, body = c.post("/connect/save", with(form,
-		"trust_imap", "1", "imap_pin", imapSrv.CertSHA256,
-		"trust_smtp", "1", "smtp_pin", smtpSrv.CertSHA256))
+		"trust_imap", "1", "imap_offer", imapOffer,
+		"trust_smtp", "1", "smtp_offer", smtpOffer))
 	require.Equal(t, http.StatusSeeOther, resp.StatusCode, body)
 	require.Equal(t, "/", resp.Header.Get("Location"))
 	c.requireNoLeak(resp, body, imapSrv.Pass)
@@ -495,9 +555,13 @@ func TestConnectRefusesWhenProbeFails(t *testing.T) {
 	c := newConnectFixture(t)
 	imapSrv := imaptest.New(t)
 	smtpSrv := smtptest.New(t)
+	_, prompt := c.post("/connect/save", saveForm(imapSrv, smtpSrv, imapSrv.Pass))
+	imapOffer, smtpOffer := offerOf(t, prompt, "imap"), offerOf(t, prompt, "smtp")
 	trusted := func(form url.Values) url.Values {
-		return with(form, "trust_imap", "1", "imap_pin", imapSrv.CertSHA256,
-			"trust_smtp", "1", "smtp_pin", smtpSrv.CertSHA256)
+		return with(form, "trust_imap", "1", "imap_offer", imapOffer, "trust_smtp", "1", "smtp_offer", smtpOffer)
+	}
+	smtpTrusted := func(form url.Values) url.Values {
+		return with(form, "trust_smtp", "1", "smtp_offer", smtpOffer)
 	}
 
 	// A wrong password: the text is fixed, never the text of the server.
@@ -509,12 +573,13 @@ func TestConnectRefusesWhenProbeFails(t *testing.T) {
 	require.NotContains(t, text, "AUTHENTICATIONFAILED")
 	c.requireNoLeak(resp, body, marker)
 	requireSafePasswordFields(t, body)
-	// The trust that the user chose stays ticked, so only the password must be
-	// typed again.
-	for _, protocol := range []string{"imap", "smtp"} {
+	// The trust that the user chose stays ticked, with its offer, so only the
+	// password must be typed again.
+	for protocol, offer := range map[string]string{"imap": imapOffer, "smtp": smtpOffer} {
 		boxes := inputNamed(t, body, "trust_"+protocol)
 		require.Len(t, boxes, 1)
 		require.True(t, boxes[0].has["checked"])
+		require.Equal(t, offer, offerOf(t, body, protocol))
 	}
 
 	// A port where nothing listens.
@@ -522,13 +587,13 @@ func TestConnectRefusesWhenProbeFails(t *testing.T) {
 	require.NoError(t, err)
 	closedPort := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 	require.NoError(t, ln.Close())
-	resp, body = c.post("/connect/save", with(trusted(saveForm(imapSrv, smtpSrv, imapSrv.Pass)), "imap_port", closedPort))
+	resp, body = c.post("/connect/save", smtpTrusted(with(saveForm(imapSrv, smtpSrv, imapSrv.Pass), "imap_port", closedPort)))
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	require.Contains(t, visibleText(t, body), textCannotConnect)
 
 	// TLS to a server that speaks plain text.
 	plainSrv := imaptest.New(t, imaptest.WithMode(imaptest.ModePlain))
-	resp, body = c.post("/connect/save", with(trusted(saveForm(imapSrv, smtpSrv, imapSrv.Pass)), "imap_port", strconv.Itoa(plainSrv.Port)))
+	resp, body = c.post("/connect/save", smtpTrusted(with(saveForm(imapSrv, smtpSrv, imapSrv.Pass), "imap_port", strconv.Itoa(plainSrv.Port))))
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	require.Contains(t, visibleText(t, body), textTLSFailed)
 
@@ -561,8 +626,8 @@ func TestConnectOffersPinForLoopbackSelfSigned(t *testing.T) {
 
 	resp, body := c.post("/connect/save", form)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	requireTrustOffered(t, body, "imap", imapSrv.CertSHA256)
-	requireTrustOffered(t, body, "smtp", smtpSrv.CertSHA256)
+	imapOffer := c.requireTrustOffered(body, "imap", imapSrv.Host, imapSrv.Port, imapSrv.CertSHA256)
+	c.requireTrustOffered(body, "smtp", smtpSrv.Host, smtpSrv.Port, smtpSrv.CertSHA256)
 	require.Empty(t, inputNamed(t, body, "understand"), "a server on this computer needs no extra warning")
 	require.Contains(t, visibleText(t, body), "127.0.0.1", "the page names the host that the user typed")
 	requireSafePasswordFields(t, body)
@@ -570,18 +635,19 @@ func TestConnectOffersPinForLoopbackSelfSigned(t *testing.T) {
 
 	// Trusting only the IMAP certificate: the IMAP login now works, and the page
 	// asks about the SMTP certificate again. The IMAP trust stays ticked.
-	resp, body = c.post("/connect/save", with(form, "trust_imap", "1", "imap_pin", imapSrv.CertSHA256))
+	resp, body = c.post("/connect/save", with(form, "trust_imap", "1", "imap_offer", imapOffer))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	requireTrustOffered(t, body, "smtp", smtpSrv.CertSHA256)
+	smtpOffer := c.requireTrustOffered(body, "smtp", smtpSrv.Host, smtpSrv.Port, smtpSrv.CertSHA256)
 	require.False(t, inputNamed(t, body, "trust_smtp")[0].has["checked"])
 	imapBox := inputNamed(t, body, "trust_imap")
 	require.Len(t, imapBox, 1)
 	require.True(t, imapBox[0].has["checked"])
+	require.Equal(t, imapOffer, offerOf(t, body, "imap"))
 	require.Empty(t, c.accounts())
 
 	// Trusting both saves the account with both pins.
-	resp, _ = c.post("/connect/save", with(form, "trust_imap", "1", "imap_pin", imapSrv.CertSHA256,
-		"trust_smtp", "1", "smtp_pin", smtpSrv.CertSHA256))
+	resp, _ = c.post("/connect/save", with(form, "trust_imap", "1", "imap_offer", offerOf(t, body, "imap"),
+		"trust_smtp", "1", "smtp_offer", smtpOffer))
 	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
 	require.Len(t, c.accounts(), 1)
 }
@@ -596,8 +662,25 @@ func TestConnectTrustRules(t *testing.T) {
 		resp, body := c.post("/connect/save", with(saveForm(imapSrv, smtpSrv, imapSrv.Pass), "imap_host", "LOCALHOST"))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		requireTrustNotOffered(t, body, "imap")
-		requireTrustOffered(t, body, "smtp", smtpSrv.CertSHA256)
+		c.requireTrustOffered(body, "smtp", smtpSrv.Host, smtpSrv.Port, smtpSrv.CertSHA256)
 		require.Contains(t, visibleText(t, body), textWrongHost)
+		require.Empty(t, c.accounts())
+	})
+
+	t.Run("an offer moved to another host", func(t *testing.T) {
+		c := newConnectFixture(t)
+		form := saveForm(imapSrv, smtpSrv, imapSrv.Pass)
+		_, body := c.post("/connect/save", form)
+		imapOffer := c.requireTrustOffered(body, "imap", imapSrv.Host, imapSrv.Port, imapSrv.CertSHA256)
+		probes := c.probe.count()
+
+		// The offer was for 127.0.0.1. The user then types localhost, for which
+		// the certificate is not valid, and keeps the box ticked.
+		resp, body := c.post("/connect/save", with(form, "imap_host", "localhost", "trust_imap", "1", "imap_offer", imapOffer))
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+		require.Contains(t, visibleText(t, body), textBadTrust)
+		requireTrustNotOffered(t, body, "imap")
+		require.Equal(t, probes, c.probe.count(), "nothing was tested")
 		require.Empty(t, c.accounts())
 	})
 
@@ -619,10 +702,13 @@ func TestConnectTrustRules(t *testing.T) {
 
 	t.Run("a pin that does not match", func(t *testing.T) {
 		c := newConnectFixture(t)
-		wrong := strings.Repeat("0", 64)
+		// An earlier page offered another certificate for the same host and
+		// port. The server now shows its own certificate.
+		offer := c.sealOffer("imap", imapSrv.Host, imapSrv.Port, strings.Repeat("0", 64))
 		resp, body := c.post("/connect/save", with(saveForm(imapSrv, smtpSrv, imapSrv.Pass),
-			"trust_imap", "1", "imap_pin", wrong, "trust_smtp", "1", "smtp_pin", smtpSrv.CertSHA256))
+			"trust_imap", "1", "imap_offer", offer))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, strings.Repeat("0", 64), c.probe.last().Server.PinnedIMAPCert, "the pin of the offer was tested")
 		requireTrustNotOffered(t, body, "imap")
 		text := visibleText(t, body)
 		require.Contains(t, text, textPinChanged)
@@ -633,20 +719,12 @@ func TestConnectTrustRules(t *testing.T) {
 	t.Run("a server that is not on this computer", func(t *testing.T) {
 		c := newConnectFixture(t)
 		fingerprint := strings.Repeat("e1", 32)
-		c.probe.set(func(_ context.Context, cfg imapsmtp.Config) (*imapsmtp.ProbeResult, error) {
-			if cfg.Server.PinnedIMAPCert == fingerprint {
-				return &imapsmtp.ProbeResult{IMAPOK: true, SMTPOK: true}, nil
-			}
-			return &imapsmtp.ProbeResult{SMTPOK: true, IMAPCert: &imapsmtp.CertificateUnknownError{
-				Protocol: "imap", Host: cfg.Server.IMAPHost, FingerprintSHA256: fingerprint,
-				Reason: x509.UnknownAuthorityError{},
-			}}, nil
-		})
+		c.probe.set(unknownIMAPCert(fingerprint))
 		form := remoteForm(marker)
 
 		resp, body := c.post("/connect/save", form)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
-		requireTrustOffered(t, body, "imap", fingerprint)
+		offer := c.requireTrustOffered(body, "imap", "imap.example.org", 993, fingerprint)
 		understand := inputNamed(t, body, "understand")
 		require.Len(t, understand, 1, "a remote server needs the extra box")
 		require.Equal(t, "checkbox", understand[0].attrs["type"])
@@ -654,17 +732,17 @@ func TestConnectTrustRules(t *testing.T) {
 		require.Equal(t, 1, c.probe.count())
 
 		// The trust box alone is refused before any test.
-		resp, body = c.post("/connect/save", with(form, "trust_imap", "1", "imap_pin", fingerprint))
+		resp, body = c.post("/connect/save", with(form, "trust_imap", "1", "imap_offer", offer))
 		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 		require.Contains(t, visibleText(t, body), textUnderstand)
-		requireTrustOffered(t, body, "imap", fingerprint)
+		require.Equal(t, offer, c.requireTrustOffered(body, "imap", "imap.example.org", 993, fingerprint))
 		require.Len(t, inputNamed(t, body, "understand"), 1)
 		require.Equal(t, 1, c.probe.count(), "nothing was tested")
 		c.requireNoLeak(resp, body, marker)
 		require.Empty(t, c.accounts())
 
 		// With "I understand", the certificate is pinned and the account saved.
-		resp, _ = c.post("/connect/save", with(form, "trust_imap", "1", "imap_pin", fingerprint, "understand", "1"))
+		resp, _ = c.post("/connect/save", with(form, "trust_imap", "1", "imap_offer", offer, "understand", "1"))
 		require.Equal(t, http.StatusSeeOther, resp.StatusCode)
 		require.Equal(t, fingerprint, c.probe.last().Server.PinnedIMAPCert)
 		require.Empty(t, c.probe.last().Server.PinnedSMTPCert)
@@ -685,10 +763,12 @@ func TestConnectTrustRules(t *testing.T) {
 				Protocol: "smtp", Host: cfg.Server.SMTPHost, FingerprintSHA256: smtpPin, Reason: x509.UnknownAuthorityError{},
 			}}, nil
 		})
+		_, body := c.post("/connect/save", remoteForm(marker))
+		imapOffer := c.requireTrustOffered(body, "imap", "imap.example.org", 993, imapPin)
 
-		resp, body := c.post("/connect/save", with(remoteForm(marker), "trust_imap", "1", "imap_pin", imapPin, "understand", "1"))
+		resp, body := c.post("/connect/save", with(remoteForm(marker), "trust_imap", "1", "imap_offer", imapOffer, "understand", "1"))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
-		requireTrustOffered(t, body, "smtp", smtpPin)
+		c.requireTrustOffered(body, "smtp", "smtp.example.org", 465, smtpPin)
 		require.False(t, inputNamed(t, body, "trust_smtp")[0].has["checked"])
 		require.True(t, inputNamed(t, body, "trust_imap")[0].has["checked"], "the earlier trust stays")
 		understand := inputNamed(t, body, "understand")
@@ -697,24 +777,126 @@ func TestConnectTrustRules(t *testing.T) {
 		require.Empty(t, c.accounts())
 	})
 
-	t.Run("a pin that is not a fingerprint", func(t *testing.T) {
+	t.Run("an offer that is not valid", func(t *testing.T) {
 		c := newConnectFixture(t)
 		c.probe.set(probeOK)
-		for _, pin := range []string{"", "abc", strings.Repeat("zz", 32), strings.Repeat("ab", 33)} {
-			resp, body := c.post("/connect/save", with(remoteForm(marker), "trust_imap", "1", "imap_pin", pin, "understand", "1"))
-			require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, pin)
-			require.Contains(t, visibleText(t, body), textBadTrust, pin)
+		fingerprint := strings.Repeat("e1", 32)
+		old := signing.New(testKey)
+		old.Now = func() time.Time { return time.Now().Add(-certOfferTTL - time.Minute) }
+		otherSession := hashOf(randomText())
+
+		refused := map[string]url.Values{
+			"a pin that was never offered": {"trust_imap": {"1"}, "imap_pin": {fingerprint}},
+			"no offer":                     {"trust_imap": {"1"}},
+			"an offer that is not a token": {"trust_imap": {"1"}, "imap_offer": {"x"}},
+			"an offer of another session": {"trust_imap": {"1"},
+				"imap_offer": {sealOfferWith(t, c.signer, otherSession, "imap", "imap.example.org", 993, fingerprint)}},
+			"an offer for another host": {"trust_imap": {"1"},
+				"imap_offer": {c.sealOffer("imap", "imap.other.org", 993, fingerprint)}},
+			"an offer for another port": {"trust_imap": {"1"},
+				"imap_offer": {c.sealOffer("imap", "imap.example.org", 994, fingerprint)}},
+			"an IMAP offer posted as SMTP": {"trust_smtp": {"1"},
+				"smtp_offer": {c.sealOffer("imap", "smtp.example.org", 465, fingerprint)}},
+			"an expired offer": {"trust_imap": {"1"},
+				"imap_offer": {sealOfferWith(t, old, c.sessionHash, "imap", "imap.example.org", 993, fingerprint)}},
+			"a token of another purpose": {"trust_imap": {"1"}, "imap_offer": {c.csrf}},
+			"an offer without a fingerprint": {"trust_imap": {"1"},
+				"imap_offer": {c.sealOffer("imap", "imap.example.org", 993, "abc")}},
 		}
-		require.Zero(t, c.probe.count())
+		for name, extra := range refused {
+			form := with(remoteForm(marker), "understand", "1")
+			for k, v := range extra {
+				form[k] = v
+			}
+			resp, body := c.post("/connect/save", form)
+			require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, name)
+			require.Contains(t, visibleText(t, body), textBadTrust, name)
+			c.requireNoLeak(resp, body, marker)
+		}
+		require.Zero(t, c.probe.count(), "no refused offer was tested")
 		require.Empty(t, c.accounts())
+
+		// A valid offer is used as the pin, and the account is saved.
+		resp, _ := c.post("/connect/save", with(remoteForm(marker), "understand", "1",
+			"trust_imap", "1", "imap_offer", c.sealOffer("imap", "imap.example.org", 993, fingerprint)))
+		require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+		require.Equal(t, fingerprint, c.probe.last().Server.PinnedIMAPCert)
+		require.Len(t, c.accounts(), 1)
 	})
 
-	t.Run("a pin without its trust box is ignored", func(t *testing.T) {
+	t.Run("an offer without its trust box is ignored", func(t *testing.T) {
 		c := newConnectFixture(t)
 		c.probe.set(probeOK)
-		resp, _ := c.post("/connect/save", with(remoteForm(marker), "imap_pin", strings.Repeat("ab", 32)))
+		resp, _ := c.post("/connect/save", with(remoteForm(marker),
+			"imap_offer", c.sealOffer("imap", "imap.example.org", 993, strings.Repeat("ab", 32))))
 		require.Equal(t, http.StatusSeeOther, resp.StatusCode)
 		require.Empty(t, c.probe.last().Server.PinnedIMAPCert)
+	})
+}
+
+func TestConnectPlainTextNeedsConsent(t *testing.T) {
+	imapSrv := imaptest.New(t, imaptest.WithMode(imaptest.ModePlain))
+	smtpSrv := smtptest.New(t, smtptest.WithMode(smtptest.ModePlain))
+	plainForm := with(saveForm(imapSrv, smtpSrv, imapSrv.Pass), "imap_security", "plain", "smtp_security", "plain")
+
+	t.Run("refused without the tick", func(t *testing.T) {
+		c := newConnectFixture(t)
+		resp, body := c.post("/connect/save", plainForm)
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+		text := visibleText(t, body)
+		require.Contains(t, text, textPlainUnderstand)
+		require.Contains(t, text, textPlainWarning)
+		box := inputNamed(t, body, "plain_understand")
+		require.Len(t, box, 1)
+		require.Equal(t, "checkbox", box[0].attrs["type"])
+		require.False(t, box[0].has["checked"])
+		require.Zero(t, c.probe.count(), "nothing was tested")
+		require.Zero(t, smtpSrv.AuthAttempts(), "the password was not sent")
+		require.Empty(t, c.accounts())
+		c.requireNoLeak(resp, body, imapSrv.Pass)
+
+		// One plain server is enough to need the tick.
+		c.probe.set(probeOK)
+		resp, _ = c.post("/connect/save", with(remoteForm(marker), "smtp_host", "127.0.0.1", "smtp_security", "plain"))
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+		require.Zero(t, c.probe.count())
+	})
+
+	t.Run("saved with the tick", func(t *testing.T) {
+		c := newConnectFixture(t)
+		resp, body := c.post("/connect/save", with(plainForm, "plain_understand", "1"))
+		require.Equal(t, http.StatusSeeOther, resp.StatusCode, body)
+		got := c.probe.last().Server
+		require.Equal(t, account.SecurityPlain, got.IMAPSecurity)
+		require.Equal(t, account.SecurityPlain, got.SMTPSecurity)
+		require.Len(t, c.accounts(), 1)
+		require.Equal(t, account.SecurityPlain, c.accounts()[0].Mail.IMAPSecurity)
+	})
+
+	t.Run("the tick stays only while plain text is chosen", func(t *testing.T) {
+		c := newConnectFixture(t)
+		// A wrong password with the tick: the box comes back ticked.
+		resp, body := c.post("/connect/save", with(plainForm, "plain_understand", "1", "password", marker))
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+		require.Contains(t, visibleText(t, body), textAuthFailed)
+		box := inputNamed(t, body, "plain_understand")
+		require.Len(t, box, 1)
+		require.True(t, box[0].has["checked"])
+
+		// With TLS chosen again, there is no box.
+		resp, body = c.post("/connect/save", with(remoteForm(marker), "plain_understand", "1", "imap_port", "x"))
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+		require.Empty(t, inputNamed(t, body, "plain_understand"))
+	})
+
+	t.Run("a remote host is refused even with the tick", func(t *testing.T) {
+		c := newConnectFixture(t)
+		c.probe.set(probeOK)
+		resp, body := c.post("/connect/save", with(remoteForm(marker), "imap_security", "plain", "plain_understand", "1"))
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+		require.Contains(t, visibleText(t, body), textSettings)
+		require.Zero(t, c.probe.count())
+		require.Empty(t, c.accounts())
 	})
 }
 
@@ -732,7 +914,7 @@ func TestConnectCleansHosts(t *testing.T) {
 	// A host of white space only is refused before any test.
 	resp, body := c.post("/connect/save", with(remoteForm(marker), "email", "bob@example.org", "imap_host", "   "))
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
-	require.Contains(t, visibleText(t, body), "The server settings are not valid.")
+	require.Contains(t, visibleText(t, body), textSettings)
 	require.Equal(t, 1, c.probe.count())
 }
 
@@ -765,36 +947,69 @@ func TestPasswordNeverRendered(t *testing.T) {
 	leakyError := func(context.Context, imapsmtp.Config) (*imapsmtp.ProbeResult, error) {
 		return nil, errors.New("imap: login failed for " + marker)
 	}
+	remoteOffer := c.sealOffer("imap", "imap.example.org", 993, fingerprint)
 
 	cases := []struct {
-		name  string
-		probe func(context.Context, imapsmtp.Config) (*imapsmtp.ProbeResult, error)
-		path  string
-		form  url.Values
+		name   string
+		probe  func(context.Context, imapsmtp.Config) (*imapsmtp.ProbeResult, error)
+		path   string
+		form   url.Values
+		status int
+		// text is a part of the visible text that shows that the case reached
+		// its branch.
+		text string
 	}{
-		{"discover", probeOK, "/connect/discover", url.Values{"email": {"alice@example.org"}, "password": {marker}}},
-		{"discover, bad address", probeOK, "/connect/discover", url.Values{"email": {"alice"}, "password": {marker}}},
-		{"discover, nothing found", probeOK, "/connect/discover", url.Values{"email": {"alice@nothing-here.org"}, "password": {marker}}},
-		{"settings", probeOK, "/connect/settings", with(remoteForm(marker))},
-		{"save, certificate", unknownCert, "/connect/save", remoteForm(marker)},
-		{"save, test failed", leakyError, "/connect/save", remoteForm(marker)},
-		{"save, bad address", probeOK, "/connect/save", with(remoteForm(marker), "email", "not an address")},
-		{"save, bad settings", probeOK, "/connect/save", with(remoteForm(marker), "imap_port", "99999")},
-		{"save, plain to a remote host", probeOK, "/connect/save", with(remoteForm(marker), "imap_security", "plain")},
-		{"save, needs I understand", probeOK, "/connect/save", with(remoteForm(marker), "trust_imap", "1", "imap_pin", fingerprint)},
-		{"save, bad pin", probeOK, "/connect/save", with(remoteForm(marker), "trust_imap", "1", "imap_pin", "x")},
-		{"save, control character in the user name", probeOK, "/connect/save", with(remoteForm(marker), "username", "\x00")},
-		{"save, success", probeOK, "/connect/save", remoteForm(marker)},
-		{"save, duplicate", probeOK, "/connect/save", remoteForm(marker)},
+		{"discover", probeOK, "/connect/discover", url.Values{"email": {"alice@example.org"}, "password": {marker}},
+			http.StatusOK, "imap.example.org"},
+		{"discover, bad address", probeOK, "/connect/discover", url.Values{"email": {"alice"}, "password": {marker}},
+			http.StatusUnprocessableEntity, textAddress},
+		{"discover, nothing found", probeOK, "/connect/discover", url.Values{"email": {"alice@nothing-here.org"}, "password": {marker}},
+			http.StatusOK, textNothingFound},
+		{"settings", probeOK, "/connect/settings", remoteForm(marker),
+			http.StatusOK, "Password or app password"},
+		{"save, certificate", unknownCert, "/connect/save", remoteForm(marker),
+			http.StatusOK, textCertificate},
+		{"save, test failed", leakyError, "/connect/save", remoteForm(marker),
+			http.StatusUnprocessableEntity, textTestFailed},
+		{"save, bad address", probeOK, "/connect/save", with(remoteForm(marker), "email", "not an address"),
+			http.StatusUnprocessableEntity, textAddress},
+		{"save, bad settings", probeOK, "/connect/save", with(remoteForm(marker), "imap_port", "99999"),
+			http.StatusUnprocessableEntity, textSettings},
+		{"save, plain to a remote host", probeOK, "/connect/save", with(remoteForm(marker), "imap_security", "plain"),
+			http.StatusUnprocessableEntity, textSettings},
+		{"save, plain without the tick", probeOK, "/connect/save",
+			with(remoteForm(marker), "imap_host", "127.0.0.1", "imap_security", "plain"),
+			http.StatusUnprocessableEntity, textPlainUnderstand},
+		{"save, needs I understand", probeOK, "/connect/save", with(remoteForm(marker), "trust_imap", "1", "imap_offer", remoteOffer),
+			http.StatusUnprocessableEntity, textUnderstand},
+		{"save, bad offer", probeOK, "/connect/save", with(remoteForm(marker), "trust_imap", "1", "imap_offer", "x"),
+			http.StatusUnprocessableEntity, textBadTrust},
+		{"save, control character in the user name", probeOK, "/connect/save", with(remoteForm(marker), "username", "\x00"),
+			http.StatusUnprocessableEntity, textSettings},
+		{"save, no password", probeOK, "/connect/save", with(remoteForm(marker), "password", ""),
+			http.StatusUnprocessableEntity, textNoPassword},
+		{"save, success", probeOK, "/connect/save", remoteForm(marker),
+			http.StatusSeeOther, ""},
+		{"save, duplicate", probeOK, "/connect/save", remoteForm(marker),
+			http.StatusUnprocessableEntity, textExists},
 	}
 	for _, tc := range cases {
 		c.probe.set(tc.probe)
 		resp, body := c.post(tc.path, tc.form)
-		require.NotEqual(t, http.StatusInternalServerError, resp.StatusCode, tc.name)
+		require.Equal(t, tc.status, resp.StatusCode, tc.name)
+		require.NotContains(t, body, marker, tc.name)
+		for name, values := range resp.Header {
+			for _, v := range values {
+				require.NotContains(t, v, marker, "%s: header %s", tc.name, name)
+			}
+		}
 		c.requireNoLeak(resp, body, marker)
 		requireSafePasswordFields(t, body)
-		if resp.StatusCode == http.StatusSeeOther {
+		if tc.status == http.StatusSeeOther {
 			require.Equal(t, "/", resp.Header.Get("Location"), tc.name)
+		} else {
+			require.Empty(t, resp.Header.Get("Location"), tc.name)
+			require.Contains(t, visibleText(t, body), tc.text, tc.name)
 		}
 	}
 	// The pages without a form post.

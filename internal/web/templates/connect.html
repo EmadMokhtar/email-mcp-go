@@ -91,6 +91,13 @@
 <p><label for="username">User name</label><br>
 <input id="username" name="username" value="{{.Username}}" autocomplete="off" spellcheck="false" required></p>
 {{end}}
+{{if .Plain}}
+<fieldset>
+<legend>No encryption</legend>
+<p>Without encryption, your password and your messages travel as plain text. Anyone who can read the connection can read them. Use it only for a server on this computer, such as a local bridge.</p>
+<p><label><input type="checkbox" name="plain_understand" value="1"{{if .PlainChecked}} checked{{end}}> I understand that this connection is not encrypted: my password and my messages travel over it as plain text.</label></p>
+</fieldset>
+{{end}}
 <p><label for="password">Password or app password</label><br>
 <input id="password" name="password" type="password" autocomplete="off" required></p>
 <p>The password is saved, encrypted, only after the test passes. This page never keeps it, so type it again each time you test.</p>
@@ -103,7 +110,7 @@
 <p>{{.Problem}}</p>
 {{if .Fingerprint}}<p>SHA-256 fingerprint: <code>{{.Fingerprint}}</code></p>{{end}}
 {{if .CanTrust}}
-<input type="hidden" name="{{.Field}}_pin" value="{{.Pin}}">
+<input type="hidden" name="{{.Field}}_offer" value="{{.Offer}}">
 <p><label><input type="checkbox" name="trust_{{.Field}}" value="1"{{if .Checked}} checked{{end}}> Trust this certificate</label></p>
 {{end}}
 </section>

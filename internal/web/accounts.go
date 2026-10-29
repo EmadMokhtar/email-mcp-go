@@ -15,6 +15,14 @@ package web
 //     certificate that is not trusted, the page shows its fingerprint and may
 //     offer to trust it.
 //
+// An offer to trust a certificate is a signed token (purpose "cert_offer", 10
+// minutes) bound to the session, the protocol, the host, the port and the
+// fingerprint. The save takes a pin only from such an offer whose protocol, host
+// and port are the ones posted now, so a pin that the page never offered, or an
+// offer moved to another host, is refused before any test. A plain
+// (unencrypted) connection needs its own "I understand" box, which the server
+// checks before any test.
+//
 // The password is never kept between requests, never put in a page, a log or a
 // redirect: after every refusal the user types it again. A message about a
 // failed test is a fixed text chosen by the type of the error, never the text
@@ -23,13 +31,16 @@ package web
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/discovery"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
@@ -64,6 +75,25 @@ const (
 // web interface.
 const webClient = "web"
 
+// purposeCertOffer is the signing purpose of an offer to trust a certificate.
+const purposeCertOffer = "cert_offer"
+
+// certOfferTTL is how long an offer to trust a certificate can be used.
+const certOfferTTL = 10 * time.Minute
+
+// certOffer is what an offer token holds: the server offered this session to
+// trust the certificate with this fingerprint for this protocol, host and
+// port. The token is signed, so the browser cannot change it, and it is
+// readable, so it holds nothing secret (the session hash is not the session
+// id). The keys are short to keep the form small.
+type certOffer struct {
+	Session     []byte `json:"s"`
+	Protocol    string `json:"p"`
+	Host        string `json:"h"`
+	Port        int    `json:"n"`
+	Fingerprint string `json:"f"`
+}
+
 // The defaults of the settings form when the user types the settings.
 const (
 	defaultIMAPPort = "993"
@@ -84,7 +114,8 @@ const (
 	msgTLSFailed      = "A secure connection could not be made. Check the ports and the security settings."
 	msgCertificate    = "A server showed a certificate that this computer does not trust. Nothing was saved."
 	msgUnderstand     = "To trust the certificate of a server that is not on this computer, also tick “I understand the risk”."
-	msgBadTrust       = "The certificate to trust is not valid. Test the connection again without trusting a certificate."
+	msgBadTrust       = "The choice to trust a certificate is not valid: the server settings changed after the offer, or the offer is older than 10 minutes. Test the connection again to see the certificate."
+	msgPlain          = "You chose a connection without encryption. To use it, also tick “I understand that this connection is not encrypted”."
 	msgCertUnknown    = "No authority that this computer trusts signed this certificate. A local bridge (such as Proton Mail Bridge) uses such a certificate. Trust it only if you expect it."
 	msgCertWrongHost  = "The certificate is not for this host name. Check the host name. This certificate cannot be trusted here."
 	msgCertExpired    = "The certificate has expired or is not valid yet. This certificate cannot be trusted here."
@@ -126,6 +157,11 @@ type connectPage struct {
 	// the certificate of a server that is not on this computer.
 	Understand        bool
 	UnderstandChecked bool
+	// Plain shows the warning and the box that a plain (unencrypted)
+	// connection needs. It is shown while a server on this computer is set to
+	// plain. A plain connection to another host is refused in any case.
+	Plain        bool
+	PlainChecked bool
 }
 
 // serverFields are the values of the settings form, as text, so that a value
@@ -159,7 +195,7 @@ type certPrompt struct {
 	// Name is "IMAP" or "SMTP".
 	Name string
 	// Field is "imap" or "smtp": the form names are "trust_<field>" and
-	// "<field>_pin".
+	// "<field>_offer".
 	Field string
 	// Host is the host that the user typed (cleaned), not a value from the
 	// server.
@@ -169,36 +205,42 @@ type certPrompt struct {
 	Fingerprint string
 	// Problem is a fixed text about the certificate.
 	Problem string
-	// CanTrust shows the "Trust this certificate" box, with Pin in a hidden
-	// field.
+	// CanTrust shows the "Trust this certificate" box, with Offer (the signed
+	// offer token) in a hidden field.
 	CanTrust bool
-	Pin      string
+	Offer    string
 	Checked  bool
 }
 
 // protocol is one of the two servers of an account, with the parts of the form
 // and of the settings that belong to it.
 type protocol struct {
-	name  string // "IMAP" or "SMTP"
-	field string // "imap" or "smtp"
-	host  func(*account.MailServer) string
-	pin   func(*account.MailServer) *string
-	cert  func(*service.CertificateError) *imapsmtp.CertificateUnknownError
+	name     string // "IMAP" or "SMTP"
+	field    string // "imap" or "smtp"
+	host     func(*account.MailServer) string
+	port     func(*account.MailServer) int
+	security func(*account.MailServer) account.Security
+	pin      func(*account.MailServer) *string
+	cert     func(*service.CertificateError) *imapsmtp.CertificateUnknownError
 }
 
 // protocols are the two servers, IMAP first.
 var protocols = []protocol{
 	{
 		name: "IMAP", field: "imap",
-		host: func(m *account.MailServer) string { return m.IMAPHost },
-		pin:  func(m *account.MailServer) *string { return &m.PinnedIMAPCert },
-		cert: func(e *service.CertificateError) *imapsmtp.CertificateUnknownError { return e.IMAP },
+		host:     func(m *account.MailServer) string { return m.IMAPHost },
+		port:     func(m *account.MailServer) int { return m.IMAPPort },
+		security: func(m *account.MailServer) account.Security { return m.IMAPSecurity },
+		pin:      func(m *account.MailServer) *string { return &m.PinnedIMAPCert },
+		cert:     func(e *service.CertificateError) *imapsmtp.CertificateUnknownError { return e.IMAP },
 	},
 	{
 		name: "SMTP", field: "smtp",
-		host: func(m *account.MailServer) string { return m.SMTPHost },
-		pin:  func(m *account.MailServer) *string { return &m.PinnedSMTPCert },
-		cert: func(e *service.CertificateError) *imapsmtp.CertificateUnknownError { return e.SMTP },
+		host:     func(m *account.MailServer) string { return m.SMTPHost },
+		port:     func(m *account.MailServer) int { return m.SMTPPort },
+		security: func(m *account.MailServer) account.Security { return m.SMTPSecurity },
+		pin:      func(m *account.MailServer) *string { return &m.PinnedSMTPCert },
+		cert:     func(e *service.CertificateError) *imapsmtp.CertificateUnknownError { return e.SMTP },
 	},
 }
 
@@ -300,6 +342,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if f.Username == "" {
 		f.Username = page.Email
 	}
+	page.Plain = plainOnThisComputer(mailServerOf(*f))
 	s.render(w, r, http.StatusOK, pageConnect, page)
 }
 
@@ -307,9 +350,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 // the test passes. On success it redirects to the accounts page. Otherwise it
 // shows the form again, with a fixed text and without the password.
 //
-// A certificate that the user chose to trust is checked here before any test:
-// its pin must be a SHA-256 in hex, and a server that is not on this computer
-// also needs the "I understand the risk" box.
+// Before any test it checks, in this order: each certificate that the user
+// chose to trust must come with a valid offer of this session for the posted
+// protocol, host and port (its fingerprint becomes the pin); a server that is
+// not on this computer also needs the "I understand the risk" box; a plain
+// connection needs the "I understand that this connection is not encrypted"
+// box; and the password must not be empty.
 func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	svc := s.svc.Load()
 	sess, ok := sessionFrom(r.Context())
@@ -324,24 +370,29 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	understand := r.PostForm.Get("understand") == "1"
 	page.UnderstandChecked = understand
 
-	// The certificates that the user chose to trust become pins.
+	page.Plain = plainOnThisComputer(server)
+	page.PlainChecked = page.Plain && r.PostForm.Get("plain_understand") == "1"
+
+	// The certificates that the user chose to trust become pins, but only from
+	// an offer that this server made for these settings.
 	needUnderstand := false
 	for _, p := range protocols {
 		if r.PostForm.Get("trust_"+p.field) != "1" {
 			continue
 		}
-		pin := strings.ToLower(strings.TrimSpace(r.PostForm.Get(p.field + "_pin")))
-		if !isFingerprint(pin) {
+		token := r.PostForm.Get(p.field + "_offer")
+		offer, ok := s.openOffer(sess, p, server, token)
+		if !ok {
 			page.Error = msgBadTrust
 			continue
 		}
 		host := p.host(&server)
-		*p.pin(&server) = pin
+		*p.pin(&server) = offer.Fingerprint
 		page.Certs = append(page.Certs, certPrompt{
-			Name: p.name, Field: p.field, Host: host, Fingerprint: groupFingerprint(pin),
-			Problem: msgTrusted, CanTrust: true, Pin: pin, Checked: true,
+			Name: p.name, Field: p.field, Host: host, Fingerprint: groupFingerprint(offer.Fingerprint),
+			Problem: msgTrusted, CanTrust: true, Offer: token, Checked: true,
 		})
-		if !isLoopbackHost(host) {
+		if !account.IsLoopbackHost(host) {
 			needUnderstand = true
 		}
 	}
@@ -352,6 +403,10 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	case needUnderstand && !understand:
 		page.Error = msgUnderstand
+		s.render(w, r, http.StatusUnprocessableEntity, pageConnect, page)
+		return
+	case page.Plain && !page.PlainChecked:
+		page.Error = msgPlain
 		s.render(w, r, http.StatusUnprocessableEntity, pageConnect, page)
 		return
 	}
@@ -373,7 +428,11 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	if errors.As(err, &certErr) {
 		s.log.Info("connect refused", "code", codeConnectRefused, "reason", "certificate")
 		page.Error = msgCertificate
-		page.Certs, page.Understand = certPrompts(page.Certs, certErr, server)
+		page.Certs, page.Understand, err = s.certPrompts(sess, page.Certs, certErr, server)
+		if err != nil {
+			s.fail(w, r, codeConnectFailed, err)
+			return
+		}
 		// The risk box was ticked for the certificates shown before. A new
 		// certificate needs a new decision, so the box starts empty.
 		page.UnderstandChecked = false
@@ -395,13 +454,17 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 // A certificate of the test replaces the one that the user chose to trust for
 // the same server (its pin did not match). A trust of the user for a server
 // whose certificate the test accepted stays.
-func certPrompts(trusted []certPrompt, certErr *service.CertificateError, server account.MailServer) ([]certPrompt, bool) {
+func (s *Server) certPrompts(sess session, trusted []certPrompt, certErr *service.CertificateError, server account.MailServer) ([]certPrompt, bool, error) {
 	var prompts []certPrompt
 	understand := false
 	for _, p := range protocols {
 		prompt, found := certPrompt{}, false
 		if c := p.cert(certErr); c != nil {
-			prompt, found = promptFor(p, p.host(&server), c), true
+			var err error
+			if prompt, err = s.promptFor(sess, p, server, c); err != nil {
+				return nil, false, err
+			}
+			found = true
 		} else {
 			for _, t := range trusted {
 				if t.Field == p.field {
@@ -412,12 +475,12 @@ func certPrompts(trusted []certPrompt, certErr *service.CertificateError, server
 		if !found {
 			continue
 		}
-		if prompt.CanTrust && !isLoopbackHost(prompt.Host) {
+		if prompt.CanTrust && !account.IsLoopbackHost(prompt.Host) {
 			understand = true
 		}
 		prompts = append(prompts, prompt)
 	}
-	return prompts, understand
+	return prompts, understand, nil
 }
 
 // promptFor describes a certificate that the test did not accept. It offers to
@@ -426,9 +489,13 @@ func certPrompts(trusted []certPrompt, certErr *service.CertificateError, server
 // of the certificate are checked before the authority, so then they are right.
 // A host name that does not match, a certificate out of its time, and a pin that
 // did not match are never offered.
-func promptFor(p protocol, host string, c *imapsmtp.CertificateUnknownError) certPrompt {
+//
+// The offer is a signed token for this session, protocol, host, port and
+// fingerprint (see certOffer). The save accepts the trust only with it.
+func (s *Server) promptFor(sess session, p protocol, server account.MailServer, c *imapsmtp.CertificateUnknownError) (certPrompt, error) {
+	host := p.host(&server)
 	prompt := certPrompt{Name: p.name, Field: p.field, Host: host}
-	if isFingerprint(c.FingerprintSHA256) {
+	if account.IsFingerprint(c.FingerprintSHA256) {
 		prompt.Fingerprint = groupFingerprint(c.FingerprintSHA256)
 	}
 	var (
@@ -444,13 +511,54 @@ func promptFor(p protocol, host string, c *imapsmtp.CertificateUnknownError) cer
 	case errors.As(c.Reason, &invalid) && invalid.Reason == x509.Expired:
 		prompt.Problem = msgCertExpired
 	case errors.As(c.Reason, &unknownAuthority) && prompt.Fingerprint != "":
+		token, err := s.d.Signer.Seal(purposeCertOffer, certOffer{
+			Session: sess.hash, Protocol: p.field, Host: host, Port: p.port(&server), Fingerprint: c.FingerprintSHA256,
+		}, certOfferTTL)
+		if err != nil {
+			return certPrompt{}, fmt.Errorf("web: seal a certificate offer: %w", err)
+		}
 		prompt.Problem = msgCertUnknown
 		prompt.CanTrust = true
-		prompt.Pin = c.FingerprintSHA256
+		prompt.Offer = token
 	default:
 		prompt.Problem = msgCertInvalid
 	}
-	return prompt
+	return prompt, nil
+}
+
+// openOffer checks an offer token that came back with a ticked trust box. It
+// accepts the offer only when its signature is good, it has not expired, it was
+// made for this session, and its protocol, host and port are the ones posted
+// now (cleaned as the form is). So a pin that the page never offered, an offer
+// of another session, and an offer that the user moved to another host or port
+// are refused.
+func (s *Server) openOffer(sess session, p protocol, server account.MailServer, token string) (certOffer, bool) {
+	var o certOffer
+	if token == "" || s.d.Signer.Open(purposeCertOffer, token, &o) != nil {
+		return certOffer{}, false
+	}
+	ok := subtle.ConstantTimeCompare(o.Session, sess.hash) == 1 &&
+		o.Protocol == p.field &&
+		o.Host == p.host(&server) &&
+		o.Port == p.port(&server) &&
+		account.IsFingerprint(o.Fingerprint)
+	if !ok {
+		return certOffer{}, false
+	}
+	return o, true
+}
+
+// plainOnThisComputer reports whether a server on this computer is set to a
+// plain (unencrypted) connection. Such a connection needs the explicit consent
+// of the user. A plain connection to another host is refused by the service,
+// so no consent can allow it.
+func plainOnThisComputer(server account.MailServer) bool {
+	for _, p := range protocols {
+		if p.security(&server) == account.SecurityPlain && account.IsLoopbackHost(p.host(&server)) {
+			return true
+		}
+	}
+	return false
 }
 
 // saveErrorText returns the fixed text for an error of CreateIMAPAccount. known
@@ -546,27 +654,6 @@ func mailServerOf(f serverFields) account.MailServer {
 		SMTPSecurity: account.Security(f.SMTPSecurity),
 		Username:     f.Username,
 	}
-}
-
-// isLoopbackHost reports whether a cleaned host is on this computer:
-// "localhost" or a loopback IP address. It is the rule of
-// account.MailServer.Validate, and it never resolves a name.
-func isLoopbackHost(host string) bool {
-	return host == "localhost" || net.ParseIP(host).IsLoopback()
-}
-
-// isFingerprint reports whether text is a SHA-256 in lower-case hex.
-func isFingerprint(text string) bool {
-	if len(text) != 64 {
-		return false
-	}
-	for i := 0; i < len(text); i++ {
-		c := text[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 // groupFingerprint writes a fingerprint in upper-case pairs with a colon

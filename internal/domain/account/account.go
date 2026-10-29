@@ -151,7 +151,7 @@ func validateEndpoint(name, host string, port int, security Security, local bool
 		if !local {
 			return fmt.Errorf("account: %s plain connections are not allowed on a hosted server", name)
 		}
-		if !isLoopbackHost(host) {
+		if !IsLoopbackHost(host) {
 			return fmt.Errorf("account: %s plain connections are allowed only to a loopback host", name)
 		}
 		return nil
@@ -160,15 +160,37 @@ func validateEndpoint(name, host string, port int, security Security, local bool
 	}
 }
 
-// isLoopbackHost reports whether host is "localhost" or a loopback IP address.
-// It looks only at the text of host and never resolves a name.
-func isLoopbackHost(host string) bool {
+// IsLoopbackHost reports whether host is "localhost" or a loopback IP address:
+// a server on this computer. It looks only at the text of host and never
+// resolves a name. The text must be cleaned first (no outer spaces, lower
+// case). Validate uses this rule for plain connections, and the web interface
+// uses it to decide when a certificate needs the extra warning, so the two
+// always agree.
+func IsLoopbackHost(host string) bool {
 	if host == "localhost" {
 		return true
 	}
 	// ParseIP returns nil for a name that is not an IP address. A nil IP is
 	// never loopback.
 	return net.ParseIP(host).IsLoopback()
+}
+
+// fingerprintLen is the length of a certificate fingerprint: a SHA-256 in hex.
+const fingerprintLen = 64
+
+// IsFingerprint reports whether text has the form of a certificate pin
+// (PinnedIMAPCert, PinnedSMTPCert): a SHA-256 in lower-case hex, 64 digits.
+func IsFingerprint(text string) bool {
+	if len(text) != fingerprintLen {
+		return false
+	}
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // maxUndoWindow is the longest allowed undo window.
