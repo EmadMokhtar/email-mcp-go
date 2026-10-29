@@ -249,9 +249,15 @@ func (s *Service) CreateIMAPAccount(ctx context.Context, address string, server 
 //     every such save, also when the user accepted before;
 //  4. sets AutonomyAcceptedAt to now when the save has both confirmations off;
 //  5. saves the account;
-//  6. drops the cached backend of the account (Backends.Forget);
-//  7. writes the audit entry "settings_changed", and "autonomy_accepted" when
+//  6. writes the audit entry "settings_changed", and "autonomy_accepted" when
 //     the user accepted the risk of full autonomy.
+//
+// It does not close the cached backend of the account: a send or a read may
+// use it at this moment, and closing it would make that call fail (a send
+// would lose its Sent copy). The only setting here that the backend uses is
+// SaveSentCopy. It is part of the fingerprint of the backend cache, so the next
+// call gets a new backend and the old one closes after a grace time (see
+// BackendCache).
 //
 // A refusal changes nothing and writes no entry. A failed save leaves the
 // account as it was.
@@ -301,7 +307,6 @@ func (s *Service) UpdateSettings(ctx context.Context, id account.AccountID, u Se
 		}
 		return fmt.Errorf("service: save the settings: %w", err)
 	}
-	s.d.Backends.Forget(id)
 
 	s.record(ctx, p, entry{tool: toolUpdateSettings, account: id, outcome: audit.OutcomeOK, detail: detailSettingsChanged})
 	if autonomy {

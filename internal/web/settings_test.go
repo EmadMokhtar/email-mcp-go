@@ -171,7 +171,7 @@ func TestLevelChangeAudited(t *testing.T) {
 	require.True(t, got.Limits.NewRecipientCheck)
 	require.True(t, got.Mail.SaveSentCopy)
 	require.Nil(t, got.AutonomyAcceptedAt)
-	require.Equal(t, []account.AccountID{a.ID}, p.backends.forgot())
+	require.Empty(t, p.backends.forgot(), "a save does not close a backend that a call may use")
 
 	entries := p.entries()
 	require.Len(t, entries, 1)

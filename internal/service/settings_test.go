@@ -64,7 +64,10 @@ func TestUpdateSettingsSavesEverything(t *testing.T) {
 	require.Equal(t, a.Mail.IMAPHost, got.Mail.IMAPHost)
 	require.Equal(t, a.Status, got.Status)
 
-	require.Equal(t, []account.AccountID{a.ID}, env.factory.forgot(), "the cached backend is dropped")
+	// The cached backend is not closed: a send or a read may use it right now.
+	// The backend cache sees the change of SaveSentCopy in its fingerprint, and
+	// retires the old backend with a grace time (see BackendCache).
+	require.Empty(t, env.factory.forgot(), "the cached backend is not dropped")
 	entries := env.entries()
 	require.Len(t, entries, 1)
 	requireEntry(t, entries[0], "update_settings", audit.OutcomeOK, "settings_changed")
