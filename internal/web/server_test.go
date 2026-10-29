@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -633,7 +634,7 @@ func TestCSRFTokenRequired(t *testing.T) {
 		"token as a header":   withHeader(newRequest(t, http.MethodPost, base+"/test/submit", nil), "X-CSRF-Token", aliceToken),
 		"put without token":   newRequest(t, http.MethodPut, base+"/test/submit", nil),
 		"delete":              newRequest(t, http.MethodDelete, base+"/test/submit", nil),
-		"head without token":  newRequest(t, http.MethodHead, base+"/test/form", nil),
+		"options":             newRequest(t, http.MethodOptions, base+"/test/submit", nil),
 		"multipart has token": multipartRequest(t, base+"/test/submit", aliceToken),
 	}
 	for name, req := range refused {
@@ -655,6 +656,120 @@ func TestCSRFTokenRequired(t *testing.T) {
 	big := url.Values{"csrf_token": {aliceToken}, "data": {strings.Repeat("a", 15<<20)}}
 	resp, _ = do(t, alice, sameOrigin(newRequest(t, http.MethodPost, base+"/test/submit", big), base))
 	require.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+
+	// HEAD is a safe method like GET, and the mux sends it to the GET page. It
+	// needs a session but no form token.
+	f.reached.Store(0)
+	resp, body = do(t, alice, newRequest(t, http.MethodHead, base+"/test/form", nil))
+	require.Equal(t, http.StatusOK, resp.StatusCode, "head without a token")
+	require.Empty(t, body)
+	require.Equal(t, int32(1), f.reached.Load())
+	resp, _ = do(t, newBrowser(t), newRequest(t, http.MethodHead, base+"/test/form", nil))
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "head without a session")
+	require.Equal(t, int32(1), f.reached.Load())
+}
+
+func TestSetupTakesOnlyGetAndHead(t *testing.T) {
+	f := newFixture(t)
+	s := f.newServer()
+	// A catch-all route stands for any later route that matches every path.
+	var caught atomic.Int32
+	s.mux.HandleFunc("/{path...}", func(w http.ResponseWriter, _ *http.Request) {
+		caught.Add(1)
+		_, _ = io.WriteString(w, "caught")
+	})
+	base, err := s.EnsureStarted(context.Background())
+	require.NoError(t, err)
+	browser := newBrowser(t)
+	f.signIn(s, browser)
+	token := f.csrfFrom(browser, base)
+	setupURL, err := s.NewSetupURL(context.Background())
+	require.NoError(t, err)
+
+	clients := map[string]*http.Client{"no session": newBrowser(t), "session": browser}
+	methods := []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions}
+	for name, client := range clients {
+		for _, method := range methods {
+			for _, target := range []string{base + "/setup", setupURL} {
+				req := sameOrigin(newRequest(t, method, target, url.Values{"csrf_token": {token}}), base)
+				resp, body := do(t, client, req)
+				require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode, "%s %s", name, method)
+				require.Equal(t, "GET, HEAD", resp.Header.Get("Allow"), "%s %s", name, method)
+				require.NotContains(t, body, "caught")
+				require.Empty(t, resp.Header.Values("Set-Cookie"))
+			}
+		}
+	}
+	require.Zero(t, caught.Load(), "no request to /setup reached another route")
+
+	// GET and HEAD go to the setup page, never to the catch-all.
+	resp, body := do(t, newBrowser(t), newRequest(t, http.MethodGet, base+"/setup", nil))
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	require.Equal(t, instruction, visibleText(t, body))
+	resp, _ = do(t, newBrowser(t), newRequest(t, http.MethodHead, base+"/setup", nil))
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	require.Zero(t, caught.Load())
+
+	// The setup link was not used by the refused requests.
+	f.signInWith(setupURL)
+
+	// Other paths still reach the catch-all, after the session check.
+	resp, _ = do(t, newBrowser(t), newRequest(t, http.MethodGet, base+"/setup/x", nil))
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	resp, body = do(t, browser, newRequest(t, http.MethodGet, base+"/setup/x", nil))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "caught", body)
+}
+
+func TestServeFailureStartsANewListener(t *testing.T) {
+	f := newFixture(t)
+	s := f.newServer()
+	var (
+		mu        sync.Mutex
+		listeners []net.Listener
+	)
+	s.listen = func(ctx context.Context, network, address string) (net.Listener, error) {
+		var lc net.ListenConfig
+		ln, err := lc.Listen(ctx, network, address)
+		if err == nil {
+			mu.Lock()
+			listeners = append(listeners, ln)
+			mu.Unlock()
+		}
+		return ln, err
+	}
+	ctx := context.Background()
+	_, err := s.EnsureStarted(ctx)
+	require.NoError(t, err)
+
+	// Closing the listener under the server makes Serve fail with an error that
+	// is not http.ErrServerClosed.
+	mu.Lock()
+	require.Len(t, listeners, 1)
+	require.NoError(t, listeners[0].Close())
+	mu.Unlock()
+	require.Eventually(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.baseURL == "" && s.srv == nil
+	}, 5*time.Second, 5*time.Millisecond, "a failed server is forgotten")
+
+	// The next call starts a new listener, and it serves.
+	base, err := s.EnsureStarted(ctx)
+	require.NoError(t, err)
+	require.Regexp(t, baseURLPattern, base)
+	mu.Lock()
+	require.Len(t, listeners, 2)
+	mu.Unlock()
+	resp, body := do(t, newBrowser(t), newRequest(t, http.MethodGet, base+"/approvals/p1", nil))
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	require.Equal(t, instruction, visibleText(t, body))
+	require.Contains(t, f.logs.String(), "code=serve_failed")
+
+	// A shutdown after the restart still stops the new listener.
+	require.NoError(t, s.Shutdown(ctx))
+	_, err = http.Get(base + "/")
+	require.Error(t, err)
 }
 
 // withHeader sets a header of the request and returns the request.

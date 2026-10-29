@@ -22,9 +22,13 @@
 //  3. Origin: http.CrossOriginProtection refuses a cross-origin request that is
 //     not GET, HEAD or OPTIONS. Refused with 403.
 //  4. Session: every path except /setup needs a valid session cookie. Without
-//     one, the answer is the no-session page with 401.
-//  5. Form token: every request that is not GET needs the CSRF token of its
-//     session in the url-encoded form body. Refused with 403.
+//     one, the answer is the no-session page with 401. /setup takes only GET
+//     and HEAD, and the guard answers it itself, never through the routes:
+//     any other method on /setup is refused with 405.
+//  5. Form token: every request that is not GET or HEAD needs the CSRF token of
+//     its session in the url-encoded form body. Refused with 403. HEAD is a
+//     safe method like GET, and the routes answer it with their GET page, so
+//     no route may change anything on GET.
 //
 // The pages are plain HTML forms, with no JavaScript. The log gets the route
 // pattern, the status and a fixed code, never a token, a cookie, a session id,
@@ -107,6 +111,8 @@ type Server struct {
 	layout *template.Template
 	pages  map[string]*template.Template
 	svc    atomic.Pointer[service.Service]
+	// listen opens the listener of EnsureStarted. Tests replace it.
+	listen func(ctx context.Context, network, address string) (net.Listener, error)
 
 	// mu guards the fields below.
 	mu      sync.Mutex
@@ -130,6 +136,8 @@ func New(d Deps) *Server {
 		cop: http.NewCrossOriginProtection(),
 		mux: http.NewServeMux(),
 	}
+	var lc net.ListenConfig
+	s.listen = lc.Listen
 	if s.now == nil {
 		s.now = time.Now
 	}
@@ -145,9 +153,8 @@ func New(d Deps) *Server {
 }
 
 // routes adds the routes of the pages to the mux. The checks of guard.go run
-// before any of them.
+// before any of them. /setup is not here: the guard answers it (see serve).
 func (s *Server) routes() {
-	s.mux.HandleFunc("GET "+setupPath, s.handleSetup)
 }
 
 // Attach gives the server the service that the pages use. The service needs the
@@ -166,7 +173,8 @@ func (s *Server) Attach(svc *service.Service) {
 //
 // ctx limits only the start. The server runs until Shutdown. After Shutdown it
 // returns ErrClosed. When the listen fails, it returns the error, and the next
-// call tries again.
+// call tries again. When the server stops by itself (its listener fails), the
+// next call starts a new listener, maybe on another port.
 func (s *Server) EnsureStarted(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -177,8 +185,7 @@ func (s *Server) EnsureStarted(ctx context.Context) (string, error) {
 		return s.baseURL, nil
 	}
 
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", listenAddr)
+	ln, err := s.listen(ctx, "tcp", listenAddr)
 	if err != nil {
 		return "", fmt.Errorf("web: listen: %w", err)
 	}
@@ -198,8 +205,18 @@ func (s *Server) EnsureStarted(ctx context.Context) (string, error) {
 		ErrorLog: httpserve.ErrorLog(s.log, "web server error"),
 	}
 	go func() {
-		if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
-			s.log.Error("web server stopped", "code", codeServeFailed, "error_types", errtype.Chain(err))
+		err := srv.Serve(ln)
+		if errors.Is(err, http.ErrServerClosed) {
+			return
+		}
+		s.log.Error("web server stopped", "code", codeServeFailed, "error_types", errtype.Chain(err))
+		// The listener is gone. Forget this server, so the next EnsureStarted
+		// starts a new listener and does not give out a dead address.
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.srv == srv {
+			s.srv = nil
+			s.baseURL = ""
 		}
 	}()
 	s.srv = srv

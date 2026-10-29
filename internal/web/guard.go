@@ -30,6 +30,7 @@ const (
 	codeBadCSRF      = "bad_csrf"
 	codeBadForm      = "bad_form"
 	codeBodyTooLarge = "body_too_large"
+	codeBadMethod    = "bad_method"
 )
 
 // serve runs the checks of every request, in the order of the package
@@ -46,8 +47,16 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.refuse(w, http.StatusForbidden, codeCrossOrigin)
 		return
 	}
+	// The setup page is the only page without a session, so it is answered
+	// here and never through the mux: a later route that matches every path
+	// must not get a request for /setup without the session check.
 	if r.URL.Path == setupPath {
-		s.mux.ServeHTTP(w, r)
+		if !safeMethod(r.Method) {
+			w.Header().Set("Allow", "GET, HEAD")
+			s.refuse(w, http.StatusMethodNotAllowed, codeBadMethod)
+			return
+		}
+		s.handleSetup(w, r)
 		return
 	}
 
@@ -62,10 +71,17 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	r = r.WithContext(withSession(r.Context(), sess))
 
-	if r.Method != http.MethodGet && !s.checkForm(w, r, sess) {
+	if !safeMethod(r.Method) && !s.checkForm(w, r, sess) {
 		return
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// safeMethod reports whether a request with this method needs no form token:
+// GET and HEAD. Both only read, and the mux sends a HEAD request to the GET
+// route of the path. Every other method, OPTIONS too, needs the token.
+func safeMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
 }
 
 // setSecurityHeaders sets the headers of every answer. The pages hold private
@@ -93,9 +109,10 @@ func hostAllowed(r *http.Request) bool {
 	return r.Host == "127.0.0.1:"+port || r.Host == "localhost:"+port
 }
 
-// checkForm checks the CSRF token of a request that is not GET, and answers the
-// request when the check fails. The token must be in the url-encoded form body,
-// never in the address, and it must belong to the session of the request.
+// checkForm checks the CSRF token of a request that is not GET or HEAD, and
+// answers the request when the check fails. The token must be in the
+// url-encoded form body, never in the address, and it must belong to the
+// session of the request.
 //
 // The body is read here, up to 15 MB. It is read only after the session check,
 // so a browser without a session cannot make the server read a body. The page
