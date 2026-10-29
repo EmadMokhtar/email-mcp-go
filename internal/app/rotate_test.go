@@ -124,7 +124,7 @@ func TestRotateKEKRefusesAKeyFileThatExists(t *testing.T) {
 // with two slashes, and through a folder that is a symbolic link (macOS has
 // such links: /var is /private/var). The rotation would wrap the keys with the
 // same key and then tell the user to delete the "old" file, which is the only
-// key.
+// key. A spelling with ".." is refused before that, by CheckKEKSource.
 func TestRotateKEKRefusesTheKeyInUseUnderAnySpelling(t *testing.T) {
 	ta := openTest(t)
 	version, sealed := sealTestSecret(t, ta.App)
@@ -136,13 +136,15 @@ func TestRotateKEKRefusesTheKeyInUseUnderAnySpelling(t *testing.T) {
 	for _, spelling := range []string{
 		dir + "/./" + name,
 		dir + "//" + name,
-		dir + "/../" + filepath.Base(dir) + "/" + name,
 		filepath.Join(link, name),
 	} {
 		rot, err := ta.RotateKEK(context.Background(), "file:"+spelling)
 		require.ErrorIs(t, err, ErrSameKEK, spelling)
 		require.Empty(t, rot.OldKeyFile, spelling)
 	}
+	rot, err := ta.RotateKEK(context.Background(), "file:"+dir+"/../"+filepath.Base(dir)+"/"+name)
+	require.ErrorIs(t, err, errDotDotInKeyPath)
+	require.Empty(t, rot.OldKeyFile)
 	require.Equal(t, "file:"+ta.keyPath, ta.kekSource)
 	require.NoError(t, ta.CloseNow(context.Background()))
 	require.True(t, opensWith(t, ta.dir, ta.keyPath, version, sealed))

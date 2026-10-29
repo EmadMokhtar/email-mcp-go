@@ -40,6 +40,12 @@ var afterKeyLookup = func() {}
 // client starts the server in, so the same setting could point at different
 // files. Open and RotateKEK check every source with it; the command line checks
 // --to with it before it opens anything.
+//
+// A path with a ".." part is refused too, with a fixed text. The code that makes
+// a new key file resolves ".." on the disk, after a symbolic link, while the
+// code that reads the key cleans the path as text. After a symbolic link the two
+// can name different files, so a first start could write one key file and read
+// another.
 func CheckKEKSource(source string) error {
 	if source == kekKeychain {
 		return nil
@@ -52,8 +58,17 @@ func CheckKEKSource(source string) error {
 		return fmt.Errorf("app: the master key file path %q must be absolute: a relative path depends on the "+
 			"directory that the MCP client starts the server in", path)
 	}
+	isSeparator := func(r rune) bool { return r == '/' || r == filepath.Separator }
+	if slices.Contains(strings.FieldsFunc(path, isSeparator), "..") {
+		return errDotDotInKeyPath
+	}
 	return nil
 }
+
+// errDotDotInKeyPath is the error of CheckKEKSource for a key file path with a
+// ".." part.
+var errDotDotInKeyPath = errors.New(`app: the master key file path must not have a ".." part. ` +
+	"Give the path without it")
 
 // loadKEK finds the master key of source, or makes it on the first run.
 //
@@ -89,7 +104,7 @@ func loadKEK(ctx context.Context, dataDir, source string, st *store.Store, log *
 	defer unlock()
 
 	if source == kekKeychain {
-		return secrets.NewKeychainKEK()
+		return keychainKEK(ctx, st)
 	}
 	path := strings.TrimPrefix(source, kekFilePrefix)
 	_, statErr := os.Lstat(path)
@@ -101,6 +116,27 @@ func loadKEK(ctx context.Context, dataDir, source string, st *store.Store, log *
 		log.Info("app: made a new master key file")
 	}
 	return secrets.NewFileKEK(path)
+}
+
+// keychainKEK returns the master key in the keychain. It makes a new one only
+// when the database has no wrapped keys yet, as makeKeyFile does for a key
+// file. A database with keys needs the key that wrapped them: a new random key
+// could never open them, and the new keychain entry would block a later restore
+// of the real one. The caller holds the lock of the keychain.
+func keychainKEK(ctx context.Context, st *store.Store) (secrets.KEK, error) {
+	hasKeys, err := databaseHasKeys(ctx, st)
+	if err != nil {
+		return nil, err
+	}
+	if !hasKeys {
+		return secrets.NewKeychainKEK()
+	}
+	kek, err := secrets.LoadKeychainKEK()
+	if errors.Is(err, secrets.ErrNoKey) {
+		return nil, fmt.Errorf("app: the keychain has no master key (the entry email-mcp/master-key), and the "+
+			"database has keys that only that key can open. Restore the keychain entry, or check %s", envKEK)
+	}
+	return kek, err
 }
 
 // loadExistingKEK loads the master key of source, and never makes one. A

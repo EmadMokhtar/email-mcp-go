@@ -541,6 +541,42 @@ func TestOpenRefusesToMakeAKeyFileForADatabaseWithKeys(t *testing.T) {
 	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
+// The keychain gets the same guard as a key file: a database that holds
+// wrapped keys needs the key that wrapped them. When the keychain entry is gone
+// (a data directory restored without it), Open refuses, and it makes no new
+// entry: a new random key could never open the keys, and it would block a later
+// restore of the real one. The keychain is the in-memory mock of go-keyring.
+func TestOpenRefusesToMakeAKeychainKeyForADatabaseWithKeys(t *testing.T) {
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
+	setUserDirs(t, t.TempDir())
+	dir := t.TempDir()
+	first, err := Open(context.Background(), Config{DataDir: dir, KEKSource: kekKeychain, LogOutput: &syncBuffer{}})
+	require.NoError(t, err)
+	require.NoError(t, first.Close(context.Background()))
+	require.NoError(t, keyring.Delete("email-mcp", "master-key"))
+
+	_, err = Open(context.Background(), Config{DataDir: dir, KEKSource: kekKeychain, LogOutput: &syncBuffer{}})
+
+	require.ErrorContains(t, err, "the keychain has no master key")
+	_, getErr := keyring.Get("email-mcp", "master-key")
+	require.ErrorIs(t, getErr, keyring.ErrNotFound, "no new keychain key was made")
+}
+
+// A "..": part in a key file path is refused. The writer of a new key file
+// resolves ".." after a symbolic link on the disk, while the reader cleans it as
+// text, so the two could use different files.
+func TestCheckKEKSourceRefusesDotDot(t *testing.T) {
+	for _, source := range []string{"file:/keys/../master.key", "file:/keys/sub/..", "file:/../master.key"} {
+		err := CheckKEKSource(source)
+		require.Error(t, err, source)
+		require.NotContains(t, err.Error(), "keys", "the text is fixed and names no path")
+	}
+	for _, source := range []string{"file:/keys/..master.key", "file:/keys/master..key", "file:/keys/.hidden/master.key"} {
+		require.NoError(t, CheckKEKSource(source), source)
+	}
+}
+
 // ---------------------------------------------------------------- Sender
 
 func TestSenderMarksUnknownDeliveryAndHardRefusalsPermanent(t *testing.T) {

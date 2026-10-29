@@ -42,12 +42,14 @@ func runKeyRotate(ctx context.Context, c *cli, args []string) int {
 	if len(rest) > 0 {
 		return c.unexpected(cmd)
 	}
-	if app.CheckKEKSource(*to) != nil {
-		return c.usage(cmd, "--to must be file:<absolute path> or keychain")
-	}
+	// CheckKEKSource refuses a ".." part too. This check comes first, so the
+	// user gets the text that names the problem.
 	if path, isFile := strings.CutPrefix(*to, "file:"); isFile && hasDotDot(path) {
 		return c.usage(cmd, `--to must not have a ".." part: after a folder that is a symbolic link, ".." does `+
 			`not go where the text says. Give the path without it`)
+	}
+	if app.CheckKEKSource(*to) != nil {
+		return c.usage(cmd, "--to must be file:<absolute path> or keychain")
 	}
 
 	// Another program that runs now keeps the old master key in memory. A key
