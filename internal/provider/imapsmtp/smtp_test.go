@@ -493,6 +493,7 @@ func TestSendRefusesAMessageThatCannotBeSentSafely(t *testing.T) {
 		"line break":       with(func(r *mail.RawMessage) { r.Recipients = []string{"bob@example.com\r\nRSET"} }),
 		"sender with a >":  with(func(r *mail.RawMessage) { r.From = "me@example.com> SIZE=1" }),
 		"NUL in address":   with(func(r *mail.RawMessage) { r.Recipients = []string{"bob\x00@example.com"} }),
+		"line separator":   with(func(r *mail.RawMessage) { r.Recipients = []string{"bob\u2028x@example.com"} }),
 	} {
 		t.Run(name, func(t *testing.T) {
 			smtpSrv := smtptest.New(t)
@@ -500,7 +501,7 @@ func TestSendRefusesAMessageThatCannotBeSentSafely(t *testing.T) {
 
 			err := b.Send(t.Context(), raw)
 
-			require.Error(t, err)
+			require.ErrorIs(t, err, ErrInvalidMessage, "a retry would get the same answer")
 			requireNoneOf(t, err.Error(), "bob", "example.com", "NOTIFY", "RSET", "SIZE=1")
 			require.Empty(t, smtpSrv.Messages())
 			require.Zero(t, smtpSrv.AuthAttempts(), "nothing was sent, not even the login")

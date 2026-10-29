@@ -82,6 +82,9 @@ func newSender(accounts accountReader, backends service.BackendFactory, log *slo
 //     not.)
 //   - a *imapsmtp.RecipientRejectedError with a 5xx code: the server refused a
 //     recipient for good, and a retry gets the same answer.
+//   - imapsmtp.ErrInvalidMessage: the provider refused the message before it
+//     connected (an address that cannot go into an SMTP command). A retry gets
+//     the same answer.
 //
 // Any other error means that the server did not take the message, and a retry
 // is safe.
@@ -89,6 +92,7 @@ func sendError(err error) error {
 	var rejected *imapsmtp.RecipientRejectedError
 	switch {
 	case errors.Is(err, imapsmtp.ErrDeliveryUnknown),
+		errors.Is(err, imapsmtp.ErrInvalidMessage),
 		errors.Is(err, context.Canceled),
 		errors.Is(err, context.DeadlineExceeded),
 		errors.As(err, &rejected) && rejected.Code >= 500 && rejected.Code <= 599:

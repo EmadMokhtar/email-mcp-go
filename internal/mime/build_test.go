@@ -810,6 +810,32 @@ func requireEnvelopeSafe(t *testing.T, address string) {
 	require.Equal(t, "<"+address+">", (&netmail.Address{Address: address}).String(), "address %q needs quotes", address)
 }
 
+// The SMTP code refuses an envelope address with any white space or control
+// character (imapsmtp.checkOutgoing). Build must refuse the same addresses.
+// Otherwise the user confirms a message that can never be sent: CleanUntrusted
+// keeps the line and paragraph separators and the wide spaces, so the
+// confirmation shows them as a space, and the send fails only in the outbox.
+func TestAddressWithAnySpaceOrSeparatorIsRefused(t *testing.T) {
+	for _, address := range []string{
+		"a b@x",      // line separator
+		"a b@x",      // paragraph separator
+		"a\u0085b@x", // next line (a C1 control)
+		"a b@x",      // no-break space
+		"a　b@x",      // ideographic space
+		"a b@x",      // em space
+		"bob@x ",
+	} {
+		_, err := Build(mail.Compose{To: []string{address}}, newContext())
+		require.ErrorIs(t, err, ErrInvalidAddress, "address %q", address)
+
+		bc := newContext()
+		bc.Original = originalMessage()
+		bc.Original.Cc = []mail.Address{{Email: address}}
+		_, err = Build(mail.Compose{ReplyTo: replyTo(true)}, bc)
+		require.ErrorIs(t, err, ErrInvalidAddress, "original address %q", address)
+	}
+}
+
 func TestOriginalAddressMustBeSafeToo(t *testing.T) {
 	for _, email := range []string{`"a b"@x`, "a b@x", "bob@[1.2.3.4]", "a>b@x"} {
 		bc := newContext()

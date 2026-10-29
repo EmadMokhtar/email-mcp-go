@@ -591,6 +591,7 @@ func TestSenderMarksUnknownDeliveryAndHardRefusalsPermanent(t *testing.T) {
 		"time limit":              {err: fmt.Errorf("smtp: %w", context.DeadlineExceeded), permanent: true},
 		"cancelled":               {err: fmt.Errorf("smtp: %w", context.Canceled), permanent: true},
 		"connection refused":      {err: errors.New("smtp: dial: connection refused")},
+		"message cannot be sent":  {err: fmt.Errorf("%w: recipient 1 of 1 is not a valid address", imapsmtp.ErrInvalidMessage), permanent: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ta := openTest(t)

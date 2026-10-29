@@ -44,6 +44,12 @@ const (
 // retry could send it twice. Check it with errors.Is.
 var ErrDeliveryUnknown = errors.New("smtp: the server did not confirm the message, so it may have been delivered")
 
+// ErrInvalidMessage means that Send refused the message before it connected: the
+// message, its sender or a recipient cannot be written into the SMTP commands
+// as it is (see checkOutgoing). Nothing was sent, and a retry gets the same
+// answer. Check it with errors.Is.
+var ErrInvalidMessage = errors.New("smtp: the message cannot be sent as it is")
+
 // RecipientRejectedError means the SMTP server refused one recipient, so the
 // message was not sent to anyone. The error names the recipient by its place in
 // RawMessage.Recipients. It never holds the address or the text of the server:
@@ -118,20 +124,20 @@ func (b *Backend) Send(ctx context.Context, raw *mail.RawMessage) error {
 // checkOutgoing checks the parts of a message that the SMTP commands are made
 // of. The mime package checks the addresses when it builds a message. This
 // check is the last one before the network, and it keeps anything out of a
-// command line that could end the line or add a parameter. Its errors never
-// hold an address.
+// command line that could end the line or add a parameter. Its errors match
+// ErrInvalidMessage and never hold an address.
 func checkOutgoing(raw *mail.RawMessage) error {
 	switch {
 	case raw == nil || len(raw.Data) == 0:
-		return errors.New("smtp: there is no message to send")
+		return fmt.Errorf("%w: there is no message to send", ErrInvalidMessage)
 	case len(raw.Recipients) == 0:
-		return errors.New("smtp: the message has no recipients")
+		return fmt.Errorf("%w: the message has no recipients", ErrInvalidMessage)
 	case !validEnvelopeAddress(raw.From):
-		return errors.New("smtp: the sender address is not valid")
+		return fmt.Errorf("%w: the sender address is not valid", ErrInvalidMessage)
 	}
 	for i, to := range raw.Recipients {
 		if !validEnvelopeAddress(to) {
-			return fmt.Errorf("smtp: recipient %d of %d is not a valid address", i+1, len(raw.Recipients))
+			return fmt.Errorf("%w: recipient %d of %d is not a valid address", ErrInvalidMessage, i+1, len(raw.Recipients))
 		}
 	}
 	return nil

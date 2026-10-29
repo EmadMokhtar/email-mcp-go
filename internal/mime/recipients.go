@@ -4,6 +4,7 @@ import (
 	"fmt"
 	netmail "net/mail"
 	"strings"
+	"unicode"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
 )
@@ -184,8 +185,17 @@ func checkAddress(field string, a *netmail.Address) error {
 // literal such as bob@[1.2.3.4] unsafe too. An address is also refused when
 // net/mail would have to quote it again (a dot at the start or the end of the
 // local part, two dots in a row, an "@" in the local part, and so on).
+//
+// Any other white space or control character is refused too: the line and
+// paragraph separators (U+2028, U+2029), U+0085, the no-break space and the
+// other wide spaces. The SMTP code refuses them in the envelope, so a message
+// with one could never be sent, and a confirmation would show the character as
+// a plain space.
 func isEnvelopeSafe(address string) bool {
 	if address == "" || strings.ContainsAny(address, " \"<>()[],;:\\") {
+		return false
+	}
+	if strings.ContainsFunc(address, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
 		return false
 	}
 	return !strings.Contains((&netmail.Address{Address: address}).String(), `"`)
