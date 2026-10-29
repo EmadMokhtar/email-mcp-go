@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/audit"
@@ -57,12 +58,6 @@ const (
 	maxForwardChars = 100000
 	// previewChars is the most characters of the body in a preview.
 	previewChars = 500
-	// previewParseChars is how much of the text part of a new message the
-	// preview reads. The text part is already text, so 500 characters of it are
-	// enough; the rest is margin. The HTML is never cut: a cut can drop the end
-	// of a hidden element or a style rule, and then the preview shows text that
-	// the recipient does not see, or misses text that the recipient sees.
-	previewParseChars = 20000
 	// sendPayloadVersion is the version of the send payload format.
 	sendPayloadVersion = 1
 	// maxSendPayloadBytes is the largest send payload: 15 MB, the largest HTTP
@@ -327,7 +322,7 @@ func (s *Service) rebuildApproval(ctx context.Context, b mail.Backend, a *accoun
 	if !samePreview(stored, built.preview) {
 		return req, built, nil, errMessageChanged()
 	}
-	return req, built, detailOf(req, built), nil
+	return req, built, detailOf(built), nil
 }
 
 // errMessageChanged is the error for a message that, built again, is not the one
@@ -475,8 +470,10 @@ func checkShownAddresses(msg *mail.RawMessage) error {
 
 // sendContent is what the preview shows of the content of a message.
 type sendContent struct {
-	// body is the cleaned text that the recipient sees: the text of the HTML
-	// when the message has HTML, the text part otherwise.
+	// body is the whole cleaned text that the recipient sees: the text of the
+	// HTML when the message has HTML, the text part otherwise. It is cleaned as
+	// a whole, never cut first, so no hidden characters before the text can push
+	// the text out of the preview.
 	body string
 	// attachments are the file names of the attachments, in the order of the
 	// message.
@@ -524,12 +521,16 @@ func (s *Service) buildSend(ctx context.Context, b mail.Backend, a *account.Acco
 	return msg, content, nil
 }
 
-// composedBody returns the cleaned text part of a message that mime.Build made,
-// as far as the preview needs it. Build makes that part from the whole HTML when
-// the request has HTML (a request with both a body and HTML is refused), so it
-// is the text that the recipient sees, with the block of a forward.
+// composedBody returns the whole cleaned text part of a message that mime.Build
+// made. Build makes that part from the whole HTML when the request has HTML (a
+// request with both a body and HTML is refused), so it is the text that the
+// recipient sees, with the block of a forward.
+//
+// The text is read in full and cleaned before anything is cut. A cut before the
+// clean would let 21000 zero width spaces fill the part that is read, and the
+// preview would show nothing of the text that is sent.
 func composedBody(data []byte) string {
-	return composedText(data, previewParseChars)
+	return composedText(data)
 }
 
 // draftContent reads a whole draft for the preview: the text of its whole HTML
@@ -840,10 +841,12 @@ func (p *composePayload) compose() mail.Compose {
 // previewOf makes the preview of a send from the built message: the envelope
 // sender, every envelope recipient (so a Reply-To that a stranger set, the people
 // that a reply to all adds, and the Bcc are all visible), the subject, the file
-// names of the attachments and the start of the text. The subject and the text
-// are cleaned of characters that a reader cannot see. Every value is valid UTF-8,
-// so the stored preview reads back the same, and the preview of the same message
-// built again is equal to it.
+// names of the attachments and the start of the text (see previewBody). The
+// subject and the text are cleaned of characters that a reader cannot see.
+// Every value is valid UTF-8, so the stored preview reads back the same, and the
+// preview of the same message built again is equal to it. The first call and
+// the answer (and the approval page) all build it here, so samePreview compares
+// two previews that were made in the same way.
 func previewOf(a *account.Account, msg *mail.RawMessage, content sendContent) confirm.Preview {
 	to := make([]string, len(msg.Recipients))
 	for i, r := range msg.Recipients {
@@ -853,15 +856,68 @@ func previewOf(a *account.Account, msg *mail.RawMessage, content sendContent) co
 	for _, name := range content.attachments {
 		names = append(names, validText(name))
 	}
+	start, more := previewBody(content.body)
 	return confirm.Preview{
 		Account:     validText(a.Address),
 		From:        validText(msg.From),
 		To:          to,
 		Subject:     previewSubject(msg.Data),
-		BodyStart:   firstRunes(validText(content.body), previewChars),
+		BodyStart:   start,
+		BodyMore:    more,
 		Count:       1,
 		Attachments: names,
 	}
+}
+
+// previewBody returns what a preview shows of the cleaned text of a message: the
+// first previewChars characters of the text after collapseSpace, and how many
+// characters of it come after them.
+//
+// Collapsing the white space first means that padding cannot push the text out
+// of the preview: 600 line breaks before the text become nothing. The count
+// lets each channel say that the text goes on.
+func previewBody(text string) (start string, more int) {
+	text = collapseSpace(validText(text))
+	start = firstRunes(text, previewChars)
+	return start, utf8.RuneCountInString(text[len(start):])
+}
+
+// collapseSpace removes the white space at both ends of s and makes each run of
+// white space inside it short:
+//   - a run with two or more line breaks becomes one empty line ("\n\n");
+//   - a run with one line break becomes "\n";
+//   - any other run becomes one space.
+//
+// White space is what unicode.IsSpace says, so tabs, no-break spaces and the
+// other wide spaces count. The line and paragraph separators (U+2028 and
+// U+2029) count as line breaks. So each run gives at most two characters, and
+// most of a preview of 500 characters is always text.
+func collapseSpace(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	breaks, inRun := 0, false
+	for _, r := range strings.TrimSpace(s) {
+		if unicode.IsSpace(r) {
+			inRun = true
+			if r == '\n' || r == '\u2028' || r == '\u2029' {
+				breaks++
+			}
+			continue
+		}
+		if inRun {
+			switch {
+			case breaks >= 2:
+				b.WriteString("\n\n")
+			case breaks == 1:
+				b.WriteByte('\n')
+			default:
+				b.WriteByte(' ')
+			}
+			breaks, inRun = 0, false
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // previewSubject returns the cleaned subject of a message.
@@ -875,12 +931,13 @@ func previewSubject(data []byte) string {
 
 // samePreview reports whether a message built again is the message of the
 // stored preview: the same sender, the same recipients (compared without case
-// and order), the same subject, the same attachments (in order) and the same
-// start of the text.
+// and order), the same subject, the same attachments (in order), the same start
+// of the text and the same count of characters after it.
 func samePreview(stored, rebuilt confirm.Preview) bool {
 	return stored.From == rebuilt.From &&
 		stored.Subject == rebuilt.Subject &&
 		stored.BodyStart == rebuilt.BodyStart &&
+		stored.BodyMore == rebuilt.BodyMore &&
 		slices.Equal(addressSet(stored.To), addressSet(rebuilt.To)) &&
 		slices.Equal(stored.Attachments, rebuilt.Attachments)
 }

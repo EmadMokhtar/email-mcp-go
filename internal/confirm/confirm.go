@@ -43,6 +43,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/errtype"
@@ -172,11 +173,29 @@ type Preview struct {
 	// BodyStart is the first part of the body. Create keeps at most 500
 	// characters.
 	BodyStart string `json:"body_start"`
+	// BodyMore is how many characters of the body come after BodyStart and are
+	// not in the preview. Each channel that shows the preview shows
+	// MoreCharsText after BodyStart, so the user knows that the body goes on.
+	BodyMore int `json:"body_more,omitempty"`
 	// Count is the number of messages the action affects.
 	Count int `json:"count"`
 	// Attachments are the file names of the attachments of a send, in the order
 	// of the message. They are part of what the user approves.
 	Attachments []string `json:"attachments,omitempty"`
+}
+
+// MoreCharsText returns the line that a channel shows after BodyStart when the
+// preview leaves out a part of the body, such as "… and 1200 more characters
+// not shown". It returns "" when BodyMore is 0.
+func (p Preview) MoreCharsText() string {
+	switch {
+	case p.BodyMore <= 0:
+		return ""
+	case p.BodyMore == 1:
+		return "… and 1 more character not shown"
+	default:
+		return fmt.Sprintf("… and %d more characters not shown", p.BodyMore)
+	}
 }
 
 // Pending is an action that needs the user's confirmation. It does not hold the
@@ -278,7 +297,8 @@ func NewManager(st PendingStore, v *secrets.Vault, s *signing.Signer, now func()
 
 // Create stores an action that waits for the user, and returns it in the state
 // "pending". The payload and the preview are stored encrypted. Create keeps at
-// most 500 characters of the preview body.
+// most 500 characters of the preview body, and adds the characters that it cuts
+// to BodyMore.
 //
 // The mode says how the user answers the action, and it sets how long the
 // action waits: InBandLifetime for ModeInBand, ApprovalLifetime for
@@ -317,7 +337,11 @@ func (m *Manager) createWithLifetime(ctx context.Context, tenant account.TenantI
 	// Own the preview, so a later change by the caller does not change it.
 	p.To = slices.Clone(p.To)
 	p.Attachments = slices.Clone(p.Attachments)
-	p.BodyStart = firstChars(p.BodyStart, maxBodyStart)
+	if short := firstChars(p.BodyStart, maxBodyStart); len(short) < len(p.BodyStart) {
+		// What is cut is not shown, so it counts toward BodyMore.
+		p.BodyMore += utf8.RuneCountInString(p.BodyStart[len(short):])
+		p.BodyStart = short
+	}
 
 	id := strings.ToLower(rand.Text())
 	created := m.now().UTC().Truncate(time.Millisecond)

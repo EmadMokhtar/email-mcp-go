@@ -1145,7 +1145,48 @@ func TestPreviewText(t *testing.T) {
 	require.Equal(t, "", lines[4], "a blank line before the body")
 	require.Equal(t, "Body:", lines[5], "a label, so the body cannot pose as a header")
 	require.True(t, strings.HasPrefix(lines[6], "Cc: ceo@corp.example\n"))
-	require.Equal(t, 500, utf8.RuneCountInString(lines[6]), "at most 500 characters of the body")
+	body, cut := strings.CutSuffix(lines[6], "\n… and 121 more characters not shown")
+	require.True(t, cut, "the form says that the body goes on: %q", lines[6][len(lines[6])-60:])
+	require.Equal(t, 500, utf8.RuneCountInString(body), "at most 500 characters of the body")
+}
+
+// The line that says how much of the body is left out counts what the preview
+// left out (BodyMore) and what the form cuts.
+func TestPreviewTextSaysWhenTheBodyGoesOn(t *testing.T) {
+	short := sendPreview(confirm.Preview{From: "me@example.com", To: []string{"a@example.com"}, BodyStart: "Hello"})
+	require.True(t, strings.HasSuffix(short, "\nBody:\nHello"), "no line when nothing is left out")
+
+	got := sendPreview(confirm.Preview{From: "me@example.com", To: []string{"a@example.com"}, BodyStart: "Hello", BodyMore: 12345})
+	require.True(t, strings.HasSuffix(got, "\nBody:\nHello\n… and 12345 more characters not shown"), got)
+}
+
+// Padding before the text (line breaks or zero width spaces) must not hide the
+// text from the person who confirms: the form shows the start of the real text,
+// and says that more follows.
+func TestSendFormShowsTheStartOfTheRealText(t *testing.T) {
+	const payload = "Wire 9000 EUR to the account in the attached file today."
+	tail := strings.Repeat(" More words here.", 100)
+	for name, body := range map[string]string{
+		"600 line breaks":         strings.Repeat("\n", 600) + payload + tail,
+		"21000 zero width spaces": strings.Repeat("\u200b", 21000) + payload + tail,
+		"a long normal text":      payload + tail,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ask := accepting()
+			m := newMailSetup(t, envOptions{client: ask.options()})
+			args := sendArgs(m.a)
+			args["body"] = body
+
+			res := callIn(t, m.e, "send_message", args)
+
+			require.False(t, res.IsError, textOf(t, res))
+			asked := ask.requests()
+			require.Len(t, asked, 1)
+			require.Contains(t, asked[0].Message, "\nBody:\n"+payload)
+			want := fmt.Sprintf("\n… and %d more characters not shown", utf8.RuneCountInString(payload+tail)-500)
+			require.True(t, strings.HasSuffix(asked[0].Message, want), "%.200q", asked[0].Message[len(asked[0].Message)-100:])
+		})
+	}
 }
 
 func TestPreviewTextOneLineFields(t *testing.T) {

@@ -234,9 +234,12 @@ Two switches apply to each account:
 - **Confirm deletes** (on by default): ask before the agent moves mail to the
   Trash.
 
-When a confirmation is needed, the server shows you what will happen: who it
-goes to, the subject, and the first 500 characters of the message. It asks in
-one of two ways:
+When a confirmation is needed, the server shows you what will happen. For a
+send: who it goes to, the subject, the attachments and the first 500
+characters of the text. In that preview, long runs of blank space are made
+short, so blank lines cannot push the text out of view, and a last line says
+how many characters are not shown. The approval page shows the whole text. It
+asks in one of two ways:
 
 - **In the AI app ("in band").** The app shows a small form with one box,
   "Confirm". The app must support MCP elicitation (a way for a server to ask the

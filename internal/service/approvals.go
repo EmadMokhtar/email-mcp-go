@@ -137,28 +137,23 @@ func (s *Service) sendDetail(ctx context.Context, id account.AccountID, stored c
 }
 
 // detailOf returns what the approval page shows of a built message: every text
-// cleaned with mime.CleanUntrusted.
-func detailOf(req *sendRequest, built *builtSend) *SendDetail {
+// cleaned with mime.CleanUntrusted. The body is the whole text, as the
+// recipient sees it.
+func detailOf(built *builtSend) *SendDetail {
 	msg := built.msg
-	body := built.content.body
-	if req.compose != nil {
-		// The preview reads only the start of the text. The page shows all of
-		// it.
-		body = composedText(msg.Data, 0)
-	}
 	return &SendDetail{
 		From:        mime.CleanUntrusted(msg.From),
 		Recipients:  cleanAll(msg.Recipients),
 		Subject:     previewSubject(msg.Data),
 		Attachments: cleanAll(built.content.attachments),
-		Body:        mime.CleanUntrusted(body),
+		Body:        mime.CleanUntrusted(built.content.body),
 	}
 }
 
-// composedText returns the cleaned text part of a message that mime.Build made,
-// read up to maxChars characters (0 means all of it).
-func composedText(data []byte, maxChars int) string {
-	parsed, _ := mime.ParseMessage(bytes.NewReader(data), maxChars)
+// composedText returns the whole text part of a message that mime.Build made,
+// cleaned with mime.CleanUntrusted as a whole.
+func composedText(data []byte) string {
+	parsed, _ := mime.ParseMessage(bytes.NewReader(data), 0)
 	if parsed == nil {
 		return ""
 	}

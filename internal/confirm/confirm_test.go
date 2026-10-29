@@ -877,6 +877,8 @@ func TestCreateKeepsAtMost500CharactersOfTheBody(t *testing.T) {
 	long := strings.Repeat("é", 600)
 	p := create(long)
 	require.Equal(t, exact, p.Preview.BodyStart, "characters count, not bytes")
+	require.Equal(t, 100, p.Preview.BodyMore, "what Create cuts counts as not shown")
+	require.Equal(t, "… and 100 more characters not shown", p.Preview.MoreCharsText())
 
 	// What is stored is what Create returned.
 	got, _, err := f.mgr.Get(ctx, f.tenant, p.ID)

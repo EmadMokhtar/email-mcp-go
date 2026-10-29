@@ -309,6 +309,7 @@ func TestApprovalPageWithoutTheWholeMessageOffersOnlyReject(t *testing.T) {
 	require.Contains(t, text, textCannotShow)
 	require.Contains(t, text, "alice@example.com")
 	require.NotContains(t, text, "THE-END", "only the stored start is shown")
+	require.Contains(t, text, "… and 108 more characters not shown", "the page says that the text goes on")
 	requireOnlyReject(t, body, id)
 
 	resp, body = p.post(approvalPath(id)+"/approve", nil)

@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -195,7 +196,9 @@ func linkRequest(message, link string) *mcp.CallToolResult {
 // one-line values are put on one line with single spaces, so a subject cannot
 // add a line, or wrap into a line, that looks like another header. The subject
 // and each attachment name are cut. The body comes last, after a blank line and
-// a label, so its first line cannot pose as a header either.
+// a label, so its first line cannot pose as a header either. When the body is
+// longer than the preview, a last line says how many characters are not shown
+// (confirm.Preview.MoreCharsText), so the person knows that the text goes on.
 //
 //	Send this email from <from>?
 //	To: <to, comma-separated>
@@ -204,15 +207,23 @@ func linkRequest(message, link string) *mcp.CallToolResult {
 //
 //	Body:
 //	<first 500 chars of body>
+//	… and <n> more characters not shown
 func sendPreview(p confirm.Preview) string {
 	to := make([]string, 0, len(p.To))
 	for _, addr := range p.To {
 		to = append(to, oneLine(addr))
 	}
-	body := firstChars(clean(p.BodyStart), previewBodyChars)
+	body := clean(p.BodyStart)
+	shown := firstChars(body, previewBodyChars)
+	// The service keeps at most 500 characters, so the form cuts nothing in
+	// practice. If it did, the cut part counts as not shown too.
+	p.BodyMore += utf8.RuneCountInString(body[len(shown):])
+	if more := p.MoreCharsText(); more != "" {
+		shown += "\n" + more
+	}
 	return fmt.Sprintf("Send this email from %s?\nTo: %s\nSubject: %s\nAttachments: %s\n\nBody:\n%s",
 		oneLine(p.From), strings.Join(to, ", "), cut(oneLine(p.Subject), previewSubjectChars),
-		attachmentList(p.Attachments), body)
+		attachmentList(p.Attachments), shown)
 }
 
 // attachmentList is the attachments part of a send preview: the number of

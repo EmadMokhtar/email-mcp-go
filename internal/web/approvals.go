@@ -249,6 +249,9 @@ func approvalOf(svc *service.Service, ctx context.Context, id string) (approvalP
 	// the same way), so the page offers only Reject.
 	page.From, page.Recipients, page.Subject = p.Preview.From, p.Preview.To, p.Preview.Subject
 	page.Attachments, page.Body, page.BodyNote = p.Preview.Attachments, p.Preview.BodyStart, msgDetailUnavailable
+	if more := p.Preview.MoreCharsText(); more != "" {
+		page.Body += "\n" + more
+	}
 	return page, true, nil
 }
 

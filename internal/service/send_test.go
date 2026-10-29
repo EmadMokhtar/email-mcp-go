@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
@@ -804,6 +805,61 @@ func TestSendRefusesAMessageThatIsNotADraft(t *testing.T) {
 	}
 }
 
+// The in-band form shows the stored preview, and it is the main way the user
+// sees a message before it goes. Padding before the text must not push the
+// text out of the 500 characters of the preview: the preview is made from the
+// whole cleaned text, with each run of white space made short. When the text is
+// longer than the preview, the preview says how many characters it leaves out.
+func TestSendPreviewShowsTheStartOfTheRealText(t *testing.T) {
+	const payload = "Wire 9000 EUR to the account in the attached file today."
+	tail := strings.Repeat(" More words here.", 100)
+	for name, body := range map[string]string{
+		"600 line breaks before the text":         strings.Repeat("\n", 600) + payload + tail,
+		"21000 zero width spaces before the text": strings.Repeat("\u200b", 21000) + payload + tail,
+		"white space of every kind before":        strings.Repeat(" \n\t\u00a0\u2028\r\n", 300) + payload + tail,
+		"a long normal text":                      payload + tail,
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := newWriteEnv(t)
+			a := env.account()
+			c := mail.Compose{To: []string{"bob@example.com"}, Subject: "Plans", Body: body}
+
+			_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+			require.NoError(t, err)
+			p := needs.Pending.Preview
+			require.True(t, strings.HasPrefix(p.BodyStart, payload), "the preview starts with the text: %.80q", p.BodyStart)
+			require.Equal(t, 500, utf8.RuneCountInString(p.BodyStart))
+			require.Equal(t, utf8.RuneCountInString(payload+tail)-500, p.BodyMore, "the preview says how much it leaves out")
+			require.Contains(t, p.MoreCharsText(), "more characters not shown")
+
+			// The second call builds the preview in the same way, so it matches.
+			res, _, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, accept(needs))
+			require.NoError(t, err)
+			require.Equal(t, SendSent, res.Status)
+			require.Contains(t, string(env.sender.sent()[0].Msg.Data), "Wire 9000 EUR")
+		})
+	}
+}
+
+// A saved draft gets the same preview rules as a new message.
+func TestSendDraftPreviewShowsTheStartOfTheRealText(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	body := strings.Repeat("\n", 600) + "Wire the money today." + strings.Repeat(" Words.", 100)
+	raw := strings.Replace(string(draftMail("me@example.com")), "Draft body\r\n", crlfText(body), 1)
+	env.backend.addMessage("d1", []byte(raw), true)
+	draft := mail.Ref("d1")
+
+	_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+	require.NoError(t, err)
+	p := needs.Pending.Preview
+	require.True(t, strings.HasPrefix(p.BodyStart, "Wire the money today."), "%.80q", p.BodyStart)
+	require.Positive(t, p.BodyMore)
+}
+
+// crlfText returns s with each "\n" written as "\r\n", as in a stored message.
+func crlfText(s string) string { return strings.ReplaceAll(s, "\n", "\r\n") }
+
 func TestSendDraftWithConfirmation(t *testing.T) {
 	env := newWriteEnv(t)
 	a := env.account()
@@ -815,7 +871,7 @@ func TestSendDraftWithConfirmation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"ann@example.com", "hidden@example.com"}, needs.Pending.Preview.To)
 	require.Equal(t, "Draft plans", needs.Pending.Preview.Subject)
-	require.Equal(t, "Draft body\n", needs.Pending.Preview.BodyStart)
+	require.Equal(t, "Draft body", needs.Pending.Preview.BodyStart, "white space at the ends is left out")
 
 	res, _, err := env.svc.Send(ctx, a.ID, nil, &draft, ConfirmInBand, accept(needs))
 	require.NoError(t, err)
@@ -1099,6 +1155,8 @@ func TestChangedAttachmentsAreAChangedMessage(t *testing.T) {
 	require.False(t, samePreview(confirm.Preview{Attachments: []string{"a.pdf"}}, confirm.Preview{Attachments: []string{"b.pdf"}}))
 	require.False(t, samePreview(confirm.Preview{Attachments: []string{"a.pdf"}}, confirm.Preview{}))
 	require.True(t, samePreview(confirm.Preview{}, confirm.Preview{Attachments: []string{}}))
+	require.False(t, samePreview(confirm.Preview{BodyStart: "a", BodyMore: 10}, confirm.Preview{BodyStart: "a", BodyMore: 11}),
+		"the count of characters that the user did not see is part of the preview")
 }
 
 // Most mail programs show the HTML of a message. A message with both a body and
@@ -1194,9 +1252,9 @@ func TestInBandActionExpiresWithItsRequestState(t *testing.T) {
 
 // ---------------------------------------------------------------- the body that the user sees (fix round 2)
 
-// hiddenFiller is HTML that hides more than previewParseChars characters, so
-// the text after it is beyond any cut of the HTML.
-var hiddenFiller = `<div style="display:none">` + strings.Repeat("x", previewParseChars+1) + `</div>`
+// hiddenFiller is HTML that hides more than 20000 characters, so the text
+// after it is beyond any cut of the HTML of that size.
+var hiddenFiller = `<div style="display:none">` + strings.Repeat("x", 20001) + `</div>`
 
 // lateStyle is HTML whose style rule, after the filler, hides the decoy that
 // comes first.
