@@ -1,0 +1,61 @@
+# Mail servers for the interop test (go test -tags interop ./test/interop/).
+#
+#   go run ./test/interop/gencerts test/interop/certs
+#   docker compose -f test/interop/compose.yaml up -d --wait
+#   go test -tags interop ./test/interop/ -v
+#   docker compose -f test/interop/compose.yaml down -v
+#
+# Dovecot serves IMAP and stores the mail. Postfix takes mail by SMTP
+# submission, checks logins with Dovecot, and delivers to Dovecot over LMTP.
+# Both use the certificate that gencerts makes. Every port is published on
+# 127.0.0.1 only.
+#
+# The images are pinned by digest. The comment above each one is its tag.
+name: email-mcp-interop
+
+services:
+  dovecot:
+    # dovecot/dovecot:2.4.5 (the image of the Dovecot project)
+    image: dovecot/dovecot@sha256:43c14def08a57f25107593cbcf64a0a6fbae84a7b9de7aa038513c9b21e91914
+    environment:
+      # The password of the one test user, interop@example.test. It is a test
+      # value. interop_test.go has the same value.
+      INTEROP_PASSWORD: interop-test-only-password-7Hq2
+    volumes:
+      - ./certs:/certs:ro
+      # Replaces the auth.conf of the image, which lets any user name log in.
+      - ./dovecot/auth.conf:/etc/dovecot/conf.d/auth.conf:ro
+      # Read last, so it changes the settings of the image.
+      - ./dovecot/interop.conf:/etc/dovecot/conf.d/zz-interop.conf:ro
+    ports:
+      - "127.0.0.1:31143:31143" # IMAP with STARTTLS
+      - "127.0.0.1:31993:31993" # IMAP with implicit TLS
+    healthcheck:
+      # The TLS handshake works only when Dovecot has loaded the certificate.
+      test: ["CMD", "sh", "-c", "openssl s_client -brief -verify_return_error -CAfile /certs/ca.crt -connect 127.0.0.1:31993 </dev/null"]
+      # Check every second while the server starts, then every 30 seconds.
+      start_period: 60s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  postfix:
+    build: ./postfix
+    image: email-mcp-interop-postfix
+    depends_on:
+      dovecot:
+        condition: service_healthy
+    volumes:
+      - ./certs:/certs:ro
+    ports:
+      - "127.0.0.1:31587:587" # SMTP submission with STARTTLS
+      - "127.0.0.1:31465:465" # SMTP submission with implicit TLS
+    healthcheck:
+      test: ["CMD", "postfix", "status"]
+      # Check every second while the server starts, then every 30 seconds.
+      start_period: 60s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3

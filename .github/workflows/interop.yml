@@ -1,0 +1,43 @@
+name: Interop
+
+# Runs the mail scenario against real Dovecot and Postfix servers in Docker
+# (test/interop). It runs every night, for every release tag, and by hand.
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Read-only token. The job does not write to the repository.
+permissions:
+  contents: read
+
+# Every action is pinned by full commit SHA. The comment after the SHA is the
+# release tag. Use the same SHAs as ci.yml.
+
+jobs:
+  interop:
+    name: Dovecot and Postfix
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: make the test certificates
+        run: go run ./test/interop/gencerts test/interop/certs
+      - name: start the mail servers
+        run: docker compose -f test/interop/compose.yaml up -d --wait
+      - name: interop test
+        run: go test -tags interop ./test/interop/ -v
+      - name: server logs
+        if: always()
+        run: docker compose -f test/interop/compose.yaml logs --no-color
+      - name: stop the mail servers
+        if: always()
+        run: docker compose -f test/interop/compose.yaml down -v

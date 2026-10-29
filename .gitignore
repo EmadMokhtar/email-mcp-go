@@ -46,3 +46,7 @@ build/
 # Temporary files
 tmp/
 temp/
+
+# TLS files of the interop test servers. go run ./test/interop/gencerts makes
+# them for each run. They are never committed.
+/test/interop/certs/

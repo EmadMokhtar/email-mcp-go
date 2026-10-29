@@ -1,0 +1,48 @@
+# Postfix for the interop test: a submission server for the test domain. A
+# logged-in user may send mail. Mail for the test user goes to Dovecot.
+compatibility_level = 3.6
+
+myhostname = mail.example.test
+mydomain = example.test
+myorigin = $mydomain
+mydestination = localhost
+inet_interfaces = all
+inet_protocols = ipv4
+mynetworks = 127.0.0.0/8
+
+# The log goes to the container log.
+maillog_file = /dev/stdout
+
+# No local mail and no alias files.
+alias_maps =
+alias_database =
+biff = no
+append_dot_mydomain = no
+
+# The only mailbox is the test user. Postfix delivers to Dovecot over LMTP.
+virtual_mailbox_domains = example.test
+virtual_mailbox_maps = inline:{ interop@example.test=ok }
+virtual_transport = lmtp:inet:dovecot:31025
+lmtp_host_lookup = native
+
+# Logins go to Dovecot, so IMAP and SMTP share one password. The services in
+# master.cf turn logins on.
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = inet:dovecot:31012
+smtpd_sasl_auth_enable = no
+smtpd_sasl_security_options = noanonymous
+
+# TLS with the certificate made by test/interop/gencerts. A password may be
+# sent only after TLS has started.
+smtpd_tls_chain_files = /certs/server.key, /certs/server.crt
+smtpd_tls_security_level = may
+smtpd_tls_auth_only = yes
+smtpd_tls_protocols = >=TLSv1.2
+smtpd_tls_mandatory_protocols = >=TLSv1.2
+
+# Only a logged-in user may send, and only to the test domain: the test
+# never sends mail out of the containers.
+smtpd_relay_restrictions = permit_sasl_authenticated, reject
+smtpd_recipient_restrictions = reject_unauth_destination
+default_transport = error:mail to other domains is turned off in the interop test
+relay_transport = error:mail to other domains is turned off in the interop test
