@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -258,4 +259,31 @@ func TestCloseNowLeavesTheQueue(t *testing.T) {
 	require.True(t, ta.factory.isClosed())
 	require.NotContains(t, ta.logs.String(), "drain_stopped")
 	require.NoError(t, ta.Close(context.Background()), "a second close does nothing")
+}
+
+// A key file that is in place but maybe not on the disk yet (the folder sync
+// failed) counts as made: the command line tells the user where it is. Nothing
+// is wrapped with it.
+func TestRotateKEKReportsAKeyFileThatIsNotDurable(t *testing.T) {
+	ta := openTest(t)
+	version, sealed := sealTestSecret(t, ta.App)
+	newKey := filepath.Join(t.TempDir(), "new.key")
+	old := generateKeyFile
+	t.Cleanup(func() { generateKeyFile = old })
+	generateKeyFile = func(path string) error {
+		if err := secrets.GenerateKeyFile(path); err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: the folder sync failed in the test", secrets.ErrNotDurable)
+	}
+	setBeforeRewrap(t, func() { t.Fatal("nothing is wrapped with a key that may not be on the disk") })
+
+	rot, err := ta.RotateKEK(context.Background(), "file:"+newKey)
+
+	require.ErrorIs(t, err, secrets.ErrNotDurable)
+	require.True(t, rot.MadeKeyFile)
+	require.FileExists(t, newKey)
+	require.Equal(t, "file:"+ta.keyPath, ta.kekSource)
+	require.NoError(t, ta.CloseNow(context.Background()))
+	require.True(t, opensWith(t, ta.dir, ta.keyPath, version, sealed))
 }

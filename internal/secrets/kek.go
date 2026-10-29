@@ -214,17 +214,32 @@ func NewFileKEK(path string) (KEK, error) {
 // database that depends on a key that is lost can never be read again. The first
 // start of a data directory and a change of master key both use it.
 //
-// In this order it:
+// It never replaces anything at path, also when another program makes a key
+// file at the same path at the same moment (two data directories can share one
+// key file path, and each holds only its own lock). In this order it:
 //  1. refuses, with an error that matches fs.ErrExist, when anything exists at
-//     path (a file or a symbolic link). It never replaces a key;
+//     path (a file or a symbolic link). This is only an early answer: step 3
+//     is the real guard;
 //  2. writes the key to a new temporary file in the folder of path (mode
 //     0600), calls Sync on it, and closes it;
-//  3. renames the temporary file to path, and calls Sync on the folder, so the
-//     new name is on the disk too (not on Windows, see syncDir).
+//  3. puts it in place with a hard link (os.Link) from path to the temporary
+//     file. The link fails in one step when anything exists at path, and it
+//     does not follow a symbolic link there. Then it removes the temporary
+//     name. A file system without hard links (FAT, exFAT, some network shares)
+//     gets an exclusive create of path instead (O_CREATE|O_EXCL), which also
+//     never replaces: the key is written, synced and closed there. A rename is
+//     never used, because a rename replaces the file of the other program;
+//  4. calls Sync on the folder, so the new name is on the disk too (not on
+//     Windows, see syncDir).
 //
-// Steps 1 and 3 are not one step. The caller must hold a lock, so that no other
-// program makes a file at path in between. On an error, the temporary file is
-// removed and nothing is at path.
+// The folder is the text of path before its last separator, as written, so the
+// system resolves it as it resolves path (a ".." after a symbolic link goes to
+// the folder that the system finds).
+//
+// When anything exists at path, the error matches fs.ErrExist. When step 4
+// fails, the key file is in place but may not be on the disk yet: the error
+// matches ErrNotDurable. On any other error, nothing is at path and no
+// temporary file is left.
 func GenerateKeyFile(path string) (err error) {
 	if _, err := os.Lstat(path); err == nil {
 		return fmt.Errorf("secrets: create key file: %w", fs.ErrExist)
@@ -235,20 +250,79 @@ func GenerateKeyFile(path string) (err error) {
 	if _, err := rand.Read(key); err != nil {
 		return fmt.Errorf("secrets: create key: %w", err)
 	}
-	dir := filepath.Dir(path)
+	content := encodeKey(key) + "\n"
+	dir, _ := filepath.Split(path)
+	if dir == "" {
+		dir = "."
+	}
+
+	tmp, err := writeTempKey(dir, content)
+	if err != nil {
+		return err
+	}
+	linkErr := linkFile(tmp, path)
+	// The key now has the name path (after a link), or it was not placed. The
+	// temporary name goes in both cases.
+	_ = os.Remove(tmp)
+	switch {
+	case linkErr == nil:
+	case errors.Is(linkErr, fs.ErrExist):
+		return fmt.Errorf("secrets: create key file: %w", fs.ErrExist)
+	default:
+		// No hard link here. Any other link error ends in the exclusive create
+		// too: it reports the real problem, and it never replaces a file.
+		if err := writeKeyExclusive(path, content); err != nil {
+			return err
+		}
+	}
+	if err := syncFolder(dir); err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrNotDurable, path, err)
+	}
+	return nil
+}
+
+// writeTempKey writes content to a new temporary file in dir, syncs it and
+// closes it. It returns the name of the file. On an error it removes the file.
+func writeTempKey(dir, content string) (name string, err error) {
 	// CreateTemp makes the file with mode 0600, and never opens one that exists.
 	f, err := os.CreateTemp(dir, ".email-mcp-key-*")
 	if err != nil {
-		return fmt.Errorf("secrets: create key file: %w", err)
+		return "", fmt.Errorf("secrets: create key file: %w", err)
 	}
-	tmp := f.Name()
 	defer func() {
 		if err != nil {
 			_ = f.Close()
-			_ = os.Remove(tmp)
+			_ = os.Remove(f.Name())
 		}
 	}()
-	if _, err := io.WriteString(f, encodeKey(key)+"\n"); err != nil {
+	if _, err := io.WriteString(f, content); err != nil {
+		return "", fmt.Errorf("secrets: write key file: %w", err)
+	}
+	if err := syncFile(f); err != nil {
+		return "", fmt.Errorf("secrets: write key file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("secrets: write key file: %w", err)
+	}
+	return f.Name(), nil
+}
+
+// writeKeyExclusive makes path with O_CREATE|O_EXCL and mode 0600, writes
+// content, syncs it and closes it. O_EXCL fails when anything exists at path,
+// and it does not follow a symbolic link at path. On an error after the create,
+// it removes the file: it is ours, and no key depends on it yet.
+func writeKeyExclusive(path, content string) (err error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: the user chooses the key file path on purpose
+	if err != nil {
+		return fmt.Errorf("secrets: create key file: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = f.Close()
+			_ = os.Remove(path)
+		}
+	}()
+	if _, err := io.WriteString(f, content); err != nil {
 		return fmt.Errorf("secrets: write key file: %w", err)
 	}
 	if err := syncFile(f); err != nil {
@@ -257,20 +331,21 @@ func GenerateKeyFile(path string) (err error) {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("secrets: write key file: %w", err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("secrets: put the key file in place: %w", err)
-	}
-	if err := syncFolder(dir); err != nil {
-		return fmt.Errorf("secrets: write key file: %w", err)
-	}
 	return nil
 }
 
-// The sync calls of the key file writer. Tests replace them to see the order.
+// The calls of the key file writer that tests replace.
 var (
 	syncFile   = (*os.File).Sync
 	syncFolder = syncDir
+	linkFile   = os.Link
 )
+
+// ErrNotDurable is returned by GenerateKeyFile when the key file is in place,
+// but the sync of its folder failed: the file may not be on the disk yet. The
+// caller must not let stored data depend on it. The file stays, and a later
+// start can use it.
+var ErrNotDurable = errors.New("secrets: the key file was written, but it may not be on the disk yet")
 
 // syncDir flushes the entries of the folder dir to the disk, so a new name in it
 // survives a power loss. Windows cannot open a folder to sync it, and NTFS keeps

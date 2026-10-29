@@ -655,7 +655,7 @@ func TestGenerateKeyFileSyncsTheFileAndTheFolder(t *testing.T) {
 		return f.Sync()
 	}
 	syncFolder = func(folder string) error {
-		require.Equal(t, dir, folder)
+		require.Equal(t, dir, filepath.Clean(folder))
 		require.FileExists(t, path, "the folder is synced after the rename")
 		events = append(events, "folder")
 		return syncDir(folder)

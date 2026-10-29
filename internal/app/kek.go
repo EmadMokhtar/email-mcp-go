@@ -125,9 +125,11 @@ func loadExistingKEK(source string) (secrets.KEK, error) {
 //
 // secrets.GenerateKeyFile puts the file on the disk before it returns, so the
 // keys that the database wraps next never depend on a key that a power loss
-// could take away. It refuses a path where anything exists. The lock of a key
-// file is per data directory: two data directories that make one new key file
-// path at the same moment are not kept apart by it.
+// could take away. The lock of a key file is per data directory, so two data
+// directories that make one new key file path at the same moment are not kept
+// apart by it. GenerateKeyFile is: it places the file in one step that fails
+// when anything exists at the path, so one of them gets an error and makes no
+// second key.
 func makeKeyFile(ctx context.Context, path string, st *store.Store) error {
 	hasKeys, err := databaseHasKeys(ctx, st)
 	if err != nil {
@@ -137,7 +139,7 @@ func makeKeyFile(ctx context.Context, path string, st *store.Store) error {
 		return fmt.Errorf("app: the master key file %s does not exist, and the database has keys that "+
 			"only the old master key can open. Check the path in %s", path, envKEK)
 	}
-	if err := secrets.GenerateKeyFile(path); err != nil {
+	if err := generateKeyFile(path); err != nil {
 		return fmt.Errorf("app: make the master key file: %w", err)
 	}
 	return nil
@@ -217,6 +219,10 @@ func lockDir(ctx context.Context, dir string) (unlock func(), err error) {
 	}
 }
 
+// generateKeyFile makes a new key file (secrets.GenerateKeyFile). Tests replace
+// it to make it fail after the file is in place.
+var generateKeyFile = secrets.GenerateKeyFile
+
 // beforeRewrap is a hook for tests. RotateKEK calls it when it holds the locks
 // and has the new master key, just before it wraps the stored keys again.
 var beforeRewrap = func() {}
@@ -271,9 +277,10 @@ var (
 //  3. gets the new key. For a key file it refuses a path where anything exists
 //     (ErrKeyFileExists): a key is never overwritten. Otherwise it writes the
 //     new file with secrets.GenerateKeyFile: a temporary file with mode 0600,
-//     synced to the disk and closed, then renamed into place, then the folder
-//     synced. So the key is on the disk before any stored key depends on it.
-//     The keychain gives its key, or makes one when it has none;
+//     synced to the disk and closed, then put in place with a hard link (or an
+//     exclusive create where the file system has no hard links), then the
+//     folder synced. So the key is on the disk before any stored key depends on
+//     it. The keychain gives its key, or makes one when it has none;
 //  4. refuses a new key with the id of the key in use (ErrSameKEK), as a last
 //     check;
 //  5. wraps every stored key again, in one database transaction.
@@ -367,19 +374,27 @@ func realPath(path string) string {
 
 // openNewKEK gets the master key of source for a rotation. For a key file, it
 // refuses a path where anything exists (ErrKeyFileExists), and writes a new
-// key file that is on the disk when it returns. made is true when it made a key
-// file. The caller holds the lock of source.
+// key file that is on the disk when it returns. made is true when a key file is
+// at the path after the call: also when the error is secrets.ErrNotDurable (the
+// file is there, but maybe not on the disk yet). The caller holds the lock of
+// source.
 func openNewKEK(source string) (kek secrets.KEK, made bool, err error) {
 	if source == kekKeychain {
 		kek, err := secrets.NewKeychainKEK()
 		return kek, false, err
 	}
 	path := strings.TrimPrefix(source, kekFilePrefix)
-	if err := secrets.GenerateKeyFile(path); err != nil {
-		if errors.Is(err, fs.ErrExist) {
+	if err := generateKeyFile(path); err != nil {
+		switch {
+		case errors.Is(err, fs.ErrExist):
 			return nil, false, fmt.Errorf("%w (%s)", ErrKeyFileExists, path)
+		case errors.Is(err, secrets.ErrNotDurable):
+			// The file is in place, so it was made. No stored key may depend on
+			// it until it is surely on the disk, so the rotation stops here.
+			return nil, true, fmt.Errorf("app: make the new master key file: %w", err)
+		default:
+			return nil, false, fmt.Errorf("app: make the new master key file: %w", err)
 		}
-		return nil, false, fmt.Errorf("app: make the new master key file: %w", err)
 	}
 	kek, err = secrets.NewFileKEK(path)
 	return kek, true, err
