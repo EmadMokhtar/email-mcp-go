@@ -111,6 +111,11 @@ type Config struct {
 	// LogLevel is the lowest level that the log writes. Nil means Info. It is
 	// the level of the default logger of the program too (see Open).
 	LogLevel slog.Leveler
+	// Now is the clock of the limiter, the confirm manager (and so of the
+	// request states that it signs), the outbox, the audit log, the tokens, the
+	// web server and the service. Nil means time.Now. A test sets it to let a
+	// request state expire without waiting.
+	Now func() time.Time
 	// ExistingKeyOnly makes Open only load the master key, and never make one:
 	// a missing keychain entry or key file is an error that matches
 	// ErrNoMasterKey. A check that must not change the install (doctor) sets it.
@@ -308,17 +313,18 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 	signer := signing.New(serverKey)
 	clear(serverKey)
 
-	limiter := &policy.Limiter{Store: st}
-	confirmMgr := confirm.NewManager(st, vault, signer, nil)
+	// A nil cfg.Now means time.Now in each part.
+	limiter := &policy.Limiter{Store: st, Now: cfg.Now}
+	confirmMgr := confirm.NewManager(st, vault, signer, cfg.Now)
 	backends := opts.backends
 	if backends == nil {
 		backends = service.NewBackendFactory(st, vault, signer, cfg.Local, log)
 	}
 	sender := newSender(st, backends, log)
-	ob := outbox.New(st, vault, sender, nil)
+	ob := outbox.New(st, vault, sender, cfg.Now)
 	ob.Logger = log
-	auditLog := audit.New(st, vault, nil)
-	tokenMgr := tokens.New(st, nil)
+	auditLog := audit.New(st, vault, cfg.Now)
+	tokenMgr := tokens.New(st, cfg.Now)
 	finder := &discovery.Finder{}
 
 	webServer := web.New(web.Deps{
@@ -327,6 +333,7 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 		Discovery: finder,
 		Tokens:    tokenMgr,
 		Audit:     auditLog,
+		Now:       cfg.Now,
 		Logger:    log,
 	})
 	svc := service.New(service.Deps{
@@ -341,6 +348,7 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 		Links:    webServer.Links(),
 		Tokens:   tokenMgr,
 		Local:    cfg.Local,
+		Now:      cfg.Now,
 		Logger:   log,
 	})
 	webServer.Attach(svc)

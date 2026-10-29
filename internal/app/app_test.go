@@ -297,6 +297,32 @@ func TestOpenLogLevel(t *testing.T) {
 	}
 }
 
+// Config.Now is the clock of every part that Open builds. A test that must let
+// a request state expire moves this clock instead of waiting 10 minutes.
+func TestOpenUsesTheClockOfTheConfig(t *testing.T) {
+	at := time.Date(2030, 5, 6, 7, 8, 9, 0, time.UTC)
+	a, err := Open(context.Background(), Config{
+		DataDir: t.TempDir(), KEKSource: "file:" + filepath.Join(t.TempDir(), "master.key"),
+		LogOutput: &syncBuffer{}, Now: func() time.Time { return at },
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = a.CloseNow(context.Background()) })
+
+	// The tokens and the audit log of the service.
+	_, err = a.Service.CreateToken(localCtx(), "clock", []string{"email:read"})
+	require.NoError(t, err)
+	list, err := a.Tokens.List(context.Background(), store.LocalTenantID)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	require.True(t, at.Equal(list[0].CreatedAt), "the token was made at the time of the clock")
+	entries, err := a.audit.List(context.Background(), store.LocalTenantID, audit.Filter{})
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+	require.True(t, at.Equal(entries[0].Time), "the audit entry has the time of the clock")
+	// The other parts keep the clock in private fields. The e2e test of the
+	// confirmations checks that a request state expires on this clock.
+}
+
 func TestConfigDefaults(t *testing.T) {
 	t.Run("explicit values win", func(t *testing.T) {
 		t.Setenv(envDataDir, "/from/env")
