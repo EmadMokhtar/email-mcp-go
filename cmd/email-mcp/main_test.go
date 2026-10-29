@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,7 +13,7 @@ import (
 func TestVersionCommand(t *testing.T) {
 	var out, errOut bytes.Buffer
 
-	code := run(t.Context(), []string{"version"}, &out, &errOut)
+	code := run(t.Context(), []string{"version"}, strings.NewReader(""), &out, &errOut)
 
 	require.Equal(t, 0, code)
 	require.Contains(t, out.String(), version.Version)
@@ -22,7 +23,7 @@ func TestVersionCommand(t *testing.T) {
 func TestUnknownCommand(t *testing.T) {
 	var out, errOut bytes.Buffer
 
-	code := run(t.Context(), []string{"nope"}, &out, &errOut)
+	code := run(t.Context(), []string{"nope"}, strings.NewReader(""), &out, &errOut)
 
 	require.Equal(t, 2, code)
 	require.Contains(t, errOut.String(), `unknown command "nope"`)
@@ -32,7 +33,7 @@ func TestUnknownCommand(t *testing.T) {
 func TestNoCommandPrintsUsage(t *testing.T) {
 	var out, errOut bytes.Buffer
 
-	code := run(t.Context(), nil, &out, &errOut)
+	code := run(t.Context(), nil, strings.NewReader(""), &out, &errOut)
 
 	require.Equal(t, 2, code)
 	require.Contains(t, errOut.String(), "Usage:")
@@ -44,11 +45,12 @@ func TestHelpPrintsUsageToStdout(t *testing.T) {
 		t.Run(arg, func(t *testing.T) {
 			var out, errOut bytes.Buffer
 
-			code := run(t.Context(), []string{arg}, &out, &errOut)
+			code := run(t.Context(), []string{arg}, strings.NewReader(""), &out, &errOut)
 
 			require.Equal(t, 0, code)
 			require.Contains(t, out.String(), "Usage:")
 			require.Contains(t, out.String(), "version")
+			require.Contains(t, out.String(), "serve")
 			require.Empty(t, errOut.String())
 		})
 	}
@@ -57,7 +59,7 @@ func TestHelpPrintsUsageToStdout(t *testing.T) {
 func TestVersionRejectsExtraArguments(t *testing.T) {
 	var out, errOut bytes.Buffer
 
-	code := run(t.Context(), []string{"version", "extra"}, &out, &errOut)
+	code := run(t.Context(), []string{"version", "extra"}, strings.NewReader(""), &out, &errOut)
 
 	require.Equal(t, 2, code)
 	require.Contains(t, errOut.String(), "unexpected argument")
