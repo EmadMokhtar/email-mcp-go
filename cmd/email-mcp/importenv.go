@@ -43,11 +43,13 @@ func runImportEnv(ctx context.Context, c *cli, args []string) int {
 	fs := c.newFlags(cmd)
 	dataDir := fs.String("data-dir", "", dataDirUsage)
 	email := fs.String("email", "", "the email address of the account (default: IMAP_USERNAME, when it is an address)")
+	acceptRemote := fs.Bool("accept-remote-certificate", false, "when standard input is not a terminal: also needed "+
+		"to trust, with --trust-fingerprint, the certificate of a server that is not on this computer")
 	var trust fingerprintList
 	fs.Var(&trust, "trust-fingerprint", "when standard input is not a terminal: trust the certificate with this SHA-256 "+
 		"fingerprint, if a server shows it in this run (repeat the flag for the second server)")
 	plaintext := fs.Bool("plaintext-i-understand", false, "allow IMAP_TLS=false or SMTP_TLS=false to a server on this computer")
-	rest, code, ok := parseFlags(fs, args)
+	rest, code, ok := c.parseFlags(cmd, fs, args)
 	if !ok {
 		return code
 	}
@@ -81,7 +83,7 @@ func runImportEnv(ctx context.Context, c *cli, args []string) int {
 		c.errorf("%s: IMAP_USERNAME is not an email address. Run again with --email and the address of the account.\n", cmd)
 		return exitError
 	}
-	opts := connectOptions{trust: trust, plaintext: *plaintext}
+	opts := connectOptions{trust: trust, plaintext: *plaintext, acceptRemote: *acceptRemote}
 	if !c.checkServer(cmd, imported.server, opts) {
 		return exitError
 	}

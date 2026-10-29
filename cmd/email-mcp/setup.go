@@ -23,12 +23,12 @@ func runSetup(ctx context.Context, c *cli, args []string) int {
 	const cmd = "setup"
 	fs := c.newFlags(cmd)
 	dataDir := fs.String("data-dir", "", dataDirUsage)
-	rest, code, ok := parseFlags(fs, args)
+	rest, code, ok := c.parseFlags(cmd, fs, args)
 	if !ok {
 		return code
 	}
 	if len(rest) > 0 {
-		return c.usage(cmd, "unexpected argument %q", rest[0])
+		return c.unexpected(cmd)
 	}
 
 	a := c.openApp(ctx, cmd, *dataDir)

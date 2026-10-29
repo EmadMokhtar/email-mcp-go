@@ -686,7 +686,7 @@ func TestCheckpointWALTruncatesTheLog(t *testing.T) {
 
 	walSize := func() int64 {
 		t.Helper()
-		info, err := os.Stat(filepath.Join(dir, dbFileName+"-wal"))
+		info, err := os.Stat(filepath.Join(dir, DBFileName+"-wal"))
 		require.NoError(t, err)
 		return info.Size()
 	}
@@ -715,7 +715,7 @@ func TestCheckpointWALPassiveKeepsTheLogFile(t *testing.T) {
 	tenant, err := s.EnsureLocalTenant(ctx)
 	require.NoError(t, err)
 	require.NoError(t, s.CreateAccount(ctx, testAccount(tenant, "a1", testNow)))
-	walPath := filepath.Join(dir, dbFileName+"-wal")
+	walPath := filepath.Join(dir, DBFileName+"-wal")
 	before, err := os.Stat(walPath)
 	require.NoError(t, err)
 

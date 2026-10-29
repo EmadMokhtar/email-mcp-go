@@ -621,3 +621,66 @@ func TestGenerateKeyFileRefusesToFollowASymlink(t *testing.T) {
 	require.ErrorIs(t, err, fs.ErrExist)
 	require.NoFileExists(t, target)
 }
+
+// GenerateDurableKeyFile makes a usable key file with mode 0600, leaves no
+// temporary file behind, and never replaces anything at the path.
+func TestGenerateDurableKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "master.key")
+	require.NoError(t, GenerateDurableKeyFile(path))
+
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
+	kek, err := NewFileKEK(path)
+	require.NoError(t, err)
+	wrapped, err := kek.Wrap(t.Context(), []byte("dek"))
+	require.NoError(t, err)
+	unwrapped, err := kek.Unwrap(t.Context(), wrapped)
+	require.NoError(t, err)
+	require.Equal(t, []byte("dek"), unwrapped)
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "no temporary file is left")
+
+	before := readFile(t, path)
+	require.ErrorIs(t, GenerateDurableKeyFile(path), fs.ErrExist)
+	require.Equal(t, before, readFile(t, path), "the existing key must not change")
+	entries, err = os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+}
+
+func TestGenerateDurableKeyFileRefusesASymlink(t *testing.T) {
+	skipOnWindows(t)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.key")
+	link := filepath.Join(dir, "master.key")
+	require.NoError(t, os.Symlink(target, link))
+
+	require.ErrorIs(t, GenerateDurableKeyFile(link), fs.ErrExist)
+	require.NoFileExists(t, target)
+}
+
+// LoadKeychainKEK finds the key, and never makes one.
+func TestLoadKeychainKEKNeverCreates(t *testing.T) {
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
+
+	_, err := LoadKeychainKEK()
+	require.ErrorIs(t, err, ErrNoKey)
+	_, err = keyring.Get(keychainService, keychainUser)
+	require.ErrorIs(t, err, keyring.ErrNotFound, "no key was made")
+
+	made, err := NewKeychainKEK()
+	require.NoError(t, err)
+	loaded, err := LoadKeychainKEK()
+	require.NoError(t, err)
+	wrapped, err := made.Wrap(t.Context(), []byte("dek"))
+	require.NoError(t, err)
+	unwrapped, err := loaded.Unwrap(t.Context(), wrapped)
+	require.NoError(t, err)
+	require.Equal(t, []byte("dek"), unwrapped)
+}

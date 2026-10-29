@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +21,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/zalando/go-keyring"
+	"golang.org/x/term"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/app"
 	"github.com/EmadMokhtar/email-mcp-go/internal/connect"
@@ -251,7 +252,8 @@ func TestHelpListsTheCommands(t *testing.T) {
 		require.Contains(t, r.stderr, "Usage:", group)
 		r = runCLI(t, nil, "", group, "nope")
 		require.Equal(t, exitUsage, r.code, group)
-		require.Contains(t, r.stderr, `unknown command "nope"`, group)
+		require.Contains(t, r.stderr, "unknown command", group)
+		require.NotContains(t, r.stderr, "nope", "an argument is never echoed")
 	}
 }
 
@@ -625,11 +627,26 @@ func TestConnectFlowTrustRules(t *testing.T) {
 		require.Len(t, create.servers, 1, "no second test")
 	})
 
-	t.Run("a remote server without a terminal and the fingerprint", func(t *testing.T) {
+	t.Run("a remote server without a terminal needs both flags", func(t *testing.T) {
 		create := &recordingCreate{answers: []error{unknown(), nil}}
 		ok, r := connectWith(t, &fakeSystem{}, "", create, connectOptions{trust: []string{fingerprint}})
+		require.False(t, ok, "the fingerprint alone is not enough for a server that is not on this computer")
+		require.Contains(t, r.stderr, "--accept-remote-certificate")
+		require.Contains(t, r.stdout, "not on this computer", "the risk is shown")
+		require.Len(t, create.servers, 1)
+
+		create = &recordingCreate{answers: []error{unknown(), nil}}
+		ok, r = connectWith(t, &fakeSystem{}, "", create, connectOptions{trust: []string{fingerprint}, acceptRemote: true})
 		require.True(t, ok, r.stderr)
 		require.Equal(t, fingerprint, create.servers[1].PinnedIMAPCert)
+	})
+
+	t.Run("a refusal tells the user to check the fingerprint elsewhere", func(t *testing.T) {
+		create := &recordingCreate{answers: []error{unknown(), nil}}
+		ok, r := connectWith(t, &fakeSystem{}, "", create, connectOptions{})
+		require.False(t, ok)
+		require.Contains(t, r.stderr, "--trust-fingerprint "+fingerprint+" --accept-remote-certificate")
+		require.Contains(t, r.stderr, msgCheckFingerprint)
 	})
 
 	t.Run("an expired certificate is never offered", func(t *testing.T) {
@@ -643,7 +660,7 @@ func TestConnectFlowTrustRules(t *testing.T) {
 
 	t.Run("a pin that does not match is never offered again", func(t *testing.T) {
 		create := &recordingCreate{answers: []error{unknown(), certError(strings.Repeat("f2", 32), true, nil), nil}}
-		ok, r := connectWith(t, &fakeSystem{}, "", create, connectOptions{trust: []string{fingerprint, strings.Repeat("f2", 32)}})
+		ok, r := connectWith(t, &fakeSystem{}, "", create, connectOptions{trust: []string{fingerprint, strings.Repeat("f2", 32)}, acceptRemote: true})
 		require.False(t, ok)
 		require.Contains(t, r.stdout, connect.TextCertPinChanged)
 		require.Len(t, create.servers, 2)
@@ -1111,6 +1128,39 @@ func TestDoctorWithoutData(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist, "no master key was made")
 }
 
+// doctor never makes a master key: with the keychain and no entry in it, or
+// with a key file that is missing, the master key check fails with a fixed
+// text, and no key appears.
+func TestDoctorNeverMakesAKey(t *testing.T) {
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
+	setUserDirs(t)
+	dir, keyPath := newCLIEnv(t)
+	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)
+	addAccount(t, dir, keyPath, alice, srv.server(), srv.imap.Pass)
+
+	t.Setenv("EMAIL_MCP_KEK", "keychain")
+	r := runCLI(t, nil, "", "doctor", "--data-dir", dir)
+	require.Equal(t, exitError, r.code)
+	require.Equal(t, "master key (keychain): FAIL "+msgNoMasterKey, doctorLine(t, r.stdout, "master key"))
+	_, err := keyring.Get("email-mcp", "master-key")
+	require.ErrorIs(t, err, keyring.ErrNotFound, "no keychain entry was made")
+
+	// A database without keys, and a key file that does not exist: Open would
+	// make one on a first start. doctor does not.
+	empty := filepath.Join(t.TempDir(), "data")
+	st, err := store.Open(context.Background(), empty)
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+	missing := filepath.Join(t.TempDir(), "missing.key")
+	t.Setenv("EMAIL_MCP_KEK", "file:"+missing)
+	r = runCLI(t, nil, "", "doctor", "--data-dir", empty)
+	require.Equal(t, exitError, r.code)
+	require.Contains(t, doctorLine(t, r.stdout, "master key"), "FAIL "+msgNoMasterKey)
+	_, err = os.Stat(missing)
+	require.ErrorIs(t, err, os.ErrNotExist, "no key file was made")
+}
+
 // ---------------------------------------------------------------- key rotate
 
 // rotateFixture is a data directory with an account on local servers, opened
@@ -1160,10 +1210,12 @@ func TestKeyRotateToAFile(t *testing.T) {
 	dir, oldKey, srv := rotateFixture(t)
 	newKey := filepath.Join(t.TempDir(), "new.key")
 
-	r := runCLI(t, nil, "", "key", "rotate", "--to", "file:"+newKey, "--data-dir", dir)
+	r := runCLI(t, nil, "", "key", "rotate", "--yes", "--to", "file:"+newKey, "--data-dir", dir)
 
 	require.Equal(t, exitOK, r.code, r.stderr)
-	require.Contains(t, r.stdout, "EMAIL_MCP_KEK=file:"+newKey+"\n")
+	require.Contains(t, r.stdout, "  EMAIL_MCP_KEK='file:"+newKey+"'\n")
+	require.Contains(t, r.stdout, `  "EMAIL_MCP_KEK": "file:`+newKey+`"`+"\n")
+	require.Contains(t, r.stdout, "The old key file "+oldKey+" was not deleted")
 	require.Contains(t, r.stdout, "doctor")
 	_, err := os.Stat(oldKey)
 	require.NoError(t, err, "the old key file is never deleted")
@@ -1201,7 +1253,7 @@ func TestKeyRotateFailureLeavesEveryKeyReadableWithTheOldKey(t *testing.T) {
 	require.NoError(t, db.Close())
 	newKey := filepath.Join(t.TempDir(), "new.key")
 
-	r := runCLI(t, nil, "", "key", "rotate", "--to", "file:"+newKey, "--data-dir", dir)
+	r := runCLI(t, nil, "", "key", "rotate", "--yes", "--to", "file:"+newKey, "--data-dir", dir)
 
 	require.Equal(t, exitError, r.code)
 	require.Contains(t, r.stderr, "nothing was changed")
@@ -1227,13 +1279,127 @@ func TestKeyRotateRefusesBadTargets(t *testing.T) {
 		"another kind":   {"--to", "vault:transit"},
 		"an extra word":  {"--to", "keychain", "extra"},
 	} {
-		r := runCLI(t, nil, "", append([]string{"key", "rotate", "--data-dir", dir}, args...)...)
+		r := runCLI(t, nil, "", append([]string{"key", "rotate", "--yes", "--data-dir", dir}, args...)...)
 		require.Equal(t, exitUsage, r.code, name)
 	}
 
-	r := runCLI(t, nil, "", "key", "rotate", "--to", "file:"+oldKey, "--data-dir", dir)
+	r := runCLI(t, nil, "", "key", "rotate", "--yes", "--to", "file:"+oldKey, "--data-dir", dir)
 	require.Equal(t, exitError, r.code)
+	require.Contains(t, r.stderr, "already uses")
 	require.Contains(t, r.stderr, "nothing was changed")
+
+	other := filepath.Join(t.TempDir(), "other.key")
+	require.NoError(t, secrets.GenerateKeyFile(other))
+	r = runCLI(t, nil, "", "key", "rotate", "--yes", "--to", "file:"+other, "--data-dir", dir)
+	require.Equal(t, exitError, r.code)
+	require.Contains(t, r.stderr, "never overwritten")
+	require.Contains(t, r.stderr, "nothing was changed")
+}
+
+// The key in use is refused under another spelling of its path, with exit 1,
+// and nothing changes. No line tells the user to delete a key file.
+func TestKeyRotateRefusesTheKeyInUse(t *testing.T) {
+	dir, oldKey, srv := rotateFixture(t)
+	ids := kekIDs(t, dir)
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(filepath.Dir(oldKey), link))
+
+	for _, spelling := range []string{
+		filepath.Dir(oldKey) + "/./" + filepath.Base(oldKey),
+		filepath.Dir(oldKey) + "//" + filepath.Base(oldKey),
+		filepath.Join(link, filepath.Base(oldKey)),
+	} {
+		r := runCLI(t, nil, "", "key", "rotate", "--yes", "--to", "file:"+spelling, "--data-dir", dir)
+		require.Equal(t, exitError, r.code, spelling)
+		require.Contains(t, r.stderr, "already uses", spelling)
+		require.NotContains(t, r.stdout+r.stderr, "delete", spelling)
+		require.NotContains(t, r.stdout, "EMAIL_MCP_KEK=", spelling)
+	}
+	require.Equal(t, ids, kekIDs(t, dir))
+	requireOpens(t, dir, oldKey, srv.imap.Pass)
+}
+
+// Every other email-mcp program must be stopped first. The command says so
+// before it opens anything, asks on a terminal, and needs --yes without one.
+func TestKeyRotateAsksFirst(t *testing.T) {
+	dir, _, _ := rotateFixture(t)
+	ids := kekIDs(t, dir)
+	newKey := filepath.Join(t.TempDir(), "new.key")
+
+	r := runCLI(t, nil, "", "key", "rotate", "--to", "file:"+newKey, "--data-dir", dir)
+	require.Equal(t, exitError, r.code)
+	require.Contains(t, r.stdout, "Stop every other email-mcp program")
+	require.Contains(t, r.stderr, "--yes")
+
+	r = runCLI(t, &fakeSystem{terminal: true}, "n\n", "key", "rotate", "--to", "file:"+newKey, "--data-dir", dir)
+	require.Equal(t, exitError, r.code)
+	require.Contains(t, r.stdout, "[y/N]")
+	require.Equal(t, ids, kekIDs(t, dir), "nothing changed")
+	_, err := os.Stat(newKey)
+	require.ErrorIs(t, err, os.ErrNotExist, "no key was made")
+
+	r = runCLI(t, &fakeSystem{terminal: true}, "y\n", "key", "rotate", "--to", "file:"+newKey, "--data-dir", dir)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	require.NotEqual(t, ids, kekIDs(t, dir))
+}
+
+// The printed setting is quoted for a POSIX shell, so a path with a space can
+// be pasted as it is.
+func TestKeyRotateQuotesTheSetting(t *testing.T) {
+	dir, _, srv := rotateFixture(t)
+	keys := filepath.Join(t.TempDir(), "My Keys")
+	require.NoError(t, os.Mkdir(keys, 0o700))
+	newKey := filepath.Join(keys, "new key.key")
+
+	r := runCLI(t, nil, "", "key", "rotate", "--yes", "--to", "file:"+newKey, "--data-dir", dir)
+
+	require.Equal(t, exitOK, r.code, r.stderr)
+	require.Contains(t, r.stdout, "  EMAIL_MCP_KEK='file:"+newKey+"'\n")
+	requireOpens(t, dir, newKey, srv.imap.Pass)
+}
+
+func TestShellQuote(t *testing.T) {
+	require.Equal(t, `'file:/a b/k.key'`, shellQuote("file:/a b/k.key"))
+	require.Equal(t, `'file:/it'\''s/k.key'`, shellQuote("file:/it's/k.key"))
+	require.Equal(t, `'keychain'`, shellQuote("keychain"))
+}
+
+// setUserDirs points the user directories of the platform (os.UserConfigDir)
+// at a new folder, so the lock of the keychain is not in the real one.
+func setUserDirs(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("AppData", home)
+}
+
+// A rotation to the keychain and back. The keychain is the in-memory mock of
+// go-keyring, so the test never touches the real keychain. The old key of the
+// keychain is never offered for deletion: other data directories may use it.
+func TestKeyRotateToTheKeychainAndBack(t *testing.T) {
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
+	setUserDirs(t)
+	dir, oldKey, srv := rotateFixture(t)
+
+	r := runCLI(t, nil, "", "key", "rotate", "--yes", "--to", "keychain", "--data-dir", dir)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	require.Contains(t, r.stdout, "  EMAIL_MCP_KEK='keychain'\n")
+	require.Contains(t, r.stdout, "The old key file "+oldKey+" was not deleted")
+	_, err := keyring.Get("email-mcp", "master-key")
+	require.NoError(t, err)
+
+	t.Setenv("EMAIL_MCP_KEK", "keychain")
+	r = runCLI(t, nil, "", "doctor", "--data-dir", dir)
+	require.Equal(t, exitOK, r.code, r.stdout+r.stderr)
+
+	back := filepath.Join(t.TempDir(), "back.key")
+	r = runCLI(t, nil, "", "key", "rotate", "--yes", "--to", "file:"+back, "--data-dir", dir)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	require.Contains(t, r.stdout, "stays in the keychain")
+	require.NotContains(t, r.stdout, "delete")
+	requireOpens(t, dir, back, srv.imap.Pass)
 }
 
 // ---------------------------------------------------------------- setup
@@ -1294,24 +1460,126 @@ func TestSetupOpensTheBrowserAndNeverLogsTheLink(t *testing.T) {
 // Flags may come before and after the other arguments. After "--" every
 // argument is an argument.
 func TestParseFlagsTakesFlagsAnywhere(t *testing.T) {
-	fs := flag.NewFlagSet("t", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	yes := fs.Bool("yes", false, "")
-	rest, _, ok := parseFlags(fs, []string{"ID", "--yes"})
+	var out, errOut syncBuffer
+	c := &cli{stdin: strings.NewReader(""), stdout: &out, stderr: &errOut, sys: (&fakeSystem{}).system()}
+	fs := c.newFlags("t")
+	yes := fs.Bool("yes", false, "remove without a question")
+	rest, _, ok := c.parseFlags("t", fs, []string{"ID", "--yes"})
 	require.True(t, ok)
 	require.True(t, *yes)
 	require.Equal(t, []string{"ID"}, rest)
 
 	*yes = false
-	rest, _, ok = parseFlags(fs, []string{"--", "--yes", "ID"})
+	rest, _, ok = c.parseFlags("t", fs, []string{"--", "--yes", "ID"})
 	require.True(t, ok)
 	require.False(t, *yes)
 	require.Equal(t, []string{"--yes", "ID"}, rest)
 
-	_, code, ok := parseFlags(fs, []string{"--nope"})
+	_, code, ok := c.parseFlags("t", fs, []string{"--nope"})
 	require.False(t, ok)
 	require.Equal(t, exitUsage, code)
-	_, code, ok = parseFlags(fs, []string{"-h"})
+	require.Contains(t, errOut.String(), "unknown flag")
+	require.NotContains(t, errOut.String(), "nope")
+	_, code, ok = c.parseFlags("t", fs, []string{"-h"})
 	require.False(t, ok)
 	require.Equal(t, exitOK, code)
+	require.Contains(t, out.String(), "remove without a question")
+}
+
+// No argument and no flag value that the command does not expect is echoed:
+// the user may have typed a password in the wrong place, and standard error is
+// also the log.
+func TestNoArgumentIsEchoed(t *testing.T) {
+	dir, _ := newCLIEnv(t)
+	const secret = "pw-typed-here-5e1c" //nolint:gosec // G101: a test value, used to check that it is never shown
+	for name, args := range map[string][]string{
+		"a top-level command":      {secret},
+		"a subcommand":             {"account", secret},
+		"an extra argument":        {"account", "add", "--email", alice, secret},
+		"an unknown flag":          {"account", "add", "--" + secret},
+		"an unknown flag value":    {"account", "add", "--" + secret + "=x"},
+		"a bad fingerprint":        {"account", "add", "--email", alice, "--trust-fingerprint", secret},
+		"a bad port":               {"account", "add", "--email", alice, "--imap-host", "a", "--smtp-host", "b", "--imap-port", secret},
+		"a bad scope":              {"token", "create", "--name", "n", "--scopes", "email:read," + secret},
+		"a token argument":         {"token", "create", "--name", "n", "--scopes", "all", secret},
+		"a key argument":           {"key", "rotate", "--yes", "--to", "keychain", secret},
+		"a bad key source":         {"key", "rotate", "--yes", "--to", "file:" + secret},
+		"a doctor argument":        {"doctor", secret},
+		"a setup argument":         {"setup", secret},
+		"a list argument":          {"account", "list", secret},
+		"a token list argument":    {"token", "list", secret},
+		"two import paths":         {"import-env", "a.env", secret},
+		"a bad boolean flag value": {"account", "remove", "--yes=" + secret, "id"},
+	} {
+		r := runCLI(t, nil, "", append(args, "--data-dir", dir)...)
+		require.Equal(t, exitUsage, r.code, name)
+		requireNoLeak(t, r, secret)
+		require.NotEmpty(t, r.stderr, name)
+	}
+	requireNoData(t, dir)
+
+	// The name of a known flag is not secret, and it helps.
+	r := runCLI(t, nil, "", "account", "add", "--email", alice, "--imap-host", "a", "--smtp-host", "b", "--imap-port", secret, "--data-dir", dir)
+	require.Contains(t, r.stderr, "-imap-port")
+	r = runCLI(t, nil, "", "account", "add", "--email")
+	require.Contains(t, r.stderr, "-email")
+	r = runCLI(t, nil, "", "account", "add", "-h")
+	require.Equal(t, exitOK, r.code)
+	require.Contains(t, r.stdout, "-trust-fingerprint")
+}
+
+// fakeTerminal is the terminal of readTerminalPassword in a test. Its read
+// waits until the test lets it go.
+type fakeTerminal struct {
+	mu       sync.Mutex
+	state    *term.State
+	restored []*term.State
+	release  chan struct{}
+}
+
+func (f *fakeTerminal) funcs() terminalFuncs {
+	return terminalFuncs{
+		getState: func(int) (*term.State, error) { return f.state, nil },
+		restore: func(_ int, s *term.State) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.restored = append(f.restored, s)
+			return nil
+		},
+		readPassword: func(int) ([]byte, error) {
+			<-f.release
+			return []byte("pw-typed-9a"), nil
+		},
+	}
+}
+
+// The first Ctrl-C ends the context: the read returns, and the terminal gets
+// back the state it had before the read (the echo is on again). A read that
+// ends normally does not restore: term.ReadPassword does that itself.
+func TestReadTerminalPasswordRestoresOnCtrlC(t *testing.T) {
+	f := &fakeTerminal{state: &term.State{}, release: make(chan struct{})}
+	defer close(f.release)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := readTerminalPassword(ctx, f.funcs(), 0)
+		done <- err
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the read did not return on Ctrl-C")
+	}
+	f.mu.Lock()
+	require.Equal(t, []*term.State{f.state}, f.restored)
+	f.mu.Unlock()
+
+	g := &fakeTerminal{state: &term.State{}, release: make(chan struct{})}
+	close(g.release)
+	line, err := readTerminalPassword(context.Background(), g.funcs(), 0)
+	require.NoError(t, err)
+	require.Equal(t, []byte("pw-typed-9a"), line)
+	require.Empty(t, g.restored)
 }

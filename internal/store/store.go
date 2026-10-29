@@ -26,8 +26,10 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// dbFileName is the name of the database file inside the data directory.
-const dbFileName = "email-mcp.db"
+// DBFileName is the name of the database file inside the data directory. SQLite
+// keeps its write-ahead log next to it, in DBFileName+"-wal" and
+// DBFileName+"-shm".
+const DBFileName = "email-mcp.db"
 
 // ErrNotFound means that no row matched. It is also returned when the row
 // exists for another tenant.
@@ -61,7 +63,7 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 	if err := ensureDir(dir); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, dbFileName)
+	path := filepath.Join(dir, DBFileName)
 	if err := createPrivateFile(path); err != nil {
 		return nil, err
 	}

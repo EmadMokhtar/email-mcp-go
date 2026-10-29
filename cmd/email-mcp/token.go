@@ -39,12 +39,12 @@ func runTokenCreate(ctx context.Context, c *cli, args []string) int {
 	name := fs.String("name", "", "a name for the token, such as the client that uses it (required)")
 	scopesFlag := fs.String("scopes", "", "what the token allows, as a comma-separated list of "+
 		strings.Join(policy.KnownScopes(), ", ")+", or all (required)")
-	rest, code, ok := parseFlags(fs, args)
+	rest, code, ok := c.parseFlags(cmd, fs, args)
 	if !ok {
 		return code
 	}
 	if len(rest) > 0 {
-		return c.usage(cmd, "unexpected argument %q", rest[0])
+		return c.unexpected(cmd)
 	}
 	if strings.TrimSpace(*name) == "" {
 		return c.usage(cmd, "--name is required")
@@ -88,7 +88,8 @@ func parseScopes(text string) (policy.Scopes, error) {
 		case policy.KnownScope(part):
 			scopes = append(scopes, part)
 		default:
-			return nil, fmt.Errorf("unknown scope %q: use %s, or all", part, strings.Join(known, ", "))
+			// The text is not repeated: it could be anything the user typed.
+			return nil, fmt.Errorf("--scopes has a scope that is not known: use %s, or all", strings.Join(known, ", "))
 		}
 	}
 	if len(scopes) == 0 {
@@ -103,12 +104,12 @@ func runTokenList(ctx context.Context, c *cli, args []string) int {
 	const cmd = "token list"
 	fs := c.newFlags(cmd)
 	dataDir := fs.String("data-dir", "", dataDirUsage)
-	rest, code, ok := parseFlags(fs, args)
+	rest, code, ok := c.parseFlags(cmd, fs, args)
 	if !ok {
 		return code
 	}
 	if len(rest) > 0 {
-		return c.usage(cmd, "unexpected argument %q", rest[0])
+		return c.unexpected(cmd)
 	}
 	a := c.openApp(ctx, cmd, *dataDir)
 	if a == nil {
@@ -147,7 +148,7 @@ func runTokenRevoke(ctx context.Context, c *cli, args []string) int {
 	const cmd = "token revoke"
 	fs := c.newFlags(cmd)
 	dataDir := fs.String("data-dir", "", dataDirUsage)
-	rest, code, ok := parseFlags(fs, args)
+	rest, code, ok := c.parseFlags(cmd, fs, args)
 	if !ok {
 		return code
 	}

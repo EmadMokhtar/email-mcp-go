@@ -14,7 +14,9 @@ package main
 //     host and port that they gave and the SHA-256 fingerprint, and answers
 //     "y". A server that is not on this computer also needs a typed "yes".
 //     Without a terminal nothing is trusted on its own: a --trust-fingerprint
-//     must be the fingerprint that the server showed in this run.
+//     must be the fingerprint that the server showed in this run, and a server
+//     that is not on this computer also needs --accept-remote-certificate (the
+//     second explicit confirmation).
 //   - A pin is saved only for the server (protocol, host and port) that showed
 //     the certificate.
 //   - A failed test prints a fixed text (connect.ErrorText), never the text of
@@ -49,7 +51,22 @@ type connectOptions struct {
 	trust []string
 	// plaintext is --plaintext-i-understand.
 	plaintext bool
+	// acceptRemote is --accept-remote-certificate: without a terminal, the
+	// second confirmation that a certificate of a server that is not on this
+	// computer may be trusted.
+	acceptRemote bool
 }
+
+// msgCheckFingerprint tells the user how to check a fingerprint before
+// trusting it. The server of this connection showed the fingerprint, so only
+// another channel can confirm it.
+const msgCheckFingerprint = "Before you trust a certificate, check its fingerprint with your mail provider, or with " +
+	"the program that runs the server, through a channel other than this connection."
+
+// msgRemoteRisk is the warning about trusting the certificate of a server that
+// is not on this computer.
+const msgRemoteRisk = "is not on this computer. If this is not the certificate that you expect, someone on the " +
+	"network can read your password and your mail."
 
 // fingerprintList is the value of the repeatable flag --trust-fingerprint. It
 // takes a SHA-256 in hex, with or without colons, in any case.
@@ -211,25 +228,39 @@ func (c *cli) describeCertificate(s side, check connect.Certificate) {
 }
 
 // decideTrust asks the user whether to trust one certificate. Without a
-// terminal it trusts it only when --trust-fingerprint names its fingerprint.
+// terminal it trusts it only when --trust-fingerprint names its fingerprint,
+// and, for a server that is not on this computer, --accept-remote-certificate
+// is given too.
 func (c *cli) decideTrust(cmd string, s side, fingerprint string, opts connectOptions) bool {
+	remote := !account.IsLoopbackHost(s.host)
 	if !c.sys.isTerminal() {
-		if slices.Contains(opts.trust, fingerprint) {
-			c.printf("Trusted the certificate of the %s server: it matches --trust-fingerprint.\n", s.name)
-			return true
+		if !slices.Contains(opts.trust, fingerprint) {
+			flags := "--trust-fingerprint " + fingerprint
+			if remote {
+				flags += " --accept-remote-certificate"
+			}
+			c.errorf("%s: the certificate of the %s server %s:%d is not trusted. Nothing was saved.\n", cmd, s.name, s.host, s.port)
+			c.errorf("%s: %s Then, to trust it without a terminal, run again with %s.\n", cmd, msgCheckFingerprint, flags)
+			return false
 		}
-		c.errorf("%s: the certificate of the %s server %s:%d is not trusted. Check the fingerprint, and to trust "+
-			"it without a terminal, run again with --trust-fingerprint %s. Nothing was saved.\n",
-			cmd, s.name, s.host, s.port, fingerprint)
-		return false
+		if remote {
+			c.printf("%s %s\n", s.host, msgRemoteRisk)
+			if !opts.acceptRemote {
+				c.errorf("%s: %s is not on this computer. To trust its certificate without a terminal, also give "+
+					"--accept-remote-certificate. Nothing was saved.\n", cmd, s.host)
+				return false
+			}
+		}
+		c.printf("Trusted the certificate of the %s server: it matches --trust-fingerprint.\n", s.name)
+		return true
 	}
+	c.printf("%s\n", msgCheckFingerprint)
 	if !c.confirm("Trust this certificate?") {
 		c.errorf("%s: the certificate of the %s server was not trusted. Nothing was saved.\n", cmd, s.name)
 		return false
 	}
-	if !account.IsLoopbackHost(s.host) {
-		c.printf("%s is not on this computer. If this is not the certificate that you expect, someone on the network "+
-			"can read your password and your mail.\n", s.host)
+	if remote {
+		c.printf("%s %s\n", s.host, msgRemoteRisk)
 		if !c.confirmTyped(fmt.Sprintf("Trust the certificate of %s anyway?", s.host)) {
 			c.errorf("%s: the certificate of the %s server was not trusted. Nothing was saved.\n", cmd, s.name)
 			return false

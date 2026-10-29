@@ -2,14 +2,22 @@ package main
 
 // This file holds the "doctor" command. It checks the install and prints one
 // line per check: "<check>: ok" or "<check>: FAIL <reason>". It exits with 1
-// when a check fails. It makes nothing: a data directory that does not exist is
-// a failure, and it stays missing.
+// when a check fails.
+//
+// It never makes a master key: it loads the key with
+// app.Config.ExistingKeyOnly, so a missing keychain entry or key file is a
+// failure. It makes no data directory and no database file: when they are
+// missing, it stops before it opens anything. What it may write: when it opens
+// an existing database, app.Open runs the migrations that have not run yet,
+// adds the row of the local tenant when it is missing, and makes the server
+// key (wrapped by the existing master key) when the database has none.
 //
 // The checks, in order:
 //   - the data directory exists and has mode 0700;
 //   - the database file exists, and it and its write-ahead log files have mode
 //     0600;
-//   - the master key of EMAIL_MCP_KEK opens the stored keys (the App opens);
+//   - the master key of EMAIL_MCP_KEK exists and opens the stored keys (the
+//     App opens);
 //   - each account logs in to its IMAP and SMTP servers, with its stored
 //     settings, password and pins (Service.ProbeAccount).
 //
@@ -25,16 +33,19 @@ import (
 	"runtime"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/app"
+	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 )
-
-// dbFileName is the name of the database file in the data directory.
-const dbFileName = "email-mcp.db"
 
 // The modes that the checks want.
 const (
 	wantDirMode  fs.FileMode = 0o700
 	wantFileMode fs.FileMode = 0o600
 )
+
+// msgNoMasterKey is the reason of the master key check when the key does not
+// exist.
+const msgNoMasterKey = "the master key does not exist: no keychain entry email-mcp/master-key, or no key file at " +
+	"the path of EMAIL_MCP_KEK. Check EMAIL_MCP_KEK. doctor never makes a key"
 
 // doctor collects the result of the checks.
 type doctor struct {
@@ -57,12 +68,12 @@ func runDoctor(ctx context.Context, c *cli, args []string) int {
 	const cmd = "doctor"
 	flags := c.newFlags(cmd)
 	dataDir := flags.String("data-dir", "", dataDirUsage)
-	rest, code, ok := parseFlags(flags, args)
+	rest, code, ok := c.parseFlags(cmd, flags, args)
 	if !ok {
 		return code
 	}
 	if len(rest) > 0 {
-		return c.usage(cmd, "unexpected argument %q", rest[0])
+		return c.unexpected(cmd)
 	}
 	cfg, err := app.Config{DataDir: *dataDir}.Resolve()
 	if err != nil {
@@ -79,8 +90,14 @@ func runDoctor(ctx context.Context, c *cli, args []string) int {
 	}
 
 	keyName := "master key (" + cfg.KEKSource + ")"
-	a, err := app.Open(ctx, app.Config{DataDir: cfg.DataDir, KEKSource: cfg.KEKSource, Local: true, LogOutput: c.stderr})
-	if err != nil {
+	a, err := app.Open(ctx, app.Config{
+		DataDir: cfg.DataDir, KEKSource: cfg.KEKSource, Local: true, LogOutput: c.stderr, ExistingKeyOnly: true,
+	})
+	switch {
+	case errors.Is(err, app.ErrNoMasterKey):
+		d.fail(keyName, "%s", msgNoMasterKey)
+		return exitError
+	case err != nil:
 		d.fail(keyName, "%v", err)
 		return exitError
 	}
@@ -136,7 +153,7 @@ func (d *doctor) checkDir(name, dir string) bool {
 // checkDatabase checks the database file and its write-ahead log files. It
 // returns false when the file is missing.
 func (d *doctor) checkDatabase(name, dir string) bool {
-	path := filepath.Join(dir, dbFileName)
+	path := filepath.Join(dir, store.DBFileName)
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 		d.fail(name, "%s does not exist", path)
 		return false

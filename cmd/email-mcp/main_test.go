@@ -26,7 +26,8 @@ func TestUnknownCommand(t *testing.T) {
 	code := run(t.Context(), []string{"nope"}, strings.NewReader(""), &out, &errOut)
 
 	require.Equal(t, 2, code)
-	require.Contains(t, errOut.String(), `unknown command "nope"`)
+	require.Contains(t, errOut.String(), "unknown command")
+	require.NotContains(t, errOut.String(), "nope", "an argument is never echoed: it could be a password")
 	require.Empty(t, out.String())
 }
 

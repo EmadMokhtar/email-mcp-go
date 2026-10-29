@@ -11,21 +11,16 @@ package main
 
 import (
 	"context"
-	"path/filepath"
+	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/app"
 )
 
-// The forms of --to.
-const (
-	keySourceKeychain = "keychain"
-	keySourceFile     = "file:"
-)
-
 // keyCommands are the subcommands of "key".
 var keyCommands = []command{
-	{name: "rotate", summary: "change the master key: rotate --to file:<absolute path>|keychain", run: runKeyRotate},
+	{name: "rotate", summary: "change the master key: rotate --to file:<absolute path>|keychain [--yes]", run: runKeyRotate},
 }
 
 func runKey(ctx context.Context, c *cli, args []string) int {
@@ -36,16 +31,35 @@ func runKeyRotate(ctx context.Context, c *cli, args []string) int {
 	const cmd = "key rotate"
 	fs := c.newFlags(cmd)
 	dataDir := fs.String("data-dir", "", dataDirUsage)
-	to := fs.String("to", "", "the new master key: file:<absolute path> (made with mode 0600 when it is missing) or keychain")
-	rest, code, ok := parseFlags(fs, args)
+	to := fs.String("to", "", "the new master key: file:<absolute path> (a new file, made with mode 0600) or keychain")
+	yes := fs.Bool("yes", false, "rotate without a question (needed when standard input is not a terminal)")
+	rest, code, ok := c.parseFlags(cmd, fs, args)
 	if !ok {
 		return code
 	}
 	if len(rest) > 0 {
-		return c.usage(cmd, "unexpected argument %q", rest[0])
+		return c.unexpected(cmd)
 	}
-	if !validKeySource(*to) {
+	if app.CheckKEKSource(*to) != nil {
 		return c.usage(cmd, "--to must be file:<absolute path> or keychain")
+	}
+
+	// Another program that runs now keeps the old master key in memory. A key
+	// that it makes during the rotation would be wrapped by the old key, and
+	// lost after its restart. So the user stops them before anything is opened.
+	c.printf("Stop every other email-mcp program that uses this data directory (serve, setup, and the MCP clients " +
+		"that start email-mcp) before the rotation. Start them again afterwards, with the new setting that this " +
+		"command prints.\n")
+	if !*yes {
+		if !c.sys.isTerminal() {
+			c.errorf("%s: without a terminal, run again with --yes when every other email-mcp program is stopped. "+
+				"Nothing was changed.\n", cmd)
+			return exitError
+		}
+		if !c.confirm("Is every other email-mcp program stopped?") {
+			c.errorf("%s: nothing was changed.\n", cmd)
+			return exitError
+		}
 	}
 
 	a := c.openApp(ctx, cmd, *dataDir)
@@ -53,49 +67,68 @@ func runKeyRotate(ctx context.Context, c *cli, args []string) int {
 		return exitError
 	}
 	defer c.closeApp(ctx, cmd, a)
-	c.printf("Stop every other email-mcp program that uses this data directory before the rotation, " +
-		"and start it again afterwards.\n")
 	rot, err := a.RotateKEK(ctx, *to)
 	if err != nil {
-		c.errorf("%s: %v\n", cmd, err)
-		c.errorf("%s: nothing was changed. Every stored key is still wrapped by the old master key (%s). "+
-			"Keep EMAIL_MCP_KEK as it is.\n", cmd, rot.From)
-		if rot.MadeKeyFile {
-			c.errorf("%s: the new key file %s was made, but no stored key uses it. You can run the command again "+
-				"with the same --to.\n", cmd, strings.TrimPrefix(rot.To, keySourceFile))
-		}
+		c.printRotationError(cmd, rot, err)
 		return exitError
 	}
 	c.printRotation(rot)
 	return exitOK
 }
 
-// validKeySource reports whether source is "keychain" or "file:" with an
-// absolute path. The App checks it again.
-func validKeySource(source string) bool {
-	if source == keySourceKeychain {
-		return true
+// printRotationError says why the rotation failed, and that nothing changed.
+func (c *cli) printRotationError(cmd string, rot app.Rotation, err error) {
+	switch {
+	case errors.Is(err, app.ErrSameKEK):
+		c.errorf("%s: the data directory already uses this master key (%s), maybe under another spelling of the "+
+			"path. Give a new file or the keychain.\n", cmd, rot.From)
+	case errors.Is(err, app.ErrKeyFileExists):
+		c.errorf("%s: a file exists at the path of --to. A key is never overwritten: give a path where nothing "+
+			"exists.\n", cmd)
+	default:
+		c.errorf("%s: %v\n", cmd, err)
 	}
-	path, ok := strings.CutPrefix(source, keySourceFile)
-	return ok && filepath.IsAbs(path)
+	c.errorf("%s: nothing was changed. Every stored key is still wrapped by the old master key (%s). "+
+		"Keep EMAIL_MCP_KEK as it is.\n", cmd, rot.From)
+	if rot.MadeKeyFile {
+		c.errorf("%s: the new key file %s was made, but no stored key uses it. A rotation never overwrites a "+
+			"file: to try again, give another path, or remove that file first.\n",
+			cmd, strings.TrimPrefix(rot.To, "file:"))
+	}
 }
 
 // printRotation tells the user what changed, the exact setting of the next
 // start, and when the old key may go.
 func (c *cli) printRotation(rot app.Rotation) {
 	c.printf("The master key was changed. Every stored key is now wrapped by the new master key (%s).\n", rot.To)
-	c.printf("From now on, start email-mcp with this setting, in your shell and in the \"env\" block of your harness config:\n")
-	c.printf("  EMAIL_MCP_KEK=%s\n", rot.To)
-	if rot.To == keySourceKeychain {
+	c.printf("From now on, start email-mcp with this setting. In a shell (POSIX quoting):\n")
+	c.printf("  EMAIL_MCP_KEK=%s\n", shellQuote(rot.To))
+	c.printf("In the \"env\" block of your harness config (JSON):\n")
+	c.printf("  \"EMAIL_MCP_KEK\": %s\n", jsonString(rot.To))
+	if rot.To == "keychain" {
 		c.printf("(The keychain is also the default: leaving EMAIL_MCP_KEK unset works too.)\n")
 	}
-	c.printf("Restart every email-mcp program that is still running, so it uses the new key.\n")
-	if old, isFile := strings.CutPrefix(rot.From, keySourceFile); isFile {
+	c.printf("Restart every email-mcp program, so it uses the new key.\n")
+	if rot.OldKeyFile != "" {
 		c.printf("The old key file %s was not deleted. First run \"email-mcp doctor\" with the new setting. "+
-			"When it passes, you can delete the old key file.\n", old)
+			"When it passes, you can delete the old key file.\n", rot.OldKeyFile)
 		return
 	}
-	c.printf("The old master key stays in the keychain (service \"email-mcp\", account \"master-key\"). First run " +
-		"\"email-mcp doctor\" with the new setting. When it passes, and no other data directory uses the keychain, " +
-		"you can delete that entry.\n")
+	// Other data directories may use the keychain entry, so the command never
+	// says to delete it.
+	c.printf("The old master key stays in the keychain (service \"email-mcp\", account \"master-key\"), unchanged. " +
+		"Other data directories may use it.\n")
+}
+
+// shellQuote quotes s for a POSIX shell: in single quotes, with each single
+// quote written as '\”. The shell then takes every other character as it is.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// jsonString writes s as a JSON string.
+func jsonString(s string) string {
+	// Marshaling a string cannot fail.
+	b, _ := json.Marshal(s)
+	return string(b)
 }

@@ -77,11 +77,14 @@ func TestRotateKEKToAFileHoldsTheLock(t *testing.T) {
 
 	require.NoError(t, err)
 	require.True(t, called)
-	require.Equal(t, Rotation{From: "file:" + ta.keyPath, To: "file:" + newKey, MadeKeyFile: true}, rot)
-	require.Equal(t, "file:"+newKey, ta.KEKSource())
+	require.Equal(t, Rotation{From: "file:" + ta.keyPath, To: "file:" + newKey, MadeKeyFile: true, OldKeyFile: ta.keyPath}, rot)
+	require.Equal(t, "file:"+newKey, ta.kekSource)
 	info, err := os.Stat(newKey)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	entries, err := os.ReadDir(filepath.Dir(newKey))
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "only the key file, no temporary file")
 	_, err = os.Stat(ta.keyPath)
 	require.NoError(t, err, "the old key file is never deleted")
 
@@ -93,25 +96,74 @@ func TestRotateKEKToAFileHoldsTheLock(t *testing.T) {
 	require.False(t, opensWith(t, ta.dir, ta.keyPath, version, sealed))
 }
 
-// A key file that exists already is used as it is, so a rotation that failed
-// can run again with the same --to.
-func TestRotateKEKUsesAKeyFileThatExists(t *testing.T) {
+// A rotation never overwrites a file: a key file that exists already is
+// refused, and it does not change.
+func TestRotateKEKRefusesAKeyFileThatExists(t *testing.T) {
 	ta := openTest(t)
 	version, sealed := sealTestSecret(t, ta.App)
 	newKey := filepath.Join(t.TempDir(), "new.key")
 	require.NoError(t, secrets.GenerateKeyFile(newKey))
 	before, err := os.ReadFile(newKey) //nolint:gosec // G304: a path of the test
 	require.NoError(t, err)
+	setBeforeRewrap(t, func() { t.Fatal("nothing is wrapped again") })
 
 	rot, err := ta.RotateKEK(context.Background(), "file:"+newKey)
 
-	require.NoError(t, err)
+	require.ErrorIs(t, err, ErrKeyFileExists)
 	require.False(t, rot.MadeKeyFile)
 	after, err := os.ReadFile(newKey) //nolint:gosec // G304: a path of the test
 	require.NoError(t, err)
 	require.Equal(t, before, after)
+	require.Equal(t, "file:"+ta.keyPath, ta.kekSource)
 	require.NoError(t, ta.CloseNow(context.Background()))
-	require.True(t, opensWith(t, ta.dir, newKey, version, sealed))
+	require.True(t, opensWith(t, ta.dir, ta.keyPath, version, sealed))
+}
+
+// The key file in use is refused under any spelling of its path: with "./",
+// with two slashes, and through a folder that is a symbolic link (macOS has
+// such links: /var is /private/var). The rotation would wrap the keys with the
+// same key and then tell the user to delete the "old" file, which is the only
+// key.
+func TestRotateKEKRefusesTheKeyInUseUnderAnySpelling(t *testing.T) {
+	ta := openTest(t)
+	version, sealed := sealTestSecret(t, ta.App)
+	dir, name := filepath.Dir(ta.keyPath), filepath.Base(ta.keyPath)
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(dir, link))
+	setBeforeRewrap(t, func() { t.Fatal("nothing is wrapped again") })
+
+	for _, spelling := range []string{
+		dir + "/./" + name,
+		dir + "//" + name,
+		dir + "/../" + filepath.Base(dir) + "/" + name,
+		filepath.Join(link, name),
+	} {
+		rot, err := ta.RotateKEK(context.Background(), "file:"+spelling)
+		require.ErrorIs(t, err, ErrSameKEK, spelling)
+		require.Empty(t, rot.OldKeyFile, spelling)
+	}
+	require.Equal(t, "file:"+ta.keyPath, ta.kekSource)
+	require.NoError(t, ta.CloseNow(context.Background()))
+	require.True(t, opensWith(t, ta.dir, ta.keyPath, version, sealed))
+}
+
+// With ExistingKeyOnly, Open loads the master key and never makes one: not in
+// the keychain, and not as a key file, also for a database without keys.
+func TestOpenWithExistingKeyOnlyNeverMakesAKey(t *testing.T) {
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
+	setUserDirs(t, t.TempDir())
+
+	_, err := Open(context.Background(), Config{DataDir: t.TempDir(), KEKSource: kekKeychain, ExistingKeyOnly: true, LogOutput: &syncBuffer{}})
+	require.ErrorIs(t, err, ErrNoMasterKey)
+	_, err = keyring.Get("email-mcp", "master-key")
+	require.ErrorIs(t, err, keyring.ErrNotFound, "no keychain key was made")
+
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	_, err = Open(context.Background(), Config{DataDir: t.TempDir(), KEKSource: "file:" + keyPath, ExistingKeyOnly: true, LogOutput: &syncBuffer{}})
+	require.ErrorIs(t, err, ErrNoMasterKey)
+	_, err = os.Stat(keyPath)
+	require.ErrorIs(t, err, os.ErrNotExist, "no key file was made")
 }
 
 // The keychain belongs to the user, so a rotation to it also holds the lock of
@@ -151,7 +203,7 @@ func TestRotateKEKToTheKeychainHoldsBothLocks(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("the rotation waited for its own lock")
 			}
-			require.Equal(t, kekKeychain, a.KEKSource())
+			require.Equal(t, kekKeychain, a.kekSource)
 			_, err = keyring.Get("email-mcp", "master-key")
 			require.NoError(t, err, "the keychain holds the new key")
 		})
@@ -185,7 +237,7 @@ func TestResolveAndTheSettingsOfTheApp(t *testing.T) {
 	require.Equal(t, "file:/env.key", got.KEKSource)
 
 	ta := openTest(t)
-	require.Equal(t, "file:"+ta.keyPath, ta.KEKSource())
+	require.Equal(t, "file:"+ta.keyPath, ta.kekSource)
 }
 
 // CloseNow is for a command that never served: it leaves the queued messages

@@ -52,7 +52,8 @@ func runGroup(ctx context.Context, c *cli, group string, commands []command, arg
 			return cmd.run(ctx, c, args[1:])
 		}
 	}
-	c.errorf("%s: unknown command %q\n\n", group, args[0])
+	// The name is not repeated: the user may have typed a password.
+	c.errorf("%s: unknown command: see the list of commands below\n\n", group)
 	printGroupUsage(c.stderr, group, commands)
 	return exitUsage
 }
@@ -86,16 +87,18 @@ func runAccountAdd(ctx context.Context, c *cli, args []string) int {
 		smtpSecurity: fs.String("smtp-security", "tls", "the SMTP security: tls, starttls or plain"),
 	}
 	username := fs.String("username", "", "the login name of both servers (default: the email address)")
+	acceptRemote := fs.Bool("accept-remote-certificate", false, "when standard input is not a terminal: also needed "+
+		"to trust, with --trust-fingerprint, the certificate of a server that is not on this computer")
 	var trust fingerprintList
 	fs.Var(&trust, "trust-fingerprint", "when standard input is not a terminal: trust the certificate with this SHA-256 "+
 		"fingerprint, if a server shows it in this run (repeat the flag for the second server)")
 	plaintext := fs.Bool("plaintext-i-understand", false, "allow a connection without encryption to a server on this computer")
-	rest, code, ok := parseFlags(fs, args)
+	rest, code, ok := c.parseFlags(cmd, fs, args)
 	if !ok {
 		return code
 	}
 	if len(rest) > 0 {
-		return c.usage(cmd, "unexpected argument %q", rest[0])
+		return c.unexpected(cmd)
 	}
 	if *email == "" {
 		return c.usage(cmd, "--email is required")
@@ -112,7 +115,7 @@ func runAccountAdd(ctx context.Context, c *cli, args []string) int {
 	if *username != "" {
 		server.Username = *username
 	}
-	opts := connectOptions{trust: trust, plaintext: *plaintext}
+	opts := connectOptions{trust: trust, plaintext: *plaintext, acceptRemote: *acceptRemote}
 	if !c.checkServer(cmd, server, opts) {
 		return exitError
 	}
@@ -284,12 +287,12 @@ func runAccountList(ctx context.Context, c *cli, args []string) int {
 	const cmd = "account list"
 	fs := c.newFlags(cmd)
 	dataDir := fs.String("data-dir", "", dataDirUsage)
-	rest, code, ok := parseFlags(fs, args)
+	rest, code, ok := c.parseFlags(cmd, fs, args)
 	if !ok {
 		return code
 	}
 	if len(rest) > 0 {
-		return c.usage(cmd, "unexpected argument %q", rest[0])
+		return c.unexpected(cmd)
 	}
 	a := c.openApp(ctx, cmd, *dataDir)
 	if a == nil {
@@ -344,7 +347,7 @@ func runAccountRemove(ctx context.Context, c *cli, args []string) int {
 	fs := c.newFlags(cmd)
 	dataDir := fs.String("data-dir", "", dataDirUsage)
 	yes := fs.Bool("yes", false, "remove without a question (needed when standard input is not a terminal)")
-	rest, code, ok := parseFlags(fs, args)
+	rest, code, ok := c.parseFlags(cmd, fs, args)
 	if !ok {
 		return code
 	}
@@ -388,7 +391,7 @@ func runAccountTest(ctx context.Context, c *cli, args []string) int {
 	const cmd = "account test"
 	fs := c.newFlags(cmd)
 	dataDir := fs.String("data-dir", "", dataDirUsage)
-	rest, code, ok := parseFlags(fs, args)
+	rest, code, ok := c.parseFlags(cmd, fs, args)
 	if !ok {
 		return code
 	}

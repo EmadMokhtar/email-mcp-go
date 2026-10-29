@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -97,6 +98,9 @@ func decodeKey(encoded string) ([]byte, error) {
 	return key, nil
 }
 
+// ErrNoKey is returned by LoadKeychainKEK when the keychain has no master key.
+var ErrNoKey = errors.New("secrets: no master key is stored")
+
 // NewKeychainKEK returns a KEK whose key is stored in the operating system
 // keychain (service "email-mcp", user "master-key"). It creates a new random
 // key when the keychain has none.
@@ -112,6 +116,25 @@ func NewKeychainKEK() (KEK, error) {
 	if err != nil {
 		return nil, fmt.Errorf("secrets: keychain: %w", err)
 	}
+	return keychainKEK(encoded)
+}
+
+// LoadKeychainKEK is NewKeychainKEK without the creation: when the keychain has
+// no key, it returns an error that matches ErrNoKey, and the keychain stays as
+// it was. A check that must change nothing uses it.
+func LoadKeychainKEK() (KEK, error) {
+	encoded, err := keyring.Get(keychainService, keychainUser)
+	if errors.Is(err, keyring.ErrNotFound) {
+		return nil, fmt.Errorf("secrets: keychain entry %q/%q: %w", keychainService, keychainUser, ErrNoKey)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("secrets: keychain: %w", err)
+	}
+	return keychainKEK(encoded)
+}
+
+// keychainKEK returns the KEK of the text that the keychain holds.
+func keychainKEK(encoded string) (KEK, error) {
 	key, err := decodeKey(encoded)
 	if err != nil {
 		return nil, fmt.Errorf("secrets: keychain entry %q/%q: %w", keychainService, keychainUser, err)
@@ -183,6 +206,82 @@ func NewFileKEK(path string) (KEK, error) {
 
 	sum := sha256.Sum256([]byte(absPath))
 	return &localKEK{id: "file:" + hex.EncodeToString(sum[:])[:8], key: key}, nil
+}
+
+// GenerateDurableKeyFile creates a new random master key and writes it to path
+// with mode 0600, in the format that NewFileKEK reads. Unlike GenerateKeyFile,
+// the file is on the disk when it returns, so a crash or a power loss right
+// after cannot take it away. A change of master key needs this: the database
+// is about to depend on the new key.
+//
+// In this order it:
+//  1. refuses, with an error that matches fs.ErrExist, when anything exists at
+//     path (a file or a symbolic link). It never replaces a key;
+//  2. writes the key to a new temporary file in the folder of path (mode
+//     0600), calls Sync on it, and closes it;
+//  3. renames the temporary file to path, and calls Sync on the folder, so the
+//     new name is on the disk too.
+//
+// Steps 1 and 3 are not one step. The caller must hold a lock, so that no other
+// program makes a file at path in between. On an error, the temporary file is
+// removed and nothing is at path.
+func GenerateDurableKeyFile(path string) (err error) {
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("secrets: create key file: %w", fs.ErrExist)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("secrets: create key file: %w", err)
+	}
+	key := make([]byte, keySize)
+	if _, err := rand.Read(key); err != nil {
+		return fmt.Errorf("secrets: create key: %w", err)
+	}
+	dir := filepath.Dir(path)
+	// CreateTemp makes the file with mode 0600, and never opens one that exists.
+	f, err := os.CreateTemp(dir, ".email-mcp-key-*")
+	if err != nil {
+		return fmt.Errorf("secrets: create key file: %w", err)
+	}
+	tmp := f.Name()
+	defer func() {
+		if err != nil {
+			_ = f.Close()
+			_ = os.Remove(tmp)
+		}
+	}()
+	if _, err := io.WriteString(f, encodeKey(key)+"\n"); err != nil {
+		return fmt.Errorf("secrets: write key file: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("secrets: write key file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("secrets: write key file: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("secrets: put the key file in place: %w", err)
+	}
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("secrets: write key file: %w", err)
+	}
+	return nil
+}
+
+// syncDir flushes the entries of the folder dir to the disk, so a new name in it
+// survives a power loss. Windows cannot open a folder to sync it, and NTFS keeps
+// the change of a name in its own journal, so this does nothing there.
+func syncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	d, err := os.Open(dir) //nolint:gosec // G304: the folder of a key file that the user chose
+	if err != nil {
+		return err
+	}
+	err = d.Sync()
+	if closeErr := d.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 // GenerateKeyFile creates a new random master key and writes it to path with

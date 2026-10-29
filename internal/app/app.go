@@ -108,6 +108,11 @@ type Config struct {
 	// LogOutput gets the log, as text. Nil means os.Stderr. It must never be
 	// standard output: on stdio, standard output carries the protocol.
 	LogOutput io.Writer
+	// ExistingKeyOnly makes Open only load the master key, and never make one:
+	// a missing keychain entry or key file is an error that matches
+	// ErrNoMasterKey. A check that must not change the install (doctor) sets it.
+	// Open still writes to the database (see Open).
+	ExistingKeyOnly bool
 }
 
 // resolve fills the empty fields from the environment and the defaults. It does
@@ -200,9 +205,12 @@ type App struct {
 	jobEvery   time.Duration
 	sweepEvery time.Duration
 
-	// kekMu guards kekSource, which RotateKEK changes.
+	// kekMu guards kekSource and kekID, which RotateKEK changes. It also makes
+	// two calls of RotateKEK take turns.
 	kekMu     sync.Mutex
 	kekSource string
+	// kekID is the id of the master key in use (secrets.KEK.ID).
+	kekID string
 
 	// calls counts the tool calls that run, so Close can wait for them.
 	calls inflight.Tracker
@@ -236,15 +244,19 @@ type options struct {
 //  2. opens the store in the data directory and makes sure the local tenant
 //     exists;
 //  3. finds the master key, or makes it on the first run (under a lock, see
-//     loadKEK), and builds the vault;
-//  4. builds the signer from the server key of the vault;
+//     loadKEK), and builds the vault. With Config.ExistingKeyOnly it never
+//     makes a master key;
+//  4. builds the signer from the server key of the vault (the vault makes the
+//     server key, wrapped by the master key, when the database has none);
 //  5. builds the limiter, the confirm manager, the backend factory, the outbox,
 //     the audit log, the tokens and the discovery (the backend factory comes
 //     before the outbox, because the sender of the outbox uses it);
 //  6. builds the web server, then the service with the links of the web
 //     server, and then attaches the service to the web server.
 //
-// Open does not start any background work. See Run.
+// Open writes to the database in steps 2 and 4: the migrations that have not
+// run yet, the row of the local tenant, and the server key, each only when it
+// is missing. Open does not start any background work. See Run.
 func Open(ctx context.Context, cfg Config) (*App, error) {
 	return open(ctx, cfg, options{})
 }
@@ -262,7 +274,7 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkKEKSource(cfg.KEKSource); err != nil {
+	if err := CheckKEKSource(cfg.KEKSource); err != nil {
 		return nil, err
 	}
 
@@ -279,7 +291,7 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 		return nil, err
 	}
 
-	kek, err := loadKEK(ctx, cfg.DataDir, cfg.KEKSource, st, log)
+	kek, err := loadKEK(ctx, cfg.DataDir, cfg.KEKSource, st, log, cfg.ExistingKeyOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -336,6 +348,7 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 		log:        log,
 		dataDir:    cfg.DataDir,
 		kekSource:  cfg.KEKSource,
+		kekID:      kek.ID(),
 		store:      st,
 		vault:      vault,
 		confirm:    confirmMgr,
@@ -350,14 +363,6 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 // Logger returns the logger of the App. It writes to Config.LogOutput.
 func (a *App) Logger() *slog.Logger {
 	return a.log
-}
-
-// KEKSource returns the source of the master key that the App uses, such as
-// "keychain" or "file:/keys/master.key". After a RotateKEK it is the new one.
-func (a *App) KEKSource() string {
-	a.kekMu.Lock()
-	defer a.kekMu.Unlock()
-	return a.kekSource
 }
 
 // MCPServer returns an MCP server with the tools of the program. An empty

@@ -86,7 +86,8 @@ func runWith(ctx context.Context, sys system, args []string, stdin io.Reader, st
 		}
 	}
 
-	_, _ = fmt.Fprintf(stderr, "unknown command %q\n\n", name)
+	// The name is not repeated: the user may have typed a password.
+	_, _ = fmt.Fprint(stderr, "unknown command: see the list of commands below\n\n")
 	printUsage(stderr)
 	return exitUsage
 }
@@ -116,7 +117,8 @@ func runVersion(_ context.Context, c *cli, args []string) int {
 		return exitUsage
 	}
 	if fs.NArg() > 0 {
-		_, _ = fmt.Fprintf(stderr, "version: unexpected argument %q\n", fs.Arg(0))
+		// The argument is not repeated: the user may have typed a password.
+		_, _ = fmt.Fprintln(stderr, "version: unexpected argument 1: this command takes no arguments")
 		return exitUsage
 	}
 

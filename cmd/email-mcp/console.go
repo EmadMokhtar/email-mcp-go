@@ -82,12 +82,23 @@ func realSystem(stdin io.Reader) system {
 			if !isFile {
 				return nil, errors.New("standard input is not a terminal")
 			}
-			return readTerminalPassword(ctx, int(f.Fd())) //nolint:gosec // G115: a file descriptor fits in an int
+			return readTerminalPassword(ctx, realTerminal, int(f.Fd())) //nolint:gosec // G115: a file descriptor fits in an int
 		},
 		openBrowser: openBrowser,
 		discover:    finder.Mail,
 	}
 }
+
+// terminalFuncs are the calls of golang.org/x/term that readTerminalPassword
+// makes. Tests replace them, so they need no terminal.
+type terminalFuncs struct {
+	getState     func(fd int) (*term.State, error)
+	restore      func(fd int, state *term.State) error
+	readPassword func(fd int) ([]byte, error)
+}
+
+// realTerminal are the real calls.
+var realTerminal = terminalFuncs{getState: term.GetState, restore: term.Restore, readPassword: term.ReadPassword}
 
 // readTerminalPassword reads a password from the terminal fd without echo.
 //
@@ -96,8 +107,8 @@ func realSystem(stdin io.Reader) system {
 // ends the program at once: the echo of the terminal would stay off. So when
 // ctx ends, this puts the terminal back as it was and returns. The read stays
 // blocked until the program ends, which it does next.
-func readTerminalPassword(ctx context.Context, fd int) ([]byte, error) {
-	state, err := term.GetState(fd)
+func readTerminalPassword(ctx context.Context, t terminalFuncs, fd int) ([]byte, error) {
+	state, err := t.getState(fd)
 	if err != nil {
 		return nil, err
 	}
@@ -107,14 +118,14 @@ func readTerminalPassword(ctx context.Context, fd int) ([]byte, error) {
 	}
 	done := make(chan answer, 1)
 	go func() {
-		line, err := term.ReadPassword(fd)
+		line, err := t.readPassword(fd)
 		done <- answer{line: line, err: err}
 	}()
 	select {
 	case a := <-done:
 		return a.line, a.err
 	case <-ctx.Done():
-		_ = term.Restore(fd, state)
+		_ = t.restore(fd, state)
 		return nil, ctx.Err()
 	}
 }
@@ -240,32 +251,39 @@ func (c *cli) readPassword(ctx context.Context, prompt string) (secrets.Secret, 
 	return password, nil
 }
 
-// newFlags returns the flag set of a command. The flag package writes its
-// messages to standard error.
+// newFlags returns the flag set of a command. The flag package writes nothing:
+// its messages repeat the text of a bad flag, and the user may have typed a
+// password there. parseFlags prints fixed texts instead.
 func (c *cli) newFlags(name string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs.SetOutput(io.Discard)
 	return fs
 }
 
 // parseFlags parses args with fs. Flags may come before and after the
-// arguments that are not flags, such as "remove ID --yes". It returns the
-// arguments that are not flags. When the command must stop (after -h, or a bad
-// flag) ok is false and code is the exit code.
-func parseFlags(fs *flag.FlagSet, args []string) (rest []string, code int, ok bool) {
+// arguments that are not flags, such as "remove ID --yes". After "--" every
+// argument is one that is not a flag. It returns the arguments that are not
+// flags. When the command must stop, ok is false and code is the exit code:
+// after -h it prints the flags on standard output (exitOK); after a bad flag it
+// prints a fixed text on standard error (exitUsage), never the text that the
+// user typed.
+func (c *cli) parseFlags(cmd string, fs *flag.FlagSet, args []string) (rest []string, code int, ok bool) {
 	for {
 		if err := fs.Parse(args); err != nil {
-			// The flag package has already printed the problem or the help text.
 			if errors.Is(err, flag.ErrHelp) {
+				c.printf("Usage of email-mcp %s:\n", cmd)
+				fs.SetOutput(c.stdout)
+				fs.PrintDefaults()
+				fs.SetOutput(io.Discard)
 				return nil, exitOK, false
 			}
+			c.errorf("%s: %s. Run \"email-mcp %s -h\" to see the flags.\n", cmd, flagProblem(fs, err), cmd)
 			return nil, exitUsage, false
 		}
 		left := fs.Args()
 		if len(left) == 0 {
 			return rest, exitOK, true
 		}
-		// After "--" every argument is an argument, also one that starts with -.
 		if used := len(args) - len(left); used > 0 && args[used-1] == "--" {
 			return append(rest, left...), exitOK, true
 		}
@@ -274,10 +292,49 @@ func parseFlags(fs *flag.FlagSet, args []string) (rest []string, code int, ok bo
 	}
 }
 
+// flagProblem describes an error of the flag package without the text that the
+// user typed. It names a flag only when the command has a flag of that name: an
+// unknown "flag" could be a password.
+func flagProblem(fs *flag.FlagSet, err error) string {
+	msg := err.Error()
+	known := func(name string) bool { return name != "" && fs.Lookup(name) != nil }
+	switch {
+	case strings.HasPrefix(msg, "flag provided but not defined"):
+		return "unknown flag"
+	case strings.HasPrefix(msg, "flag needs an argument: -"):
+		if name := strings.TrimPrefix(msg, "flag needs an argument: -"); known(name) {
+			return "the flag -" + name + " needs a value"
+		}
+		return "a flag needs a value"
+	case strings.HasPrefix(msg, "invalid "):
+		// "invalid value %q for flag -NAME: …" or "invalid boolean value %q
+		// for -NAME: …". The value comes before the name, so the name is after
+		// the last " for ".
+		if i := strings.LastIndex(msg, " for "); i >= 0 {
+			name, reason, _ := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(msg[i+len(" for "):], "flag "), "-"), ":")
+			if known(name) {
+				// The reason after the name is a fixed text of the flag package
+				// ("parse error") or of a flag of this program, never the value.
+				return "the value of the flag -" + name + " is not valid: " + strings.TrimSpace(reason)
+			}
+		}
+		return "a flag has a value that is not valid"
+	default:
+		return "a flag is not valid"
+	}
+}
+
 // usage prints a usage error of a command and returns exitUsage.
 func (c *cli) usage(cmd, format string, args ...any) int {
 	c.errorf("%s: %s\n", cmd, fmt.Sprintf(format, args...))
 	return exitUsage
+}
+
+// unexpected prints that the command got arguments that it does not take, and
+// returns exitUsage. It names the position of the first one, never its text:
+// the user may have typed a password there.
+func (c *cli) unexpected(cmd string) int {
+	return c.usage(cmd, "unexpected argument 1: this command takes no arguments that are not flags")
 }
 
 // openApp opens the App in the data directory, as "serve" does: the master key
