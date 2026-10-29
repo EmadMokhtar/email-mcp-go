@@ -215,6 +215,7 @@ func TestLoginErrorHasNoServerText(t *testing.T) {
 	_, err := dialIMAP(t.Context(), cfg)
 
 	require.EqualError(t, err, "imap: login failed [AUTHENTICATIONFAILED]")
+	require.ErrorIs(t, err, ErrAuthFailed)
 }
 
 func TestLoginErrorWithoutResponseCode(t *testing.T) {
@@ -225,6 +226,32 @@ func TestLoginErrorWithoutResponseCode(t *testing.T) {
 	_, err := dialIMAP(t.Context(), fake.plainConfig())
 
 	require.EqualError(t, err, "imap: login failed")
+	require.ErrorIs(t, err, ErrAuthFailed)
+}
+
+func TestLoginErrorMarksOnlyARefusedLogin(t *testing.T) {
+	// A NO answer to LOGIN is a refused login, unless the server says that it is
+	// not working (UNAVAILABLE, SERVERBUG). A BAD answer is a broken command, not
+	// a refusal.
+	for answer, refused := range map[string]bool{
+		"NO [AUTHENTICATIONFAILED] wrong":   true,
+		"NO [AUTHORIZATIONFAILED] no":       true,
+		"NO [CONTACTADMIN] blocked":         true,
+		"NO sorry":                          true,
+		"NO [UNAVAILABLE] try again later":  false,
+		"NO [SERVERBUG] something broke":    false,
+		"BAD [AUTHENTICATIONFAILED] syntax": false,
+		"BAD unknown command":               false,
+	} {
+		fake := newFakeIMAP(t, "* OK ready\r\n", func(tag, cmd string) (string, fakeThen) {
+			return tag + " " + answer + "\r\n", fakeStay
+		})
+
+		_, err := dialIMAP(t.Context(), fake.plainConfig())
+
+		require.ErrorContains(t, err, "imap: login failed", answer)
+		require.Equal(t, refused, errors.Is(err, ErrAuthFailed), answer)
+	}
 }
 
 // startHandshakeServer starts a TLS server that shows a self-signed

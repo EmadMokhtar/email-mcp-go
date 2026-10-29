@@ -428,6 +428,33 @@ func TestSendAuthFailureHidesTheServerText(t *testing.T) {
 	}
 }
 
+func TestSMTPLoginErrorMarksOnlyARefusedLogin(t *testing.T) {
+	// 535 is a wrong user name or password. 534 is what Google sends when the
+	// account needs an app password. 454 is a temporary failure of the server.
+	for reply, refused := range map[string]bool{
+		"535 5.7.8 Authentication failed for alice\r\n":            true,
+		"534 5.7.9 Application-specific password required\r\n":     true,
+		"454 4.7.0 Temporary authentication failure for alice\r\n": false,
+	} {
+		fake := newFakeSMTP(t, "220 fake ESMTP ready\r\n", func(line string) (string, fakeThen) {
+			switch smtpVerb(line) {
+			case "EHLO":
+				return "250-fake\r\n250 AUTH PLAIN\r\n", fakeStay
+			case "AUTH":
+				return reply, fakeStay
+			}
+			return "502 unexpected\r\n", fakeStay
+		})
+		b := newSMTPBackend(t, fake.config(account.SecurityPlain))
+
+		err := b.Send(t.Context(), outgoing("one", "Lunch", "bob@example.com"))
+
+		require.ErrorContains(t, err, "smtp: login failed (reply code "+reply[:3]+")", reply)
+		require.Equal(t, refused, errors.Is(err, ErrAuthFailed), reply)
+		require.NotContains(t, err.Error(), "alice")
+	}
+}
+
 func TestSendNeedsAuthPlain(t *testing.T) {
 	fake := newFakeSMTP(t, "220 fake ESMTP ready\r\n", func(line string) (string, fakeThen) {
 		switch smtpVerb(line) {

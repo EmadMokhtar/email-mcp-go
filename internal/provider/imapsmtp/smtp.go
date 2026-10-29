@@ -484,16 +484,30 @@ func loginSMTP(client *smtp.Client, cfg Config) error {
 	return nil
 }
 
+// The SMTP replies to AUTH that mean a refused login (they match ErrAuthFailed).
+const (
+	// smtpAuthFailed is "authentication credentials invalid" (RFC 4954).
+	smtpAuthFailed = 535
+	// smtpAppPasswordNeeded is "authentication mechanism is too weak". Google
+	// sends it when the account needs an app password.
+	smtpAppPasswordNeeded = 534
+)
+
 // smtpLoginError turns the error of a failed AUTH into the error that callers
 // see: "smtp: login failed" with the reply code of the server. It never repeats
 // the free text of the server. Servers often put the user name or the mail
 // address in that text, and logs must not hold addresses. A network failure
-// keeps its error, because that text has no user data.
+// keeps its error, because that text has no user data. A reply 535 or 534
+// matches ErrAuthFailed.
 func smtpLoginError(err error) error {
 	var reply *smtp.SMTPError
 	switch {
 	case errors.As(err, &reply):
-		return fmt.Errorf("smtp: login failed (reply code %d)", reply.Code)
+		text := fmt.Sprintf("smtp: login failed (reply code %d)", reply.Code)
+		if reply.Code == smtpAuthFailed || reply.Code == smtpAppPasswordNeeded {
+			return &authError{text: text}
+		}
+		return errors.New(text)
 	case isNetworkError(err):
 		return fmt.Errorf("smtp: login failed: %w", err)
 	default:

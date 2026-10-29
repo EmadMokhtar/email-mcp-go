@@ -77,6 +77,7 @@ const (
 	msgExists         = "An account with this address is already connected."
 	msgSettings       = "The server settings are not valid. Check the host names (without a port or a scheme), the ports (1 to 65535) and the security settings. A connection without encryption is allowed only to a server on this computer."
 	msgTestFailed     = "The connection test failed. Check the user name, the password and the server settings. Some providers need an app password."
+	msgAuthFailed     = "The server refused the user name or the password. Some providers need an app password, or IMAP access turned on in their settings."
 	msgCannotConnect  = "Could not connect to the server. Check the host names and the ports."
 	msgHostNotFound   = "A server name was not found. Check the host names."
 	msgTimeout        = "A server did not answer in time. Check the host names and the ports, then try again."
@@ -483,6 +484,8 @@ func testFailureText(err error) string {
 		opErr     *net.OpError
 	)
 	switch {
+	case errors.Is(err, imapsmtp.ErrAuthFailed):
+		return msgAuthFailed
 	case errors.As(err, &dnsErr):
 		return msgHostNotFound
 	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():

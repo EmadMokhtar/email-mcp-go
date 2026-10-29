@@ -164,6 +164,7 @@ func TestProbeBadPasswordFails(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, res)
 		require.ErrorContains(t, err, "imap: login failed")
+		require.ErrorIs(t, err, ErrAuthFailed)
 		requireNoneOf(t, err.Error(), wrong, imapSrv.Pass)
 		require.Zero(t, smtpSrv.AuthAttempts(), "the SMTP server is not tried after the IMAP login failed")
 	})
@@ -181,6 +182,7 @@ func TestProbeBadPasswordFails(t *testing.T) {
 		require.Nil(t, res)
 		require.ErrorContains(t, err, "smtp: login failed")
 		require.ErrorContains(t, err, "535")
+		require.ErrorIs(t, err, ErrAuthFailed)
 		// The server repeats the user name in its text. That text is not in the error.
 		requireNoneOf(t, err.Error(), "Authentication failed for", imapSrv.User, imapSrv.Pass, "another-password")
 	})

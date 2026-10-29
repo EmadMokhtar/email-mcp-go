@@ -37,6 +37,7 @@ const marker = "Pw-marker-9f3k-NEVER-SHOWN"
 // The fixed texts that the connect pages show.
 const (
 	textTestFailed    = "The connection test failed. Check the user name, the password and the server settings. Some providers need an app password."
+	textAuthFailed    = "The server refused the user name or the password. Some providers need an app password, or IMAP access turned on in their settings."
 	textCannotConnect = "Could not connect to the server. Check the host names and the ports."
 	textHostNotFound  = "A server name was not found. Check the host names."
 	textTLSFailed     = "A secure connection could not be made. Check the ports and the security settings."
@@ -503,7 +504,7 @@ func TestConnectRefusesWhenProbeFails(t *testing.T) {
 	resp, body := c.post("/connect/save", trusted(saveForm(imapSrv, smtpSrv, marker)))
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	text := visibleText(t, body)
-	require.Contains(t, text, textTestFailed)
+	require.Contains(t, text, textAuthFailed)
 	require.NotContains(t, strings.ToLower(text), "login failed")
 	require.NotContains(t, text, "AUTHENTICATIONFAILED")
 	c.requireNoLeak(resp, body, marker)
@@ -538,6 +539,14 @@ func TestConnectRefusesWhenProbeFails(t *testing.T) {
 	resp, body = c.post("/connect/save", remoteForm(marker))
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	require.Contains(t, visibleText(t, body), textHostNotFound)
+
+	// Any other failure gets the general text.
+	c.probe.set(func(context.Context, imapsmtp.Config) (*imapsmtp.ProbeResult, error) {
+		return nil, errors.New("imap: starttls: the server does not support it")
+	})
+	resp, body = c.post("/connect/save", remoteForm(marker))
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), textTestFailed)
 
 	require.Empty(t, c.accounts(), "nothing was saved")
 	require.False(t, bytes.Contains(c.dataFiles(), []byte(marker)))

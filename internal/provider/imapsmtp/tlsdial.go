@@ -197,21 +197,47 @@ func secureAndLogin(ctx context.Context, cfg Config, conn net.Conn) (*imapclient
 	return client, nil
 }
 
+// ErrAuthFailed means that the server refused the login: an IMAP NO answer to
+// LOGIN (except the codes UNAVAILABLE and SERVERBUG, which say that the server
+// is not working), or an SMTP reply 535 or 534 to AUTH. The user name, the
+// password, or a setting of the account (an app password, IMAP access) is
+// wrong. Callers check it with errors.Is. The error text stays as before, so it
+// still holds no text of the server.
+var ErrAuthFailed = errors.New("imapsmtp: the server refused the login")
+
+// authError is a login that the server refused. It matches ErrAuthFailed and
+// keeps its own text, which holds no text of the server.
+type authError struct {
+	text string
+}
+
+func (e *authError) Error() string { return e.text }
+
+// Is makes errors.Is(err, ErrAuthFailed) true.
+func (e *authError) Is(target error) bool { return target == ErrAuthFailed }
+
 // loginError turns the error of a failed LOGIN into the error that callers
 // see. The text is "imap: login failed", with the response code of the server
 // in brackets when it sent one (for example "[AUTHENTICATIONFAILED]").
 //
 // It never repeats the free text of the server. Servers often put the user
 // name or the mail address in that text, and logs must not hold addresses.
-// A network failure keeps its error, because that text has no user data.
+// A network failure keeps its error, because that text has no user data. A NO
+// answer matches ErrAuthFailed, unless its code says that the server is not
+// working.
 func loginError(err error) error {
 	var serverErr *imap.Error
 	switch {
 	case errors.As(err, &serverErr):
+		text := "imap: login failed"
 		if serverErr.Code != "" {
-			return fmt.Errorf("imap: login failed [%s]", serverErr.Code)
+			text += " [" + string(serverErr.Code) + "]"
 		}
-		return errors.New("imap: login failed")
+		if serverErr.Type == imap.StatusResponseTypeNo &&
+			serverErr.Code != imap.ResponseCodeUnavailable && serverErr.Code != imap.ResponseCodeServerBug {
+			return &authError{text: text}
+		}
+		return errors.New(text)
 	case isNetworkError(err):
 		return fmt.Errorf("imap: login failed: %w", err)
 	default:
