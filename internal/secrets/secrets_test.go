@@ -622,46 +622,48 @@ func TestGenerateKeyFileRefusesToFollowASymlink(t *testing.T) {
 	require.NoFileExists(t, target)
 }
 
-// GenerateDurableKeyFile makes a usable key file with mode 0600, leaves no
-// temporary file behind, and never replaces anything at the path.
-func TestGenerateDurableKeyFile(t *testing.T) {
+// GenerateKeyFile leaves no temporary file behind, also when it refuses a path
+// where a key exists.
+func TestGenerateKeyFileLeavesNoTemporaryFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "master.key")
-	require.NoError(t, GenerateDurableKeyFile(path))
+	require.NoError(t, GenerateKeyFile(path))
+	require.ErrorIs(t, GenerateKeyFile(path), fs.ErrExist)
 
-	if runtime.GOOS != "windows" {
-		info, err := os.Stat(path)
-		require.NoError(t, err)
-		require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-	}
-	kek, err := NewFileKEK(path)
-	require.NoError(t, err)
-	wrapped, err := kek.Wrap(t.Context(), []byte("dek"))
-	require.NoError(t, err)
-	unwrapped, err := kek.Unwrap(t.Context(), wrapped)
-	require.NoError(t, err)
-	require.Equal(t, []byte("dek"), unwrapped)
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
-	require.Len(t, entries, 1, "no temporary file is left")
-
-	before := readFile(t, path)
-	require.ErrorIs(t, GenerateDurableKeyFile(path), fs.ErrExist)
-	require.Equal(t, before, readFile(t, path), "the existing key must not change")
-	entries, err = os.ReadDir(dir)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
+	require.Len(t, entries, 1, "only the key file")
 }
 
-func TestGenerateDurableKeyFileRefusesASymlink(t *testing.T) {
-	skipOnWindows(t)
+// GenerateKeyFile puts the key on the disk before it returns: it syncs the
+// written file before the rename puts it in place, and then syncs the folder,
+// so the new name is on the disk too. A database that depends on a key that a
+// power loss takes away cannot be read again.
+func TestGenerateKeyFileSyncsTheFileAndTheFolder(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "target.key")
-	link := filepath.Join(dir, "master.key")
-	require.NoError(t, os.Symlink(target, link))
+	path := filepath.Join(dir, "master.key")
+	var events []string
+	oldFile, oldFolder := syncFile, syncFolder
+	t.Cleanup(func() { syncFile, syncFolder = oldFile, oldFolder })
+	syncFile = func(f *os.File) error {
+		_, err := os.Lstat(path)
+		require.ErrorIs(t, err, fs.ErrNotExist, "the file is synced before it is put in place")
+		content, err := os.ReadFile(f.Name())
+		require.NoError(t, err)
+		require.NotEmpty(t, content, "the key is written before the sync")
+		events = append(events, "file")
+		return f.Sync()
+	}
+	syncFolder = func(folder string) error {
+		require.Equal(t, dir, folder)
+		require.FileExists(t, path, "the folder is synced after the rename")
+		events = append(events, "folder")
+		return syncDir(folder)
+	}
 
-	require.ErrorIs(t, GenerateDurableKeyFile(link), fs.ErrExist)
-	require.NoFileExists(t, target)
+	require.NoError(t, GenerateKeyFile(path))
+
+	require.Equal(t, []string{"file", "folder"}, events)
 }
 
 // LoadKeychainKEK finds the key, and never makes one.

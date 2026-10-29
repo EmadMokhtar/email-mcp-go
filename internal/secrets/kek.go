@@ -208,11 +208,11 @@ func NewFileKEK(path string) (KEK, error) {
 	return &localKEK{id: "file:" + hex.EncodeToString(sum[:])[:8], key: key}, nil
 }
 
-// GenerateDurableKeyFile creates a new random master key and writes it to path
-// with mode 0600, in the format that NewFileKEK reads. Unlike GenerateKeyFile,
-// the file is on the disk when it returns, so a crash or a power loss right
-// after cannot take it away. A change of master key needs this: the database
-// is about to depend on the new key.
+// GenerateKeyFile creates a new random master key and writes it to path with
+// mode 0600, in the format that NewFileKEK reads. The file is on the disk when
+// it returns, so a crash or a power loss right after cannot take it away: a
+// database that depends on a key that is lost can never be read again. The first
+// start of a data directory and a change of master key both use it.
 //
 // In this order it:
 //  1. refuses, with an error that matches fs.ErrExist, when anything exists at
@@ -220,12 +220,12 @@ func NewFileKEK(path string) (KEK, error) {
 //  2. writes the key to a new temporary file in the folder of path (mode
 //     0600), calls Sync on it, and closes it;
 //  3. renames the temporary file to path, and calls Sync on the folder, so the
-//     new name is on the disk too.
+//     new name is on the disk too (not on Windows, see syncDir).
 //
 // Steps 1 and 3 are not one step. The caller must hold a lock, so that no other
 // program makes a file at path in between. On an error, the temporary file is
 // removed and nothing is at path.
-func GenerateDurableKeyFile(path string) (err error) {
+func GenerateKeyFile(path string) (err error) {
 	if _, err := os.Lstat(path); err == nil {
 		return fmt.Errorf("secrets: create key file: %w", fs.ErrExist)
 	} else if !errors.Is(err, fs.ErrNotExist) {
@@ -251,7 +251,7 @@ func GenerateDurableKeyFile(path string) (err error) {
 	if _, err := io.WriteString(f, encodeKey(key)+"\n"); err != nil {
 		return fmt.Errorf("secrets: write key file: %w", err)
 	}
-	if err := f.Sync(); err != nil {
+	if err := syncFile(f); err != nil {
 		return fmt.Errorf("secrets: write key file: %w", err)
 	}
 	if err := f.Close(); err != nil {
@@ -260,11 +260,17 @@ func GenerateDurableKeyFile(path string) (err error) {
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("secrets: put the key file in place: %w", err)
 	}
-	if err := syncDir(dir); err != nil {
+	if err := syncFolder(dir); err != nil {
 		return fmt.Errorf("secrets: write key file: %w", err)
 	}
 	return nil
 }
+
+// The sync calls of the key file writer. Tests replace them to see the order.
+var (
+	syncFile   = (*os.File).Sync
+	syncFolder = syncDir
+)
 
 // syncDir flushes the entries of the folder dir to the disk, so a new name in it
 // survives a power loss. Windows cannot open a folder to sync it, and NTFS keeps
@@ -282,38 +288,4 @@ func syncDir(dir string) error {
 		err = closeErr
 	}
 	return err
-}
-
-// GenerateKeyFile creates a new random master key and writes it to path with
-// mode 0600, in the format that NewFileKEK reads. It returns an error that
-// matches fs.ErrExist when anything already exists at path (a file or a
-// symbolic link), and never changes it.
-func GenerateKeyFile(path string) (err error) {
-	key := make([]byte, keySize)
-	if _, err := rand.Read(key); err != nil {
-		return fmt.Errorf("secrets: create key: %w", err)
-	}
-
-	// O_EXCL makes the call fail if the path exists, and it does not follow a
-	// symbolic link at the path.
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: the user chooses the key file path on purpose
-	if err != nil {
-		return fmt.Errorf("secrets: create key file: %w", err)
-	}
-	// If writing fails, remove the new file. A half-written key file would
-	// block the next attempt because the file already exists.
-	defer func() {
-		if err != nil {
-			_ = os.Remove(path)
-		}
-	}()
-
-	if _, err := io.WriteString(f, encodeKey(key)+"\n"); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("secrets: write key file: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("secrets: write key file: %w", err)
-	}
-	return nil
 }

@@ -123,9 +123,11 @@ func loadExistingKEK(source string) (secrets.KEK, error) {
 // makeKeyFile makes a new key file at path, but only for a database that has no
 // wrapped keys yet. The caller holds the lock of the data directory.
 //
-// The lock of a key file is per data directory. Two data directories that start
-// at the same time with one new key file path both try to make it: the file is
-// made with O_EXCL, so one of them fails with an error and makes no second key.
+// secrets.GenerateKeyFile puts the file on the disk before it returns, so the
+// keys that the database wraps next never depend on a key that a power loss
+// could take away. It refuses a path where anything exists. The lock of a key
+// file is per data directory: two data directories that make one new key file
+// path at the same moment are not kept apart by it.
 func makeKeyFile(ctx context.Context, path string, st *store.Store) error {
 	hasKeys, err := databaseHasKeys(ctx, st)
 	if err != nil {
@@ -268,10 +270,10 @@ var (
 //     now waits, so it cannot make or use a key in the middle;
 //  3. gets the new key. For a key file it refuses a path where anything exists
 //     (ErrKeyFileExists): a key is never overwritten. Otherwise it writes the
-//     new file with secrets.GenerateDurableKeyFile: a temporary file with mode
-//     0600, synced to the disk and closed, then renamed into place, then the
-//     folder synced. So the key is on the disk before any stored key depends
-//     on it. The keychain gives its key, or makes one when it has none;
+//     new file with secrets.GenerateKeyFile: a temporary file with mode 0600,
+//     synced to the disk and closed, then renamed into place, then the folder
+//     synced. So the key is on the disk before any stored key depends on it.
+//     The keychain gives its key, or makes one when it has none;
 //  4. refuses a new key with the id of the key in use (ErrSameKEK), as a last
 //     check;
 //  5. wraps every stored key again, in one database transaction.
@@ -373,7 +375,7 @@ func openNewKEK(source string) (kek secrets.KEK, made bool, err error) {
 		return kek, false, err
 	}
 	path := strings.TrimPrefix(source, kekFilePrefix)
-	if err := secrets.GenerateDurableKeyFile(path); err != nil {
+	if err := secrets.GenerateKeyFile(path); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return nil, false, fmt.Errorf("%w (%s)", ErrKeyFileExists, path)
 		}
