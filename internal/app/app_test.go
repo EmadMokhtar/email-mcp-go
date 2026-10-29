@@ -613,8 +613,8 @@ func TestRunExpiresStaleApprovedActions(t *testing.T) {
 
 	createApproved := func(at time.Time, payload string) *confirm.Pending {
 		m := confirm.NewManager(ta.store, ta.vault, signer, func() time.Time { return at })
-		p, err := m.Create(ctx, store.LocalTenantID, acct.ID, confirm.KindSend, []byte(payload),
-			confirm.Preview{Account: "me", Count: 1}, confirm.InBandLifetime)
+		p, err := m.Create(ctx, store.LocalTenantID, acct.ID, confirm.KindSend, confirm.ModeInBand, []byte(payload),
+			confirm.Preview{Account: "me", Count: 1})
 		require.NoError(t, err)
 		require.NoError(t, m.Transition(ctx, store.LocalTenantID, p.ID, confirm.StatePending, confirm.StateApproved, ""))
 		return p
@@ -648,8 +648,8 @@ func TestDailyJobsPruneAndCheckpoint(t *testing.T) {
 	old := time.Now().Add(-100 * 24 * time.Hour)
 	oldClock := func() time.Time { return old }
 	m := confirm.NewManager(ta.store, ta.vault, signer, oldClock)
-	waited, err := m.Create(ctx, store.LocalTenantID, acct.ID, confirm.KindSend, []byte("old"),
-		confirm.Preview{Account: "me", Count: 1}, confirm.InBandLifetime)
+	waited, err := m.Create(ctx, store.LocalTenantID, acct.ID, confirm.KindSend, confirm.ModeInBand, []byte("old"),
+		confirm.Preview{Account: "me", Count: 1})
 	require.NoError(t, err)
 	require.NoError(t, audit.New(ta.store, ta.vault, oldClock).Record(ctx, audit.Entry{
 		Tenant: store.LocalTenantID, Account: acct.ID, Area: account.AreaMail, Tool: "send_message",

@@ -122,6 +122,13 @@ var (
 	ErrMoveToTrash = errors.New("service: move_messages cannot move mail to the Trash folder. " +
 		"Use trash_messages, which asks the user when the account wants it and counts toward the Trash limit")
 
+	// ErrAnswerInBand means that the action waits for the answer of the user in
+	// the chat where the agent asked, so the web page cannot approve or reject
+	// it. Only one channel may answer an action, so one message cannot be
+	// approved twice. It matches confirm.ErrNotPending.
+	ErrAnswerInBand = fmt.Errorf("%w: the user answers it in the chat where it was asked, not on the web page",
+		confirm.ErrNotPending)
+
 	// errNoAudit means that the service has no audit log. A write must not run
 	// without its audit entry.
 	errNoAudit = errors.New("service: the audit log is not set up, so no write is allowed")
@@ -316,6 +323,9 @@ func auditCode(err error) (audit.Outcome, string) {
 		return refused("state_invalid")
 	case errors.Is(err, confirm.ErrStateExpired):
 		return refused("state_expired")
+	// ErrAnswerInBand also matches ErrNotPending, so it comes first.
+	case errors.Is(err, ErrAnswerInBand):
+		return refused("in_band_only")
 	case errors.Is(err, confirm.ErrNotPending):
 		return refused("not_pending")
 	case errors.Is(err, confirm.ErrNotFound):
@@ -579,15 +589,17 @@ type asked struct {
 
 // ask stores an action that waits for the user, and records the
 // "pending_approval" entry with the reason as its code.
+//
+// The action keeps the mode of the path that the service took. An in-band
+// action can be answered only in the chat (the web page refuses it), and it
+// ends with its request state. A fallback action waits for the web page.
 func (s *Service) ask(ctx context.Context, acc access, tool string, kind confirm.Kind, payload []byte, preview confirm.Preview, mode ConfirmMode, recipients []string, reason string) (*asked, error) {
 	t := acc.Principal.Tenant
-	// An action that the user confirms in band ends with its request state, so it
-	// cannot be approved on the web page after the agent has asked again.
-	lifetime := confirm.ApprovalLifetime
+	stored := confirm.ModeApproval
 	if mode == ConfirmInBand {
-		lifetime = confirm.InBandLifetime
+		stored = confirm.ModeInBand
 	}
-	p, err := s.d.Confirm.Create(ctx, t, acc.Account.ID, kind, payload, preview, lifetime)
+	p, err := s.d.Confirm.Create(ctx, t, acc.Account.ID, kind, stored, payload, preview)
 	if err != nil {
 		s.finish(ctx, acc, tool, preview.Count, recipients, "", err)
 		return nil, err
@@ -851,10 +863,14 @@ func trashRefs(payload []byte) []mail.Ref {
 // ApprovePending carries out an action that waits for the user. The web page
 // calls it when the user presses Approve, in the tenant of the principal.
 //
+// Only an action of the mode confirm.ModeApproval can be approved here. An
+// in-band action gives ErrAnswerInBand (it matches confirm.ErrNotPending), and
+// the refusal is in the audit log.
+//
 // The permission of the account is checked again, so an action that the level
 // no longer allows is refused. The move from "pending" to "approved" is the
-// compare-and-set gate: when two approvals (or an approval and an in-band
-// answer) come at the same time, one acts and the others get
+// compare-and-set gate: when two approvals (or an approval and the agent
+// withdrawing the send) come at the same time, one acts and the others get
 // confirm.ErrNotPending. A send uses the confirmed undo window. The action then
 // moves to "done", with the id of the outbox item for a send.
 //
@@ -886,6 +902,10 @@ func (s *Service) ApprovePending(ctx context.Context, pendingID string) error {
 	if err != nil {
 		s.recordPendingRefusal(ctx, p, nil, toolApprovePending, err)
 		return err
+	}
+	if pending.Mode != confirm.ModeApproval {
+		s.recordPendingRefusal(ctx, p, pending, toolApprovePending, ErrAnswerInBand)
+		return ErrAnswerInBand
 	}
 	if pending.State != confirm.StatePending || payload == nil {
 		err := confirm.ErrNotPending
@@ -927,8 +947,10 @@ func (s *Service) approveTrash(ctx context.Context, pending *confirm.Pending, pa
 
 // RejectPending rejects an action that waits for the user. The web page calls it
 // when the user presses Reject, in the tenant of the principal. It returns
-// confirm.ErrNotPending when the action does not wait any more. A rejection
-// that cannot be carried out is in the audit log as "refused".
+// confirm.ErrNotPending when the action does not wait any more, and
+// ErrAnswerInBand (it matches confirm.ErrNotPending) for an action that the user
+// answers in the chat. A rejection that cannot be carried out is in the audit
+// log as "refused".
 func (s *Service) RejectPending(ctx context.Context, pendingID string) error {
 	if err := s.confirmDeps(); err != nil {
 		return err
@@ -941,6 +963,10 @@ func (s *Service) RejectPending(ctx context.Context, pendingID string) error {
 	if err != nil {
 		s.recordPendingRefusal(ctx, p, nil, toolRejectPending, err)
 		return err
+	}
+	if pending.Mode != confirm.ModeApproval {
+		s.recordPendingRefusal(ctx, p, pending, toolRejectPending, ErrAnswerInBand)
+		return ErrAnswerInBand
 	}
 	if err := s.d.Confirm.Transition(ctx, p.Tenant, pendingID, confirm.StatePending, confirm.StateRejected, ""); err != nil {
 		s.recordPendingRefusal(ctx, p, pending, toolRejectPending, err)

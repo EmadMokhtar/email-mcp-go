@@ -3,7 +3,9 @@ package store
 import (
 	"bytes"
 	"context"
+	"io/fs"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -32,6 +34,7 @@ func testPendingRow(tenant account.TenantID, acct account.AccountID, id string, 
 		Tenant:            tenant,
 		Account:           acct,
 		Kind:              "send",
+		Mode:              "approval",
 		Hash:              bytes.Repeat([]byte{0xab}, 32),
 		State:             "pending",
 		CreatedAt:         created,
@@ -719,4 +722,63 @@ func TestExpireStaleApprovedPending(t *testing.T) {
 	n, err = s.ExpireStaleApprovedPending(ctx, cut)
 	require.NoError(t, err)
 	require.Zero(t, n, "a second call has nothing left to do")
+}
+
+// The mode says how the user answers an action. The table keeps only the two
+// known modes, so an action never has a mode that no code knows.
+func TestPendingModeMustBeKnown(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+
+	for _, mode := range []string{"in_band", "approval"} {
+		row := testPendingRow(tenant, acct, "p-"+mode, testNow)
+		row.Mode = mode
+		putPending(t, s, row)
+		got, err := s.GetPending(ctx, tenant, row.ID)
+		require.NoError(t, err)
+		require.Equal(t, mode, got.Mode)
+	}
+	for _, mode := range []string{"", "web", "APPROVAL"} {
+		row := testPendingRow(tenant, acct, "bad", testNow)
+		row.Mode = mode
+		require.Error(t, s.CreatePending(ctx, row, []byte("sealed"), 1), "mode %q", mode)
+	}
+}
+
+// An action that was stored before the mode existed has no known mode. It gets
+// the in-band mode, so it can never be approved on the web page: it fails
+// closed and expires.
+func TestPendingModeOfAnOldRowIsInBand(t *testing.T) {
+	ctx := context.Background()
+	db := newRawDB(t)
+	all, err := fs.Sub(migrationsFS, "migrations")
+	require.NoError(t, err)
+	before := fstest.MapFS{}
+	entries, err := fs.ReadDir(all, ".")
+	require.NoError(t, err)
+	for _, e := range entries {
+		if e.Name() >= "0009" {
+			continue
+		}
+		data, err := fs.ReadFile(all, e.Name())
+		require.NoError(t, err)
+		before[e.Name()] = file(string(data))
+	}
+	require.NoError(t, migrate(ctx, db, before))
+	s := &Store{db: db}
+	tenant, acct := newPendingAccount(t, s, "a1")
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO pending_actions (id, tenant_id, account_id, kind, hash, state, created_at, expires_at,
+			payload, payload_key_version, preview, preview_key_version)
+		VALUES ('old', ?, ?, 'send', ?, 'pending', ?, ?, x'01', 1, x'02', 1)`,
+		string(tenant), string(acct), bytes.Repeat([]byte{0xab}, 32),
+		testNow.UnixMilli(), testNow.Add(pendingLife).UnixMilli())
+	require.NoError(t, err)
+
+	require.NoError(t, migrate(ctx, db, all))
+
+	got, err := s.GetPending(ctx, tenant, "old")
+	require.NoError(t, err)
+	require.Equal(t, "in_band", got.Mode)
 }

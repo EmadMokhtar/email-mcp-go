@@ -48,6 +48,9 @@ type PendingRow struct {
 	Tenant  account.TenantID
 	Account account.AccountID
 	Kind    string
+	// Mode says how the user answers the action: "in_band" or "approval". The
+	// table refuses any other value (see migration 0009).
+	Mode string
 	// Hash is the SHA-256 of the kind and the payload. It is 32 bytes.
 	Hash  []byte
 	State string
@@ -62,14 +65,14 @@ type PendingRow struct {
 
 // pendingColumns lists the columns of pending_actions that scanPending reads.
 // The payload columns are not in the list.
-const pendingColumns = `id, tenant_id, account_id, kind, hash, state, created_at, expires_at,
+const pendingColumns = `id, tenant_id, account_id, kind, mode, hash, state, created_at, expires_at,
 	result_id, preview, preview_key_version`
 
 // CreatePending adds a pending action. The payload is sealed. The key version
 // says which tenant key sealed it.
 //
-// It fails if the tenant has no account with this id, or if the tenant already
-// has an action with the same id.
+// It fails if the tenant has no account with this id, if the tenant already has
+// an action with the same id, or if the mode is not "in_band" or "approval".
 func (s *Store) CreatePending(ctx context.Context, row *PendingRow, payload []byte, payloadKeyVersion int) error {
 	if err := validateAccountIDs(row.Tenant, row.Account); err != nil {
 		return err
@@ -79,8 +82,8 @@ func (s *Store) CreatePending(ctx context.Context, row *PendingRow, payload []by
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO pending_actions (`+pendingColumns+`, payload, payload_key_version)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		row.ID, string(row.Tenant), string(row.Account), row.Kind, row.Hash, row.State,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		row.ID, string(row.Tenant), string(row.Account), row.Kind, row.Mode, row.Hash, row.State,
 		row.CreatedAt.UnixMilli(), row.ExpiresAt.UnixMilli(), row.ResultID,
 		row.Preview, row.PreviewKeyVersion, payload, payloadKeyVersion)
 	if err != nil {
@@ -338,7 +341,7 @@ func scanPending(row rowScanner) (*PendingRow, error) {
 		p                    PendingRow
 		createdAt, expiresAt int64
 	)
-	err := row.Scan(&p.ID, &p.Tenant, &p.Account, &p.Kind, &p.Hash, &p.State, &createdAt, &expiresAt,
+	err := row.Scan(&p.ID, &p.Tenant, &p.Account, &p.Kind, &p.Mode, &p.Hash, &p.State, &createdAt, &expiresAt,
 		&p.ResultID, &p.Preview, &p.PreviewKeyVersion)
 	if err != nil {
 		return nil, err

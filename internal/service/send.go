@@ -914,10 +914,12 @@ func (s *Service) CancelSend(ctx context.Context, id account.AccountID, sendID s
 // SendStatus returns the status of a send. It needs Mail 1.
 //
 // The id may name an outbox item or an action that waits for the user. An
-// action gives "pending_approval" (with the approval link), "sending" while the
-// server carries it out, "declined", "cancelled" (the agent withdrew it),
-// "expired", or, when it is done, the status of its outbox item. A send of another account, or an id that does not exist,
-// gives ErrSendNotFound.
+// action gives "pending_approval" (with the approval link when the user
+// approves it on the web page, and without one when the user answers it in the
+// chat), "sending" while the server carries it out, "declined", "cancelled" (the
+// agent withdrew it), "expired", or, when it is done, the status of its outbox
+// item. A send of another account, or an id that does not exist, gives
+// ErrSendNotFound.
 func (s *Service) SendStatus(ctx context.Context, id account.AccountID, sendID string) (*SendResult, error) {
 	acc, err := s.authorize(ctx, id, policy.ActRead)
 	if err != nil {
@@ -937,7 +939,14 @@ func (s *Service) SendStatus(ctx context.Context, id account.AccountID, sendID s
 	}
 	switch p.State {
 	case confirm.StatePending:
-		return &SendResult{Status: SendPendingApproval, SendID: p.ID, ApprovalLink: s.approvalLink(ctx, p.ID)}, nil
+		res := &SendResult{Status: SendPendingApproval, SendID: p.ID}
+		// Only the web page can approve an action of the approval mode. An
+		// in-band action waits for the answer in the chat, so a link would lead
+		// to a page that does not show it.
+		if p.Mode == confirm.ModeApproval {
+			res.ApprovalLink = s.approvalLink(ctx, p.ID)
+		}
+		return res, nil
 	case confirm.StateApproved:
 		return &SendResult{Status: SendSending, SendID: p.ID}, nil
 	case confirm.StateRejected:

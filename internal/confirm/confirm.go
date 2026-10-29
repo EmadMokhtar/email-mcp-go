@@ -60,6 +60,36 @@ const (
 	KindTrash Kind = "trash"
 )
 
+// Mode is how the user answers an action. The caller of Create chooses it by
+// the way its client can ask the user, and it never changes.
+type Mode string
+
+// The modes of an action.
+const (
+	// ModeInBand means that the client asks the user in its own chat (an
+	// elicitation), and only that answer can confirm the action (see Claim). The
+	// action lives InBandLifetime. The web page must not show, approve or reject
+	// it, so one message cannot be approved twice: once in the chat and once on
+	// the page.
+	ModeInBand Mode = "in_band"
+	// ModeApproval means that the client cannot ask the user, so the user
+	// approves or rejects the action on the web page (the approval link). The
+	// action lives ApprovalLifetime.
+	ModeApproval Mode = "approval"
+)
+
+// lifetime returns how long an action of the mode waits for the user. ok is
+// false for a mode that this package does not know.
+func (m Mode) lifetime() (d time.Duration, ok bool) {
+	switch m {
+	case ModeInBand:
+		return InBandLifetime, true
+	case ModeApproval:
+		return ApprovalLifetime, true
+	}
+	return 0, false
+}
+
 // State is where an action is in its life.
 type State string
 
@@ -87,8 +117,7 @@ const (
 	maxBodyStart = 500
 )
 
-// The lifetimes of an action. The caller of Create chooses one by the way the
-// user answers.
+// The lifetimes of an action. The mode of the action chooses one.
 const (
 	// ApprovalLifetime is how long an action waits for the user on the web page
 	// (the approval link): 24 hours.
@@ -159,6 +188,9 @@ type Pending struct {
 	Tenant  account.TenantID
 	Account account.AccountID
 	Kind    Kind
+	// Mode is how the user answers the action. An action that was stored before
+	// the mode existed has ModeInBand, so the web page cannot approve it.
+	Mode Mode
 	// Hash is HashPayload of the kind and the payload that the user confirms.
 	Hash    [32]byte
 	Preview Preview
@@ -241,20 +273,37 @@ func NewManager(st PendingStore, v *secrets.Vault, s *signing.Signer, now func()
 // "pending". The payload and the preview are stored encrypted. Create keeps at
 // most 500 characters of the preview body.
 //
-// The action expires after lifetime: InBandLifetime for an action that the user
-// confirms in band, ApprovalLifetime for one that the user approves on the web
-// page. lifetime must be more than 0 and at most ApprovalLifetime.
+// The mode says how the user answers the action, and it sets how long the
+// action waits: InBandLifetime for ModeInBand, ApprovalLifetime for
+// ModeApproval. The caller sets the mode from the way its client can ask the
+// user. Another mode is refused.
 //
 // The account must belong to the tenant. The payload must not be empty.
-func (m *Manager) Create(ctx context.Context, tenant account.TenantID, acct account.AccountID, kind Kind, payload []byte, p Preview, lifetime time.Duration) (*Pending, error) {
+func (m *Manager) Create(ctx context.Context, tenant account.TenantID, acct account.AccountID, kind Kind, mode Mode, payload []byte, p Preview) (*Pending, error) {
+	lifetime, ok := mode.lifetime()
+	if !ok {
+		return nil, fmt.Errorf("confirm: unknown mode %q", mode)
+	}
+	return m.CreateWithLifetime(ctx, tenant, acct, kind, mode, payload, p, lifetime)
+}
+
+// CreateWithLifetime is Create with a lifetime that is shorter than the one of
+// the mode, for tests that need an action to expire soon. lifetime must be more
+// than 0 and at most the lifetime of the mode, so it can never make an action
+// wait longer than its mode allows.
+func (m *Manager) CreateWithLifetime(ctx context.Context, tenant account.TenantID, acct account.AccountID, kind Kind, mode Mode, payload []byte, p Preview, lifetime time.Duration) (*Pending, error) {
 	if kind != KindSend && kind != KindTrash {
 		return nil, fmt.Errorf("confirm: unknown kind %q", kind)
+	}
+	most, ok := mode.lifetime()
+	if !ok {
+		return nil, fmt.Errorf("confirm: unknown mode %q", mode)
 	}
 	if len(payload) == 0 {
 		return nil, errors.New("confirm: the payload is empty")
 	}
-	if lifetime <= 0 || lifetime > ApprovalLifetime {
-		return nil, fmt.Errorf("confirm: the lifetime of an action must be more than 0 and at most %s", ApprovalLifetime)
+	if lifetime <= 0 || lifetime > most {
+		return nil, fmt.Errorf("confirm: the lifetime of an action of mode %s must be more than 0 and at most %s", mode, most)
 	}
 
 	// Own the preview, so a later change by the caller does not change it.
@@ -269,6 +318,7 @@ func (m *Manager) Create(ctx context.Context, tenant account.TenantID, acct acco
 		Tenant:    tenant,
 		Account:   acct,
 		Kind:      kind,
+		Mode:      mode,
 		Hash:      HashPayload(kind, payload),
 		Preview:   p,
 		State:     StatePending,
@@ -294,6 +344,7 @@ func (m *Manager) Create(ctx context.Context, tenant account.TenantID, acct acco
 		Tenant:            tenant,
 		Account:           acct,
 		Kind:              string(kind),
+		Mode:              string(mode),
 		Hash:              pending.Hash[:],
 		State:             string(StatePending),
 		CreatedAt:         pending.CreatedAt,
@@ -621,6 +672,7 @@ func (m *Manager) pendingFromRow(ctx context.Context, row *store.PendingRow, now
 		Tenant:    row.Tenant,
 		Account:   row.Account,
 		Kind:      Kind(row.Kind),
+		Mode:      modeOf(row.Mode),
 		State:     stateOf(row, now),
 		CreatedAt: row.CreatedAt,
 		ExpiresAt: row.ExpiresAt,
@@ -724,6 +776,16 @@ func stateOf(row *store.PendingRow, now time.Time) State {
 		return StateExpired
 	}
 	return state
+}
+
+// modeOf returns the mode of a stored action. The table keeps only the two
+// known modes. Any other value counts as ModeInBand, so it can never be
+// approved on the web page.
+func modeOf(stored string) Mode {
+	if Mode(stored) == ModeApproval {
+		return ModeApproval
+	}
+	return ModeInBand
 }
 
 // isState reports whether s is one of the five states.

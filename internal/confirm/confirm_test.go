@@ -111,7 +111,7 @@ func testPreview() Preview {
 // create makes a pending send in the fixture account.
 func (f *fixture) create(payload string) *Pending {
 	f.t.Helper()
-	p, err := f.mgr.Create(context.Background(), f.tenant, f.acct, KindSend, []byte(payload), testPreview(), ApprovalLifetime)
+	p, err := f.mgr.Create(context.Background(), f.tenant, f.acct, KindSend, ModeApproval, []byte(payload), testPreview())
 	require.NoError(f.t, err)
 	return p
 }
@@ -188,7 +188,7 @@ func TestResumeHappyPath(t *testing.T) {
 	f := newFixture(t)
 	payload := []byte("the exact message the user saw")
 
-	created, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, payload, testPreview(), ApprovalLifetime)
+	created, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, ModeApproval, payload, testPreview())
 	require.NoError(t, err)
 	require.Equal(t, StatePending, created.State)
 	require.Equal(t, f.tenant, created.Tenant)
@@ -801,7 +801,7 @@ func TestListPendingIsNewestFirstAndScopedToTheTenant(t *testing.T) {
 	require.NoError(t, f.mgr.Transition(ctx, f.tenant, finished.ID, StatePending, StateDone, ""))
 	f.clock.Set(testStart.Add(3 * time.Minute))
 	third := f.create("4")
-	foreign, err := f.mgr.Create(ctx, otherTenant, otherAcct, KindTrash, []byte("5"), Preview{Count: 3}, ApprovalLifetime)
+	foreign, err := f.mgr.Create(ctx, otherTenant, otherAcct, KindTrash, ModeApproval, []byte("5"), Preview{Count: 3})
 	require.NoError(t, err)
 
 	got, err := f.mgr.ListPending(ctx, f.tenant)
@@ -832,13 +832,13 @@ func TestCreateRefusesBadInput(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
 
-	_, err := f.mgr.Create(ctx, f.tenant, f.acct, Kind("format_disk"), []byte("x"), testPreview(), ApprovalLifetime)
+	_, err := f.mgr.Create(ctx, f.tenant, f.acct, Kind("format_disk"), ModeApproval, []byte("x"), testPreview())
 	require.Error(t, err)
-	_, err = f.mgr.Create(ctx, f.tenant, f.acct, KindSend, nil, testPreview(), ApprovalLifetime)
+	_, err = f.mgr.Create(ctx, f.tenant, f.acct, KindSend, ModeApproval, nil, testPreview())
 	require.Error(t, err)
-	_, err = f.mgr.Create(ctx, f.tenant, "no-such-account", KindSend, []byte("x"), testPreview(), ApprovalLifetime)
+	_, err = f.mgr.Create(ctx, f.tenant, "no-such-account", KindSend, ModeApproval, []byte("x"), testPreview())
 	require.Error(t, err)
-	_, err = f.mgr.Create(ctx, f.tenant, "a|b", KindSend, []byte("x"), testPreview(), ApprovalLifetime)
+	_, err = f.mgr.Create(ctx, f.tenant, "a|b", KindSend, ModeApproval, []byte("x"), testPreview())
 	require.Error(t, err)
 
 	listed, err := f.mgr.ListPending(ctx, f.tenant)
@@ -853,7 +853,7 @@ func TestCreateKeepsAtMost500CharactersOfTheBody(t *testing.T) {
 	create := func(body string) *Pending {
 		p := testPreview()
 		p.BodyStart = body
-		got, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, []byte("x"), p, ApprovalLifetime)
+		got, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, ModeApproval, []byte("x"), p)
 		require.NoError(t, err)
 		return got
 	}
@@ -1150,7 +1150,7 @@ func TestPruneDeletesOnlyOldEndedActions(t *testing.T) {
 	oldWaiting := f.create("old waiting") // nobody answers: it is past its time later
 	oldApproved := f.create("old approved")
 	f.approve(oldApproved, "old approved")
-	otherOld, err := f.mgr.Create(ctx, other, otherAcct, KindSend, []byte("other tenant"), testPreview(), ApprovalLifetime)
+	otherOld, err := f.mgr.Create(ctx, other, otherAcct, KindSend, ModeApproval, []byte("other tenant"), testPreview())
 	require.NoError(t, err)
 	require.NoError(t, f.mgr.Transition(ctx, other, otherOld.ID, StatePending, StateRejected, ""))
 
@@ -1512,10 +1512,10 @@ func TestCreateLifetime(t *testing.T) {
 	require.Equal(t, 24*time.Hour, ApprovalLifetime)
 	require.Equal(t, 10*time.Minute, InBandLifetime)
 
-	web, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, []byte("web"), testPreview(), ApprovalLifetime)
+	web, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, ModeApproval, []byte("web"), testPreview())
 	require.NoError(t, err)
 	require.Equal(t, web.CreatedAt.Add(24*time.Hour), web.ExpiresAt)
-	inBand, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, []byte("in band"), testPreview(), InBandLifetime)
+	inBand, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, ModeInBand, []byte("in band"), testPreview())
 	require.NoError(t, err)
 	require.Equal(t, inBand.CreatedAt.Add(10*time.Minute), inBand.ExpiresAt)
 	state := f.state(inBand)
@@ -1538,10 +1538,49 @@ func TestCreateLifetime(t *testing.T) {
 	require.Len(t, listed, 1)
 	require.Equal(t, web.ID, listed[0].ID)
 
-	for _, bad := range []time.Duration{0, -time.Minute, ApprovalLifetime + time.Millisecond} {
-		_, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, []byte("x"), testPreview(), bad)
-		require.Error(t, err, "lifetime %s", bad)
+	// A test may make an action that lives shorter than its mode allows, never
+	// longer.
+	short, err := f.mgr.CreateWithLifetime(ctx, f.tenant, f.acct, KindSend, ModeApproval, []byte("short"), testPreview(), time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, short.CreatedAt.Add(time.Minute), short.ExpiresAt)
+	cases := map[Mode][]time.Duration{
+		ModeApproval: {0, -time.Minute, ApprovalLifetime + time.Millisecond},
+		ModeInBand:   {0, -time.Minute, InBandLifetime + time.Millisecond, ApprovalLifetime},
 	}
+	for mode, lifetimes := range cases {
+		for _, bad := range lifetimes {
+			_, err := f.mgr.CreateWithLifetime(ctx, f.tenant, f.acct, KindSend, mode, []byte("x"), testPreview(), bad)
+			require.Error(t, err, "mode %s, lifetime %s", mode, bad)
+		}
+	}
+}
+
+// The mode says how the user answers an action. Create stores it, and every
+// read gives it back. A mode that the package does not know is refused.
+func TestCreateStoresTheMode(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+
+	for _, mode := range []Mode{ModeInBand, ModeApproval} {
+		created, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, mode, []byte(string(mode)), testPreview())
+		require.NoError(t, err)
+		require.Equal(t, mode, created.Mode)
+		got, _, err := f.mgr.Get(ctx, f.tenant, created.ID)
+		require.NoError(t, err)
+		require.Equal(t, mode, got.Mode)
+	}
+	listed, err := f.mgr.ListPending(ctx, f.tenant)
+	require.NoError(t, err)
+	require.Len(t, listed, 2)
+	require.ElementsMatch(t, []Mode{ModeInBand, ModeApproval}, []Mode{listed[0].Mode, listed[1].Mode})
+
+	for _, bad := range []Mode{"", "web", "APPROVAL"} {
+		_, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, bad, []byte("x"), testPreview())
+		require.Error(t, err, "mode %q", bad)
+	}
+	listed, err = f.mgr.ListPending(ctx, f.tenant)
+	require.NoError(t, err)
+	require.Len(t, listed, 2, "a refused mode leaves nothing behind")
 }
 
 func TestPreviewKeepsTheAttachmentNames(t *testing.T) {
@@ -1550,7 +1589,7 @@ func TestPreviewKeepsTheAttachmentNames(t *testing.T) {
 	p := testPreview()
 	p.Attachments = []string{"figures.xlsx", "photo.png"}
 
-	created, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, []byte("x"), p, ApprovalLifetime)
+	created, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, ModeApproval, []byte("x"), p)
 	require.NoError(t, err)
 	p.Attachments[0] = "changed.exe"
 
@@ -1569,7 +1608,7 @@ func TestExpireStaleApprovedEndsOnlyApprovalsThatNothingCanFinish(t *testing.T) 
 
 	// In band: it lives 10 minutes, and the user approves it at once.
 	f.clock.Set(testStart)
-	inBand, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, []byte("in band"), testPreview(), InBandLifetime)
+	inBand, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, ModeInBand, []byte("in band"), testPreview())
 	require.NoError(t, err)
 	f.approve(inBand, "in band")
 	finished := f.create("finished")

@@ -640,8 +640,10 @@ func TestSendAcceptedTwiceSendsOnce(t *testing.T) {
 	require.Len(t, env.backend.trashCalls(), 1)
 }
 
-// The in-band answer and the web page can approve the same action at the same
-// time, and an agent can repeat its answer. Exactly one of them acts.
+// The in-band answer and the web page can try to approve the same action at the
+// same time, and an agent can repeat its answer. Exactly one of them acts. The
+// web page refuses an in-band action at all (ErrAnswerInBand matches
+// confirm.ErrNotPending), so one of the answers in the chat acts.
 func TestConcurrentApprovalsActOnce(t *testing.T) {
 	for name, webApprovals := range map[string]bool{"in band and web": true, "in band only": false} {
 		t.Run(name, func(t *testing.T) {
