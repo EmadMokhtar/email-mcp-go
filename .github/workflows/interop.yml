@@ -29,6 +29,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
+          # No module cache: this job also runs on release tags, and a cache
+          # written by another run must not feed into it.
+          cache: false
       - name: make the test certificates
         run: go run ./test/interop/gencerts test/interop/certs
       - name: start the mail servers
