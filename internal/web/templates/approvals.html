@@ -1,0 +1,25 @@
+{{/*
+  The list of the actions that wait for the user on this page (see
+  approvals.go). An action that the user answers in the chat is not here. Every
+  text is cleaned by the service and written as text.
+*/}}
+{{define "title"}}Approvals · email-mcp{{end}}
+{{define "content"}}
+<h1>Approvals</h1>
+<p>These actions wait for you. The agent asked for them, and nothing happens until you approve one.</p>
+{{with .Data}}
+{{if .Items}}
+<table>
+<thead>
+<tr><th scope="col">Account</th><th scope="col">Action</th><th scope="col">To</th><th scope="col">Asked</th><th scope="col">Expires</th><th scope="col">Details</th></tr>
+</thead>
+<tbody>
+{{range .Items}}<tr><td>{{.Account}}</td><td>{{.What}}</td><td>{{.To}}</td><td>{{.Created}}</td><td>{{.Expires}}</td><td><a href="/approvals/{{.ID}}">Review</a></td></tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>Nothing waits for your approval.</p>
+{{end}}
+{{end}}
+{{end}}

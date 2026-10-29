@@ -1,7 +1,8 @@
 package service
 
-// This file holds the use case that connects a new account: the web interface
-// and the command line tool both use it.
+// This file holds the use cases that connect, change and remove an account.
+// The web interface and the command line tool use them. The user, never the
+// agent, calls them: no MCP tool reaches UpdateSettings or RemoveAccount.
 
 import (
 	"context"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	netmail "net/mail"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -19,11 +21,33 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 )
 
-// The audit entry of a new account.
+// The audit entries of the account use cases.
 const (
 	toolConnectAccount     = "connect_account"
 	detailAccountConnected = "account_connected"
+
+	toolUpdateSettings     = "update_settings"
+	detailSettingsChanged  = "settings_changed"
+	detailAutonomyAccepted = "autonomy_accepted"
+	toolRemoveAccount      = "remove_account"
+	detailAccountRemoved   = "account_removed"
 )
+
+// auditTools are the tools that the service writes in the audit log. The
+// activity page offers them as a filter.
+var auditTools = []string{
+	toolApprovePending, toolCancelSend, toolConnectAccount, toolCreateDraft, toolCreateFolder,
+	toolCreateTag, toolDiscardDraft, toolMove, toolRejectPending, toolRemoveAccount, toolSend,
+	toolSetFlags, toolTag, toolTrash, toolUpdateSettings,
+}
+
+// AuditTools returns the names of the tools that the service writes in the
+// audit log, sorted, each once. The caller gets its own copy.
+func AuditTools() []string {
+	out := slices.Clone(auditTools)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
 
 // The limits of the text of a new account.
 const (
@@ -50,6 +74,37 @@ var (
 	// address (in any case).
 	ErrAccountExists = errors.New("service: an account with this address is already connected")
 )
+
+// The errors of UpdateSettings. Callers check them with errors.Is.
+var (
+	// ErrAutonomyNotAccepted means that both confirmations would be off (full
+	// autonomy), and the user did not accept the risk in this save. Nothing was
+	// changed.
+	ErrAutonomyNotAccepted = errors.New("service: both confirmations are off, " +
+		"and the user did not accept the risk of full autonomy")
+	// ErrInvalidLevel means that the mail level is not 0 to 5.
+	ErrInvalidLevel = errors.New("service: the mail level must be 0 to 5")
+	// ErrInvalidLimits means that the limits are not valid (see
+	// account.Limits.Validate).
+	ErrInvalidLimits = errors.New("service: the limits are not valid")
+)
+
+// SettingsUpdate is what the user sets on the settings page of an account.
+type SettingsUpdate struct {
+	// MailLevel is the level of the mail area, 0 to 5.
+	MailLevel account.Level
+	// ConfirmSends and ConfirmDeletes are the two confirmation switches. Full
+	// autonomy means both are off.
+	ConfirmSends, ConfirmDeletes bool
+	// AcceptAutonomyRisk is true when the user ticked the box that accepts the
+	// risk of full autonomy in this save. A save that ends with both switches
+	// off needs it, every time.
+	AcceptAutonomyRisk bool
+	// Limits are the limits of the account and its undo windows.
+	Limits account.Limits
+	// SaveSentCopy saves a copy of each sent message in the Sent folder.
+	SaveSentCopy bool
+}
 
 // ConnectionTestError means that the test of the settings failed: a server
 // could not be reached, the connection could not be secured, or a server
@@ -182,6 +237,109 @@ func (s *Service) CreateIMAPAccount(ctx context.Context, address string, server 
 
 	s.record(ctx, p, entry{tool: toolConnectAccount, account: a.ID, outcome: audit.OutcomeOK, detail: detailAccountConnected})
 	return a, nil
+}
+
+// UpdateSettings saves the settings of an account of the tenant of the
+// caller. The user calls it from the settings page. In this order it:
+//  1. refuses a mail level outside 0 to 5 (ErrInvalidLevel) and limits that
+//     account.Limits.Validate refuses (ErrInvalidLimits);
+//  2. finds the account in the tenant (ErrAccountNotFound);
+//  3. refuses a save that ends with both confirmations off when
+//     AcceptAutonomyRisk is false (ErrAutonomyNotAccepted). This holds for
+//     every such save, also when the user accepted before;
+//  4. sets AutonomyAcceptedAt to now when the save has both confirmations off;
+//  5. saves the account;
+//  6. drops the cached backend of the account (Backends.Forget);
+//  7. writes the audit entry "settings_changed", and "autonomy_accepted" when
+//     the user accepted the risk of full autonomy.
+//
+// A refusal changes nothing and writes no entry. A failed save leaves the
+// account as it was.
+func (s *Service) UpdateSettings(ctx context.Context, id account.AccountID, u SettingsUpdate) error {
+	p, err := PrincipalFrom(ctx)
+	if err != nil {
+		return err
+	}
+	if s.d.Audit == nil {
+		return errNoAudit
+	}
+	if u.MailLevel < account.MailOff || u.MailLevel > account.MailDelete {
+		return ErrInvalidLevel
+	}
+	if err := u.Limits.Validate(); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidLimits, err)
+	}
+	a, err := s.d.Store.GetAccount(ctx, p.Tenant, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return ErrAccountNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("service: look up account: %w", err)
+	}
+	autonomy := !u.ConfirmSends && !u.ConfirmDeletes
+	if autonomy && !u.AcceptAutonomyRisk {
+		return ErrAutonomyNotAccepted
+	}
+
+	if a.Levels == nil {
+		a.Levels = map[account.Area]account.Level{}
+	}
+	a.Levels[account.AreaMail] = u.MailLevel
+	a.ConfirmSends = u.ConfirmSends
+	a.ConfirmDeletes = u.ConfirmDeletes
+	a.Limits = u.Limits
+	if a.Mail != nil {
+		a.Mail.SaveSentCopy = u.SaveSentCopy
+	}
+	if autonomy {
+		now := s.d.Now().UTC()
+		a.AutonomyAcceptedAt = &now
+	}
+	if err := s.d.Store.UpdateAccount(ctx, a); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrAccountNotFound
+		}
+		return fmt.Errorf("service: save the settings: %w", err)
+	}
+	s.d.Backends.Forget(id)
+
+	s.record(ctx, p, entry{tool: toolUpdateSettings, account: id, outcome: audit.OutcomeOK, detail: detailSettingsChanged})
+	if autonomy {
+		s.record(ctx, p, entry{tool: toolUpdateSettings, account: id, outcome: audit.OutcomeOK, detail: detailAutonomyAccepted})
+	}
+	return nil
+}
+
+// RemoveAccount removes an account of the tenant of the caller. The user calls
+// it from the settings page. In this order it:
+//  1. deletes the secrets (the password) and the account in one transaction, so
+//     a failure deletes nothing. The other rows of the account go with it, its
+//     queued messages too: they are never sent. So do its audit entries;
+//  2. drops the cached backend of the account (Backends.Forget), which closes
+//     its connections and forgets its password;
+//  3. writes the audit entry "account_removed". It is an entry of the tenant,
+//     because the account is gone, and it holds no address.
+//
+// It returns ErrAccountNotFound when the tenant has no such account. A failure
+// leaves everything as it was, the cache too, and writes no entry.
+func (s *Service) RemoveAccount(ctx context.Context, id account.AccountID) error {
+	p, err := PrincipalFrom(ctx)
+	if err != nil {
+		return err
+	}
+	if s.d.Audit == nil {
+		return errNoAudit
+	}
+	err = s.d.Store.DeleteAccountWithSecrets(ctx, p.Tenant, id)
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrInvalidID) {
+		return ErrAccountNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("service: remove the account: %w", err)
+	}
+	s.d.Backends.Forget(id)
+	s.record(ctx, p, entry{tool: toolRemoveAccount, outcome: audit.OutcomeOK, detail: detailAccountRemoved})
+	return nil
 }
 
 // probe tests the settings and the password. It returns nil only when both

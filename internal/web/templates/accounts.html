@@ -9,10 +9,10 @@
 {{if .Accounts}}
 <table>
 <thead>
-<tr><th scope="col">Address</th><th scope="col">Provider</th><th scope="col">Mail level</th><th scope="col">Status</th></tr>
+<tr><th scope="col">Address</th><th scope="col">Provider</th><th scope="col">Mail level</th><th scope="col">Status</th><th scope="col">Settings</th></tr>
 </thead>
 <tbody>
-{{range .Accounts}}<tr><td>{{.Address}}</td><td>{{.Provider}}</td><td>{{.MailLevel}}</td><td>{{.Status}}</td></tr>
+{{range .Accounts}}<tr><td>{{.Address}}</td><td>{{.Provider}}</td><td>{{.MailLevel}}</td><td>{{.Status}}</td><td><a href="/accounts/{{.ID}}/settings">Permissions and settings</a></td></tr>
 {{end}}
 </tbody>
 </table>

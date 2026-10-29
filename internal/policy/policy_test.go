@@ -372,6 +372,20 @@ func TestKnownScope(t *testing.T) {
 	}
 }
 
+// KnownScopes lists every scope that KnownScope accepts, from the lowest level
+// to the highest.
+func TestKnownScopes(t *testing.T) {
+	want := []string{"email:read", "email:organize", "email:draft", "email:send", "email:delete"}
+	require.Equal(t, want, KnownScopes())
+	for _, scope := range KnownScopes() {
+		require.True(t, KnownScope(scope), scope)
+	}
+	require.Len(t, KnownScopes(), len(scopeLevels), "every known scope is in the list")
+	list := KnownScopes()
+	list[0] = "changed"
+	require.Equal(t, want, KnownScopes(), "the caller gets its own copy")
+}
+
 func TestIsTrashTarget(t *testing.T) {
 	require.True(t, IsTrashTarget("Trash", "Trash"))
 	require.True(t, IsTrashTarget("[Gmail]/Trash", "[Gmail]/Trash"))

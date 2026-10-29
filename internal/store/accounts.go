@@ -196,6 +196,45 @@ func (s *Store) DeleteAccount(ctx context.Context, tenant account.TenantID, id a
 	return requireOneRow(result, "delete account")
 }
 
+// DeleteAccountWithSecrets deletes the secrets of an account and the account in
+// one transaction: both are deleted, or neither is. The foreign keys delete the
+// other rows of the account with it: its queued messages, pending actions,
+// counters, known recipients and audit entries.
+//
+// The secrets are deleted by their own statement first, so the delete does not
+// depend on the foreign key alone. It returns ErrNotFound, and deletes nothing,
+// if the tenant has no account with this id.
+func (s *Store) DeleteAccountWithSecrets(ctx context.Context, tenant account.TenantID, id account.AccountID) error {
+	if err := validateAccountIDs(tenant, id); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: delete account: %w", err)
+	}
+	// Rollback after a successful Commit does nothing.
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM account_secrets WHERE tenant_id = ? AND account_id = ?`,
+		string(tenant), string(id)); err != nil {
+		return fmt.Errorf("store: delete account secrets: %w", err)
+	}
+	result, err := tx.ExecContext(ctx,
+		`DELETE FROM accounts WHERE tenant_id = ? AND id = ?`,
+		string(tenant), string(id))
+	if err != nil {
+		return fmt.Errorf("store: delete account: %w", err)
+	}
+	if err := requireOneRow(result, "delete account"); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: delete account: %w", err)
+	}
+	return nil
+}
+
 // PutAccountSecret saves a sealed (encrypted) value of an account. It replaces
 // the value of the same kind, if there is one. The key version says which tenant
 // key sealed the value.

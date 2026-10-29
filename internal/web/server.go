@@ -73,6 +73,7 @@ const listenAddr = "127.0.0.1:0"
 // The names of the pages. Each is a file in templates/ without ".html".
 const (
 	pageNoSession = "no_session"
+	pageMessage   = "message"
 )
 
 // Fixed codes for the log.
@@ -151,22 +152,49 @@ func New(d Deps) *Server {
 	if s.layout, s.pages, err = parsePages(); err != nil {
 		panic(fmt.Sprintf("web: %v", err))
 	}
-	s.routes()
+	s.addRoutes()
 	return s
 }
 
-// routes adds the routes of the pages to the mux. The checks of guard.go run
-// before any of them. /setup is not here: the guard answers it (see serve).
+// route is one page of the server: a pattern with its method, and the method
+// of Server that answers it.
+type route struct {
+	pattern string
+	handle  func(*Server, http.ResponseWriter, *http.Request)
+}
+
+// routes are the pages of the server. The checks of guard.go run before any of
+// them. /setup is not here: the guard answers it (see serve).
 //
 // Every pattern has its method. A GET route only reads, and every change is a
 // POST of a url-encoded form with the CSRF token. "GET /{$}" is the page "/"
-// alone, not every path.
-func (s *Server) routes() {
-	s.mux.HandleFunc("GET /{$}", s.handleAccounts)
-	s.mux.HandleFunc("GET /connect", s.handleConnect)
-	s.mux.HandleFunc("POST /connect/discover", s.handleDiscover)
-	s.mux.HandleFunc("POST /connect/settings", s.handleSettings)
-	s.mux.HandleFunc("POST /connect/save", s.handleSave)
+// alone, not every path. The tests go through this list, so a new page is
+// checked for both rules.
+var routes = []route{
+	{"GET /{$}", (*Server).handleAccounts},
+	{"GET /connect", (*Server).handleConnect},
+	{"POST /connect/discover", (*Server).handleDiscover},
+	{"POST /connect/settings", (*Server).handleSettings},
+	{"POST /connect/save", (*Server).handleSave},
+	{"GET /accounts/{id}/settings", (*Server).handleAccountSettings},
+	{"POST /accounts/{id}/settings", (*Server).handleSaveAccountSettings},
+	{"POST /accounts/{id}/remove", (*Server).handleRemoveAccount},
+	{"GET /approvals", (*Server).handleApprovals},
+	{"GET /approvals/{id}", (*Server).handleApproval},
+	{"POST /approvals/{id}/approve", (*Server).handleApprove},
+	{"POST /approvals/{id}/reject", (*Server).handleReject},
+	{"GET /activity", (*Server).handleActivity},
+	{"GET /connections", (*Server).handleConnections},
+	{"POST /connections", (*Server).handleCreateToken},
+	{"POST /connections/{id}/revoke", (*Server).handleRevokeToken},
+}
+
+// addRoutes adds the routes to the mux.
+func (s *Server) addRoutes() {
+	for _, r := range routes {
+		handle := r.handle
+		s.mux.HandleFunc(r.pattern, func(w http.ResponseWriter, req *http.Request) { handle(s, w, req) })
+	}
 }
 
 // Attach gives the server the service that the pages use. The service needs the
@@ -297,6 +325,18 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write(buf.Bytes())
+}
+
+// messagePage is the data of the message page: a title and one fixed text.
+type messagePage struct {
+	Title string
+	Text  string
+}
+
+// message answers with the message page: a fixed title and a fixed text, and a
+// link back to the accounts. It shows nothing of the request.
+func (s *Server) message(w http.ResponseWriter, r *http.Request, status int, title, text string) {
+	s.render(w, r, status, pageMessage, messagePage{Title: title, Text: text})
 }
 
 // fail answers 500 with a fixed text, and logs the route pattern, the code and

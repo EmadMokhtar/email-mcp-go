@@ -8,6 +8,7 @@ package policy
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 )
@@ -80,6 +81,17 @@ var scopeLevels = map[string]account.Level{
 func KnownScope(scope string) bool {
 	_, ok := scopeLevels[scope]
 	return ok
+}
+
+// knownScopes lists the scopes of scopeLevels from the lowest level to the
+// highest.
+var knownScopes = []string{"email:read", "email:organize", "email:draft", "email:send", "email:delete"}
+
+// KnownScopes returns every scope that policy knows, from the lowest level to
+// the highest. A form that makes a token offers these. The caller gets its own
+// copy.
+func KnownScopes() []string {
+	return slices.Clone(knownScopes)
 }
 
 // maxScopeLevel returns the highest mail level that the scopes allow. A nil

@@ -166,12 +166,12 @@ func (f *fixture) addTestPages(s *Server) {
 		f.reached.Add(1)
 		_, _ = io.WriteString(w, "accepted")
 	})
-	s.mux.HandleFunc("GET /approvals/{id}", func(w http.ResponseWriter, r *http.Request) {
+	s.mux.HandleFunc("GET /test/secret/{id}", func(w http.ResponseWriter, r *http.Request) {
 		f.reached.Add(1)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = fmt.Fprintf(w, "approval %s: %s", r.PathValue("id"), secretDetail) //nolint:gosec // G705: a plain-text test page that shows which id arrived
 	})
-	s.mux.HandleFunc("POST /approvals/{id}/approve", func(w http.ResponseWriter, _ *http.Request) {
+	s.mux.HandleFunc("POST /test/secret/{id}/approve", func(w http.ResponseWriter, _ *http.Request) {
 		f.reached.Add(1)
 		_, _ = io.WriteString(w, "approved")
 	})
@@ -336,10 +336,10 @@ func TestSetupTokenSingleUse(t *testing.T) {
 	require.Equal(t, instruction, visibleText(t, body))
 
 	// The first browser is signed in, the second is not.
-	resp, body = do(t, first, newRequest(t, http.MethodGet, base+"/approvals/p1", nil))
+	resp, body = do(t, first, newRequest(t, http.MethodGet, base+"/test/secret/p1", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, body, secretDetail)
-	resp, _ = do(t, second, newRequest(t, http.MethodGet, base+"/approvals/p1", nil))
+	resp, _ = do(t, second, newRequest(t, http.MethodGet, base+"/test/secret/p1", nil))
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 	// Of many browsers that open one link at the same moment, one signs in.
@@ -448,7 +448,7 @@ func (f *fixture) signInWith(setupURL string) {
 func TestNoSessionShowsOnlyInstruction(t *testing.T) {
 	f := newFixture(t)
 	s, base := f.start()
-	target := base + "/approvals/pending-7f3a"
+	target := base + "/test/secret/pending-7f3a"
 
 	cases := map[string]func(*http.Request){
 		"no cookie":        func(*http.Request) {},
@@ -513,7 +513,7 @@ func TestWrongHostRefused(t *testing.T) {
 		"0.0.0.0:" + port,
 	}
 	for _, host := range bad {
-		req := newRequest(t, http.MethodGet, base+"/approvals/p1", nil)
+		req := newRequest(t, http.MethodGet, base+"/test/secret/p1", nil)
 		req.Host = host
 		req.Header.Set("Cookie", "emcp_session="+cookie)
 		resp, body := do(t, newBrowser(t), req)
@@ -530,7 +530,7 @@ func TestWrongHostRefused(t *testing.T) {
 	require.Zero(t, f.reached.Load())
 
 	for _, host := range []string{"127.0.0.1:" + port, "localhost:" + port} {
-		req := newRequest(t, http.MethodGet, base+"/approvals/p1", nil)
+		req := newRequest(t, http.MethodGet, base+"/test/secret/p1", nil)
 		req.Host = host
 		req.Header.Set("Cookie", "emcp_session="+cookie)
 		resp, _ := do(t, newBrowser(t), req)
@@ -549,7 +549,7 @@ func TestHostCheckUsesConnectionPort(t *testing.T) {
 	for _, pair := range [][2]string{{baseA, baseB}, {baseB, baseA}} {
 		to, hostOf := pair[0], pair[1]
 		for _, name := range []string{"127.0.0.1:", "localhost:"} {
-			req := newRequest(t, http.MethodGet, to+"/approvals/p1", nil)
+			req := newRequest(t, http.MethodGet, to+"/test/secret/p1", nil)
 			req.Host = name + strings.TrimPrefix(hostOf, "http://127.0.0.1:")
 			resp, _ := do(t, newBrowser(t), req)
 			require.Equal(t, http.StatusForbidden, resp.StatusCode,
@@ -748,7 +748,7 @@ func TestServeFailureStartsANewListener(t *testing.T) {
 	conn, err := net.Dial("tcp", addr)
 	require.NoError(t, err)
 	defer func() { _ = conn.Close() }()
-	_, err = io.WriteString(conn, "GET /approvals/p1 HTTP/1.1\r\nHost: "+addr+"\r\n\r\n")
+	_, err = io.WriteString(conn, "GET /test/secret/p1 HTTP/1.1\r\nHost: "+addr+"\r\n\r\n")
 	require.NoError(t, err)
 	reader := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(reader, nil)
@@ -784,7 +784,7 @@ func TestServeFailureStartsANewListener(t *testing.T) {
 	require.Len(t, listeners, 2)
 	mu.Unlock()
 	var body string
-	resp, body = do(t, newBrowser(t), newRequest(t, http.MethodGet, base+"/approvals/p1", nil))
+	resp, body = do(t, newBrowser(t), newRequest(t, http.MethodGet, base+"/test/secret/p1", nil))
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	require.Equal(t, instruction, visibleText(t, body))
 	require.Contains(t, f.logs.String(), "code=serve_failed")
@@ -824,11 +824,11 @@ func TestSessionWorksAcrossPorts(t *testing.T) {
 	// The browser sends the cookie of 127.0.0.1 to both ports, and both
 	// servers accept it, because the session is in the shared store.
 	for _, base := range []string{baseA, baseB} {
-		resp, body := do(t, browser, newRequest(t, http.MethodGet, base+"/approvals/p1", nil))
+		resp, body := do(t, browser, newRequest(t, http.MethodGet, base+"/test/secret/p1", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode, base)
 		require.Contains(t, body, secretDetail, base)
 	}
-	resp, _ := do(t, newBrowser(t), newRequest(t, http.MethodGet, baseB+"/approvals/p1", nil))
+	resp, _ := do(t, newBrowser(t), newRequest(t, http.MethodGet, baseB+"/test/secret/p1", nil))
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "a browser without the cookie is refused")
 
 	// A form of one process can post to another: the token belongs to the
@@ -847,11 +847,11 @@ func TestSessionExpires(t *testing.T) {
 	cookie := f.signIn(s, browser)
 
 	f.clock.Set(t0.Add(30*24*time.Hour - time.Millisecond))
-	resp, _ := do(t, browser, newRequest(t, http.MethodGet, base+"/approvals/p1", nil))
+	resp, _ := do(t, browser, newRequest(t, http.MethodGet, base+"/test/secret/p1", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode, "the session works for 30 days")
 
 	f.clock.Set(t0.Add(30 * 24 * time.Hour))
-	resp, body := do(t, browser, newRequest(t, http.MethodGet, base+"/approvals/p1", nil))
+	resp, body := do(t, browser, newRequest(t, http.MethodGet, base+"/test/secret/p1", nil))
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "the session ends after 30 days")
 	require.Equal(t, instruction, visibleText(t, body))
 
@@ -945,8 +945,10 @@ func TestLinksHaveNoToken(t *testing.T) {
 		require.NotContains(t, link, "csrf")
 	}
 
-	// An escaped id reaches the page as the same id.
-	resp, body := do(t, browser, newRequest(t, http.MethodGet, approval, nil))
+	// An escaped id reaches the page as the same id. The test page stands for
+	// the approval page, at another path.
+	secretPage := strings.Replace(approval, base+"/approvals/", base+"/test/secret/", 1)
+	resp, body := do(t, browser, newRequest(t, http.MethodGet, secretPage, nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "approval p/1?token=x: "+secretDetail, body)
 
@@ -1030,9 +1032,9 @@ func TestSecurityHeaders(t *testing.T) {
 		"setup redirect": {newBrowser(t), newRequest(t, http.MethodGet, setupURL, nil), http.StatusSeeOther},
 		"bad setup":      {newBrowser(t), newRequest(t, http.MethodGet, base+"/setup?token=x", nil), http.StatusUnauthorized},
 		"post to setup":  {browser, sameOrigin(newRequest(t, http.MethodPost, base+"/setup", nil), base), http.StatusMethodNotAllowed},
-		"no session":     {newBrowser(t), newRequest(t, http.MethodGet, base+"/approvals/p1", nil), http.StatusUnauthorized},
+		"no session":     {newBrowser(t), newRequest(t, http.MethodGet, base+"/test/secret/p1", nil), http.StatusUnauthorized},
 		"page":           {browser, newRequest(t, http.MethodGet, base+"/test/form", nil), http.StatusOK},
-		"plain page":     {browser, newRequest(t, http.MethodGet, base+"/approvals/p1", nil), http.StatusOK},
+		"plain page":     {browser, newRequest(t, http.MethodGet, base+"/test/secret/p1", nil), http.StatusOK},
 		"form post":      {browser, sameOrigin(newRequest(t, http.MethodPost, base+"/test/submit", url.Values{"csrf_token": {token}}), base), http.StatusOK},
 		"unknown page":   {browser, newRequest(t, http.MethodGet, base+"/nothing", nil), http.StatusNotFound},
 		"bad host":       {newBrowser(t), badHost, http.StatusForbidden},
@@ -1061,13 +1063,13 @@ func TestLogsHoldNoSecrets(t *testing.T) {
 	badHost := newRequest(t, http.MethodGet, setupURL, nil)
 	badHost.Host = "evil.example"
 	do(t, newBrowser(t), badHost)
-	crossOrigin := newRequest(t, http.MethodPost, base+"/approvals/pending-7f3a/approve?csrf_token="+token,
+	crossOrigin := newRequest(t, http.MethodPost, base+"/test/secret/pending-7f3a/approve?csrf_token="+token,
 		url.Values{"csrf_token": {token}})
 	crossOrigin.Header.Set("Sec-Fetch-Site", "cross-site")
 	do(t, browser, crossOrigin)
-	do(t, browser, sameOrigin(newRequest(t, http.MethodPost, base+"/approvals/pending-7f3a/approve",
+	do(t, browser, sameOrigin(newRequest(t, http.MethodPost, base+"/test/secret/pending-7f3a/approve",
 		url.Values{"csrf_token": {token + "x"}}), base))
-	do(t, newBrowser(t), newRequest(t, http.MethodGet, base+"/approvals/pending-7f3a?q=secret-query", nil))
+	do(t, newBrowser(t), newRequest(t, http.MethodGet, base+"/test/secret/pending-7f3a?q=secret-query", nil))
 	do(t, newBrowser(t), newRequest(t, http.MethodGet, base+"/setup?token="+randomText(), nil))
 	f.signInWith(setupURL)
 	do(t, newBrowser(t), newRequest(t, http.MethodGet, setupURL, nil))
@@ -1091,7 +1093,7 @@ func TestStoreFailureIsAnError(t *testing.T) {
 	cookie := f.signIn(s, browser)
 	require.NoError(t, f.store.Close())
 
-	resp, body := do(t, browser, newRequest(t, http.MethodGet, base+"/approvals/p1", nil))
+	resp, body := do(t, browser, newRequest(t, http.MethodGet, base+"/test/secret/p1", nil))
 	require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 	require.Equal(t, "Internal Server Error\n", body)
 	resp, _ = do(t, newBrowser(t), newRequest(t, http.MethodGet, base+"/setup?token="+randomText(), nil))

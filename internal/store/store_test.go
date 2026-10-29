@@ -619,6 +619,58 @@ func TestDeleteAccountRemovesSecrets(t *testing.T) {
 	require.Zero(t, rows)
 }
 
+// DeleteAccountWithSecrets deletes the account and its secrets together. The
+// rows of the account in other tables (such as queued messages) go with it.
+func TestDeleteAccountWithSecrets(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	ensureTestTenant(t, s, "other")
+	require.NoError(t, s.CreateAccount(ctx, testAccount(tenant, "gone", testNow)))
+	require.NoError(t, s.PutAccountSecret(ctx, tenant, "gone", "password", 1, []byte("sealed")))
+	require.NoError(t, s.CreateAccount(ctx, testAccount(tenant, "keep", testNow)))
+	require.NoError(t, s.PutAccountSecret(ctx, tenant, "keep", "password", 1, []byte("sealed keep")))
+
+	require.ErrorIs(t, s.DeleteAccountWithSecrets(ctx, "other", "gone"), ErrNotFound,
+		"another tenant cannot delete the account")
+	_, _, err = s.GetAccountSecret(ctx, tenant, "gone", "password")
+	require.NoError(t, err, "a refused delete deletes no secret")
+
+	require.NoError(t, s.DeleteAccountWithSecrets(ctx, tenant, "gone"))
+	_, err = s.GetAccount(ctx, tenant, "gone")
+	require.ErrorIs(t, err, ErrNotFound)
+	_, _, err = s.GetAccountSecret(ctx, tenant, "gone", "password")
+	require.ErrorIs(t, err, ErrNotFound)
+	require.ErrorIs(t, s.DeleteAccountWithSecrets(ctx, tenant, "gone"), ErrNotFound)
+
+	_, _, err = s.GetAccountSecret(ctx, tenant, "keep", "password")
+	require.NoError(t, err, "the other account keeps its secret")
+	require.ErrorIs(t, s.DeleteAccountWithSecrets(ctx, tenant, "a|b"), ErrInvalidID)
+}
+
+// When the delete of the account fails, the secrets stay too: the two deletes
+// are one transaction.
+func TestDeleteAccountWithSecretsIsAllOrNothing(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	require.NoError(t, s.CreateAccount(ctx, testAccount(tenant, "acct1", testNow)))
+	require.NoError(t, s.PutAccountSecret(ctx, tenant, "acct1", "password", 1, []byte("sealed")))
+	_, err = s.db.ExecContext(ctx, `CREATE TRIGGER refuse_account_delete BEFORE DELETE ON accounts
+		BEGIN SELECT RAISE(ABORT, 'refused by the test'); END`)
+	require.NoError(t, err)
+
+	require.Error(t, s.DeleteAccountWithSecrets(ctx, tenant, "acct1"))
+
+	_, err = s.GetAccount(ctx, tenant, "acct1")
+	require.NoError(t, err)
+	_, sealed, err := s.GetAccountSecret(ctx, tenant, "acct1", "password")
+	require.NoError(t, err, "the secret was not deleted without its account")
+	require.Equal(t, []byte("sealed"), sealed)
+}
+
 // CheckpointWAL copies the write-ahead log into the database file and cuts the
 // log to zero bytes. secure_delete does not clear old frames of the log, so
 // deleted data stays there until this runs.

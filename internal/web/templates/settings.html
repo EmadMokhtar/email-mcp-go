@@ -1,0 +1,78 @@
+{{/*
+  The settings page of an account (see settings.go). The user, never the
+  agent, changes the permissions here.
+
+  The box "accept_autonomy_risk" is never ticked by the page: the user ticks it
+  in each save that turns off both confirmations. Its label is the warning of
+  spec section 7.3. A level that a link asks for is only selected in the form.
+*/}}
+{{define "title"}}Settings · email-mcp{{end}}
+{{define "content"}}
+{{$csrf := .CSRFToken}}
+{{with .Data}}
+<h1>Settings of {{.Address}}</h1>
+<p><a href="/">Back to the accounts</a></p>
+{{if .Error}}<p role="alert"><strong>{{.Error}}</strong></p>{{end}}
+{{with .Requested}}<p role="status"><strong>A request asks to set mail to level {{.Value}} ({{.Name}}). Nothing has changed yet. Check the level below, and save only if you agree.</strong></p>{{end}}
+
+<form method="post" action="/accounts/{{.ID}}/settings">
+{{template "csrf_field" $csrf}}
+<fieldset>
+<legend>Permissions</legend>
+<p>Mail is now at level {{.Current}}.</p>
+<p><label for="mail_level">Mail level</label><br>
+<select id="mail_level" name="mail_level">
+{{range .Levels}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Value}} {{.Name}}</option>
+{{end}}</select></p>
+<p><input type="checkbox" id="confirm_sends" name="confirm_sends" value="1"{{if .ConfirmSends}} checked{{end}}>
+<label for="confirm_sends">Confirm sends: ask me before the agent sends a message</label></p>
+<p><input type="checkbox" id="confirm_deletes" name="confirm_deletes" value="1"{{if .ConfirmDeletes}} checked{{end}}>
+<label for="confirm_deletes">Confirm deletes: ask me before the agent moves mail to Trash</label></p>
+</fieldset>
+
+<fieldset>
+<legend>Full autonomy</legend>
+<p>With both confirmations off, the agent acts without asking you. A save that turns off both needs this box, every time.</p>
+{{if .AcceptedAt}}<p>You last accepted this risk on {{.AcceptedAt}}.</p>{{end}}
+<p><input type="checkbox" id="accept_autonomy_risk" name="accept_autonomy_risk" value="1">
+<label for="accept_autonomy_risk">{{.AutonomyWarning}}</label></p>
+</fieldset>
+
+{{with .Limits}}
+<fieldset>
+<legend>Limits</legend>
+<p><label for="sends_per_hour">Sends per hour</label><br>
+<input id="sends_per_hour" name="sends_per_hour" value="{{.SendsPerHour}}" inputmode="numeric" required></p>
+<p><label for="sends_per_day">Sends per day</label><br>
+<input id="sends_per_day" name="sends_per_day" value="{{.SendsPerDay}}" inputmode="numeric" required></p>
+<p><label for="recipients_per_message">Recipients per message</label><br>
+<input id="recipients_per_message" name="recipients_per_message" value="{{.RecipientsPerMessage}}" inputmode="numeric" required></p>
+<p><label for="trash_per_day">Messages moved to Trash per day</label><br>
+<input id="trash_per_day" name="trash_per_day" value="{{.TrashPerDay}}" inputmode="numeric" required></p>
+<p><label for="undo_window_auto">Undo window without a confirmation, in seconds (0 to 300)</label><br>
+<input id="undo_window_auto" name="undo_window_auto" value="{{.UndoWindowAuto}}" inputmode="numeric" required></p>
+<p><label for="undo_window_confirmed">Undo window after a confirmation, in seconds (0 to 300)</label><br>
+<input id="undo_window_confirmed" name="undo_window_confirmed" value="{{.UndoWindowConfirmed}}" inputmode="numeric" required></p>
+<p><input type="checkbox" id="new_recipient_check" name="new_recipient_check" value="1"{{if .NewRecipientCheck}} checked{{end}}>
+<label for="new_recipient_check">Ask me before a message goes to an address that this account never wrote to</label></p>
+</fieldset>
+{{end}}
+
+<fieldset>
+<legend>Sent mail</legend>
+<p><input type="checkbox" id="save_sent_copy" name="save_sent_copy" value="1"{{if .SaveSent}} checked{{end}}>
+<label for="save_sent_copy">Save a copy of sent mail to Sent</label></p>
+</fieldset>
+<p><button type="submit">Save</button></p>
+</form>
+
+<h2>Remove the account</h2>
+<form method="post" action="/accounts/{{.ID}}/remove">
+{{template "csrf_field" $csrf}}
+<p>{{.RemoveWarning}}</p>
+<p><input type="checkbox" id="confirm_remove" name="confirm_remove" value="1">
+<label for="confirm_remove">Yes, remove this account and its queued messages</label></p>
+<p><button type="submit">Remove account</button></p>
+</form>
+{{end}}
+{{end}}

@@ -416,16 +416,12 @@ func (s *Service) buildSend(ctx context.Context, b mail.Backend, a *account.Acco
 	return msg, content, nil
 }
 
-// composedBody returns the cleaned text part of a message that mime.Build made.
-// Build makes that part from the whole HTML when the request has HTML (a request
-// with both a body and HTML is refused), so it is the text that the recipient
-// sees, with the block of a forward.
+// composedBody returns the cleaned text part of a message that mime.Build made,
+// as far as the preview needs it. Build makes that part from the whole HTML when
+// the request has HTML (a request with both a body and HTML is refused), so it
+// is the text that the recipient sees, with the block of a forward.
 func composedBody(data []byte) string {
-	parsed, _ := mime.ParseMessage(bytes.NewReader(data), previewParseChars)
-	if parsed == nil {
-		return ""
-	}
-	return mime.CleanUntrusted(parsed.Text)
+	return composedText(data, previewParseChars)
 }
 
 // draftContent reads a whole draft for the preview: the text of its whole HTML

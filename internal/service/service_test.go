@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -218,6 +219,7 @@ type fakeFactory struct {
 	byAccount map[account.AccountID]mail.Backend // a backend for one account
 	err       error                              // returned by Mail when it is set
 	mailCalls int
+	forgotten []account.AccountID // the ids that Forget got, in order
 }
 
 func (f *fakeFactory) Mail(_ context.Context, a *account.Account) (mail.Backend, error) {
@@ -233,8 +235,19 @@ func (f *fakeFactory) Mail(_ context.Context, a *account.Account) (mail.Backend,
 	return f.backend, nil
 }
 
-// Forget does nothing. The read use cases never call it.
-func (f *fakeFactory) Forget(account.AccountID) {}
+// Forget records the id.
+func (f *fakeFactory) Forget(id account.AccountID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.forgotten = append(f.forgotten, id)
+}
+
+// forgot returns the ids that Forget got.
+func (f *fakeFactory) forgot() []account.AccountID {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.forgotten)
+}
 
 func (f *fakeFactory) calls() int {
 	f.mu.Lock()

@@ -330,6 +330,7 @@ type writeEnv struct {
 	f       *fixture
 	svc     *Service
 	backend *recBackend
+	factory *fakeFactory
 	sender  *fakeSender
 	outbox  *outbox.Outbox
 	confirm *confirm.Manager
@@ -353,12 +354,13 @@ func newWriteEnv(t *testing.T, opts ...envOption) *writeEnv {
 	log := audit.New(f.store, f.vault, clock.Now)
 	links := &fakeLinks{}
 	backend := newRecBackend()
+	factory := &fakeFactory{backend: backend}
 	logs := &syncBuffer{}
 	d := Deps{
 		Store:    f.store,
 		Vault:    f.vault,
 		Signer:   f.signer,
-		Backends: &fakeFactory{backend: backend},
+		Backends: factory,
 		Limiter:  &policy.Limiter{Store: f.store, Now: clock.Now},
 		Confirm:  cm,
 		Outbox:   ob,
@@ -371,7 +373,7 @@ func newWriteEnv(t *testing.T, opts ...envOption) *writeEnv {
 		o(&d)
 	}
 	return &writeEnv{
-		t: t, f: f, svc: New(d), backend: backend, sender: sender, outbox: ob,
+		t: t, f: f, svc: New(d), backend: backend, factory: factory, sender: sender, outbox: ob,
 		confirm: cm, audit: log, links: links, clock: clock, logs: logs,
 	}
 }

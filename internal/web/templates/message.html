@@ -1,0 +1,10 @@
+{{/*
+  A page with one fixed message, such as "This account was not found.". It
+  shows nothing of the request.
+*/}}
+{{define "title"}}{{.Data.Title}} · email-mcp{{end}}
+{{define "content"}}
+<h1>{{.Data.Title}}</h1>
+<p role="alert">{{.Data.Text}}</p>
+<p><a href="/">Back to the accounts</a></p>
+{{end}}

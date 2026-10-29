@@ -75,6 +75,25 @@ const (
 // web interface.
 const webClient = "web"
 
+// userCall returns the service, the session, and a context whose principal is
+// the user of the session: the tenant of the session, no scope limit (nil
+// Scopes, as on a local install) and the client "web". Every page that calls
+// the service uses it. ok is false when the server has no service or the
+// request has no session. The caller then answers with fail.
+func (s *Server) userCall(r *http.Request) (svc *service.Service, sess session, ctx context.Context, ok bool) {
+	svc = s.svc.Load()
+	sess, hasSession := sessionFrom(r.Context())
+	if svc == nil || !hasSession {
+		return nil, session{}, nil, false
+	}
+	ctx = service.WithPrincipal(r.Context(), service.Principal{Tenant: sess.tenant, Client: webClient})
+	return svc, sess, ctx, true
+}
+
+// errNoService means that the server has no service yet (see Attach), or that
+// the request has no session.
+var errNoService = errors.New("web: no service or no session")
+
 // purposeCertOffer is the signing purpose of an offer to trust a certificate.
 const purposeCertOffer = "cert_offer"
 
@@ -132,6 +151,8 @@ type accountsPage struct {
 
 // accountRow is one account on the accounts page.
 type accountRow struct {
+	// ID names the account in the link to its settings page.
+	ID        string
 	Address   string
 	Provider  string
 	MailLevel string
@@ -259,6 +280,7 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 	page := accountsPage{Accounts: make([]accountRow, 0, len(accounts))}
 	for _, a := range accounts {
 		page.Accounts = append(page.Accounts, accountRow{
+			ID:        string(a.ID),
 			Address:   a.Address,
 			Provider:  providerLabel(a.Provider),
 			MailLevel: a.Level(account.AreaMail).MailName(),
@@ -357,10 +379,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 // connection needs the "I understand that this connection is not encrypted"
 // box; and the password must not be empty.
 func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
-	svc := s.svc.Load()
-	sess, ok := sessionFrom(r.Context())
-	if svc == nil || !ok {
-		s.fail(w, r, codeNoService, errors.New("web: no service or no session"))
+	svc, sess, ctx, ok := s.userCall(r)
+	if !ok {
+		s.fail(w, r, codeNoService, errNoService)
 		return
 	}
 
@@ -417,7 +438,6 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := service.WithPrincipal(r.Context(), service.Principal{Tenant: sess.tenant, Client: webClient})
 	_, err := svc.CreateIMAPAccount(ctx, page.Email, server, secrets.Secret(password))
 	if err == nil {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
