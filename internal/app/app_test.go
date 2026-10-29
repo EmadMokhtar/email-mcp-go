@@ -892,6 +892,50 @@ func TestCloseWaitsForRunningToolCalls(t *testing.T) {
 	require.NoError(t, <-closed)
 }
 
+// A send without an undo window runs inside the service call that asked for it
+// (a tool call, or an approval on the web page). Close must wait for that
+// service action before it closes the backends and the store, or the result of
+// a message that went out would never be written. This holds the send inside
+// Service.Send itself, with no tool call around it, so only the wait for the
+// service actions keeps Close from going on.
+func TestCloseWaitsForAnInlineSendOfTheService(t *testing.T) {
+	ta := openTest(t)
+	acct := ta.addAccount(t, func(a *account.Account) {
+		a.ConfirmSends = false
+		a.Limits.UndoWindowAuto = 0
+	})
+	started, release := ta.factory.backend.holdFirstSend()
+	defer release()
+
+	type sendResult struct {
+		res *service.SendResult
+		err error
+	}
+	sent := make(chan sendResult, 1)
+	go func() {
+		c := mail.Compose{To: []string{"bob@example.com"}, Subject: "Plans", Body: "See you at noon."}
+		res, _, err := ta.Service.Send(localCtx(), acct.ID, &c, nil, service.ConfirmFallback, nil)
+		sent <- sendResult{res, err}
+	}()
+	<-started
+
+	closed := make(chan error, 1)
+	go func() { closed <- ta.Close(context.Background()) }()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned while a send of the service was running: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	release()
+	got := <-sent
+	require.NoError(t, got.err)
+	require.Equal(t, service.SendSent, got.res.Status)
+	require.NoError(t, <-closed)
+	status, _ := outboxStatus(t, ta.dir, got.res.SendID)
+	require.Equal(t, "sent", status, "the result is written before the store closes")
+}
+
 func TestCloseShutsDownTheWebServer(t *testing.T) {
 	ta := openTest(t)
 	base, err := ta.Web.EnsureStarted(context.Background())
@@ -956,7 +1000,8 @@ func TestCloseRefusesNewApprovalsWhileItDrains(t *testing.T) {
 
 // Close waits for a tool call that runs (step 2), then drains the outbox (step
 // 3), which sends what that call queued, and only then shuts down the web
-// server (step 4), which stays up during the drain so the user can still undo.
+// server (step 4), which stays up during the drain so the user can still reject
+// an action that waits for approval.
 func TestCloseSendsWhatARunningToolCallQueued(t *testing.T) {
 	ta := openTest(t)
 	acct := ta.addAccount(t)
