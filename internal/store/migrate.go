@@ -62,6 +62,10 @@ func loadMigrations(fsys fs.FS) ([]migration, error) {
 // Each file runs in its own transaction, together with the row that records its
 // version. If a file fails, the transaction rolls back, so the database is
 // left as it was before that file. Later files do not run.
+//
+// A database with a version that is higher than the highest file was used by a
+// newer program (for example after a downgrade). migrate then returns
+// ErrNewerSchema and runs nothing.
 func migrate(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	migrations, err := loadMigrations(fsys)
 	if err != nil {
@@ -78,6 +82,15 @@ func migrate(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	applied, err := appliedVersions(ctx, db)
 	if err != nil {
 		return err
+	}
+	highest := 0
+	if len(migrations) > 0 {
+		highest = migrations[len(migrations)-1].version
+	}
+	for version := range applied {
+		if version > highest {
+			return ErrNewerSchema
+		}
 	}
 	for _, m := range migrations {
 		if applied[m.version] {

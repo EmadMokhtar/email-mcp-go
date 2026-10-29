@@ -190,6 +190,26 @@ func TestMigrationsIdempotent(t *testing.T) {
 	require.Equal(t, migrationFileCount(t), rows)
 }
 
+// A database that a newer email-mcp has used has a migration that this binary
+// does not know. This binary must not run on it: the newer schema can have
+// states, columns and rules that this code does not respect.
+func TestOpenRefusesADatabaseOfANewerVersion(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	first, err := Open(ctx, dir)
+	require.NoError(t, err)
+	_, err = first.db.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (9999)")
+	require.NoError(t, err)
+	require.NoError(t, first.Close())
+
+	s, err := Open(ctx, dir)
+
+	require.ErrorIs(t, err, ErrNewerSchema)
+	require.Nil(t, s)
+	require.Equal(t, "this data was written by a newer email-mcp; install that version or newer", err.Error(),
+		"the text is fixed and names no path")
+}
+
 func TestOpenConcurrentlyRunsMigrationsOnce(t *testing.T) {
 	// Two programs can start at the same time, for example the server and a
 	// setup command. Both must succeed and each migration must run once.

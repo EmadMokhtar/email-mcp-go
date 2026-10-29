@@ -45,6 +45,12 @@ var ErrExists = errors.New("already exists")
 // caller should start again.
 var ErrConflict = errors.New("conflict")
 
+// ErrNewerSchema means that a newer email-mcp has used the database: it holds a
+// migration that this program does not have. Open refuses it and changes
+// nothing, because this program does not know the rules of the newer tables.
+// The text is fixed, so it can be shown to the user as it is.
+var ErrNewerSchema = errors.New("this data was written by a newer email-mcp; install that version or newer")
+
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 

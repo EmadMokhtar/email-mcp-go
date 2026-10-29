@@ -85,6 +85,25 @@ func TestMigrateSkipsAppliedFiles(t *testing.T) {
 	require.Equal(t, 1, tableCount(t, db, "u"))
 }
 
+// A version in schema_migrations that is higher than every file means that a
+// newer program used the database. migrate runs nothing then.
+func TestMigrateRefusesANewerSchema(t *testing.T) {
+	db := newRawDB(t)
+	ctx := context.Background()
+	require.NoError(t, migrate(ctx, db, fstest.MapFS{"0001_make_table.sql": file("CREATE TABLE t (x INTEGER);")}))
+	_, err := db.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (3)")
+	require.NoError(t, err)
+
+	err = migrate(ctx, db, fstest.MapFS{
+		"0001_make_table.sql": file("CREATE TABLE t (x INTEGER);"),
+		"0002_make_other.sql": file("CREATE TABLE u (x INTEGER);"),
+	})
+
+	require.ErrorIs(t, err, ErrNewerSchema)
+	require.Zero(t, tableCount(t, db, "u"), "no file runs on a newer schema")
+	require.Equal(t, []int{1, 3}, recordedVersions(t, db))
+}
+
 func TestMigrateRollsBackAFailedFile(t *testing.T) {
 	db := newRawDB(t)
 	ctx := context.Background()
