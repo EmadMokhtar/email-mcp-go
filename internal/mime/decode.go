@@ -247,6 +247,12 @@ type Parsed struct {
 	// HasInvite is true when a part is text/calendar, or has a "method"
 	// parameter in its Content-Type.
 	HasInvite bool
+	// Incomplete is true when the walk skipped something: a header over its
+	// limit (a part that is skipped, or the rest of the message header that is
+	// taken as the body), too many parts, nesting that is too deep, a multipart
+	// part without a usable boundary, a read error or a recovered panic. The
+	// parts that were skipped may be attachments that are not in Attachments.
+	Incomplete bool
 }
 
 // ParseMessage reads a whole message (header and body) and finds its text,
@@ -269,8 +275,9 @@ type Parsed struct {
 // of each header block. A part whose header is over a limit is skipped (it
 // keeps its number). A header line that is not valid is skipped. Damaged mail
 // does not make ParseMessage fail, and it does not panic: it returns what it
-// decoded. The error is not nil only when reading r fails. The Parsed value is
-// then still returned, with what was decoded before the failure.
+// decoded. When it skipped something, Parsed.Incomplete is true. The error is
+// not nil only when reading r fails. The Parsed value is then still returned,
+// with what was decoded before the failure.
 func ParseMessage(r io.Reader, maxText int) (*Parsed, error) {
 	parsed, _, err := parseMessage(r, maxText)
 	return parsed, err
@@ -286,6 +293,9 @@ func parseMessage(r io.Reader, maxText int) (parsed *Parsed, recovered any, err 
 		defer func() { recovered = recover() }()
 		w.run(src)
 	}()
+	if recovered != nil || src.err != nil {
+		w.out.Incomplete = true
+	}
 	return w.out, recovered, src.err
 }
 
@@ -302,7 +312,10 @@ func (w *walker) run(src io.Reader) {
 	br := bufio.NewReader(src)
 	// If the header is too big, the fields read so far are used and the rest
 	// is taken as the body.
-	h, _ := readHeader(newLineReader(br), nil)
+	h, end := readHeader(newLineReader(br), nil)
+	if end == headerTooBig {
+		w.out.Incomplete = true
+	}
 	w.part(h, br, "", 0)
 }
 
@@ -323,6 +336,7 @@ func (w *walker) part(h textproto.Header, body io.Reader, id string, depth int) 
 
 func (w *walker) multipart(boundary string, body io.Reader, id string, depth int) bool {
 	if depth >= maxDepth || boundary == "" || len(boundary) > maxBoundary {
+		w.out.Incomplete = true
 		return true
 	}
 	mr := newMultipartReader(body, boundary)
@@ -333,10 +347,12 @@ func (w *walker) multipart(boundary string, body io.Reader, id string, depth int
 		}
 		w.parts++
 		if w.parts > maxParts {
+			w.out.Incomplete = true
 			return false
 		}
 		if tooBig {
 			// The part keeps its place in the numbering, but it is not read.
+			w.out.Incomplete = true
 			continue
 		}
 		childID := strconv.Itoa(i)

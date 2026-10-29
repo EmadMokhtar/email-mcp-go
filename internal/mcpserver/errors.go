@@ -79,6 +79,8 @@ const (
 	codeBadMessage          = "bad_message"
 	codeConflict            = "conflict"
 	codeTooLate             = "too_late"
+	codeBodyAndHTML         = "body_and_html"
+	codeDraftUnreadable     = "draft_unreadable"
 )
 
 // toolFailure is the error that a handler wrapper gives to the SDK. The SDK
@@ -123,9 +125,14 @@ func toolError(tool string, err error) *toolFailure {
 		reauth *service.ReauthError
 		arg    *argError
 	)
-	switch {
-	case errors.As(err, &ready): // a handler made the failure itself
+	if errors.As(err, &ready) { // a handler made the failure itself
 		return ready
+	}
+	// The errors of mime.Build wrap no other known error, so they can come first.
+	if fail, ok := messageFailure(err); ok {
+		return fail
+	}
+	switch {
 	case errors.As(err, &perm):
 		return permissionFailure(perm)
 	case errors.As(err, &rate):
@@ -156,9 +163,14 @@ func toolError(tool string, err error) *toolFailure {
 		return tooLargeFailure(tool)
 	case errors.Is(err, mail.ErrUnsupported):
 		return failure(codeUnsupported, "This account or mail server does not support this operation. "+noRetry)
-	case isMessageError(err):
-		return messageFailure(err)
-	// ErrNotADraft matches ErrInvalidRequest too, so it comes first.
+	// ErrNotADraft, ErrBodyAndHTML and ErrDraftUnreadable match ErrInvalidRequest
+	// too, so they come first.
+	case errors.Is(err, service.ErrBodyAndHTML):
+		return failure(codeBodyAndHTML, "Give body or html_body, not both: the text part of the message is made from "+
+			"the HTML. "+noRepeat)
+	case errors.Is(err, service.ErrDraftUnreadable):
+		return failure(codeDraftUnreadable, "The draft cannot be read in full, so the user cannot see all of it before "+
+			"it is sent. Write a new message instead. "+noRepeat)
 	case errors.Is(err, service.ErrNotADraft):
 		return failure(codeNotADraft, "The message is not a draft, so it is not sent. "+
 			"Send a saved draft, or write a new message. "+noRepeat)
@@ -256,27 +268,21 @@ var messageErrors = []struct {
 	{mime.ErrReplyAndForward, "A message cannot be a reply and a forward. Give reply_to or forward_of, not both."},
 	{mime.ErrInvalidContentType, "The content type of an attachment is not valid. Use one type such as " +
 		"application/pdf: not multipart, and with no charset other than UTF-8."},
-	{mime.ErrHTMLTooComplex, "The HTML body is too complex to make its text form. Give a plain text body too, or use simpler HTML."},
+	{mime.ErrHTMLTooComplex, "The HTML body is too complex to make its text form. Use simpler HTML, " +
+		"or send a plain text body instead."},
+	{mime.ErrInvalidFilename, "An attachment file name has a character that hides or reorders text (for example " +
+		"U+202E, or a zero width space). Use a plain file name."},
 }
 
-// isMessageError reports whether err is one of messageErrors.
-func isMessageError(err error) bool {
+// messageFailure returns the failure for one of messageErrors, and true. For any
+// other error it returns nil and false.
+func messageFailure(err error) (*toolFailure, bool) {
 	for _, m := range messageErrors {
 		if errors.Is(err, m.err) {
-			return true
+			return failure(codeBadMessage, m.text+" "+noRepeat), true
 		}
 	}
-	return false
-}
-
-// messageFailure builds the text for one of messageErrors.
-func messageFailure(err error) *toolFailure {
-	for _, m := range messageErrors {
-		if errors.Is(err, m.err) {
-			return failure(codeBadMessage, m.text+" "+noRepeat)
-		}
-	}
-	return errInternal
+	return nil, false
 }
 
 // rateLimitFailure builds the text for a reached limit. The text of a

@@ -1186,3 +1186,49 @@ func TestParamText(t *testing.T) {
 		})
 	}
 }
+
+// Incomplete says that the walk skipped something, so a caller that must see
+// every part (the preview of a send) can refuse the message.
+func TestParseReportsAnIncompleteWalk(t *testing.T) {
+	complete := msg("Content-Type: multipart/mixed; boundary=b", "",
+		"--b", "Content-Type: text/plain", "", "body",
+		"--b", "Content-Type: application/pdf", "Content-Disposition: attachment; filename=a.pdf", "", "x",
+		"--b--", "")
+	p, err := ParseMessage(strings.NewReader(complete), 0)
+	require.NoError(t, err)
+	require.False(t, p.Incomplete)
+	require.Len(t, p.Attachments, 1)
+
+	var many strings.Builder
+	many.WriteString("Content-Type: multipart/mixed; boundary=b\r\n\r\n")
+	for i := 0; i < maxParts+1; i++ {
+		many.WriteString("--b\r\nContent-Type: image/png\r\n\r\nx\r\n")
+	}
+	many.WriteString("--b--\r\n")
+
+	cases := map[string]string{
+		"a part header over the limit": msg("Content-Type: multipart/mixed; boundary=b", "",
+			"--b", "Content-Type: text/plain", "", "body",
+			"--b", "Content-Type: application/pdf", "X-Big: "+strings.Repeat("a", maxHeaderBytes), "", "secret",
+			"--b--", ""),
+		"a message header over the limit": msg("X-Big: "+strings.Repeat("a", maxHeaderBytes),
+			"Content-Type: multipart/mixed; boundary=b", "",
+			"--b", "Content-Type: application/pdf", "", "secret", "--b--", ""),
+		"too many parts":   many.String(),
+		"nesting too deep": nestedMultipart(maxDepth + 2),
+		"a boundary too long": msg("Content-Type: multipart/mixed; boundary="+strings.Repeat("b", maxBoundary+1), "",
+			"--"+strings.Repeat("b", maxBoundary+1), "Content-Type: application/pdf", "", "secret",
+			"--"+strings.Repeat("b", maxBoundary+1)+"--", ""),
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			p, err := ParseMessage(strings.NewReader(raw), 0)
+			require.NoError(t, err)
+			require.True(t, p.Incomplete)
+		})
+	}
+
+	p, err = ParseMessage(panicReader{}, 0)
+	require.NoError(t, err)
+	require.True(t, p.Incomplete, "a walk that a panic stopped is incomplete")
+}

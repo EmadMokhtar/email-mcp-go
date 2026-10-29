@@ -96,6 +96,8 @@ type recBackend struct {
 	raws         map[mail.Ref][]byte
 	rawMax       int64
 	errs         map[string]error // the error of a method, by name
+	// attachments are the attachments that GetAttachment returns, by id.
+	attachments map[string]*mail.Attachment
 
 	flags     []mail.FlagChange
 	tagged    [][]string
@@ -117,10 +119,21 @@ func newRecBackend() *recBackend {
 			{Name: "Drafts", Alias: mail.AliasDrafts},
 			{Name: "Projects"},
 		},
-		originals: map[mail.Ref]*mail.Message{},
-		raws:      map[mail.Ref][]byte{},
-		errs:      map[string]error{},
+		originals:   map[mail.Ref]*mail.Message{},
+		raws:        map[mail.Ref][]byte{},
+		errs:        map[string]error{},
+		attachments: map[string]*mail.Attachment{},
 	}
+}
+
+func (b *recBackend) GetAttachment(_ context.Context, _ mail.Ref, id string, _ int64) (*mail.Attachment, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	att, ok := b.attachments[id]
+	if !ok {
+		return nil, mail.ErrNotFound
+	}
+	return att, nil
 }
 
 // addMessage stores a message for GetMessage and GetRaw. draft says whether it

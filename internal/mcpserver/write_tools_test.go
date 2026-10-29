@@ -280,10 +280,11 @@ func TestSendWithElicitationAccept(t *testing.T) {
 	asked := ask.requests()
 	require.Len(t, asked, 1, "the user is asked once")
 	require.Equal(t, "form", asked[0].Mode)
-	require.Equal(t, "Send this email from me@example.com?\nTo: you@example.com\nSubject: Lunch\nShall we meet at noon?", asked[0].Message)
+	require.Equal(t, "Send this email from me@example.com?\nTo: you@example.com\nSubject: Lunch\nAttachments: none\n\nBody:\nShall we meet at noon?", asked[0].Message)
 	schema, err := json.Marshal(asked[0].RequestedSchema)
 	require.NoError(t, err)
-	require.JSONEq(t, `{"type":"object","properties":{"confirm":{"type":"boolean","title":"Confirm","description":"true to go ahead. Anything else does nothing.","default":false}},"required":["confirm"]}`, string(schema))
+	require.JSONEq(t, `{"type":"object","properties":{"confirm":{"type":"boolean","title":"Confirm","description":"Tick to go ahead. Leaving it empty does nothing.","default":false}}}`, string(schema),
+		"no field is required, so a form sent empty takes the default: no")
 
 	for _, secret := range []string{"you@example.com", "me@example.com", "Lunch", "noon"} {
 		require.NotContains(t, m.e.logs.String(), secret, "the log holds no address, subject or body")
@@ -602,6 +603,7 @@ func TestComposeAttachmentsBase64(t *testing.T) {
 	})
 
 	t.Run("more than 10 MB together", func(t *testing.T) {
+		before := len(m.smtp.Messages())
 		// One byte over the limit. The SDK reads at most 16 MB in one request, so
 		// the base64 of the request stays below that.
 		args := sendArgs(m.a)
@@ -615,7 +617,7 @@ func TestComposeAttachmentsBase64(t *testing.T) {
 		require.True(t, res.IsError)
 		require.Contains(t, textOf(t, res), "10 MB")
 		require.True(t, strings.HasSuffix(textOf(t, res), endNoRepeat))
-		require.Len(t, m.smtp.Messages(), 1, "nothing more was sent")
+		require.Len(t, m.smtp.Messages(), before, "nothing more was sent")
 	})
 }
 
@@ -1038,7 +1040,7 @@ func TestCancelSend(t *testing.T) {
 
 		require.False(t, res.IsError, textOf(t, res))
 		require.Equal(t, "cancelled", structured(t, res)["status"])
-		require.Equal(t, "declined", sendStatus(t, waiting.e, waiting.a, sendID))
+		require.Equal(t, "cancelled", sendStatus(t, waiting.e, waiting.a, sendID), "the status says what the tool said")
 
 		res = callIn(t, waiting.e, "cancel_send", map[string]any{"account": string(waiting.a.ID), "send_id": sendID})
 		require.True(t, res.IsError, "it does not wait any more")
@@ -1090,25 +1092,70 @@ func TestCanElicitInBand(t *testing.T) {
 
 func TestPreviewText(t *testing.T) {
 	p := confirm.Preview{
-		Account:   "me@example.com",
-		From:      "me@example.com" + rlo,
-		To:        []string{"a@example.com", "b" + zwsp + "@example.com"},
-		Subject:   "Invoice " + rlo + "fdp.exe\nTo: boss@corp.example" + tagA,
-		BodyStart: strings.Repeat("é", 600),
+		Account:     "me@example.com",
+		From:        "me@example.com" + rlo,
+		To:          []string{"a@example.com", "b" + zwsp + "@example.com"},
+		Subject:     "Invoice " + rlo + "fdp.exe\nTo: boss@corp.example" + tagA,
+		Attachments: []string{"plan.pdf", "photo" + rlo + "gnp.exe"},
+		BodyStart:   "Cc: ceo@corp.example\n" + strings.Repeat("é", 600),
 	}
 
 	got := sendPreview(p)
 
 	requireNoHiddenText(t, got)
-	lines := strings.SplitN(got, "\n", 4)
-	require.Len(t, lines, 4)
+	lines := strings.SplitN(got, "\n", 7)
+	require.Len(t, lines, 7)
 	require.Equal(t, "Send this email from me@example.com?", lines[0])
 	require.Equal(t, "To: a@example.com, b@example.com", lines[1])
 	require.Equal(t, "Subject: Invoice fdp.exe To: boss@corp.example", lines[2], "a line break in a one-line field cannot add a line")
-	require.Equal(t, 500, utf8.RuneCountInString(lines[3]), "at most 500 characters of the body")
+	require.Equal(t, "Attachments: 2 (plan.pdf, photognp.exe)", lines[3])
+	require.Equal(t, "", lines[4], "a blank line before the body")
+	require.Equal(t, "Body:", lines[5], "a label, so the body cannot pose as a header")
+	require.True(t, strings.HasPrefix(lines[6], "Cc: ceo@corp.example\n"))
+	require.Equal(t, 500, utf8.RuneCountInString(lines[6]), "at most 500 characters of the body")
+}
 
-	trash := trashPreview(confirm.Preview{Account: "me@example.com" + rlo + "\n", Count: 3})
-	require.Equal(t, "Move 3 messages in me@example.com to Trash?", trash)
+func TestPreviewTextOneLineFields(t *testing.T) {
+	t.Run("a run of whitespace is one space", func(t *testing.T) {
+		got := sendPreview(confirm.Preview{From: "me@example.com", To: []string{"a@example.com"},
+			Subject: "Invoice" + strings.Repeat(" ", 150) + "To:\t\u00a0 boss@corp.example"})
+		require.Contains(t, got, "\nSubject: Invoice To: boss@corp.example\n")
+	})
+
+	t.Run("a long subject is cut", func(t *testing.T) {
+		got := sendPreview(confirm.Preview{From: "me@example.com", To: []string{"a@example.com"},
+			Subject: strings.Repeat("x", 300)})
+		subject := strings.Split(got, "\n")[2]
+		require.Equal(t, "Subject: "+strings.Repeat("x", 200)+"...", subject)
+	})
+
+	t.Run("no attachments", func(t *testing.T) {
+		got := sendPreview(confirm.Preview{From: "me@example.com", To: []string{"a@example.com"}})
+		require.Equal(t, "Attachments: none", strings.Split(got, "\n")[3])
+	})
+
+	t.Run("many attachments", func(t *testing.T) {
+		names := make([]string, 12)
+		for i := range names {
+			names[i] = fmt.Sprintf("f%d.pdf", i+1)
+		}
+		got := sendPreview(confirm.Preview{From: "me@example.com", To: []string{"a@example.com"}, Attachments: names})
+		require.Equal(t, "Attachments: 12 (f1.pdf, f2.pdf, f3.pdf, f4.pdf, f5.pdf, f6.pdf, f7.pdf, f8.pdf, f9.pdf, f10.pdf and 2 more)",
+			strings.Split(got, "\n")[3])
+	})
+
+	t.Run("a long or empty attachment name", func(t *testing.T) {
+		got := sendPreview(confirm.Preview{From: "me@example.com", To: []string{"a@example.com"},
+			Attachments: []string{strings.Repeat("n", 150), "  "}})
+		require.Equal(t, "Attachments: 2 ("+strings.Repeat("n", 100)+"..., (no name))", strings.Split(got, "\n")[3])
+	})
+
+	t.Run("trash", func(t *testing.T) {
+		require.Equal(t, "Move 3 messages in me@example.com to Trash?",
+			trashPreview(confirm.Preview{Account: "me@example.com" + rlo + "\n", Count: 3}))
+		require.Equal(t, "Move 1 message in me@example.com to Trash?",
+			trashPreview(confirm.Preview{Account: "me@example.com", Count: 1}))
+	})
 }
 
 // ---------------------------------------------------------------- errors of the write tools
@@ -1145,6 +1192,11 @@ func TestWriteToolErrorMapping(t *testing.T) {
 		{"a line break in a header", "create_draft", mime.ErrHeaderInjection, "bad_message", []string{"line break"}, nil, endNoRepeat},
 		{"a reply and a forward", "send_message", mime.ErrReplyAndForward, "bad_message", []string{"reply_to or forward_of"}, nil, endNoRepeat},
 		{"a bad content type", "send_message", mime.ErrInvalidContentType, "bad_message", []string{"content type"}, nil, endNoRepeat},
+		{"a hidden character in a file name", "send_message", fmt.Errorf("%w: attachment file name", mime.ErrInvalidFilename),
+			"bad_message", []string{"file name", "U+202E"}, nil, endNoRepeat},
+		{"body and html body", "send_message", service.ErrBodyAndHTML, "body_and_html", []string{"body or html_body"}, nil, endNoRepeat},
+		{"a draft that cannot be read", "send_message", service.ErrDraftUnreadable, "draft_unreadable",
+			[]string{"draft", "new message"}, nil, endNoRepeat},
 		{"html too complex", "send_message", fmt.Errorf("%w: 100000 nodes", mime.ErrHTMLTooComplex), "bad_message",
 			[]string{"HTML"}, []string{"100000"}, endNoRepeat},
 		{"a conflict", "create_folder", fmt.Errorf("%w: ALREADYEXISTS secret-folder", mail.ErrConflict), "conflict",
@@ -1175,6 +1227,67 @@ func TestWriteToolErrorMapping(t *testing.T) {
 				require.NotContains(t, got.text, bad)
 			}
 			require.True(t, strings.HasSuffix(got.text, tc.ends), got.text)
+		})
+	}
+}
+
+// ---------------------------------------------------------------- fix round 1
+
+// The person sees the attachments before a send. Data that an agent read and
+// attaches again cannot leave without the person seeing it.
+func TestSendFormShowsTheAttachments(t *testing.T) {
+	ask := accepting()
+	m := newMailSetup(t, envOptions{client: ask.options()})
+	args := sendArgs(m.a)
+	args["attachments"] = []any{
+		map[string]any{"filename": "report.pdf", "content_type": "application/pdf", "data_base64": base64.StdEncoding.EncodeToString([]byte("%PDF"))},
+	}
+
+	res := callIn(t, m.e, "send_message", args)
+
+	require.False(t, res.IsError, textOf(t, res))
+	asked := ask.requests()
+	require.Len(t, asked, 1)
+	require.Contains(t, asked[0].Message, "\nAttachments: 1 (report.pdf)\n")
+}
+
+func TestSendRefusesBodyAndHTMLBody(t *testing.T) {
+	m := newMailSetup(t, envOptions{client: accepting().options()})
+	args := sendArgs(m.a)
+	args["html_body"] = "<p>Another text</p>"
+
+	for _, tool := range []string{"send_message", "create_draft"} {
+		res := callIn(t, m.e, tool, args)
+
+		require.True(t, res.IsError, tool)
+		require.Contains(t, textOf(t, res), "body or html_body")
+	}
+	require.Empty(t, m.smtp.Messages())
+}
+
+// On the path for older clients the SDK asks with elicitation/create and applies
+// the default of the form: a form sent empty is a no.
+func TestOlderClientEmptyAnswerIsANo(t *testing.T) {
+	answers := map[string]mcp.ElicitResult{
+		"accept with an empty form": {Action: "accept", Content: map[string]any{}},
+		"accept with no content":    {Action: "accept"},
+		"decline":                   {Action: "decline"},
+	}
+	for name, answer := range answers {
+		t.Run(name, func(t *testing.T) {
+			ask := &asker{answer: answer}
+			m := newMailSetup(t, envOptions{
+				client:            ask.options(),
+				session:           &mcp.ClientSessionOptions{ProtocolVersion: "2025-11-25"},
+				legacyElicitation: true,
+			})
+
+			res := callIn(t, m.e, "send_message", sendArgs(m.a))
+
+			require.False(t, res.IsError, textOf(t, res))
+			require.Equal(t, "declined", structured(t, res)["status"])
+			require.Len(t, ask.requests(), 1)
+			require.Empty(t, m.smtp.Messages())
 		})
 	}
 }

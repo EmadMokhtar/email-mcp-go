@@ -343,7 +343,7 @@ func auditCode(err error) (audit.Outcome, string) {
 func isMessageError(err error) bool {
 	for _, target := range []error{
 		mime.ErrInvalidAddress, mime.ErrNoRecipients, mime.ErrHeaderInjection, mime.ErrNoOriginal,
-		mime.ErrReplyAndForward, mime.ErrInvalidContentType, mime.ErrHTMLTooComplex,
+		mime.ErrReplyAndForward, mime.ErrInvalidContentType, mime.ErrHTMLTooComplex, mime.ErrInvalidFilename,
 	} {
 		if errors.Is(err, target) {
 			return true
@@ -539,7 +539,7 @@ func (s *Service) CreateDraft(ctx context.Context, id account.AccountID, c mail.
 	if err != nil {
 		return "", err
 	}
-	msg, err := s.buildMessage(ctx, b, acc.Account, c, true)
+	msg, _, err := s.buildMessage(ctx, b, acc.Account, c, true)
 	if err != nil {
 		s.finish(ctx, acc, toolCreateDraft, 1, nil, "", err)
 		return "", err
@@ -579,7 +579,13 @@ type asked struct {
 // "pending_approval" entry with the reason as its code.
 func (s *Service) ask(ctx context.Context, acc access, tool string, kind confirm.Kind, payload []byte, preview confirm.Preview, mode ConfirmMode, recipients []string, reason string) (*asked, error) {
 	t := acc.Principal.Tenant
-	p, err := s.d.Confirm.Create(ctx, t, acc.Account.ID, kind, payload, preview)
+	// An action that the user confirms in band ends with its request state, so it
+	// cannot be approved on the web page after the agent has asked again.
+	lifetime := confirm.ApprovalLifetime
+	if mode == ConfirmInBand {
+		lifetime = confirm.InBandLifetime
+	}
+	p, err := s.d.Confirm.Create(ctx, t, acc.Account.ID, kind, payload, preview, lifetime)
 	if err != nil {
 		s.finish(ctx, acc, tool, preview.Count, recipients, "", err)
 		return nil, err

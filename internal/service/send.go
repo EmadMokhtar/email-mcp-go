@@ -42,6 +42,12 @@ const (
 	SendExpired         = "expired"
 )
 
+// cancelledResult is the result id of a send action that the agent withdrew
+// with CancelSend before the user answered. SendStatus reports such an action as
+// "cancelled". An action that the user rejected has no result id, and is
+// "declined".
+const cancelledResult = "cancelled"
+
 // The limits of building a message.
 const (
 	// maxDraftBytes is the largest draft that Send reads: 25 MB.
@@ -89,6 +95,18 @@ var (
 	// draft state. Only a draft is sent as it was saved. It matches
 	// ErrInvalidRequest.
 	ErrNotADraft = fmt.Errorf("%w: the message is not a draft, so it is not sent. Send a saved draft, or write a new message", ErrInvalidRequest)
+
+	// ErrBodyAndHTML means that a message has both a body and an HTML body. Most
+	// mail programs show the HTML, while a preview could show the other text, so
+	// such a message is refused. The text part is made from the HTML. It matches
+	// ErrInvalidRequest.
+	ErrBodyAndHTML = fmt.Errorf("%w: give body or html_body, not both; the text part is made from the HTML", ErrInvalidRequest)
+
+	// ErrDraftUnreadable means that a draft cannot be read in full (a header over
+	// a limit, too many parts, nesting that is too deep). Its attachments could
+	// then be missing from the preview, so it is not sent. It matches
+	// ErrInvalidRequest.
+	ErrDraftUnreadable = fmt.Errorf("%w: the draft cannot be read in full, so the user cannot see all of it. Write a new message", ErrInvalidRequest)
 
 	// ErrSendNotFound means that the account has no send with this id.
 	ErrSendNotFound = errors.New("service: no send with this id for this account")
@@ -323,7 +341,7 @@ func auditRecipients(msg *mail.RawMessage) []string {
 // allow it, and makes its preview. When the message was built and a limit
 // refuses it, the message is returned with the error, for the audit entry.
 func (s *Service) prepareSend(ctx context.Context, b mail.Backend, a *account.Account, req *sendRequest) (*mail.RawMessage, confirm.Preview, error) {
-	msg, err := s.buildSend(ctx, b, a, req)
+	msg, attachments, err := s.buildSend(ctx, b, a, req)
 	if err != nil {
 		return nil, confirm.Preview{}, err
 	}
@@ -333,13 +351,15 @@ func (s *Service) prepareSend(ctx context.Context, b mail.Backend, a *account.Ac
 	if err := checkLimit(policy.CountSend, a.Limits, 1); err != nil {
 		return msg, confirm.Preview{}, err
 	}
-	return msg, previewOf(a, msg), nil
+	return msg, previewOf(a, msg, attachments), nil
 }
 
 // buildSend builds the message to send: from the Compose of the request, or from
-// the saved draft. A draft must have the draft state (ErrNotADraft) and be from
-// the address of the account (ErrDraftNotFromAccount).
-func (s *Service) buildSend(ctx context.Context, b mail.Backend, a *account.Account, req *sendRequest) (*mail.RawMessage, error) {
+// the saved draft. It also returns the file names of the attachments of the
+// message, for the preview. A draft must have the draft state (ErrNotADraft),
+// be from the address of the account (ErrDraftNotFromAccount), and be readable
+// in full (ErrDraftUnreadable).
+func (s *Service) buildSend(ctx context.Context, b mail.Backend, a *account.Account, req *sendRequest) (*mail.RawMessage, []string, error) {
 	if req.compose != nil {
 		return s.buildMessage(ctx, b, a, *req.compose, false)
 	}
@@ -348,31 +368,61 @@ func (s *Service) buildSend(ctx context.Context, b mail.Backend, a *account.Acco
 	// check comes before the message is read.
 	head, err := b.GetMessage(ctx, req.draft, mail.BodyOptions{Format: mail.BodyNone})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !head.Draft {
-		return nil, ErrNotADraft
+		return nil, nil, ErrNotADraft
 	}
 	raw, err := b.GetRaw(ctx, req.draft, maxDraftBytes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	msg, err := mime.FromDraft(raw)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !strings.EqualFold(strings.TrimSpace(msg.From), selfAddress(a)) {
-		return nil, ErrDraftNotFromAccount
+		return nil, nil, ErrDraftNotFromAccount
 	}
-	return msg, nil
+	attachments, err := draftAttachments(msg.Data)
+	if err != nil {
+		return nil, nil, err
+	}
+	return msg, attachments, nil
+}
+
+// draftAttachments returns the file names of the attachments of a draft, in the
+// order of the message. A draft that the parser cannot read in full gives
+// ErrDraftUnreadable: a part that it skipped could be an attachment that the
+// user would not see. (The parser reads 1 MB of each header, 10000 parts and a
+// fixed depth; a draft that create_draft saved stays far below these.)
+func draftAttachments(data []byte) ([]string, error) {
+	parsed, err := mime.ParseMessage(bytes.NewReader(data), 1)
+	if err != nil || parsed == nil || parsed.Incomplete {
+		return nil, ErrDraftUnreadable
+	}
+	var names []string
+	for _, att := range parsed.Attachments {
+		names = append(names, att.Filename)
+	}
+	return names, nil
 }
 
 // buildMessage builds a new message, a reply or a forward from c. A reply reads
 // the headers of the original. A forward reads its text, and its attachments
 // when c asks for them. forDraft keeps the Bcc header, for a draft.
 //
+// It also returns the file names of the attachments, in the order of the
+// message: those of the original of a forward first, then those of c. A name
+// that is empty is "attachment", as mime.Build names it.
+//
+// A message with both a body and an HTML body is refused with ErrBodyAndHTML.
+//
 // The sender is the account: its address, with its display name.
-func (s *Service) buildMessage(ctx context.Context, b mail.Backend, a *account.Account, c mail.Compose, forDraft bool) (*mail.RawMessage, error) {
+func (s *Service) buildMessage(ctx context.Context, b mail.Backend, a *account.Account, c mail.Compose, forDraft bool) (*mail.RawMessage, []string, error) {
+	if c.Body != "" && c.HTMLBody != "" {
+		return nil, nil, ErrBodyAndHTML
+	}
 	bc := mime.BuildContext{
 		From:     mail.Address{Name: a.DisplayName, Email: a.Address},
 		Self:     []string{selfAddress(a)},
@@ -381,27 +431,47 @@ func (s *Service) buildMessage(ctx context.Context, b mail.Backend, a *account.A
 	}
 	switch {
 	case c.ReplyTo != nil && c.ForwardOf != nil:
-		return nil, mime.ErrReplyAndForward
+		return nil, nil, mime.ErrReplyAndForward
 	case c.ReplyTo != nil:
 		orig, err := b.GetMessage(ctx, c.ReplyTo.Ref, mail.BodyOptions{Format: mail.BodyNone})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		bc.Original = orig
 	case c.ForwardOf != nil:
 		orig, err := b.GetMessage(ctx, *c.ForwardOf, mail.BodyOptions{Format: mail.BodyText, MaxChars: maxForwardChars})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		bc.Original = orig
 		if c.IncludeOriginalAttachments {
 			bc.OriginalAttachments, err = originalAttachments(ctx, b, *c.ForwardOf, orig.Attachments)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
-	return mime.Build(c, bc)
+	msg, err := mime.Build(c, bc)
+	if err != nil {
+		return nil, nil, err
+	}
+	var names []string
+	for _, att := range bc.OriginalAttachments {
+		names = append(names, attachmentName(att.Filename))
+	}
+	for _, att := range c.Attachments {
+		names = append(names, attachmentName(att.Filename))
+	}
+	return msg, names, nil
+}
+
+// attachmentName returns the name of an attachment as the preview shows it:
+// cleaned, and "attachment" for an empty name, as mime.Build names it.
+func attachmentName(name string) string {
+	if name == "" {
+		return "attachment"
+	}
+	return mime.CleanUntrusted(name)
 }
 
 // originalAttachments reads the attachments of the original of a forward. All
@@ -617,28 +687,36 @@ func (p *composePayload) compose() mail.Compose {
 
 // previewOf makes the preview of a send from the built message: the envelope
 // sender, every envelope recipient (so a Reply-To that a stranger set, the people
-// that a reply to all adds, and the Bcc are all visible), the subject and the
-// start of the text. The subject and the text are cleaned of characters that a
-// reader cannot see. Every value is valid UTF-8, so the stored preview reads back
-// the same, and the preview of the same message built again is equal to it.
-func previewOf(a *account.Account, msg *mail.RawMessage) confirm.Preview {
+// that a reply to all adds, and the Bcc are all visible), the subject, the file
+// names of the attachments and the start of the text. The subject and the text
+// are cleaned of characters that a reader cannot see. Every value is valid UTF-8,
+// so the stored preview reads back the same, and the preview of the same message
+// built again is equal to it.
+func previewOf(a *account.Account, msg *mail.RawMessage, attachments []string) confirm.Preview {
 	subject, body := previewText(msg.Data)
 	to := make([]string, len(msg.Recipients))
 	for i, r := range msg.Recipients {
 		to[i] = validText(r)
 	}
+	var names []string
+	for _, name := range attachments {
+		names = append(names, validText(name))
+	}
 	return confirm.Preview{
-		Account:   validText(a.Address),
-		From:      validText(msg.From),
-		To:        to,
-		Subject:   subject,
-		BodyStart: firstRunes(body, previewChars),
-		Count:     1,
+		Account:     validText(a.Address),
+		From:        validText(msg.From),
+		To:          to,
+		Subject:     subject,
+		BodyStart:   firstRunes(body, previewChars),
+		Count:       1,
+		Attachments: names,
 	}
 }
 
-// previewText returns the subject and the text of a message. A message with only
-// HTML gives the text of its HTML.
+// previewText returns the subject and the text of a message. When the message
+// has HTML, the text is the text of its HTML, made as mime.Build makes the text
+// part: most mail programs show the HTML, so that is what the user must see.
+// Otherwise it is the text part.
 func previewText(data []byte) (subject, body string) {
 	if m, err := netmail.ReadMessage(bytes.NewReader(data)); err == nil {
 		subject = mime.CleanUntrusted(mime.DecodeHeaderValue(m.Header.Get("Subject")))
@@ -648,7 +726,7 @@ func previewText(data []byte) (subject, body string) {
 		return subject, ""
 	}
 	text := parsed.Text
-	if text == "" && parsed.HTML != "" {
+	if parsed.HTML != "" {
 		if t, err := mime.HTMLToText(parsed.HTML); err == nil {
 			text = t
 		}
@@ -658,12 +736,14 @@ func previewText(data []byte) (subject, body string) {
 
 // samePreview reports whether a message built again is the message of the
 // stored preview: the same sender, the same recipients (compared without case
-// and order), the same subject and the same start of the text.
+// and order), the same subject, the same attachments (in order) and the same
+// start of the text.
 func samePreview(stored, rebuilt confirm.Preview) bool {
 	return stored.From == rebuilt.From &&
 		stored.Subject == rebuilt.Subject &&
 		stored.BodyStart == rebuilt.BodyStart &&
-		slices.Equal(addressSet(stored.To), addressSet(rebuilt.To))
+		slices.Equal(addressSet(stored.To), addressSet(rebuilt.To)) &&
+		slices.Equal(stored.Attachments, rebuilt.Attachments)
 }
 
 // addressSet returns the addresses in lower case, sorted.
@@ -787,9 +867,10 @@ func (s *Service) CancelSend(ctx context.Context, id account.AccountID, sendID s
 	}
 
 	// Not an outbox item of this account: it may be a send that waits for the
-	// user. The agent may withdraw it.
+	// user. The agent may withdraw it. The result id says that the agent did, so
+	// the status is "cancelled" and not "declined".
 	if _, err = s.pendingSend(ctx, t, id, sendID); err == nil {
-		err = s.d.Confirm.Transition(ctx, t, sendID, confirm.StatePending, confirm.StateRejected, "")
+		err = s.d.Confirm.Transition(ctx, t, sendID, confirm.StatePending, confirm.StateRejected, cancelledResult)
 	}
 	s.finish(ctx, acc, toolCancelSend, 1, nil, "", err)
 	return err
@@ -799,8 +880,8 @@ func (s *Service) CancelSend(ctx context.Context, id account.AccountID, sendID s
 //
 // The id may name an outbox item or an action that waits for the user. An
 // action gives "pending_approval" (with the approval link), "sending" while the
-// server carries it out, "declined", "expired", or, when it is done, the status
-// of its outbox item. A send of another account, or an id that does not exist,
+// server carries it out, "declined", "cancelled" (the agent withdrew it),
+// "expired", or, when it is done, the status of its outbox item. A send of another account, or an id that does not exist,
 // gives ErrSendNotFound.
 func (s *Service) SendStatus(ctx context.Context, id account.AccountID, sendID string) (*SendResult, error) {
 	acc, err := s.authorize(ctx, id, policy.ActRead)
@@ -825,6 +906,9 @@ func (s *Service) SendStatus(ctx context.Context, id account.AccountID, sendID s
 	case confirm.StateApproved:
 		return &SendResult{Status: SendSending, SendID: p.ID}, nil
 	case confirm.StateRejected:
+		if p.ResultID == cancelledResult {
+			return &SendResult{Status: SendCancelled, SendID: p.ID}, nil
+		}
 		return &SendResult{Status: SendDeclined, SendID: p.ID}, nil
 	case confirm.StateExpired:
 		return &SendResult{Status: SendExpired, SendID: p.ID}, nil

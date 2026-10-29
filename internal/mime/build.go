@@ -41,6 +41,11 @@ var (
 	// ErrInvalidContentType means the content type of an attachment is not
 	// one that Build can write.
 	ErrInvalidContentType = errors.New("mime: invalid attachment content type")
+	// ErrInvalidFilename means the file name of an attachment has a character
+	// that hides or reorders text: a Unicode format character (category Cf,
+	// such as U+202E, which makes "invoice" U+202E "gpj.exe" show as
+	// "invoiceexe.jpg") or a line or paragraph separator (Zl, Zp).
+	ErrInvalidFilename = errors.New("mime: attachment file name has a character that hides or reorders text")
 )
 
 // BuildContext is what Build needs besides the Compose request.

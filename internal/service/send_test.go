@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -903,6 +904,10 @@ func TestCancelSendWithdrawsAWaitingApproval(t *testing.T) {
 	require.Equal(t, confirm.StateRejected, env.pending(res.SendID).State)
 	require.ErrorIs(t, env.svc.ApprovePending(ctx, res.SendID), confirm.ErrNotPending)
 	require.Empty(t, env.sender.sent())
+
+	got, err := env.svc.SendStatus(ctx, a.ID, res.SendID)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", got.Status, "the agent withdrew it: it was not declined by the user")
 }
 
 // ---------------------------------------------------------------- failed sends
@@ -928,4 +933,254 @@ func TestFailedInlineSendIsReportedAsFailed(t *testing.T) {
 	_, needs, err = env.svc.Send(ctx, a.ID, &c, nil, ConfirmInBand, nil)
 	require.NoError(t, err)
 	require.NotNil(t, needs)
+}
+
+// ---------------------------------------------------------------- what the preview shows
+
+// forwardWithAttachments sets up an original message o1 with the attachments,
+// and returns a forward of it that carries them and one attachment of its own.
+func forwardWithAttachments(b *recBackend, names ...string) mail.Compose {
+	orig := original()
+	for i, name := range names {
+		id := fmt.Sprint(i + 2)
+		info := mail.AttachmentInfo{ID: id, Filename: name, ContentType: "application/pdf", Size: 3}
+		orig.Attachments = append(orig.Attachments, info)
+		b.attachments[id] = &mail.Attachment{AttachmentInfo: info, Data: []byte("pdf")}
+	}
+	b.originals["o1"] = orig
+	ref := mail.Ref("o1")
+	return mail.Compose{
+		ForwardOf: &ref, To: []string{"bob@example.com"}, Body: "FYI", IncludeOriginalAttachments: true,
+		Attachments: []mail.OutgoingAttachment{{Filename: "own.txt", ContentType: "text/plain", Data: []byte("mine")}},
+	}
+}
+
+// draftWithAttachment is a saved draft from me@example.com with one attachment.
+// extraHeader is added to the header of the attachment part.
+func draftWithAttachment(extraHeader string) []byte {
+	return crlf("From: Me <me@example.com>\n" +
+		"To: Ann <ann@example.com>\n" +
+		"Subject: Draft with a file\n" +
+		"Date: Tue, 10 Mar 2026 10:00:00 +0000\n" +
+		"MIME-Version: 1.0\n" +
+		"Content-Type: multipart/mixed; boundary=\"B\"\n" +
+		"\n" +
+		"--B\n" +
+		"Content-Type: text/plain; charset=utf-8\n" +
+		"\n" +
+		"See the file.\n" +
+		"--B\n" +
+		"Content-Type: application/pdf\n" +
+		extraHeader +
+		"Content-Disposition: attachment; filename=\"notes.pdf\"\n" +
+		"\n" +
+		"pdf\n" +
+		"--B--\n")
+}
+
+func TestPreviewListsTheAttachments(t *testing.T) {
+	t.Run("a new message", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := compose("bob@example.com")
+		c.Attachments = []mail.OutgoingAttachment{
+			{Filename: "figures.xlsx", ContentType: "application/octet-stream", Data: []byte("x")},
+			{Data: []byte("no name")},
+		}
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Equal(t, []string{"figures.xlsx", "attachment"}, needs.Pending.Preview.Attachments,
+			"an attachment without a name is sent as \"attachment\"")
+	})
+
+	t.Run("a forward with the attachments of the original", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := forwardWithAttachments(env.backend, "plan.pdf")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Equal(t, []string{"plan.pdf", "own.txt"}, needs.Pending.Preview.Attachments,
+			"the attachments of the original come first, as in the message")
+	})
+
+	t.Run("a saved draft", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		env.backend.addMessage("d1", draftWithAttachment(""), true)
+		draft := mail.Ref("d1")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Equal(t, []string{"notes.pdf"}, needs.Pending.Preview.Attachments)
+	})
+
+	t.Run("no attachments", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := compose("bob@example.com")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Nil(t, needs.Pending.Preview.Attachments)
+	})
+}
+
+// A draft that the parser cannot read in full could hide an attachment from the
+// preview, so it is not sent.
+func TestDraftThatCannotBeReadInFullIsNotSent(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(autonomy)
+	big := "X-Big: " + strings.Repeat("a", 1<<20) + "\n"
+	env.backend.addMessage("d1", draftWithAttachment(big), true)
+	draft := mail.Ref("d1")
+
+	_, _, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+	require.ErrorIs(t, err, ErrDraftUnreadable)
+	require.ErrorIs(t, err, ErrInvalidRequest)
+	require.Empty(t, env.sender.sent())
+	require.Empty(t, env.waitingActions())
+	requireEntry(t, env.lastEntry(), "send_message", audit.OutcomeRefused, "invalid_request")
+}
+
+// The attachments are part of what the user approves: when the message built
+// again has other attachments, nothing is sent.
+func TestChangedAttachmentsAreAChangedMessage(t *testing.T) {
+	setup := func(t *testing.T) (*writeEnv, *account.Account, mail.Compose) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := forwardWithAttachments(env.backend, "plan.pdf", "secret.txt")
+		first := original()
+		first.Attachments = env.backend.originals["o1"].Attachments[:1]
+		second := env.backend.originals["o1"]
+		env.backend.nextOriginal = func(_ mail.Ref, call int) *mail.Message {
+			if call == 1 {
+				return first
+			}
+			return second
+		}
+		return env, a, c
+	}
+
+	t.Run("in band", func(t *testing.T) {
+		env, a, c := setup(t)
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+		require.NoError(t, err)
+		require.Equal(t, []string{"plan.pdf", "own.txt"}, needs.Pending.Preview.Attachments)
+
+		_, _, err = env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, accept(needs))
+
+		require.ErrorIs(t, err, confirm.ErrPayloadChanged)
+		require.Empty(t, env.sender.sent())
+	})
+
+	t.Run("on the web page", func(t *testing.T) {
+		env, a, c := setup(t)
+		res, _, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmFallback, nil)
+		require.NoError(t, err)
+
+		require.ErrorIs(t, env.svc.ApprovePending(env.ctx(), res.SendID), confirm.ErrPayloadChanged)
+		require.Empty(t, env.sender.sent())
+	})
+
+	require.False(t, samePreview(confirm.Preview{Attachments: []string{"a.pdf"}}, confirm.Preview{Attachments: []string{"b.pdf"}}))
+	require.False(t, samePreview(confirm.Preview{Attachments: []string{"a.pdf"}}, confirm.Preview{}))
+	require.True(t, samePreview(confirm.Preview{}, confirm.Preview{Attachments: []string{}}))
+}
+
+// Most mail programs show the HTML of a message. A message with both a body and
+// an HTML body could show the user one text and the recipient another, so it is
+// refused. The text part is made from the HTML.
+func TestBodyAndHTMLBodyTogetherRefused(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	c := compose("bob@example.com")
+	c.HTMLBody = "<p>Something else</p>"
+
+	_, _, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+	require.ErrorIs(t, err, ErrBodyAndHTML)
+	require.ErrorIs(t, err, ErrInvalidRequest)
+	require.Empty(t, env.waitingActions())
+
+	_, err = env.svc.CreateDraft(env.ctx(), a.ID, c)
+	require.ErrorIs(t, err, ErrBodyAndHTML)
+	require.Empty(t, env.backend.saved)
+}
+
+func TestPreviewShowsTheTextOfTheHTML(t *testing.T) {
+	t.Run("a new message with only HTML", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := mail.Compose{To: []string{"bob@example.com"}, Subject: "S",
+			HTMLBody: `<p>Hello <b>Bob</b></p><div style="display:none">hidden words</div>`}
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Contains(t, needs.Pending.Preview.BodyStart, "Hello Bob")
+		require.NotContains(t, needs.Pending.Preview.BodyStart, "hidden words")
+	})
+
+	t.Run("a draft with a text part and another HTML part", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		env.backend.addMessage("d1", crlf("From: Me <me@example.com>\n"+
+			"To: Ann <ann@example.com>\n"+
+			"Subject: Two bodies\n"+
+			"MIME-Version: 1.0\n"+
+			"Content-Type: multipart/alternative; boundary=\"A\"\n"+
+			"\n"+
+			"--A\n"+
+			"Content-Type: text/plain; charset=utf-8\n"+
+			"\n"+
+			"Harmless text part.\n"+
+			"--A\n"+
+			"Content-Type: text/html; charset=utf-8\n"+
+			"\n"+
+			"<p>Please wire the money today.</p>\n"+
+			"--A--\n"), true)
+		draft := mail.Ref("d1")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Contains(t, needs.Pending.Preview.BodyStart, "Please wire the money today.",
+			"the preview shows what most mail programs show")
+		require.NotContains(t, needs.Pending.Preview.BodyStart, "Harmless")
+	})
+}
+
+// An action that the user confirms in band ends with its request state. After
+// that it cannot be approved on the web page, so the agent cannot ask again and
+// get the same message sent twice. An action for the web page keeps 24 hours.
+func TestInBandActionExpiresWithItsRequestState(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete))
+	ctx := env.ctx()
+	c := compose("bob@example.com")
+
+	_, inBand, err := env.svc.Send(ctx, a.ID, &c, nil, ConfirmInBand, nil)
+	require.NoError(t, err)
+	require.Equal(t, inBand.Pending.CreatedAt.Add(confirm.InBandLifetime), inBand.Pending.ExpiresAt)
+	_, trash, err := env.svc.Trash(ctx, a.ID, []mail.Ref{"m1"}, ConfirmInBand, nil)
+	require.NoError(t, err)
+	require.Equal(t, trash.Pending.CreatedAt.Add(confirm.InBandLifetime), trash.Pending.ExpiresAt)
+	web, _, err := env.svc.Send(ctx, a.ID, &c, nil, ConfirmFallback, nil)
+	require.NoError(t, err)
+
+	env.clock.Advance(confirm.InBandLifetime + time.Second)
+
+	require.ErrorIs(t, env.svc.ApprovePending(ctx, inBand.Pending.ID), confirm.ErrNotPending)
+	require.ErrorIs(t, env.svc.ApprovePending(ctx, trash.Pending.ID), confirm.ErrNotPending)
+	require.Empty(t, env.sender.sent())
+	require.Empty(t, env.backend.trashCalls())
+
+	require.NoError(t, env.svc.ApprovePending(ctx, web.SendID), "an action for the web page still waits")
+	require.Len(t, env.sender.sent(), 1)
 }

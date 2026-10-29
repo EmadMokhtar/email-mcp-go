@@ -83,12 +83,21 @@ const (
 	// storeTimeout is the time that a write gets when it must not be cancelled by
 	// the context of the caller. See detached.
 	storeTimeout = 30 * time.Second
-	// pendingLifetime is how long an action waits for the user.
-	pendingLifetime = 24 * time.Hour
-	// requestStateLifetime is how long a RequestState works.
-	requestStateLifetime = 10 * time.Minute
 	// maxBodyStart is the most characters of the body that a preview keeps.
 	maxBodyStart = 500
+)
+
+// The lifetimes of an action. The caller of Create chooses one by the way the
+// user answers.
+const (
+	// ApprovalLifetime is how long an action waits for the user on the web page
+	// (the approval link): 24 hours.
+	ApprovalLifetime = 24 * time.Hour
+	// InBandLifetime is how long a RequestState works: 10 minutes. An action that
+	// the user confirms in band waits as long as its state, and no longer. If it
+	// waited longer, it could still be approved on the web page after the agent
+	// had asked again for the same message, and the message would go twice.
+	InBandLifetime = 10 * time.Minute
 )
 
 var (
@@ -134,6 +143,9 @@ type Preview struct {
 	BodyStart string `json:"body_start"`
 	// Count is the number of messages the action affects.
 	Count int `json:"count"`
+	// Attachments are the file names of the attachments of a send, in the order
+	// of the message. They are part of what the user approves.
+	Attachments []string `json:"attachments,omitempty"`
 }
 
 // Pending is an action that needs the user's confirmation. It does not hold the
@@ -153,10 +165,13 @@ type Pending struct {
 	// State is the state now. A waiting action whose time has passed has the
 	// state "expired".
 	State State
-	// CreatedAt is kept as whole milliseconds. ExpiresAt is 24 hours later.
+	// CreatedAt is kept as whole milliseconds. ExpiresAt is the lifetime that
+	// Create got later.
 	CreatedAt, ExpiresAt time.Time
 	// ResultID says what the action made, for example the id of the sent
-	// message. It is empty until the server sets it with Transition.
+	// message, or a short code that the caller chose for the outcome (the
+	// service marks a send that the agent withdrew). It is empty until the
+	// server sets it with Transition.
 	ResultID string
 }
 
@@ -224,17 +239,25 @@ func NewManager(st PendingStore, v *secrets.Vault, s *signing.Signer, now func()
 // "pending". The payload and the preview are stored encrypted. Create keeps at
 // most 500 characters of the preview body.
 //
+// The action expires after lifetime: InBandLifetime for an action that the user
+// confirms in band, ApprovalLifetime for one that the user approves on the web
+// page. lifetime must be more than 0 and at most ApprovalLifetime.
+//
 // The account must belong to the tenant. The payload must not be empty.
-func (m *Manager) Create(ctx context.Context, tenant account.TenantID, acct account.AccountID, kind Kind, payload []byte, p Preview) (*Pending, error) {
+func (m *Manager) Create(ctx context.Context, tenant account.TenantID, acct account.AccountID, kind Kind, payload []byte, p Preview, lifetime time.Duration) (*Pending, error) {
 	if kind != KindSend && kind != KindTrash {
 		return nil, fmt.Errorf("confirm: unknown kind %q", kind)
 	}
 	if len(payload) == 0 {
 		return nil, errors.New("confirm: the payload is empty")
 	}
+	if lifetime <= 0 || lifetime > ApprovalLifetime {
+		return nil, fmt.Errorf("confirm: the lifetime of an action must be more than 0 and at most %s", ApprovalLifetime)
+	}
 
 	// Own the preview, so a later change by the caller does not change it.
 	p.To = slices.Clone(p.To)
+	p.Attachments = slices.Clone(p.Attachments)
 	p.BodyStart = firstChars(p.BodyStart, maxBodyStart)
 
 	id := strings.ToLower(rand.Text())
@@ -248,7 +271,7 @@ func (m *Manager) Create(ctx context.Context, tenant account.TenantID, acct acco
 		Preview:   p,
 		State:     StatePending,
 		CreatedAt: created,
-		ExpiresAt: created.Add(pendingLifetime),
+		ExpiresAt: created.Add(lifetime),
 	}
 
 	previewJSON, err := json.Marshal(p)
@@ -301,7 +324,7 @@ func (m *Manager) RequestState(p *Pending) (string, error) {
 		ID:     p.ID,
 		Hash:   hex.EncodeToString(p.Hash[:]),
 		Tenant: p.Tenant,
-	}, requestStateLifetime)
+	}, InBandLifetime)
 	if err != nil {
 		return "", fmt.Errorf("confirm: sign request state: %w", err)
 	}

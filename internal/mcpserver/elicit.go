@@ -54,6 +54,14 @@ const (
 	actionAccept = "accept"
 	// previewBodyChars is the most characters of the body in a preview.
 	previewBodyChars = 500
+	// previewSubjectChars is the most characters of the subject in a preview. A
+	// long subject wraps on the screen, and a wrapped line could look like a
+	// header of its own.
+	previewSubjectChars = 200
+	// previewNameChars is the most characters of one attachment name.
+	previewNameChars = 100
+	// previewNames is the most attachment names that a preview lists.
+	previewNames = 10
 )
 
 // errBadAnswer is the failure for a second call that has only one of the two
@@ -136,8 +144,10 @@ func accepted(answer mcp.InputResponse) bool {
 	return ok && yes
 }
 
-// confirmSchema is the form of a confirmation: one boolean field. Its default is
-// false, so a form that is sent without a value is a no.
+// confirmSchema is the form of a confirmation: one boolean field. The field is
+// not required and its default is false, so a form that is sent empty is a no
+// (the SDK applies the default for an older client; accepted treats a missing
+// field as a no for every client).
 func confirmSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{
 		Type: "object",
@@ -145,11 +155,10 @@ func confirmSchema() *jsonschema.Schema {
 			confirmField: {
 				Type:        "boolean",
 				Title:       "Confirm",
-				Description: "true to go ahead. Anything else does nothing.",
+				Description: "Tick to go ahead. Leaving it empty does nothing.",
 				Default:     json.RawMessage("false"),
 			},
 		},
-		Required: []string{confirmField},
 	}
 }
 
@@ -183,12 +192,17 @@ func linkRequest(message, link string) *mcp.CallToolResult {
 
 // sendPreview is the text of the form for a send. Every value comes from the
 // message, so each one is cleaned of characters that hide or reorder text. The
-// one-line values also lose their line breaks, so a subject cannot add a line
-// that looks like another recipient.
+// one-line values are put on one line with single spaces, so a subject cannot
+// add a line, or wrap into a line, that looks like another header. The subject
+// and each attachment name are cut. The body comes last, after a blank line and
+// a label, so its first line cannot pose as a header either.
 //
 //	Send this email from <from>?
 //	To: <to, comma-separated>
 //	Subject: <subject>
+//	Attachments: <n> (<name>, ... and <n> more) | Attachments: none
+//
+//	Body:
 //	<first 500 chars of body>
 func sendPreview(p confirm.Preview) string {
 	to := make([]string, 0, len(p.To))
@@ -196,26 +210,54 @@ func sendPreview(p confirm.Preview) string {
 		to = append(to, oneLine(addr))
 	}
 	body := firstChars(clean(p.BodyStart), previewBodyChars)
-	return fmt.Sprintf("Send this email from %s?\nTo: %s\nSubject: %s\n%s",
-		oneLine(p.From), strings.Join(to, ", "), oneLine(p.Subject), body)
+	return fmt.Sprintf("Send this email from %s?\nTo: %s\nSubject: %s\nAttachments: %s\n\nBody:\n%s",
+		oneLine(p.From), strings.Join(to, ", "), cut(oneLine(p.Subject), previewSubjectChars),
+		attachmentList(p.Attachments), body)
+}
+
+// attachmentList is the attachments part of a send preview: the number of
+// attachments and at most ten of their names, or "none".
+func attachmentList(names []string) string {
+	if len(names) == 0 {
+		return "none"
+	}
+	shown := make([]string, 0, min(len(names), previewNames))
+	for _, name := range names[:min(len(names), previewNames)] {
+		name = cut(oneLine(name), previewNameChars)
+		if name == "" {
+			name = "(no name)"
+		}
+		shown = append(shown, name)
+	}
+	list := strings.Join(shown, ", ")
+	if more := len(names) - len(shown); more > 0 {
+		list += fmt.Sprintf(" and %d more", more)
+	}
+	return fmt.Sprintf("%d (%s)", len(names), list)
 }
 
 // trashPreview is the text of the form for a move to Trash.
 func trashPreview(p confirm.Preview) string {
-	return fmt.Sprintf("Move %d messages in %s to Trash?", p.Count, oneLine(p.Account))
+	noun := "messages"
+	if p.Count == 1 {
+		noun = "message"
+	}
+	return fmt.Sprintf("Move %d %s in %s to Trash?", p.Count, noun, oneLine(p.Account))
 }
 
-// oneLine cleans s and puts it on one line: each line break, tab, line separator
-// and paragraph separator becomes a space, and the spaces at the ends go.
+// oneLine cleans s and puts it on one line: every run of white space (line
+// breaks, tabs, line and paragraph separators, no-break and other wide spaces
+// included) becomes one space, and the ends lose theirs.
 func oneLine(s string) string {
-	s = strings.Map(func(r rune) rune {
-		switch r {
-		case '\n', '\t', '\u2028', '\u2029':
-			return ' '
-		}
-		return r
-	}, clean(s))
-	return strings.TrimSpace(s)
+	return strings.Join(strings.Fields(clean(s)), " ")
+}
+
+// cut returns the first n characters of s, with "..." when it cut something.
+func cut(s string, n int) string {
+	if short := firstChars(s, n); len(short) < len(s) {
+		return short + "..."
+	}
+	return s
 }
 
 // firstChars returns the first n characters of s, or s if it is not longer.

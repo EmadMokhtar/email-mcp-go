@@ -111,7 +111,7 @@ func testPreview() Preview {
 // create makes a pending send in the fixture account.
 func (f *fixture) create(payload string) *Pending {
 	f.t.Helper()
-	p, err := f.mgr.Create(context.Background(), f.tenant, f.acct, KindSend, []byte(payload), testPreview())
+	p, err := f.mgr.Create(context.Background(), f.tenant, f.acct, KindSend, []byte(payload), testPreview(), ApprovalLifetime)
 	require.NoError(f.t, err)
 	return p
 }
@@ -188,7 +188,7 @@ func TestResumeHappyPath(t *testing.T) {
 	f := newFixture(t)
 	payload := []byte("the exact message the user saw")
 
-	created, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, payload, testPreview())
+	created, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, payload, testPreview(), ApprovalLifetime)
 	require.NoError(t, err)
 	require.Equal(t, StatePending, created.State)
 	require.Equal(t, f.tenant, created.Tenant)
@@ -801,7 +801,7 @@ func TestListPendingIsNewestFirstAndScopedToTheTenant(t *testing.T) {
 	require.NoError(t, f.mgr.Transition(ctx, f.tenant, finished.ID, StatePending, StateDone, ""))
 	f.clock.Set(testStart.Add(3 * time.Minute))
 	third := f.create("4")
-	foreign, err := f.mgr.Create(ctx, otherTenant, otherAcct, KindTrash, []byte("5"), Preview{Count: 3})
+	foreign, err := f.mgr.Create(ctx, otherTenant, otherAcct, KindTrash, []byte("5"), Preview{Count: 3}, ApprovalLifetime)
 	require.NoError(t, err)
 
 	got, err := f.mgr.ListPending(ctx, f.tenant)
@@ -832,13 +832,13 @@ func TestCreateRefusesBadInput(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
 
-	_, err := f.mgr.Create(ctx, f.tenant, f.acct, Kind("format_disk"), []byte("x"), testPreview())
+	_, err := f.mgr.Create(ctx, f.tenant, f.acct, Kind("format_disk"), []byte("x"), testPreview(), ApprovalLifetime)
 	require.Error(t, err)
-	_, err = f.mgr.Create(ctx, f.tenant, f.acct, KindSend, nil, testPreview())
+	_, err = f.mgr.Create(ctx, f.tenant, f.acct, KindSend, nil, testPreview(), ApprovalLifetime)
 	require.Error(t, err)
-	_, err = f.mgr.Create(ctx, f.tenant, "no-such-account", KindSend, []byte("x"), testPreview())
+	_, err = f.mgr.Create(ctx, f.tenant, "no-such-account", KindSend, []byte("x"), testPreview(), ApprovalLifetime)
 	require.Error(t, err)
-	_, err = f.mgr.Create(ctx, f.tenant, "a|b", KindSend, []byte("x"), testPreview())
+	_, err = f.mgr.Create(ctx, f.tenant, "a|b", KindSend, []byte("x"), testPreview(), ApprovalLifetime)
 	require.Error(t, err)
 
 	listed, err := f.mgr.ListPending(ctx, f.tenant)
@@ -853,7 +853,7 @@ func TestCreateKeepsAtMost500CharactersOfTheBody(t *testing.T) {
 	create := func(body string) *Pending {
 		p := testPreview()
 		p.BodyStart = body
-		got, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, []byte("x"), p)
+		got, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, []byte("x"), p, ApprovalLifetime)
 		require.NoError(t, err)
 		return got
 	}
@@ -1150,7 +1150,7 @@ func TestPruneDeletesOnlyOldEndedActions(t *testing.T) {
 	oldWaiting := f.create("old waiting") // nobody answers: it is past its time later
 	oldApproved := f.create("old approved")
 	f.approve(oldApproved, "old approved")
-	otherOld, err := f.mgr.Create(ctx, other, otherAcct, KindSend, []byte("other tenant"), testPreview())
+	otherOld, err := f.mgr.Create(ctx, other, otherAcct, KindSend, []byte("other tenant"), testPreview(), ApprovalLifetime)
 	require.NoError(t, err)
 	require.NoError(t, f.mgr.Transition(ctx, other, otherOld.ID, StatePending, StateRejected, ""))
 
@@ -1500,4 +1500,62 @@ func TestAnExpiryThatCannotBeRecordedStillGivesErrNotPending(t *testing.T) {
 			require.Equal(t, "pending", f.storedState(p.ID), "nothing was recorded")
 		})
 	}
+}
+
+// An action that the user confirms in band lives as long as its request state.
+// After that it cannot be approved on the web page either, so a second action
+// for the same message cannot be approved next to it. An action for the web page
+// keeps its 24 hours.
+func TestCreateLifetime(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	require.Equal(t, 24*time.Hour, ApprovalLifetime)
+	require.Equal(t, 10*time.Minute, InBandLifetime)
+
+	web, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, []byte("web"), testPreview(), ApprovalLifetime)
+	require.NoError(t, err)
+	require.Equal(t, web.CreatedAt.Add(24*time.Hour), web.ExpiresAt)
+	inBand, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, []byte("in band"), testPreview(), InBandLifetime)
+	require.NoError(t, err)
+	require.Equal(t, inBand.CreatedAt.Add(10*time.Minute), inBand.ExpiresAt)
+	state := f.state(inBand)
+
+	f.clock.Set(testStart.Add(10*time.Minute + time.Millisecond))
+
+	got, _, err := f.mgr.Get(ctx, f.tenant, inBand.ID)
+	require.NoError(t, err)
+	require.Equal(t, StateExpired, got.State)
+	require.ErrorIs(t, f.mgr.Transition(ctx, f.tenant, inBand.ID, StatePending, StateApproved, ""), ErrNotPending,
+		"the approvals page cannot approve it any more")
+	_, err = f.mgr.Claim(ctx, f.tenant, state, []byte("in band"))
+	require.Error(t, err)
+
+	got, _, err = f.mgr.Get(ctx, f.tenant, web.ID)
+	require.NoError(t, err)
+	require.Equal(t, StatePending, got.State, "an action for the web page still waits")
+	listed, err := f.mgr.ListPending(ctx, f.tenant)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	require.Equal(t, web.ID, listed[0].ID)
+
+	for _, bad := range []time.Duration{0, -time.Minute, ApprovalLifetime + time.Millisecond} {
+		_, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, []byte("x"), testPreview(), bad)
+		require.Error(t, err, "lifetime %s", bad)
+	}
+}
+
+func TestPreviewKeepsTheAttachmentNames(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	p := testPreview()
+	p.Attachments = []string{"figures.xlsx", "photo.png"}
+
+	created, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, []byte("x"), p, ApprovalLifetime)
+	require.NoError(t, err)
+	p.Attachments[0] = "changed.exe"
+
+	require.Equal(t, []string{"figures.xlsx", "photo.png"}, created.Preview.Attachments, "Create keeps its own copy")
+	got, _, err := f.mgr.Get(ctx, f.tenant, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, []string{"figures.xlsx", "photo.png"}, got.Preview.Attachments, "the names are stored with the preview")
 }

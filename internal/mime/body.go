@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	gomail "github.com/emersion/go-message/mail"
 
@@ -156,7 +157,7 @@ func collectAttachments(c mail.Compose, bc BuildContext) ([]attachment, error) {
 	var in []mail.OutgoingAttachment
 	if c.ForwardOf != nil && c.IncludeOriginalAttachments {
 		for _, a := range bc.OriginalAttachments {
-			in = append(in, mail.OutgoingAttachment{Filename: cleanOriginal(a.Filename), ContentType: a.ContentType, Data: a.Data})
+			in = append(in, mail.OutgoingAttachment{Filename: cleanOriginalName(a.Filename), ContentType: a.ContentType, Data: a.Data})
 		}
 	}
 	in = append(in, c.Attachments...)
@@ -180,8 +181,33 @@ func collectAttachments(c mail.Compose, bc BuildContext) ([]attachment, error) {
 	return out, nil
 }
 
+// hidesText reports whether r is a character that hides or reorders text in a
+// file name: a format character (Cf) or a line or paragraph separator (Zl, Zp).
+func hidesText(r rune) bool {
+	return unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+}
+
+// cleanOriginalName cleans the file name of an attachment of the original
+// message, which a third party wrote. It removes the format characters, turns a
+// line or paragraph separator into a space, and then does what cleanOriginal
+// does. The result passes the checks of newAttachment.
+func cleanOriginalName(s string) string {
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case unicode.In(r, unicode.Zl, unicode.Zp):
+			return ' '
+		case hidesText(r):
+			return -1
+		}
+		return r
+	}, s)
+	return cleanOriginal(s)
+}
+
 // newAttachment checks the file name and the content type. An empty content
-// type is found from the data. An empty file name becomes "attachment".
+// type is found from the data. An empty file name becomes "attachment". A file
+// name with a character that hides or reorders text is refused with
+// ErrInvalidFilename.
 //
 // The content type must be one type with a slash and parameters that are
 // valid, it must not be multipart (the writer would treat the data as parts),
@@ -190,6 +216,9 @@ func collectAttachments(c mail.Compose, bc BuildContext) ([]attachment, error) {
 func newAttachment(a mail.OutgoingAttachment) (attachment, error) {
 	if err := checkValue("attachment file name", a.Filename); err != nil {
 		return attachment{}, err
+	}
+	if strings.IndexFunc(a.Filename, hidesText) >= 0 {
+		return attachment{}, ErrInvalidFilename
 	}
 	filename := a.Filename
 	if filename == "" {

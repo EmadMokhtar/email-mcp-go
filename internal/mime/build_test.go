@@ -1229,3 +1229,43 @@ func TestForwardOfOriginalWithHTMLThatIsTooComplexHasNoTextOfIt(t *testing.T) {
 	require.Contains(t, text, "Subject: Plans")
 	require.True(t, strings.HasSuffix(strings.TrimSpace(text), "To: me@x, bob@x"), "no text of the original: %q", text)
 }
+
+// A name that the caller gives must not hide or reorder text: a name such as
+// "invoice" U+202E "gpj.exe" shows as invoiceexe.jpg in many programs.
+func TestAttachmentNameWithHiddenCharactersRefused(t *testing.T) {
+	for _, name := range []string{
+		"invoice\u202egpj.exe", // right-to-left override (Cf)
+		"a\u200bb.pdf",         // zero width space (Cf)
+		"a\u00adb.pdf",         // soft hyphen (Cf)
+		"\ufeffplan.pdf",       // byte order mark (Cf)
+		"a\u2028b.pdf",         // line separator (Zl)
+		"a\u2029b.pdf",         // paragraph separator (Zp)
+	} {
+		_, err := Build(mail.Compose{
+			To:          []string{"dave@x"},
+			Attachments: []mail.OutgoingAttachment{{Filename: name, ContentType: "application/pdf", Data: []byte("x")}},
+		}, newContext())
+		require.ErrorIs(t, err, ErrInvalidFilename, "name %q", name)
+	}
+
+	raw := mustBuild(t, mail.Compose{
+		To:          []string{"dave@x"},
+		Attachments: []mail.OutgoingAttachment{{Filename: "Bericht für Müller 报告.pdf", ContentType: "application/pdf", Data: []byte("x")}},
+	}, newContext())
+	require.Equal(t, []string{"Bericht für Müller 报告.pdf"}, attachmentNames(parsedOf(t, raw.Data)))
+}
+
+// The name of an original attachment comes from a third party. It is cleaned,
+// not refused, so a forward still works.
+func TestForwardRemovesHiddenCharactersFromOriginalNames(t *testing.T) {
+	bc := newContext()
+	bc.Original = originalMessage()
+	bc.OriginalAttachments = []mail.Attachment{{
+		AttachmentInfo: mail.AttachmentInfo{Filename: "invoice\u202egpj.exe\u2028x", ContentType: "application/octet-stream"},
+		Data:           []byte("MZ"),
+	}}
+
+	raw := mustBuild(t, mail.Compose{ForwardOf: forwardOf(), To: []string{"dave@x"}, IncludeOriginalAttachments: true}, bc)
+
+	require.Equal(t, []string{"invoicegpj.exe x"}, attachmentNames(parsedOf(t, raw.Data)))
+}
