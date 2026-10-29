@@ -217,6 +217,19 @@ func answerCall(t *testing.T, cs *mcp.ClientSession, tool string, args map[strin
 	return callOn(t, cs, &mcp.CallToolParams{Name: tool, Arguments: args, InputResponses: answers, RequestState: state})
 }
 
+// rootsAnswer is an answer that is not an elicitation result: on the wire it is
+// the answer to a roots request, {"roots":[]}. The SDK type for it,
+// mcp.ListRootsResult, is deprecated (the roots feature is deprecated as of
+// protocol 2026-07-28), so the test writes the JSON itself. The server still
+// decodes it as a roots answer, and the tool must take it as a no.
+//
+// mcp.InputResponse has an unexported method. The embedded *mcp.ElicitResult
+// gives that method and nothing else: it stays nil, and MarshalJSON below
+// decides what is sent.
+type rootsAnswer struct{ *mcp.ElicitResult }
+
+func (rootsAnswer) MarshalJSON() ([]byte, error) { return []byte(`{"roots":[]}`), nil }
+
 // accept is the answer of a user who confirmed.
 func accept() mcp.InputResponseMap {
 	return mcp.InputResponseMap{"confirm": &mcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}
@@ -452,7 +465,7 @@ func TestConfirmationGate(t *testing.T) {
 		"cancel":                     &mcp.ElicitResult{Action: "cancel", Content: map[string]any{"confirm": true}},
 		"decline":                    &mcp.ElicitResult{Action: "decline", Content: map[string]any{"confirm": true}},
 		"accept in capitals":         &mcp.ElicitResult{Action: "ACCEPT", Content: map[string]any{"confirm": true}},
-		"not an elicitation result":  &mcp.ListRootsResult{Roots: []*mcp.Root{}},
+		"not an elicitation result":  rootsAnswer{},
 	}
 	for name, answer := range noes {
 		t.Run(name, func(t *testing.T) {

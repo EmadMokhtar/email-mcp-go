@@ -6,8 +6,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -318,15 +318,20 @@ func TestKnownRecipientsStoredHashed(t *testing.T) {
 	plain := sha256.Sum256([]byte("new@x"))
 	require.NotEqual(t, plain[:], hash, "a plain hash can be checked against a list of addresses")
 
-	// No file of the database holds the address or its plain hash.
-	files, err := filepath.Glob(filepath.Join(env.f.dir, "email-mcp.db*"))
+	// No file of the database holds the address or its plain hash. The files
+	// are read through an os.Root of the data directory, so no name can point
+	// to a file outside it.
+	dir, err := os.OpenRoot(env.f.dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = dir.Close() })
+	files, err := fs.Glob(dir.FS(), "email-mcp.db*")
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(files), 2, "the database and its WAL file")
 	for _, name := range files {
-		data, err := os.ReadFile(name)
+		data, err := dir.ReadFile(name)
 		require.NoError(t, err)
-		require.False(t, bytes.Contains(bytes.ToLower(data), []byte("new@x")), "%s holds the address", filepath.Base(name))
-		require.False(t, bytes.Contains(data, plain[:]), "%s holds the plain hash", filepath.Base(name))
+		require.False(t, bytes.Contains(bytes.ToLower(data), []byte("new@x")), "%s holds the address", name)
+		require.False(t, bytes.Contains(data, plain[:]), "%s holds the plain hash", name)
 	}
 }
 
