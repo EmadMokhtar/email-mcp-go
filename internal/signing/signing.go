@@ -39,6 +39,9 @@ const (
 	// PurposeRequestState is the confirmation state that proves a user
 	// approved one exact email.
 	PurposeRequestState = "request_state"
+	// PurposeCSRF is the token in a form of the web interface. It holds the
+	// SHA-256 of the session id, so it works only with that session.
+	PurposeCSRF = "csrf"
 )
 
 const (

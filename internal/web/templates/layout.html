@@ -1,0 +1,29 @@
+{{/*
+  The frame of every page. A page file defines "content", and may define
+  "title". Each page runs with a view: .CSRFToken is the form token of the
+  session, and .Data is the data of the page.
+
+  The pages have no script: the Content-Security-Policy runs none. Every form
+  posts to the same origin and has the form token as its first field:
+
+    <form method="post" action="...">
+      {{template "csrf_field" $.CSRFToken}}
+      ...
+    </form>
+*/}}
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{block "title" .}}email-mcp{{end}}</title>
+</head>
+<body>
+<main>
+{{block "content" .}}{{end}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "csrf_field"}}<input type="hidden" name="csrf_token" value="{{.}}">{{end}}

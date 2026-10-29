@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -552,6 +553,30 @@ func TestHTTPBadHostAnswerIsFixed(t *testing.T) {
 	status, body := h.post(listBody, both(withToken(h.token("email:read")), func(r *http.Request) { r.Host = "evil.test" }))
 	require.Equal(t, http.StatusForbidden, status)
 	require.Equal(t, "Forbidden\n", body)
+}
+
+// LoopbackPort gives the port of the connection only when the connection came
+// in on a loopback address.
+func TestLoopbackPort(t *testing.T) {
+	withLocal := func(addr net.Addr) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+		return r.WithContext(context.WithValue(r.Context(), http.LocalAddrContextKey, addr))
+	}
+	tcp := func(s string) net.Addr { return net.TCPAddrFromAddrPort(netip.MustParseAddrPort(s)) }
+
+	for addr, want := range map[string]string{"127.0.0.1:8080": "8080", "127.9.9.9:1": "1", "[::1]:65535": "65535"} {
+		port, ok := LoopbackPort(withLocal(tcp(addr)))
+		require.True(t, ok, addr)
+		require.Equal(t, want, port, addr)
+	}
+	for _, addr := range []string{"10.0.0.1:80", "0.0.0.0:80", "[::]:80", "192.168.1.2:8080"} {
+		_, ok := LoopbackPort(withLocal(tcp(addr)))
+		require.False(t, ok, addr)
+	}
+	_, ok := LoopbackPort(httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil))
+	require.False(t, ok, "a request that did not come through an http.Server has no port")
+	_, ok = LoopbackPort(withLocal(nil))
+	require.False(t, ok)
 }
 
 func mustAtoi(t *testing.T, s string) int {

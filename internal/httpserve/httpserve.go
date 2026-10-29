@@ -191,21 +191,37 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // is compared as it is, so "LOCALHOST", "localhost.", "[localhost]",
 // "[127.0.0.1]", a zone and a port with a leading zero are all refused.
 func hostAllowed(r *http.Request) bool {
-	local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
-	if !ok || local == nil {
+	port, ok := LoopbackPort(r)
+	if !ok {
 		return false
 	}
-	localAddr, err := netip.ParseAddrPort(local.String())
-	if err != nil || !isLoopback(localAddr.Addr()) {
-		return false
-	}
-	port := strconv.Itoa(int(localAddr.Port()))
 	switch r.Host {
 	case "localhost:" + port, "127.0.0.1:" + port, "[::1]:" + port:
 		return true
 	default:
 		return false
 	}
+}
+
+// LoopbackPort returns the port of the connection that r came in on, as decimal
+// text such as "8080". It reads the local address that net/http puts in the
+// request context (http.LocalAddrContextKey). It returns false when the request
+// did not come through an http.Server, or when the connection did not come in
+// on a loopback address (see isLoopback).
+//
+// A Host check compares the Host header with this port, so it needs no port
+// setting and refuses a request that came in on any other address. The web
+// package uses it for its own Host check.
+func LoopbackPort(r *http.Request) (string, bool) {
+	local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok || local == nil {
+		return "", false
+	}
+	localAddr, err := netip.ParseAddrPort(local.String())
+	if err != nil || !isLoopback(localAddr.Addr()) {
+		return "", false
+	}
+	return strconv.Itoa(int(localAddr.Port())), true
 }
 
 // originAllowed reports whether the request has no Origin header, or exactly one
