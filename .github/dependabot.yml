@@ -1,0 +1,69 @@
+# Dependabot opens pull requests that update the dependencies (spec section
+# 16.1). Once a week, with one grouped pull request per ecosystem, so there are
+# few pull requests to review. A new version must be 7 days old before
+# Dependabot offers it (cooldown), so a bad release has time to be found and
+# pulled. Security updates do not wait: the cooldown applies only to version
+# updates.
+#
+# Not covered here, so update them by hand:
+#   - the moby/buildkit builder image in .github/workflows/release.yml
+#     (driver-opts);
+#   - the docker/buildkit-syft-scanner image in .goreleaser.yaml;
+#   - the tool versions that "go run" uses (staticcheck, govulncheck,
+#     GoReleaser) in the Makefile and the workflows.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      go-modules:
+        patterns:
+          - "*"
+    ignore:
+      # The plan pins go-imap/v2 to exactly v2.0.0-beta.8 (see the global
+      # constraints). Change it only on purpose, never through Dependabot.
+      - dependency-name: github.com/emersion/go-imap/v2
+
+  # The actions in .github/workflows, pinned by commit SHA. Dependabot updates
+  # the SHA and the tag in the comment after it.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # The base images of the Dockerfile of the release, and of the Postfix image
+  # of the interop test.
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /test/interop/postfix
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      docker-images:
+        patterns:
+          - "*"
+
+  # The Dovecot image of the interop test (test/interop/compose.yaml).
+  - package-ecosystem: docker-compose
+    directory: /test/interop
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      compose-images:
+        patterns:
+          - "*"
