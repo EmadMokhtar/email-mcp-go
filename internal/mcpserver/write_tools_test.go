@@ -223,12 +223,32 @@ func answerCall(t *testing.T, cs *mcp.ClientSession, tool string, args map[strin
 // protocol 2026-07-28), so the test writes the JSON itself. The server still
 // decodes it as a roots answer, and the tool must take it as a no.
 //
-// mcp.InputResponse has an unexported method. The embedded *mcp.ElicitResult
-// gives that method and nothing else: it stays nil, and MarshalJSON below
-// decides what is sent.
+// mcp.InputResponse has an unexported method, so the type embeds an
+// *mcp.ElicitResult to get it. Embedding also promotes the exported fields and
+// methods of ElicitResult, so newRootsAnswer sets a non-nil, empty value: a
+// call of a promoted method cannot panic. The MarshalJSON method of rootsAnswer
+// is at depth 0, so it decides the bytes on the wire, not ElicitResult.
+// TestRootsAnswerWireForm checks this.
 type rootsAnswer struct{ *mcp.ElicitResult }
 
+func newRootsAnswer() rootsAnswer { return rootsAnswer{ElicitResult: &mcp.ElicitResult{}} }
+
 func (rootsAnswer) MarshalJSON() ([]byte, error) { return []byte(`{"roots":[]}`), nil }
+
+// The subtest "not an elicitation result" of TestConfirmationGate tests
+// something only when rootsAnswer is sent exactly as {"roots":[]} and the SDK
+// decodes it as an answer that is not an elicitation result.
+func TestRootsAnswerWireForm(t *testing.T) {
+	wire, err := json.Marshal(mcp.InputResponseMap{"confirm": newRootsAnswer()})
+	require.NoError(t, err)
+	require.Equal(t, `{"confirm":{"roots":[]}}`, string(wire))
+
+	var back mcp.InputResponseMap
+	require.NoError(t, json.Unmarshal(wire, &back))
+	require.NotNil(t, back["confirm"])
+	_, isElicit := back["confirm"].(*mcp.ElicitResult)
+	require.False(t, isElicit, "the SDK decoded the roots answer as an elicitation result")
+}
 
 // accept is the answer of a user who confirmed.
 func accept() mcp.InputResponseMap {
@@ -465,7 +485,7 @@ func TestConfirmationGate(t *testing.T) {
 		"cancel":                     &mcp.ElicitResult{Action: "cancel", Content: map[string]any{"confirm": true}},
 		"decline":                    &mcp.ElicitResult{Action: "decline", Content: map[string]any{"confirm": true}},
 		"accept in capitals":         &mcp.ElicitResult{Action: "ACCEPT", Content: map[string]any{"confirm": true}},
-		"not an elicitation result":  rootsAnswer{},
+		"not an elicitation result":  newRootsAnswer(),
 	}
 	for name, answer := range noes {
 		t.Run(name, func(t *testing.T) {
