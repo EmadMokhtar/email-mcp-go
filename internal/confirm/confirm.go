@@ -39,11 +39,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
+	"github.com/EmadMokhtar/email-mcp-go/internal/errtype"
 	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
@@ -251,6 +253,11 @@ type Manager struct {
 	vault  *secrets.Vault
 	signer *signing.Signer
 	now    func() time.Time
+
+	// Logger gets a line with a fixed code when the expiry of an action could
+	// not be written. The answer to the caller does not change then. A nil
+	// Logger logs nothing. Set it before the first call.
+	Logger *slog.Logger
 }
 
 // NewManager returns a Manager. The vault encrypts the payloads and the
@@ -433,11 +440,13 @@ func (m *Manager) Claim(ctx context.Context, tenant account.TenantID, state stri
 		if errors.Is(err, ErrNotPending) && row != nil && State(row.State) == StatePending {
 			// The action waits in the store, but its time has passed. Record the
 			// expiry and delete the secrets. The claim has failed in any case, so
-			// an error here is not worth another answer. The next attempt, or
-			// Prune, does it again.
+			// an error here is not worth another answer, only a log line. The
+			// next attempt, or Prune, does it again.
 			wctx, cancel := detached(ctx)
 			defer cancel()
-			_ = m.st.ExpirePending(wctx, tenant, row.ID, now)
+			if expireErr := m.st.ExpirePending(wctx, tenant, row.ID, now); expireErr != nil {
+				m.logExpiryFailure(expireErr)
+			}
 		}
 		return nil, err
 	}
@@ -457,6 +466,7 @@ func (m *Manager) Claim(ctx context.Context, tenant account.TenantID, state stri
 	defer cancel()
 	err = m.st.ClaimPending(wctx, tenant, row.ID, sum[:], now)
 	if errors.Is(err, store.ErrNotFound) {
+		m.logJoinedExpiryFailure(err)
 		return nil, ErrNotPending
 	}
 	if err != nil {
@@ -645,12 +655,36 @@ func (m *Manager) Transition(ctx context.Context, tenant account.TenantID, id st
 	defer cancel()
 	err := m.st.TransitionPending(wctx, tenant, id, string(from), string(to), resultID, m.now())
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrInvalidID) {
+		m.logJoinedExpiryFailure(err)
 		return ErrNotPending
 	}
 	if err != nil {
 		return fmt.Errorf("confirm: change state: %w", err)
 	}
 	return nil
+}
+
+// logJoinedExpiryFailure logs the failed write of an expiry that the store
+// joined to store.ErrNotFound. When a compare-and-set of TransitionPending or
+// ClaimPending changes nothing, the store records the expiry of the action. If
+// that write fails, it returns the error of the write joined to ErrNotFound.
+// Otherwise it returns store.ErrNotFound itself, which carries nothing to log.
+func (m *Manager) logJoinedExpiryFailure(err error) {
+	// The bare sentinel means that nothing else is joined to it.
+	if err == store.ErrNotFound || errors.Is(err, store.ErrInvalidID) {
+		return
+	}
+	m.logExpiryFailure(err)
+}
+
+// logExpiryFailure logs that the expiry of an action could not be written. The
+// line has a fixed code and the Go types of the error, never its text.
+func (m *Manager) logExpiryFailure(err error) {
+	if m.Logger == nil {
+		return
+	}
+	m.Logger.Error("confirm: the expiry of a pending action was not recorded",
+		"code", "pending_expire_failed", "error_types", errtype.Chain(err))
 }
 
 // ListPending returns the actions of the tenant that wait for the user, newest

@@ -9,6 +9,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1677,4 +1679,58 @@ func TestClaimRefusesAnApprovalAction(t *testing.T) {
 	inBand := f.create("in the chat")
 	_, err = f.mgr.Claim(ctx, f.tenant, f.state(inBand), []byte("in the chat"))
 	require.NoError(t, err, "an in-band action is claimed as before")
+}
+
+// errExpiryWrite is the error of a write of an expiry that failed. Its text
+// must never reach the log.
+var errExpiryWrite = errors.New("disk full at /private/secret/path")
+
+// expiryFailStore is a store whose writes of an expiry fail. The real
+// TransitionPending and ClaimPending join such a failure to store.ErrNotFound
+// (see store.requireOneRowOrExpire). This store does the same.
+type expiryFailStore struct {
+	PendingStore
+}
+
+func (s expiryFailStore) ExpirePending(context.Context, account.TenantID, string, time.Time) error {
+	return errExpiryWrite
+}
+
+func (s expiryFailStore) TransitionPending(ctx context.Context, tenant account.TenantID, id, from, to, resultID string, now time.Time) error {
+	err := s.PendingStore.TransitionPending(ctx, tenant, id, from, to, resultID, now)
+	if errors.Is(err, store.ErrNotFound) {
+		return errors.Join(store.ErrNotFound, fmt.Errorf("store: transition pending action: %w", errExpiryWrite))
+	}
+	return err
+}
+
+// The answer to the caller stays ErrNotPending when the expiry of an action
+// cannot be written. But the failed write is not silent: it is logged with a
+// fixed code and the Go types of the error, never its text.
+func TestAFailedWriteOfAnExpiryIsLogged(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	logs := &bytes.Buffer{}
+	m := NewManager(expiryFailStore{PendingStore: f.store}, f.vault, signing.New(f.key), f.clock.Now)
+	m.Logger = slog.New(slog.NewTextHandler(logs, nil))
+	payload := []byte("payload")
+	// The action lives one minute and its state ten, so a claim after two
+	// minutes finds an action that waits but has expired.
+	p, err := m.createWithLifetime(ctx, f.tenant, f.acct, KindSend, ModeInBand, payload, testPreview(), time.Minute)
+	require.NoError(t, err)
+	state, err := m.RequestState(p)
+	require.NoError(t, err)
+	f.clock.Set(testStart.Add(2 * time.Minute))
+
+	_, err = m.Claim(ctx, f.tenant, state, payload)
+	require.ErrorIs(t, err, ErrNotPending)
+	require.Equal(t, 1, strings.Count(logs.String(), "code=pending_expire_failed"), "the claim logs it")
+
+	err = m.Transition(ctx, f.tenant, p.ID, StatePending, StateRejected, "")
+	require.ErrorIs(t, err, ErrNotPending)
+	require.Equal(t, 2, strings.Count(logs.String(), "code=pending_expire_failed"), "the transition logs it")
+
+	require.Contains(t, logs.String(), "error_types=")
+	require.NotContains(t, logs.String(), "disk full", "the text of the error is never logged")
+	require.NotContains(t, logs.String(), "Zebra")
 }

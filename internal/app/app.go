@@ -316,6 +316,7 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 	// A nil cfg.Now means time.Now in each part.
 	limiter := &policy.Limiter{Store: st, Now: cfg.Now}
 	confirmMgr := confirm.NewManager(st, vault, signer, cfg.Now)
+	confirmMgr.Logger = log
 	backends := opts.backends
 	if backends == nil {
 		backends = service.NewBackendFactory(st, vault, signer, cfg.Local, log)
