@@ -136,6 +136,11 @@ func TestPlainOnThisComputer(t *testing.T) {
 	require.False(t, PlainOnThisComputer(remote), "plain to another host is refused, not consented to")
 }
 
+func TestCleanHost(t *testing.T) {
+	require.Equal(t, "imap.example.com", CleanHost("  IMAP.Example.COM\t"))
+	require.Equal(t, "", CleanHost("   "))
+}
+
 func TestGroupFingerprint(t *testing.T) {
 	require.Equal(t, "AB:CD:EF", GroupFingerprint("abcdef"))
 	require.Empty(t, GroupFingerprint(""))

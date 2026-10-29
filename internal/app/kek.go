@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -187,4 +188,142 @@ func lockDir(ctx context.Context, dir string) (unlock func(), err error) {
 		case <-time.After(lockPoll):
 		}
 	}
+}
+
+// beforeRewrap is a hook for tests. RotateKEK calls it when it holds the locks
+// and has the new master key, just before it wraps the stored keys again.
+var beforeRewrap = func() {}
+
+// Rotation describes a change of the master key by RotateKEK.
+type Rotation struct {
+	// From and To are the sources of the old and the new master key, such as
+	// "keychain" or "file:/keys/new.key".
+	From, To string
+	// MadeKeyFile is true when RotateKEK made the key file of To. It can be true
+	// also when the rotation failed: the new key file then holds no stored key.
+	MadeKeyFile bool
+}
+
+// RotateKEK changes the master key of the data directory to the key of source
+// ("keychain" or "file:<absolute path>"). It wraps every stored key again with
+// the new key (secrets.Vault.RewrapAll). The sealed values do not change. From
+// then on the App uses the new key.
+//
+// It is for a command that does not serve: call it before Run, or without Run.
+// Every other program that uses the data directory must be stopped first, and
+// started again afterwards with the new source (see secrets.Vault.RewrapAll).
+//
+// In this order it:
+//  1. refuses a source that is not valid, and the source that the App uses;
+//  2. takes the lock of the old source and the lock of the new one (see
+//     kekLockDir), in a fixed order, and holds them to the end. Both locks are
+//     the lock of the data directory for two key files. A program that starts
+//     now waits, so it cannot make or use a key in the middle;
+//  3. finds or makes the new key, so it is stored durably before any stored key
+//     depends on it. A key file that exists is used as it is; a missing one is
+//     made with mode 0600. The keychain gives its key, or makes one when it has
+//     none;
+//  4. wraps every stored key again, in one database transaction.
+//
+// It is all or nothing. On any error, every stored key is still wrapped by the
+// old master key, and the App keeps using it. The old key file, or the old
+// keychain entry, is never deleted or changed: the user deletes it after
+// checking that the new key works.
+func (a *App) RotateKEK(ctx context.Context, source string) (Rotation, error) {
+	a.kekMu.Lock()
+	defer a.kekMu.Unlock()
+	rot := Rotation{From: a.kekSource, To: source}
+
+	if err := checkKEKSource(source); err != nil {
+		return rot, err
+	}
+	if source == a.kekSource {
+		return rot, fmt.Errorf("app: the data directory already uses the master key %s", source)
+	}
+	oldLock, err := kekLockDir(a.kekSource, a.dataDir)
+	if err != nil {
+		return rot, err
+	}
+	newLock, err := kekLockDir(source, a.dataDir)
+	if err != nil {
+		return rot, err
+	}
+	unlock, err := lockDirs(ctx, oldLock, newLock)
+	if err != nil {
+		return rot, err
+	}
+	defer unlock()
+
+	newKEK, made, err := openNewKEK(source)
+	rot.MadeKeyFile = made
+	if err != nil {
+		return rot, err
+	}
+	beforeRewrap()
+	if err := a.vault.RewrapAll(ctx, newKEK); err != nil {
+		return rot, fmt.Errorf("app: wrap the stored keys with the new master key: %w", err)
+	}
+	a.kekSource = source
+	a.log.Info("app: changed the master key")
+	return rot, nil
+}
+
+// openNewKEK finds the master key of source for a rotation, or makes it. made
+// is true when it made a key file. The caller holds the lock of source.
+func openNewKEK(source string) (kek secrets.KEK, made bool, err error) {
+	if source == kekKeychain {
+		kek, err := secrets.NewKeychainKEK()
+		return kek, false, err
+	}
+	path := strings.TrimPrefix(source, kekFilePrefix)
+	if _, statErr := os.Lstat(path); errors.Is(statErr, fs.ErrNotExist) {
+		if err := secrets.GenerateKeyFile(path); err != nil {
+			return nil, false, fmt.Errorf("app: make the new master key file: %w", err)
+		}
+		made = true
+	}
+	kek, err = secrets.NewFileKEK(path)
+	return kek, made, err
+}
+
+// lockDirs takes the locks of the directories, in the order of their names, so
+// two programs that take the same two locks cannot wait for each other. A
+// directory that is the same as one before it is locked only once: two locks of
+// one file in one program would wait for each other. It returns the function
+// that releases the locks.
+func lockDirs(ctx context.Context, dirs ...string) (unlock func(), err error) {
+	var unique []string
+	for _, dir := range dirs {
+		dir = filepath.Clean(dir)
+		if !slices.ContainsFunc(unique, func(d string) bool { return sameDir(d, dir) }) {
+			unique = append(unique, dir)
+		}
+	}
+	slices.Sort(unique)
+	var unlocks []func()
+	release := func() {
+		for i := len(unlocks) - 1; i >= 0; i-- {
+			unlocks[i]()
+		}
+	}
+	for _, dir := range unique {
+		u, err := lockDir(ctx, dir)
+		if err != nil {
+			release()
+			return nil, err
+		}
+		unlocks = append(unlocks, u)
+	}
+	return release, nil
+}
+
+// sameDir reports whether a and b name the same directory, also through
+// another spelling or a symbolic link.
+func sameDir(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ia, errA := os.Stat(a)
+	ib, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(ia, ib)
 }

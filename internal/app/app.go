@@ -132,6 +132,14 @@ func (c Config) resolve() (Config, error) {
 	return c, nil
 }
 
+// Resolve returns the config with the empty fields filled as Open fills them:
+// from the environment, then from the defaults. It does not check the master
+// key source, and it opens and makes nothing. The doctor command uses it to find
+// the data directory before it opens anything.
+func (c Config) Resolve() (Config, error) {
+	return c.resolve()
+}
+
 // defaultDataDir returns the platform data directory of the program.
 func defaultDataDir() (string, error) {
 	switch runtime.GOOS {
@@ -178,7 +186,9 @@ type App struct {
 	// Tokens makes and checks the access tokens of local HTTP.
 	Tokens *tokens.Manager
 
-	log      *slog.Logger
+	log *slog.Logger
+	// dataDir is the data directory. RotateKEK takes its lock.
+	dataDir  string
 	store    *store.Store
 	vault    *secrets.Vault
 	confirm  *confirm.Manager
@@ -189,6 +199,10 @@ type App struct {
 	// The intervals of the background work. Tests make them shorter before Run.
 	jobEvery   time.Duration
 	sweepEvery time.Duration
+
+	// kekMu guards kekSource, which RotateKEK changes.
+	kekMu     sync.Mutex
+	kekSource string
 
 	// calls counts the tool calls that run, so Close can wait for them.
 	calls inflight.Tracker
@@ -320,6 +334,8 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 		Web:        webServer,
 		Tokens:     tokenMgr,
 		log:        log,
+		dataDir:    cfg.DataDir,
+		kekSource:  cfg.KEKSource,
 		store:      st,
 		vault:      vault,
 		confirm:    confirmMgr,
@@ -334,6 +350,14 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 // Logger returns the logger of the App. It writes to Config.LogOutput.
 func (a *App) Logger() *slog.Logger {
 	return a.log
+}
+
+// KEKSource returns the source of the master key that the App uses, such as
+// "keychain" or "file:/keys/master.key". After a RotateKEK it is the new one.
+func (a *App) KEKSource() string {
+	a.kekMu.Lock()
+	defer a.kekMu.Unlock()
+	return a.kekSource
 }
 
 // MCPServer returns an MCP server with the tools of the program. An empty
@@ -554,12 +578,26 @@ func (a *App) BeginStop() {
 // the deadline StopTimeout from the start of the stop. A second call does
 // nothing and returns the result of the first.
 func (a *App) Close(ctx context.Context) error {
-	a.closeOnce.Do(func() { a.closeErr = a.close(ctx) })
+	a.closeOnce.Do(func() { a.closeErr = a.close(ctx, true) })
 	return a.closeErr
 }
 
-// close is the work of Close.
-func (a *App) close(ctx context.Context) error {
+// CloseNow closes an App that a command opened for one job and did not serve,
+// such as "email-mcp account list". It is Close without step 4: it does not
+// drain the outbox. Such a command never calls Run and queues no message, so the
+// queued messages belong to the program that serves (serve or setup), which
+// sends them when they are due. Without this, every short command could wait up
+// to 5 minutes for the queue of another program.
+//
+// Close and CloseNow share one result: a second call of either does nothing and
+// returns the result of the first.
+func (a *App) CloseNow(ctx context.Context) error {
+	a.closeOnce.Do(func() { a.closeErr = a.close(ctx, false) })
+	return a.closeErr
+}
+
+// close is the work of Close and CloseNow. drain is false for CloseNow.
+func (a *App) close(ctx context.Context, drain bool) error {
 	a.BeginStop()
 	defer a.notice.Stop()
 
@@ -574,8 +612,10 @@ func (a *App) close(ctx context.Context) error {
 	<-a.actingIdle
 
 	var errs []error
-	if err := a.drain(ctx); err != nil {
-		errs = append(errs, err)
+	if drain {
+		if err := a.drain(ctx); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if err := a.Web.Shutdown(ctx); err != nil {
 		errs = append(errs, err)

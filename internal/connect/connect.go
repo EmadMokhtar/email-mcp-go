@@ -7,6 +7,7 @@
 //     text of a mail server never reaches the user;
 //   - the decision whether the user may be offered to trust (pin) a
 //     certificate that a server showed (CheckCertificate);
+//   - the cleaning of a host name as the service tests it (CleanHost);
 //   - whether a server on this computer is set to a plain (unencrypted)
 //     connection (PlainOnThisComputer);
 //   - the form of a fingerprint for people (GroupFingerprint).
@@ -151,11 +152,19 @@ func TestFailureText(err error) string {
 	}
 }
 
+// CleanHost returns a host name as the service tests it: without outer spaces,
+// in lower case. Clean a host before account.IsLoopbackHost or
+// account.MailServer.Validate looks at it, and before it is shown, so the user
+// sees the host that is tested.
+func CleanHost(host string) string {
+	return strings.ToLower(strings.TrimSpace(host))
+}
+
 // PlainOnThisComputer reports whether a server on this computer is set to a
 // plain (unencrypted) connection. Such a connection needs the explicit consent
 // of the user. A plain connection to another host is refused by the service
 // (account.MailServer.Validate), so no consent can allow it. The hosts must be
-// cleaned first (no outer spaces, lower case).
+// cleaned first (see CleanHost).
 func PlainOnThisComputer(m account.MailServer) bool {
 	return (m.IMAPSecurity == account.SecurityPlain && account.IsLoopbackHost(m.IMAPHost)) ||
 		(m.SMTPSecurity == account.SecurityPlain && account.IsLoopbackHost(m.SMTPHost))

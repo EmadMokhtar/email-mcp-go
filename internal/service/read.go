@@ -49,19 +49,24 @@ func (s *Service) ListAccounts(ctx context.Context) ([]AccountView, error) {
 	views := make([]AccountView, len(accounts))
 	var ask []int // the indexes of the accounts to ask
 	for i, a := range accounts {
-		views[i] = AccountView{
-			ID:       a.ID,
-			Address:  a.Address,
-			Provider: string(a.Provider),
-			Areas:    map[account.Area]string{account.AreaMail: a.Level(account.AreaMail).MailName()},
-			Status:   a.Status,
-		}
+		views[i] = viewOf(a)
 		if s.worthAsking(a, p) {
 			ask = append(ask, i)
 		}
 	}
 	s.fillCapabilities(ctx, accounts, views, ask)
 	return views, nil
+}
+
+// viewOf returns the view of an account, without capabilities.
+func viewOf(a *account.Account) AccountView {
+	return AccountView{
+		ID:       a.ID,
+		Address:  a.Address,
+		Provider: string(a.Provider),
+		Areas:    map[account.Area]string{account.AreaMail: a.Level(account.AreaMail).MailName()},
+		Status:   a.Status,
+	}
 }
 
 // fillCapabilities asks the backends of the accounts at the indexes in ask and
@@ -202,4 +207,25 @@ func (s *Service) GetAttachment(ctx context.Context, id account.AccountID, ref m
 		return nil, err
 	}
 	return b.GetAttachment(ctx, ref, attachmentID, MaxAttachmentBytes)
+}
+
+// ListStoredAccounts returns the accounts of the tenant of the caller as the
+// store has them. Unlike ListAccounts it never asks a backend, so it opens no
+// connection to a mail server: the Capabilities of every view are empty. The
+// command line tool uses it to list the accounts and to find one by its id.
+func (s *Service) ListStoredAccounts(ctx context.Context) ([]AccountView, error) {
+	p, err := PrincipalFrom(ctx)
+	if err != nil {
+		return nil, err
+	}
+	accounts, err := s.d.Store.ListAccounts(ctx, p.Tenant)
+	if err != nil {
+		return nil, fmt.Errorf("service: list accounts: %w", err)
+	}
+	// An empty list is an empty slice and not nil, so it encodes as [].
+	views := make([]AccountView, len(accounts))
+	for i, a := range accounts {
+		views[i] = viewOf(a)
+	}
+	return views, nil
 }

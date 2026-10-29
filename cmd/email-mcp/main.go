@@ -22,16 +22,21 @@ const (
 )
 
 // command is one subcommand. Each subcommand owns its own flag.FlagSet.
-// Later tasks add their commands to the commands table.
 type command struct {
 	name    string
 	summary string
-	run     func(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int
+	run     func(ctx context.Context, c *cli, args []string) int
 }
 
 // commands lists the subcommands in the order that help shows them.
 var commands = []command{
 	{name: "serve", summary: "serve MCP over stdio, or over local HTTP with --http", run: runServe},
+	{name: "setup", summary: "sign a browser in to the local web interface, and serve it until Ctrl-C", run: runSetup},
+	{name: "account", summary: "add, list, remove or test an account, without a browser (account help)", run: runAccount},
+	{name: "token", summary: "create, list or revoke an access token of serve --http (token help)", run: runToken},
+	{name: "import-env", summary: "import the account of a .env file of the old email-mcp: import-env [path]", run: runImportEnv},
+	{name: "key", summary: "change the master key: key rotate --to file:<path>|keychain", run: runKey},
+	{name: "doctor", summary: "check the data directory, the master key and every account", run: runDoctor},
 	{name: "version", summary: "print the version and exit", run: runVersion},
 }
 
@@ -53,8 +58,15 @@ func main() {
 
 // run dispatches args to a subcommand and returns the process exit code.
 // It takes the input and output streams as parameters so tests can use pipes
-// and capture the output.
+// and capture the output. It uses the real terminal, browser and discovery (see
+// realSystem).
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return runWith(ctx, realSystem(stdin), args, stdin, stdout, stderr)
+}
+
+// runWith is run with the given system. Tests give it a fake system, so they
+// never open a browser and never need a terminal.
+func runWith(ctx context.Context, sys system, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printUsage(stderr)
 		return exitUsage
@@ -67,9 +79,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return exitOK
 	}
 
-	for _, c := range commands {
-		if c.name == name {
-			return c.run(ctx, rest, stdin, stdout, stderr)
+	c := &cli{stdin: stdin, stdout: stdout, stderr: stderr, sys: sys}
+	for _, cmd := range commands {
+		if cmd.name == name {
+			return cmd.run(ctx, c, rest)
 		}
 	}
 
@@ -91,7 +104,8 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "help", "show this help")
 }
 
-func runVersion(_ context.Context, args []string, _ io.Reader, stdout, stderr io.Writer) int {
+func runVersion(_ context.Context, c *cli, args []string) int {
+	stdout, stderr := c.stdout, c.stderr
 	fs := flag.NewFlagSet("version", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	if err := fs.Parse(args); err != nil {

@@ -463,3 +463,51 @@ func validHost(host string) bool {
 func validPin(pin string) bool {
 	return pin == "" || account.IsFingerprint(pin)
 }
+
+// ProbeAccount tests a connected account of the tenant of the caller, with its
+// stored settings (the hosts, the ports, the security modes and the pins) and
+// its stored password: the same test as CreateIMAPAccount makes before it saves.
+// The command line tool calls it ("account test" and "doctor").
+//
+// It changes nothing: not the account, not its status, not the cached backend,
+// and it writes no audit entry. It returns nil when both logins work. A failed
+// test gives a *ConnectionTestError, and a certificate that is not accepted (for
+// example one that does not match the pin) gives a *CertificateError. It
+// returns ErrAccountNotFound when the tenant has no such account.
+//
+// The password is never logged and never put in an error.
+func (s *Service) ProbeAccount(ctx context.Context, id account.AccountID) error {
+	p, err := PrincipalFrom(ctx)
+	if err != nil {
+		return err
+	}
+	if s.d.Vault == nil {
+		return errors.New("service: the vault must be set up to test an account")
+	}
+	a, err := s.d.Store.GetAccount(ctx, p.Tenant, id)
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrInvalidID) {
+		return ErrAccountNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("service: look up account: %w", err)
+	}
+	if a.Mail == nil {
+		return errors.New("service: the account has no mail server settings")
+	}
+	keyVersion, sealed, err := s.d.Store.GetAccountSecret(ctx, p.Tenant, a.ID, passwordSecret)
+	if errors.Is(err, store.ErrNotFound) {
+		return errors.New("service: the account has no stored password")
+	}
+	if err != nil {
+		return fmt.Errorf("service: read the account password: %w", err)
+	}
+	plain, err := s.d.Vault.Decrypt(ctx, p.Tenant, keyVersion, secrets.AAD(string(p.Tenant), string(a.ID), passwordSecret), sealed)
+	if err != nil {
+		return fmt.Errorf("service: decrypt the account password: %w", err)
+	}
+	password := secrets.Secret(plain)
+	// The Secret holds its own copy of the text. Clear the bytes of the
+	// plaintext.
+	clear(plain)
+	return s.probe(ctx, *a.Mail, password)
+}

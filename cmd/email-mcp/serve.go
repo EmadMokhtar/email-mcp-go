@@ -122,7 +122,8 @@ func (o *originList) Set(v string) error {
 	return nil
 }
 
-func runServe(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func runServe(ctx context.Context, c *cli, args []string) int {
+	stdin, stdout, stderr := c.stdin, c.stdout, c.stderr
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dataDir := fs.String("data-dir", "", "the data directory (default: $EMAIL_MCP_DATA_DIR, or the data directory of the platform)")

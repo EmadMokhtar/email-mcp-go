@@ -537,14 +537,15 @@ func (s *Server) openOffer(sess session, p protocol, server account.MailServer, 
 }
 
 // readFields reads the settings of the posted form. Outer spaces go, and host
-// names become lower case, so the form shows them as they are tested.
+// names become lower case (connect.CleanHost), so the form shows them as they
+// are tested.
 func readFields(r *http.Request) serverFields {
 	get := func(name string) string { return strings.TrimSpace(r.PostForm.Get(name)) }
 	return serverFields{
-		IMAPHost:     strings.ToLower(get("imap_host")),
+		IMAPHost:     connect.CleanHost(r.PostForm.Get("imap_host")),
 		IMAPPort:     get("imap_port"),
 		IMAPSecurity: get("imap_security"),
-		SMTPHost:     strings.ToLower(get("smtp_host")),
+		SMTPHost:     connect.CleanHost(r.PostForm.Get("smtp_host")),
 		SMTPPort:     get("smtp_port"),
 		SMTPSecurity: get("smtp_security"),
 		Username:     get("username"),
