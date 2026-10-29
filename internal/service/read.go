@@ -11,9 +11,10 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 )
 
-// maxAttachmentBytes is the largest attachment that GetAttachment returns:
-// 10 MB. The backend refuses a larger one.
-const maxAttachmentBytes = 10 << 20
+// MaxAttachmentBytes is the largest attachment that GetAttachment returns:
+// 10 MB. The backend refuses a larger one. The MCP layer uses the same value to
+// check the answer again.
+const MaxAttachmentBytes = 10 << 20
 
 // The limits of ListAccounts when it asks the backends what they support.
 const (
@@ -200,5 +201,5 @@ func (s *Service) GetAttachment(ctx context.Context, id account.AccountID, ref m
 	if err != nil {
 		return nil, err
 	}
-	return b.GetAttachment(ctx, ref, attachmentID, maxAttachmentBytes)
+	return b.GetAttachment(ctx, ref, attachmentID, MaxAttachmentBytes)
 }

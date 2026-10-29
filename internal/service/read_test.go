@@ -890,3 +890,63 @@ func TestSearchWithWrongStoredPasswordFails(t *testing.T) {
 	require.NotContains(t, err.Error(), "not-the-password")
 	require.NotContains(t, err.Error(), srv.Pass)
 }
+
+// The error for an account that must be reconnected is a typed error, so a
+// caller reads the link from a field and not from the text.
+func TestNeedsReauthErrorIsTyped(t *testing.T) {
+	f := newFixture(t)
+	a := f.addAccount(f.tenant, "me@example.com", offlineSettings(), "pw", func(a *account.Account) {
+		a.Status = account.StatusNeedsReauth
+		a.Levels[account.AreaMail] = account.MailOrganize
+	})
+	backends := &fakeFactory{backend: &fakeBackend{}}
+
+	t.Run("with a link", func(t *testing.T) {
+		svc := f.newService(backends, &fakeLinks{})
+
+		_, err := svc.ListFolders(f.ctx(), a.ID)
+
+		var re *ReauthError
+		require.ErrorAs(t, err, &re)
+		require.ErrorIs(t, err, ErrNeedsReauth)
+		require.Equal(t, fmt.Sprintf("https://mcp.test/settings/%s?area=mail&level=%d", a.ID, int(account.MailOrganize)), re.Link)
+		require.Contains(t, err.Error(), "reconnect it here: "+re.Link)
+	})
+	t.Run("without a link", func(t *testing.T) {
+		svc := f.newService(backends, &fakeLinks{err: errors.New("no base address")})
+
+		_, err := svc.ListFolders(f.ctx(), a.ID)
+
+		var re *ReauthError
+		require.ErrorAs(t, err, &re)
+		require.ErrorIs(t, err, ErrNeedsReauth)
+		require.Empty(t, re.Link)
+		require.Contains(t, err.Error(), "reconnect it in the email-mcp settings")
+	})
+}
+
+// The wording of the error is the same as before it was typed.
+func TestReauthErrorWording(t *testing.T) {
+	withLink := &ReauthError{Link: "https://mcp.test/x"}
+	require.Equal(t, "service: the account needs to be reconnected. Ask the user to reconnect it here: https://mcp.test/x", withLink.Error())
+	require.ErrorIs(t, withLink, ErrNeedsReauth)
+
+	without := &ReauthError{}
+	require.Equal(t, "service: the account needs to be reconnected. Ask the user to reconnect it in the email-mcp settings", without.Error())
+	require.ErrorIs(t, without, ErrNeedsReauth)
+}
+
+// The limit for attachments is one exported constant: 10 MB.
+func TestMaxAttachmentBytes(t *testing.T) {
+	require.EqualValues(t, 10<<20, MaxAttachmentBytes)
+
+	b := &fakeBackend{}
+	f := newFixture(t)
+	a := f.addAccount(f.tenant, "me@example.com", offlineSettings(), "pw")
+	svc := f.newService(&fakeFactory{backend: b}, &fakeLinks{})
+
+	_, err := svc.GetAttachment(f.ctx(), a.ID, "ref", "2")
+
+	require.NoError(t, err)
+	require.EqualValues(t, MaxAttachmentBytes, b.attBytes)
+}

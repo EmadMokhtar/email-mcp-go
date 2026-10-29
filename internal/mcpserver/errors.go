@@ -10,14 +10,19 @@ package mcpserver
 //     passed on, because it can hold text from the mail server or an account
 //     name. The only parts that are taken from a known error are fields that
 //     the service filled for the agent: the reason and the link of a
-//     *service.PermissionError, and the link of ErrNeedsReauth.
+//     *service.PermissionError, and the link of a *service.ReauthError.
 //   - An unknown error becomes "internal error". Only its Go type is logged.
 //   - Nothing here logs a tool error text.
+//   - A text ends in one of two sentences. "Do not retry." is for an error that
+//     nothing the agent can do will fix. "Do not repeat the same call." is for an
+//     error where the text gives a next step, so the agent does the next step
+//     and not the same call again.
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"net/url"
+	"os"
 	"strings"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
@@ -27,8 +32,11 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 )
 
-// noRetry ends the text of every error that the same call cannot get past.
-const noRetry = "Do not retry."
+// The two closing sentences of an error text (see the top of this file).
+const (
+	noRetry  = "Do not retry."
+	noRepeat = "Do not repeat the same call."
+)
 
 // The codes of the failures. They are for the log and for tests. A code never
 // holds text from an error.
@@ -51,6 +59,8 @@ const (
 	codeInvalidRequest  = "invalid_request"
 	codeSendNotFound    = "send_not_found"
 	codeBadToken        = "bad_token"
+	codeTimeout         = "timeout"
+	codeCanceled        = "canceled"
 )
 
 // toolFailure is the error that a handler wrapper gives to the SDK. The SDK
@@ -88,10 +98,11 @@ func (e *argError) Error() string { return "argument " + e.arg + " is not valid"
 // the agent sees. It never returns nil.
 func toolError(err error) *toolFailure {
 	var (
-		ready *toolFailure
-		perm  *service.PermissionError
-		rate  *policy.RateLimitError
-		arg   *argError
+		ready  *toolFailure
+		perm   *service.PermissionError
+		rate   *policy.RateLimitError
+		reauth *service.ReauthError
+		arg    *argError
 	)
 	switch {
 	case errors.As(err, &ready): // a handler made the failure itself
@@ -100,39 +111,48 @@ func toolError(err error) *toolFailure {
 		return permissionFailure(perm)
 	case errors.As(err, &rate):
 		return rateLimitFailure(rate)
-	case errors.Is(err, service.ErrNeedsReauth):
-		return reauthFailure(err)
+	case errors.As(err, &reauth):
+		return reauthFailure(reauth.Link)
+	case errors.Is(err, service.ErrNeedsReauth): // an error without the typed link
+		return reauthFailure("")
+	case errors.Is(err, service.ErrNoPrincipal):
+		return errNotAuthorized
 	case errors.Is(err, service.ErrAccountNotFound):
 		return failure(codeAccountNotFound,
-			"There is no such account. Call list_accounts and use one of its account ids. "+noRetry)
+			"There is no such account. Call list_accounts and use one of its account ids. "+noRepeat)
 	case errors.As(err, &arg):
-		return failure(codeBadArgument, fmt.Sprintf("The argument %q is not valid. %s %s", arg.arg, arg.hint, noRetry))
+		return failure(codeBadArgument, fmt.Sprintf("The argument %q is not valid. %s %s", arg.arg, arg.hint, noRepeat))
 	// A partial change can wrap the error that stopped it, so it comes before the
 	// errors below.
 	case errors.Is(err, mail.ErrPartial):
 		return failure(codePartial, "The change was made in part or in full before an error stopped it, "+
-			"so the refs may have changed. Search again to see the current state. "+noRetry)
+			"so the refs may have changed. Search again to see the current state. "+noRepeat)
 	case errors.Is(err, mail.ErrRefStale):
 		return failure(codeStaleRef, "The message ref is out of date: the message may have been moved or deleted. "+
-			"Search again to get a fresh ref. "+noRetry)
+			"Search again to get a fresh ref. "+noRepeat)
 	case errors.Is(err, mail.ErrNotFound):
 		return failure(codeNotFound, "The message, folder or attachment was not found. "+
-			"Check the ref, the folder name or the attachment id, and search again if the ref is old. "+noRetry)
+			"Check the ref, the folder name or the attachment id, and search again if the ref is old. "+noRepeat)
 	case errors.Is(err, mail.ErrTooLarge):
-		return failure(codeTooLarge, "The content is too large to return (an attachment may be at most 10 MB). "+noRetry)
+		return failure(codeTooLarge, "The content is too large to return. An attachment may be at most 10 MB. "+
+			`For a message, ask for body_format "none", or read the body in parts with max_chars and offset. `+noRepeat)
 	case errors.Is(err, mail.ErrUnsupported):
 		return failure(codeUnsupported, "This account or mail server does not support this operation. "+noRetry)
 	// ErrNotADraft matches ErrInvalidRequest too, so it comes first.
 	case errors.Is(err, service.ErrNotADraft):
 		return failure(codeNotADraft, "The message is not a draft, so it is not sent. "+
-			"Send a saved draft, or write a new message. "+noRetry)
+			"Send a saved draft, or write a new message. "+noRepeat)
 	case errors.Is(err, service.ErrInvalidRequest):
-		return failure(codeInvalidRequest, "The request is not valid. Check the arguments against the description of the tool. "+noRetry)
+		return failure(codeInvalidRequest, "The request is not valid. Check the arguments against the description of the tool. "+noRepeat)
 	case errors.Is(err, service.ErrSendNotFound):
-		return failure(codeSendNotFound, "No send with this id for this account. Check the send id. "+noRetry)
+		return failure(codeSendNotFound, "No send with this id for this account. Check the send id. "+noRepeat)
 	case errors.Is(err, signing.ErrInvalid), errors.Is(err, signing.ErrExpired):
 		return failure(codeBadToken, "The page token or cursor is not valid, or it has expired. "+
-			"Start again without it, and pass a token or cursor back only as the tool gave it. "+noRetry)
+			"Start again without it, and pass a token or cursor back only as the tool gave it. "+noRepeat)
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, os.ErrDeadlineExceeded):
+		return failure(codeTimeout, "The mail server did not answer in time. Try again later.")
+	case errors.Is(err, context.Canceled):
+		return failure(codeCanceled, "The request was cancelled.")
 	default:
 		return errInternal
 	}
@@ -163,39 +183,15 @@ func rateLimitFailure(r *policy.RateLimitError) *toolFailure {
 	return failure(codeRateLimit, r.Error())
 }
 
-// reauthLinkMarker comes just before the link in the text of the error that the
-// service makes for an account that must be reconnected.
-const reauthLinkMarker = "reconnect it here: "
-
-// reauthFailure builds the text for an account that must be reconnected. The
-// service puts the link in the text of the error and has no field for it, so
-// the link is read from the end of the text. It is used only if it is one
-// http or https address without spaces or a user name. All other text of the
-// error is left out.
-func reauthFailure(err error) *toolFailure {
+// reauthFailure builds the text for an account that must be reconnected. link is
+// the field of the *service.ReauthError, or empty. All text of the error itself
+// is left out.
+func reauthFailure(link string) *toolFailure {
 	text := "The account needs to be reconnected. Ask the user to reconnect it in the email-mcp settings"
-	if link := reauthLink(err); link != "" {
+	if link != "" {
 		text += " at " + link
 	}
 	return failure(codeNeedsReauth, text+". "+noRetry)
-}
-
-// reauthLink returns the settings link in the error, or an empty string.
-func reauthLink(err error) string {
-	msg := err.Error()
-	i := strings.LastIndex(msg, reauthLinkMarker)
-	if i < 0 {
-		return ""
-	}
-	link := msg[i+len(reauthLinkMarker):]
-	if link == "" || strings.ContainsAny(link, " \t\r\n") {
-		return ""
-	}
-	u, parseErr := url.Parse(link)
-	if parseErr != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil {
-		return ""
-	}
-	return link
 }
 
 // errorTypes returns the Go types of an error and of the errors it wraps, for

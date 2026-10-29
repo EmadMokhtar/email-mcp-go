@@ -33,6 +33,10 @@ import (
 // testStart is the time at which the test accounts are created.
 var testStart = time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)
 
+// testPassword is the password of the test accounts. It is long and unusual, so
+// a test can look for it in a result without a chance match in a random id.
+const testPassword = "test-password-3f9a7c1e"
+
 // passwordSecret is the kind of the stored secret that holds the account
 // password. The service package keeps the same name private.
 const passwordSecret = "password"
@@ -237,7 +241,7 @@ func (e *env) offlineAccount(change ...func(*account.Account)) *account.Account 
 		IMAPHost: "imap.example.com", IMAPPort: 993, IMAPSecurity: account.SecurityTLS,
 		SMTPHost: "smtp.example.com", SMTPPort: 465, SMTPSecurity: account.SecurityTLS,
 		Username: "user@example.com",
-	}, "pw", change...)
+	}, testPassword, change...)
 }
 
 // imapAccount adds an account that logs in to the test IMAP server.

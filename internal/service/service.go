@@ -47,6 +47,27 @@ var (
 	ErrNeedsReauth = errors.New("service: the account needs to be reconnected")
 )
 
+// ReauthError is the error for an account that must be reconnected. It matches
+// ErrNeedsReauth with errors.Is. A caller that wants the settings link reads
+// Link with errors.As, and does not parse the text.
+type ReauthError struct {
+	// Link is the address of the settings page of the account, where the user
+	// reconnects it. It is empty when the service could not build a link. It never
+	// holds a token.
+	Link string
+}
+
+// Error tells the user to reconnect the account, with the link when there is one.
+func (e *ReauthError) Error() string {
+	if e.Link == "" {
+		return ErrNeedsReauth.Error() + ". Ask the user to reconnect it in the email-mcp settings"
+	}
+	return ErrNeedsReauth.Error() + ". Ask the user to reconnect it here: " + e.Link
+}
+
+// Unwrap makes errors.Is(err, ErrNeedsReauth) true.
+func (e *ReauthError) Unwrap() error { return ErrNeedsReauth }
+
 // PermissionError means that the policy refused an action. The message is for
 // the agent: it says why and, when the user can fix it, where.
 type PermissionError struct {
@@ -170,7 +191,8 @@ type access struct {
 //   - ErrNoPrincipal when the request has no principal;
 //   - ErrAccountNotFound when the tenant of the caller has no such account;
 //   - a *PermissionError when the policy refuses the action;
-//   - an error that wraps ErrNeedsReauth when the account must be reconnected.
+//   - a *ReauthError (it matches ErrNeedsReauth) when the account must be
+//     reconnected.
 //
 // A refusal by permission comes before the reconnect error, so a caller that
 // may not do the action does not learn more about the account than needed.
@@ -247,8 +269,5 @@ func (s *Service) settingsLink(ctx context.Context, id account.AccountID, area a
 func (s *Service) needsReauthError(ctx context.Context, a *account.Account) error {
 	// The level is the one the account has now, so the link asks for no change.
 	link := s.settingsLink(ctx, a.ID, account.AreaMail, a.Level(account.AreaMail))
-	if link == "" {
-		return fmt.Errorf("%w. Ask the user to reconnect it in the email-mcp settings", ErrNeedsReauth)
-	}
-	return fmt.Errorf("%w. Ask the user to reconnect it here: %s", ErrNeedsReauth, link)
+	return &ReauthError{Link: link}
 }

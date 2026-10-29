@@ -13,14 +13,12 @@ import (
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
+	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 )
 
 const (
 	// maxSearchLimit is the largest page size of a search.
 	maxSearchLimit = 100
-	// maxAttachmentBytes is the largest attachment that get_attachment returns:
-	// 10 MB. The service asks the backend for at most this much too.
-	maxAttachmentBytes = 10 << 20
 	// defaultFolder is the folder of list_new_messages when the caller gives none.
 	defaultFolder = mail.AliasInbox
 )
@@ -153,52 +151,58 @@ type SendStatusOut struct {
 	ApprovalLink string `json:"approval_link,omitempty" jsonschema:"Where the user approves a send that waits."`
 }
 
-// readOnly returns the annotations of a tool that changes nothing.
-func readOnly() *mcp.ToolAnnotations { return &mcp.ToolAnnotations{ReadOnlyHint: true} }
+// readOnly returns the annotations of a tool that changes nothing and talks only
+// to the mail account of the user. MCP reads a missing openWorldHint as true, so
+// it is set to false.
+func readOnly() *mcp.ToolAnnotations {
+	closedWorld := false
+	return &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &closedWorld}
+}
 
-// registerReadTools adds the read tools to the server. The SDK lists tools in
-// the order of their names, so the order here is only for the reader.
+// registerReadTools adds the read tools to the server, with addTool. The SDK
+// lists tools in the order of their names, so the order here is only for the
+// reader.
 func registerReadTools(srv *mcp.Server, d *deps) {
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, d, &mcp.Tool{
 		Name:        "list_accounts",
 		Description: "List the email accounts of the user: id, address, access level, capabilities and status. Call this first. Needs no level.",
 		Annotations: readOnly(),
-	}, safe(d, d.listAccounts))
-	mcp.AddTool(srv, &mcp.Tool{
+	}, d.listAccounts)
+	addTool(srv, d, &mcp.Tool{
 		Name:        "list_folders",
 		Description: "List the folders of an account with their aliases and counts. Needs Mail 1 (read).",
 		Annotations: readOnly(),
-	}, safe(d, d.listFolders))
-	mcp.AddTool(srv, &mcp.Tool{
+	}, d.listFolders)
+	addTool(srv, d, &mcp.Tool{
 		Name:        "list_tags",
 		Description: "List the tags of an account. supported is false when the account cannot store tags; use folders then. Needs Mail 1 (read).",
 		Annotations: readOnly(),
-	}, safe(d, d.listTags))
-	mcp.AddTool(srv, &mcp.Tool{
+	}, d.listTags)
+	addTool(srv, d, &mcp.Tool{
 		Name:        "search_messages",
 		Description: "Search the messages of one folder. Returns summaries (at most 100 per page) and a page token. Needs Mail 1 (read).",
 		Annotations: readOnly(),
-	}, safe(d, d.searchMessages))
-	mcp.AddTool(srv, &mcp.Tool{
+	}, d.searchMessages)
+	addTool(srv, d, &mcp.Tool{
 		Name:        "list_new_messages",
 		Description: "List the messages that arrived in a folder since a cursor, and a new cursor. Pass the cursor back unchanged. Needs Mail 1 (read).",
 		Annotations: readOnly(),
-	}, safe(d, d.listNewMessages))
-	mcp.AddTool(srv, &mcp.Tool{
+	}, d.listNewMessages)
+	addTool(srv, d, &mcp.Tool{
 		Name:        "get_message",
 		Description: "Get one message: headers, body and attachment list. Needs Mail 1 (read).",
 		Annotations: readOnly(),
-	}, safe(d, d.getMessage))
-	mcp.AddTool(srv, &mcp.Tool{
+	}, d.getMessage)
+	addTool(srv, d, &mcp.Tool{
 		Name:        "get_attachment",
 		Description: "Get one attachment of a message as an embedded resource. At most 10 MB. Needs Mail 1 (read).",
 		Annotations: readOnly(),
-	}, safe(d, d.getAttachment))
-	mcp.AddTool(srv, &mcp.Tool{
+	}, d.getAttachment)
+	addTool(srv, d, &mcp.Tool{
 		Name:        "get_send_status",
 		Description: "Get the status of a send: queued, sent, failed, waiting for approval and so on. Needs Mail 1 (read).",
 		Annotations: readOnly(),
-	}, safe(d, d.getSendStatus))
+	}, d.getSendStatus)
 }
 
 func (d *deps) listAccounts(ctx context.Context, _ *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, AccountsOut, error) {
@@ -341,8 +345,8 @@ func (in getMessageInput) bodyOptions() (mail.BodyOptions, error) {
 }
 
 func (d *deps) getAttachment(ctx context.Context, _ *mcp.CallToolRequest, in getAttachmentInput) (*mcp.CallToolResult, AttachmentOut, error) {
-	// The service asks the backend for at most maxAttachmentBytes. The size is
-	// checked again here, because the limit must hold whatever a backend does.
+	// The service asks the backend for at most service.MaxAttachmentBytes. The size
+	// is checked again here, because the limit must hold whatever a backend does.
 	att, err := d.svc.GetAttachment(ctx, account.AccountID(in.Account), mail.Ref(in.Ref), in.AttachmentID)
 	if err != nil {
 		return nil, AttachmentOut{}, err
@@ -350,7 +354,7 @@ func (d *deps) getAttachment(ctx context.Context, _ *mcp.CallToolRequest, in get
 	if att == nil {
 		return nil, AttachmentOut{}, mail.ErrNotFound
 	}
-	if len(att.Data) > maxAttachmentBytes {
+	if len(att.Data) > service.MaxAttachmentBytes {
 		return nil, AttachmentOut{}, mail.ErrTooLarge
 	}
 	mimeType := contentType(att.ContentType)

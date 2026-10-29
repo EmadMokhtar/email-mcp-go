@@ -6,9 +6,11 @@
 // permissions itself: the service does that for every call.
 //
 // Rules of this layer:
-//   - Every handler goes through safe. It finds the caller, puts the caller in
-//     the context, recovers from a panic, and turns an error into a tool result
-//     (see errors.go).
+//   - Every tool is added with addTool, and so every handler goes through safe.
+//     It finds the caller, puts the caller in the context, recovers from a
+//     panic, and turns an error into a tool result (see errors.go). A tool that
+//     is added with mcp.AddTool directly would run without a caller, so no code
+//     outside addTool may call mcp.AddTool.
 //   - Text that third parties wrote is cleaned and marked untrusted (shape.go).
 //   - Nothing here logs a subject, an address, a name, a body, a token or the
 //     text of an error. The log gets the name of the tool and a fixed code.
@@ -88,17 +90,20 @@ func New(svc *service.Service, opts Options) *mcp.Server {
 }
 
 // safe wraps a tool handler. It does these things, in this order:
-//  1. It asks Options.Principal for the caller. On an error the call is refused
-//     with "not authorized" and the handler does not run.
+//  1. It asks Options.Principal for the caller. On an error, or when the
+//     principal has no tenant, the call is refused with "not authorized" and the
+//     handler does not run.
 //  2. It puts the caller in the context (service.WithPrincipal).
 //  3. It runs the handler. A panic becomes the error "internal error".
 //  4. An error of the handler becomes a toolFailure (see toolError). The SDK
 //     turns that into a tool result with isError set and no structured content.
 //
 // The log gets the name of the tool and a fixed code for a refused caller, a
-// panic and an unknown error. For a panic it also gets the Go type of the panic
-// value, and for an unknown error the Go types of the error. It never gets the
-// value or the text.
+// panic, an unknown error, a timeout and a cancellation. For a panic it also
+// gets the Go type of the panic value, and for an unknown error the Go types of
+// the error. It never gets the value or the text. A cancellation by the client
+// is logged at Debug level, a timeout at Warn level and the others at Error
+// level.
 func safe[In, Out any](d *deps, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFor[In, Out] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (res *mcp.CallToolResult, out Out, err error) {
 		var zero Out
@@ -111,7 +116,9 @@ func safe[In, Out any](d *deps, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFo
 		}()
 
 		p, perr := d.opts.Principal(ctx, req)
-		if perr != nil {
+		// A principal without a tenant is no caller: the service would refuse it
+		// with ErrNoPrincipal, but the handler must not run at all.
+		if perr != nil || p.Tenant == "" {
 			d.log.Warn("tool call refused", "tool", tool, "code", codeNotAuthorized)
 			return nil, zero, errNotAuthorized
 		}
@@ -120,13 +127,34 @@ func safe[In, Out any](d *deps, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFo
 		res, out, err = h(ctx, req, in)
 		if err != nil {
 			fail := toolError(err)
-			if fail.code == codeInternal {
-				d.log.Error("tool call failed", "tool", tool, "code", fail.code, "error_types", errorTypes(err))
-			}
+			d.logFailure(tool, fail, err)
 			return nil, zero, fail
 		}
 		return res, out, nil
 	}
+}
+
+// logFailure logs a failure that needs a log line, with the name of the tool and
+// the fixed code. Known refusals (a permission, a stale ref and so on) are not
+// logged: the agent gets their text, and the audit log has the write refusals.
+func (d *deps) logFailure(tool string, fail *toolFailure, err error) {
+	switch fail.code {
+	case codeInternal:
+		d.log.Error("tool call failed", "tool", tool, "code", fail.code, "error_types", errorTypes(err))
+	case codeTimeout:
+		d.log.Warn("tool call failed", "tool", tool, "code", fail.code)
+	case codeCanceled:
+		d.log.Debug("tool call ended", "tool", tool, "code", fail.code)
+	}
+}
+
+// addTool adds a tool to the server and wraps its handler with safe. It is the
+// only way to add a tool: that is what makes it impossible for a tool to run
+// without a principal. The write tools must use it too. The test
+// TestEveryToolRunsThroughSafe calls every tool that the server lists and fails
+// for a tool that was added another way.
+func addTool[In, Out any](srv *mcp.Server, d *deps, tool *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
+	mcp.AddTool(srv, tool, safe(d, h))
 }
 
 // toolName returns the name of the tool of a request, or an empty string.

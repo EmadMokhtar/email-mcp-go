@@ -8,6 +8,9 @@ package mcpserver
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	stdmime "mime"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -23,9 +26,13 @@ const (
 	// trustUntrusted is the value of Untrusted.Trust.
 	trustUntrusted = "untrusted"
 	// maxAddressBytes is the longest mail address that a result holds. It is the
-	// longest address that mail allows (RFC 5321: 254 bytes). A longer one is cut,
-	// so a quoted local part cannot carry a long text.
+	// longest address that mail allows (RFC 5321: 254 bytes). A longer one is not
+	// a valid address, so it is left out. It is not cut, because a cut address can
+	// be another valid-looking address.
 	maxAddressBytes = 254
+	// maxMediaNameBytes is the longest type or subtype of a content type
+	// (RFC 6838: 127 characters).
+	maxMediaNameBytes = 127
 	// maxSnippetRunes is the longest snippet, in characters.
 	maxSnippetRunes = 200
 	// defaultContentType is the type of an attachment that has none.
@@ -59,7 +66,8 @@ type SummaryOut struct {
 	Ref  string `json:"ref" jsonschema:"Opaque message reference. Pass it back unchanged."`
 	Date string `json:"date" jsonschema:"Message date, RFC 3339."`
 	// The addresses are not in the Untrusted wrapper, because an agent needs them
-	// to act. They are cleaned and cut like all other text from a message.
+	// to act. They are cleaned like all other text from a message, and an address
+	// of more than 254 bytes is left out.
 	FromEmail      string                 `json:"from_email"`
 	ToEmails       []string               `json:"to_emails"`
 	Seen           bool                   `json:"seen"`
@@ -122,18 +130,14 @@ func cleanAll(in []string) []string {
 	return out
 }
 
-// cleanAddress cleans a mail address and cuts it to maxAddressBytes, at the
-// start of a character.
+// cleanAddress cleans a mail address. It returns an empty string for an address
+// that is longer than maxAddressBytes after the cleaning.
 func cleanAddress(s string) string {
 	s = clean(s)
-	if len(s) <= maxAddressBytes {
-		return s
+	if len(s) > maxAddressBytes {
+		return ""
 	}
-	cut := maxAddressBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
+	return s
 }
 
 // addressList cleans the addresses and leaves out the empty ones.
@@ -237,13 +241,41 @@ func messageOut(m *mail.Message) MessageOut {
 	}
 }
 
-// contentType cleans a content type from a message. An empty one becomes the
-// neutral default.
+// contentType returns the media type of a content type header, as lower-case
+// "type/subtype", or the neutral default. The text in a content type comes from
+// a sender and it is not inside the Untrusted wrapper, so only a type and a
+// subtype that RFC 6838 allows are returned, and the parameters are dropped.
 func contentType(s string) string {
-	if s = clean(s); s != "" {
-		return s
+	mediaType, _, err := stdmime.ParseMediaType(s)
+	// A parameter that is not valid does not matter, because they are dropped. The
+	// media type is returned with this error.
+	if err != nil && !errors.Is(err, stdmime.ErrInvalidMediaParameter) {
+		return defaultContentType
 	}
-	return defaultContentType
+	typ, sub, ok := strings.Cut(mediaType, "/")
+	if !ok || !validMediaName(typ) || !validMediaName(sub) {
+		return defaultContentType
+	}
+	return typ + "/" + sub
+}
+
+// validMediaName reports whether name is a lower-case type or subtype that
+// RFC 6838 allows: at most 127 characters, a letter or digit first, then letters,
+// digits and the characters ! # $ & - ^ _ . +
+func validMediaName(name string) bool {
+	if name == "" || len(name) > maxMediaNameBytes {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case i > 0 && strings.IndexByte("!#$&-^_.+", c) >= 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // textCopy returns the text copy of a result: the warning line, a line break,

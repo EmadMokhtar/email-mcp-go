@@ -414,13 +414,13 @@ func originalAttachments(ctx context.Context, b mail.Backend, ref mail.Ref, info
 	for _, info := range infos {
 		listed += max(info.Size, 0)
 	}
-	if listed > maxAttachmentBytes {
+	if listed > MaxAttachmentBytes {
 		return nil, tooLarge
 	}
 	out := make([]mail.Attachment, 0, len(infos))
 	var total int64
 	for _, info := range infos {
-		left := maxAttachmentBytes - total
+		left := MaxAttachmentBytes - total
 		if left <= 0 {
 			return nil, tooLarge
 		}
@@ -429,7 +429,7 @@ func originalAttachments(ctx context.Context, b mail.Backend, ref mail.Ref, info
 			return nil, err
 		}
 		total += int64(len(att.Data))
-		if total > maxAttachmentBytes {
+		if total > MaxAttachmentBytes {
 			return nil, tooLarge
 		}
 		out = append(out, *att)
