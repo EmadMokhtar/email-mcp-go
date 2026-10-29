@@ -33,8 +33,15 @@ building on, not for daily use.
 
 - It is built from `gcr.io/distroless/static-debian12:nonroot`: no shell, no
   package manager, and it runs as the user `nonroot` (UID 65532).
-- Both base images are pinned by digest (a hash of the exact image), so a
-  build always uses the same files.
+- Both base images (the Go image that compiles and the distroless image that
+  runs) are pinned by digest (a hash of the exact image), so a build always
+  uses the same files.
+- The Dockerfile has no `# syntax=` line, so BuildKit (the build engine of
+  Docker) reads it with its built-in frontend. No other image is downloaded to
+  read the Dockerfile.
+- In the release, the BuildKit builder image (in
+  `.github/workflows/release.yml`) and the Syft scanner image that makes the
+  SBOM of the image (in `.goreleaser.yaml`) are pinned by digest too.
 - `ENTRYPOINT` is `/email-mcp`. `CMD` is `serve --http 127.0.0.1:8765`.
 - The release workflow publishes it as `ghcr.io/emadmokhtar/email-mcp` for
   `linux/amd64` and `linux/arm64`. The image has the same binary as the signed

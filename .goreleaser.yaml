@@ -109,9 +109,18 @@ dockers_v2:
     platforms:
       - linux/amd64
       - linux/arm64
-    # Docker attaches an SBOM to the published image. A snapshot builds with
-    # the local image store, which cannot keep that SBOM, so it has none.
-    sbom: "{{ not .IsSnapshot }}"
+    # The SBOM of the image. "sbom: true" would add "--attest=type=sbom",
+    # and BuildKit would then run its default scanner image,
+    # docker/buildkit-syft-scanner:stable-1, a tag that moves, inside the
+    # build of the published image. So the built-in option is off, and the
+    # flag below asks for the same SBOM with the scanner pinned by digest.
+    # A snapshot builds with the local image store, which cannot keep an SBOM,
+    # so the flag is empty there (GoReleaser drops empty flags). Dependabot
+    # does not see this line: update it by hand with
+    #   docker buildx imagetools inspect docker/buildkit-syft-scanner:<version>
+    sbom: "false"
+    flags:
+      - "{{ if not .IsSnapshot }}--attest=type=sbom,generator=docker/buildkit-syft-scanner:1.12.1@sha256:873a7458c3c8ac8e32c7b796c10e1600b07b963d2aa000a72a2d97aaaa2d6315{{ end }}"
     labels:
       org.opencontainers.image.title: "{{ .ProjectName }}"
       org.opencontainers.image.description: "MCP server for email over IMAP and SMTP"
@@ -148,10 +157,12 @@ homebrew_casks:
     hooks:
       post:
         # The binaries are not signed by Apple, so macOS would block a binary
-        # that has the "quarantine" mark of a download. Check the release with
-        # cosign first (see the README). install_steps uses the declarative
-        # steps of Homebrew (postflight_steps); .StagedPath becomes
-        # Homebrew's {{staged_path}}.
+        # that has the "quarantine" mark of a download. This step removes the
+        # mark, so Gatekeeper does not check the binary. A cask user does not
+        # see the cosign signature; the cask is only as safe as the tap and its
+        # token. The README says this, and points to the release archive for a
+        # cosign check. install_steps uses the declarative steps of Homebrew
+        # (postflight_steps); .StagedPath becomes Homebrew's {{staged_path}}.
         install_steps: |
           on_macos do
             run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/email-mcp"]

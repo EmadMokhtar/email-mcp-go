@@ -1,6 +1,9 @@
-# syntax=docker/dockerfile:1
-#
 # The container image of email-mcp.
+#
+# There is no "# syntax=" line on purpose: such a line makes BuildKit download
+# a Dockerfile frontend image (the program that reads this file) by a tag that
+# can change. Without it, BuildKit uses its built-in frontend. This file needs
+# nothing more: ARG before FROM, FROM --platform and COPY --from are built in.
 #
 # For local use, install the binary instead (see the README). In a container,
 # email-mcp cannot reach the keychain of your computer, and the address
