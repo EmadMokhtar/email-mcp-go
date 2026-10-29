@@ -192,8 +192,12 @@ func New(d Deps) *Service {
 // approval would send the message inside its web request, and nothing would
 // wait for that send.
 //
-// Reads, CancelSend, SendStatus and RejectPending keep working, so the user can
-// still undo a queued send while the program sends its last queued messages.
+// Reads, CancelSend, SendStatus and RejectPending keep working in the service.
+// But the program refuses every tool call once it starts to stop (see
+// app.App.BeginStop), cancel_send included, and the web page has no undo
+// button. So while this program stops, the user can still reject an action that
+// waits on the web page, but nothing in this program can undo a queued send:
+// only another email-mcp process that uses the same data can.
 //
 // Stop does not wait. It returns a channel that is closed when the use cases of
 // that kind that run now have ended (a send without an undo window can take some

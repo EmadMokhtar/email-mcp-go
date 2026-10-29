@@ -553,9 +553,12 @@ func (a *App) logJobError(ctx context.Context, job string, err error) {
 
 // BeginStop starts the stop of the App and returns at once. From now on:
 //   - the service refuses new sends, Trash moves and approvals
-//     (service.ErrStopping); an action that waits for approval keeps waiting,
-//     and undo (cancel_send) still works;
-//   - new tool calls of the servers of MCPServer are refused;
+//     (service.ErrStopping); an action that waits for approval keeps waiting;
+//   - every new tool call of the servers of MCPServer is refused, cancel_send
+//     included. So an agent of this process cannot undo a queued send any more,
+//     and the web page has no undo button either. Only another email-mcp
+//     process that uses the same data directory can still cancel a queued send,
+//     before the drain of Close sends it;
 //   - Run does nothing;
 //   - if the stop takes longer than a second, one log line says so.
 //
@@ -584,7 +587,9 @@ func (a *App) BeginStop() {
 //     without an undo window runs inside its tool call or its web approval).
 //  4. Outbox.Drain for 5 minutes: it sends the queued messages that are due, or
 //     that become due within 5 minutes. The web server is still up, so the user
-//     can still undo a queued send. When ctx has a deadline, the drain starts no
+//     can still reject an action that waits for approval (approvals are
+//     refused). Nothing in this process can undo a queued send now (see
+//     BeginStop). When ctx has a deadline, the drain starts no
 //     send later than outbox.SendDeadline before it, so every send it starts
 //     ends in time. When that time is over, the messages that are left stay
 //     queued for the next start: the stop is still clean, and Close logs it.
