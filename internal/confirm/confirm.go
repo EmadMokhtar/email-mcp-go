@@ -284,14 +284,15 @@ func (m *Manager) Create(ctx context.Context, tenant account.TenantID, acct acco
 	if !ok {
 		return nil, fmt.Errorf("confirm: unknown mode %q", mode)
 	}
-	return m.CreateWithLifetime(ctx, tenant, acct, kind, mode, payload, p, lifetime)
+	return m.createWithLifetime(ctx, tenant, acct, kind, mode, payload, p, lifetime)
 }
 
-// CreateWithLifetime is Create with a lifetime that is shorter than the one of
-// the mode, for tests that need an action to expire soon. lifetime must be more
-// than 0 and at most the lifetime of the mode, so it can never make an action
-// wait longer than its mode allows.
-func (m *Manager) CreateWithLifetime(ctx context.Context, tenant account.TenantID, acct account.AccountID, kind Kind, mode Mode, payload []byte, p Preview, lifetime time.Duration) (*Pending, error) {
+// createWithLifetime is Create with a lifetime that is at most the one of the
+// mode. Create gives the lifetime of the mode. The tests of this package give a
+// shorter one, to make an action expire soon. lifetime must be more than 0 and
+// at most the lifetime of the mode, so it can never make an action wait longer
+// than its mode allows.
+func (m *Manager) createWithLifetime(ctx context.Context, tenant account.TenantID, acct account.AccountID, kind Kind, mode Mode, payload []byte, p Preview, lifetime time.Duration) (*Pending, error) {
 	if kind != KindSend && kind != KindTrash {
 		return nil, fmt.Errorf("confirm: unknown kind %q", kind)
 	}
@@ -471,9 +472,12 @@ func (m *Manager) Claim(ctx context.Context, tenant account.TenantID, state stri
 //  3. The action exists for that tenant, and the hash in the state is its hash.
 //  4. The action still waits and its time has not passed.
 //  5. The hash of the payload is the hash of the action.
+//  6. The action is of the mode ModeInBand. An action of the approval mode is
+//     answered only on the web page (see Transition), never with a state.
 //
 // Errors before step 4 do not say which check failed. They are
-// ErrStateInvalid, except for an expired state.
+// ErrStateInvalid, except for an expired state. Step 6 gives ErrStateInvalid
+// too.
 //
 // verify also returns the hash of the payload, so that Claim can put it into
 // the claim statement. When it returns ErrNotPending, it also returns the row,
@@ -517,6 +521,12 @@ func (m *Manager) verify(ctx context.Context, now time.Time, tenant account.Tena
 	sum := HashPayload(Kind(row.Kind), payload)
 	if subtle.ConstantTimeCompare(sum[:], row.Hash) != 1 {
 		return nil, none, ErrPayloadChanged
+	}
+	// Only the chat can answer an in-band action, and only the web page an
+	// approval. A state for an action of the approval mode is never made, so
+	// this is a second guard: one action has one channel.
+	if modeOf(row.Mode) != ModeInBand {
+		return nil, none, ErrStateInvalid
 	}
 	return row, sum, nil
 }

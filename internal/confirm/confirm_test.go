@@ -108,8 +108,19 @@ func testPreview() Preview {
 	}
 }
 
-// create makes a pending send in the fixture account.
+// create makes a pending send in the fixture account that the user answers in
+// band, so a request state can claim it. It lives 10 minutes.
 func (f *fixture) create(payload string) *Pending {
+	f.t.Helper()
+	p, err := f.mgr.Create(context.Background(), f.tenant, f.acct, KindSend, ModeInBand, []byte(payload), testPreview())
+	require.NoError(f.t, err)
+	return p
+}
+
+// createApproval makes a pending send in the fixture account that the user
+// answers on the web page. It lives 24 hours, and no request state can claim
+// it.
+func (f *fixture) createApproval(payload string) *Pending {
 	f.t.Helper()
 	p, err := f.mgr.Create(context.Background(), f.tenant, f.acct, KindSend, ModeApproval, []byte(payload), testPreview())
 	require.NoError(f.t, err)
@@ -188,7 +199,7 @@ func TestResumeHappyPath(t *testing.T) {
 	f := newFixture(t)
 	payload := []byte("the exact message the user saw")
 
-	created, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, ModeApproval, payload, testPreview())
+	created, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, ModeInBand, payload, testPreview())
 	require.NoError(t, err)
 	require.Equal(t, StatePending, created.State)
 	require.Equal(t, f.tenant, created.Tenant)
@@ -301,7 +312,7 @@ func TestPendingExpiresAfter24h(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
 	payload := []byte("payload")
-	p := f.create(string(payload))
+	p := f.createApproval(string(payload))
 	require.Equal(t, testStart.Add(24*time.Hour), p.ExpiresAt)
 
 	// Just before the end the action is still waiting.
@@ -1014,9 +1025,9 @@ func TestClaimAndTransitionRecordTheExpiryAndClearTheSecrets(t *testing.T) {
 			f.clock.Set(testStart)
 			p := f.create(string(payload))
 			// A state made 5 minutes before the end is a good token after the end.
-			f.clock.Set(testStart.Add(24*time.Hour - 5*time.Minute))
+			f.clock.Set(p.ExpiresAt.Add(-5 * time.Minute))
 			state := f.state(p)
-			f.clock.Set(testStart.Add(24*time.Hour + time.Second))
+			f.clock.Set(p.ExpiresAt.Add(time.Second))
 
 			// Reading changes nothing.
 			_, err := f.mgr.Resume(ctx, f.tenant, state, payload)
@@ -1187,8 +1198,8 @@ func TestPruneDeletesOnlyOldEndedActions(t *testing.T) {
 func TestPruneKeepsAWaitingActionThatStillHasTime(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
-	waiting := f.create("waiting")
-	ended := f.create("ended")
+	waiting := f.createApproval("waiting")
+	ended := f.createApproval("ended")
 	require.NoError(t, f.mgr.Transition(ctx, f.tenant, ended.ID, StatePending, StateRejected, ""))
 
 	f.clock.Set(testStart.Add(2 * time.Hour))
@@ -1465,9 +1476,9 @@ func TestAnExpiryThatCannotBeRecordedStillGivesErrNotPending(t *testing.T) {
 	t.Run("Claim, the call of the manager fails", func(t *testing.T) {
 		f := newFixture(t)
 		p := f.create(string(payload))
-		f.clock.Set(testStart.Add(24*time.Hour - 5*time.Minute))
+		f.clock.Set(p.ExpiresAt.Add(-5 * time.Minute))
 		state := f.state(p)
-		f.clock.Set(testStart.Add(24*time.Hour + time.Second))
+		f.clock.Set(p.ExpiresAt.Add(time.Second))
 		mgr := f.managerOn(expireFailsStore{f.store})
 
 		_, err := mgr.Claim(ctx, f.tenant, state, payload)
@@ -1488,9 +1499,9 @@ func TestAnExpiryThatCannotBeRecordedStillGivesErrNotPending(t *testing.T) {
 		t.Run(name+", the store fails", func(t *testing.T) {
 			f := newFixture(t)
 			p := f.create(string(payload))
-			f.clock.Set(testStart.Add(24*time.Hour - 5*time.Minute))
+			f.clock.Set(p.ExpiresAt.Add(-5 * time.Minute))
 			state := f.state(p)
-			f.clock.Set(testStart.Add(24*time.Hour + time.Second))
+			f.clock.Set(p.ExpiresAt.Add(time.Second))
 			f.exec(`CREATE TRIGGER no_expire BEFORE UPDATE ON pending_actions
 				WHEN NEW.state = 'expired' BEGIN SELECT RAISE(ABORT, 'expire failed'); END`)
 
@@ -1540,7 +1551,7 @@ func TestCreateLifetime(t *testing.T) {
 
 	// A test may make an action that lives shorter than its mode allows, never
 	// longer.
-	short, err := f.mgr.CreateWithLifetime(ctx, f.tenant, f.acct, KindSend, ModeApproval, []byte("short"), testPreview(), time.Minute)
+	short, err := f.mgr.createWithLifetime(ctx, f.tenant, f.acct, KindSend, ModeApproval, []byte("short"), testPreview(), time.Minute)
 	require.NoError(t, err)
 	require.Equal(t, short.CreatedAt.Add(time.Minute), short.ExpiresAt)
 	cases := map[Mode][]time.Duration{
@@ -1549,7 +1560,7 @@ func TestCreateLifetime(t *testing.T) {
 	}
 	for mode, lifetimes := range cases {
 		for _, bad := range lifetimes {
-			_, err := f.mgr.CreateWithLifetime(ctx, f.tenant, f.acct, KindSend, mode, []byte("x"), testPreview(), bad)
+			_, err := f.mgr.createWithLifetime(ctx, f.tenant, f.acct, KindSend, mode, []byte("x"), testPreview(), bad)
 			require.Error(t, err, "mode %s, lifetime %s", mode, bad)
 		}
 	}
@@ -1614,7 +1625,7 @@ func TestExpireStaleApprovedEndsOnlyApprovalsThatNothingCanFinish(t *testing.T) 
 	finished := f.create("finished")
 	f.approve(finished, "finished")
 	require.NoError(t, f.mgr.Transition(ctx, f.tenant, finished.ID, StateApproved, StateDone, "item-1"))
-	waiting := f.create("waiting")
+	waiting := f.createApproval("waiting")
 
 	// 10 minutes of life and 15 minutes of grace have not passed yet.
 	f.clock.Set(testStart.Add(InBandLifetime + 15*time.Minute))
@@ -1642,4 +1653,28 @@ func TestExpireStaleApprovedEndsOnlyApprovalsThatNothingCanFinish(t *testing.T) 
 
 	_, err = f.mgr.ExpireStaleApproved(ctx, -time.Second)
 	require.Error(t, err, "a negative grace time is refused")
+}
+
+// One action has one channel. An action of the approval mode is answered on the
+// web page only: a request state cannot resume or claim it, even a genuine one
+// for its id and hash. The action still waits for the web page.
+func TestClaimRefusesAnApprovalAction(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	payload := []byte("for the web page")
+	p := f.createApproval(string(payload))
+	state := f.state(p)
+
+	_, err := f.mgr.Resume(ctx, f.tenant, state, payload)
+	require.ErrorIs(t, err, ErrStateInvalid)
+	_, err = f.mgr.Claim(ctx, f.tenant, state, payload)
+	require.ErrorIs(t, err, ErrStateInvalid)
+	require.Equal(t, "pending", f.storedState(p.ID), "the refused claim changed nothing")
+
+	require.NoError(t, f.mgr.Transition(ctx, f.tenant, p.ID, StatePending, StateApproved, ""),
+		"the web page can still approve it")
+
+	inBand := f.create("in the chat")
+	_, err = f.mgr.Claim(ctx, f.tenant, f.state(inBand), []byte("in the chat"))
+	require.NoError(t, err, "an in-band action is claimed as before")
 }
