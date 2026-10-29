@@ -27,13 +27,19 @@ const redacted = "[redacted]"
 // Reading is not affected. Decoding text into a Secret, for example from a
 // JSON config file, keeps the real value.
 //
-// Two things are not covered:
+// Three things are not covered:
 //   - A Secret used as a map key. The classic encoding/json writes the raw
 //     text of a map key whose type is a string type, and it does not call
 //     MarshalText. (Checked with Go 1.24, and with Go 1.27 when built with
 //     GOEXPERIMENT=nojsonv2. The default encoding/json of Go 1.27 does call
 //     MarshalText.) Do not use a Secret as a map key.
 //   - %p with a Secret that is not a pointer. See Format.
+//   - A Secret in an unexported field of a struct. fmt cannot call a method of
+//     an unexported field, so %v and %+v of the struct print the raw value. The
+//     log/slog text handler prints a struct with fmt, so it shows the raw value
+//     too. (The JSON handler leaves unexported fields out.) Never print or log
+//     a struct that holds a Secret in an unexported field; log the fields that
+//     are safe one by one. (Checked with Go 1.27.)
 type Secret string
 
 // String returns "[redacted]".
