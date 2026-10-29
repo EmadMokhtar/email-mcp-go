@@ -44,6 +44,15 @@ start a program.
 | VS Code | In band (its docs list elicitation as supported) | **[not verified]**: the docs do not name the protocol version. Approval link if it is older than 2026-07-28. |
 | Codex CLI | **[not verified]**: the docs do not mention elicitation. Without it you get the approval link. | **[not verified]**, as for stdio. |
 
+"v1 runtime" and "v2 runtime" are the two MCP clients inside Claude Code
+(see [MCP client runtimes](https://code.claude.com/docs/en/mcp#mcp-client-runtimes)).
+The v1 runtime is built on the MCP TypeScript SDK 1.x. The v2 runtime is the
+same code on the TypeScript SDK 2.0, which adds protocol 2026-07-28. The docs
+say that Claude Code uses the v2 runtime from v2.1.232 in sessions that fetch
+feature flags, and by default from v2.1.274 in sessions that do not. The
+environment variable `MCP_SDK_GENERATION` (`v1` or `v2`) chooses the runtime,
+and `MCP_PROTOCOL_NEGOTIATION=legacy` keeps Claude Code on the older protocol.
+
 An app that answers the form by itself defeats the confirmation. Only use apps
 that show the form to you.
 
@@ -85,6 +94,21 @@ Local HTTP (see [Local HTTP mode](../README.md#local-http-mode)):
 claude mcp add --transport http --scope user email \
   http://127.0.0.1:8765/mcp --header "Authorization: Bearer <token>"
 ```
+
+With `--header`, Claude Code stores the token **in plain text** in
+`~/.claude.json`. To keep it out of that file, use a
+[`headersHelper`](https://code.claude.com/docs/en/mcp#use-dynamic-headers-for-custom-authentication):
+a command that Claude Code runs at each connection, and that prints the headers
+as JSON. This one reads the token from the environment variable
+`EMAIL_MCP_TOKEN`, which you set in the shell that starts Claude Code (for
+example from your password manager):
+
+```sh
+claude mcp add-json --scope user email '{"type":"http","url":"http://127.0.0.1:8765/mcp","headersHelper":"printf '"'"'{\"Authorization\":\"Bearer %s\"}'"'"' \"$EMAIL_MCP_TOKEN\""}'
+```
+
+`claude mcp list` then shows the server as connected when `EMAIL_MCP_TOKEN` is
+set, and as refused (HTTP 401) when it is not.
 
 Also add the [recommended deny rules](../README.md#recommended-claude-code-deny-rules).
 
@@ -162,14 +186,18 @@ With a key file as the master key, add
 Do not put the email-mcp server in a project's `.cursor/mcp.json` that you
 share: other people's computers have neither your accounts nor your key.
 
-Local HTTP: the docs show a remote server with `url` and a `headers` object:
+Local HTTP: the docs show a remote server with `url` and a `headers` object. A
+token written into `headers` is stored **in plain text** in `mcp.json`. Cursor
+replaces `${env:NAME}` with an environment variable in `url` and `headers`, so
+keep the token in a variable instead, set in the shell or the system
+environment that starts Cursor:
 
 ```json
 {
   "mcpServers": {
     "email": {
       "url": "http://127.0.0.1:8765/mcp",
-      "headers": { "Authorization": "Bearer <token>" }
+      "headers": { "Authorization": "Bearer ${env:EMAIL_MCP_TOKEN}" }
     }
   }
 }

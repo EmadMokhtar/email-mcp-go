@@ -51,6 +51,13 @@ ready-made program) from the tap (a repository of Homebrew packages)
 brew install --cask emadmokhtar/tap/email-mcp
 ```
 
+The binaries are not signed by Apple. So on macOS the cask removes the
+"quarantine" mark (the flag that makes Gatekeeper, the macOS program check,
+look at a downloaded program), and Gatekeeper does not check `email-mcp`.
+Homebrew checks the SHA-256 of the archive that the cask names, but you cannot
+check a cosign signature this way. If you want to check the signature
+yourself, use a release archive.
+
 **A release archive.** Download the archive for your platform from the
 [GitHub releases](https://github.com/EmadMokhtar/email-mcp-go/releases), check
 it (see [Verifying a release](#verifying-a-release)), unpack it, and put
@@ -178,7 +185,7 @@ level when the agent calls a tool.
 | `search_messages`, `list_new_messages` | 1 | Finds messages. At most 100 per page, with a snippet of at most 200 characters. |
 | `get_message`, `get_attachment` | 1 | Reads one message or one attachment (at most 10 MB). |
 | `get_send_status` | 1 | Shows whether a send is queued, sent, or waiting for approval. |
-| `set_flags`, `tag_messages`, `move_messages` | 2 | Marks as read or unread, flags, tags and moves messages. A move to the Trash needs level 5. |
+| `set_flags`, `tag_messages`, `move_messages` | 2 | Marks as read or unread, flags, tags and moves messages. `move_messages` never moves mail to the Trash, at any level: use `trash_messages` (level 5). |
 | `create_folder`, `create_tag` | 2 | Makes a folder or a tag. There is no tool that deletes a folder. |
 | `create_draft`, `discard_draft` | 3 | Writes a draft, or moves a draft to the Trash. |
 | `send_message`, `cancel_send` | 4 | Sends a new message, a reply or a forward, and cancels a send during its undo window. |
@@ -336,6 +343,13 @@ Adjust the rules to your setup:
 
 - If you set `EMAIL_MCP_DATA_DIR` or `--data-dir`, add the rules for that
   folder too.
+- On Linux, the folders follow the XDG variables. A custom `XDG_DATA_HOME`
+  moves the data folder to `$XDG_DATA_HOME/email-mcp`. A custom
+  `XDG_CONFIG_HOME` moves the lock file folder to `$XDG_CONFIG_HOME/email-mcp`
+  (this folder is used only when the master key is in the keychain). Then the
+  `~/.local/share` and `~/.config` rules above match nothing: write the rules
+  and the sandbox paths below for the real folders instead, with their
+  absolute paths (`//` in the rules).
 - If your master key is a file (`EMAIL_MCP_KEK=file:<path>`), add
   `"Read(//<path>)"` and `"Edit(//<path>)"`. In these rules, `//` starts an
   absolute path, and `~/` starts at your home folder. A single `/` at the start
@@ -390,6 +404,8 @@ as well:
 }
 ```
 
+On Linux with a custom `XDG_DATA_HOME` or `XDG_CONFIG_HOME`, put the real
+folders in both lists (see "Adjust the rules to your setup" above).
 `allowUnsandboxedCommands: false` stops Claude from running a command outside
 the sandbox when the command fails inside it. Limits of the sandbox:
 
@@ -463,15 +479,21 @@ wrapped keys, so it is quick.
 Use this only for an AI app that cannot start a program over stdio.
 
 ```sh
-email-mcp token create --name my-app --scopes all
+email-mcp token create --name my-app --scopes email:read,email:draft
 email-mcp serve --http 127.0.0.1:8765
 ```
+
+This token lets the app read mail and write drafts, but not send. Give only
+the scopes that the app needs.
 
 - `token create` prints a token once. Copy it then. The database keeps only a
   hash (a one-way fingerprint) of it. Scopes are `email:read`,
   `email:organize`, `email:draft`, `email:send` and `email:delete`, or `all`. A
   token with fewer scopes allows less, even when the account level allows
   more.
+- Some apps keep the token in plain text in their config file.
+  [docs/harnesses.md](docs/harnesses.md) shows how to keep it out of the file
+  where the app allows it.
 - The MCP endpoint is `http://127.0.0.1:8765/mcp`. Every request needs the
   header `Authorization: Bearer <token>`.
 - The server listens only on a loopback address (127.0.0.1, [::1] or
