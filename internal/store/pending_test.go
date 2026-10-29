@@ -672,3 +672,51 @@ func TestPendingTableRulesAboutSecrets(t *testing.T) {
 	require.True(t, payloadNull)
 	require.True(t, previewNull)
 }
+
+// An approved action with no result whose time to be approved ended long ago is
+// left over from a program that stopped between the approval and the end of
+// the action. ExpireStaleApprovedPending ends it, in every tenant. It keeps
+// every other row as it is.
+func TestExpireStaleApprovedPending(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+	ensureTestTenant(t, s, "other")
+	require.NoError(t, s.CreateAccount(ctx, testAccount("other", "a1", testNow)))
+
+	put := func(tenantID account.TenantID, id string, created time.Time, to, resultID string) {
+		putPending(t, s, testPendingRow(tenantID, acct, id, created))
+		if to != "" {
+			require.NoError(t, s.TransitionPending(ctx, tenantID, id, "pending", to, resultID, created))
+		}
+	}
+	// testPendingRow lives 24 hours. The cut is one hour after the end of the
+	// life of the old rows.
+	old := testNow
+	cut := old.Add(pendingLife + time.Hour)
+	put(tenant, "stale", old, "approved", "")
+	put("other", "stale-other-tenant", old, "approved", "")
+	put(tenant, "approved-with-result", old, "approved", "item-1")
+	put(tenant, "approved-recent", cut.Add(-pendingLife), "approved", "") // ends exactly at the cut
+	put(tenant, "waiting", old, "", "")
+	put(tenant, "done", old, "done", "item-2")
+
+	n, err := s.ExpireStaleApprovedPending(ctx, cut)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+
+	require.Equal(t, "expired", pendingState(t, s, tenant, "stale"))
+	require.Equal(t, "expired", pendingState(t, s, "other", "stale-other-tenant"))
+	payloadNull, previewNull := pendingSecretsAreNull(t, s, tenant, "stale")
+	require.True(t, payloadNull, "an expired action keeps no payload")
+	require.True(t, previewNull, "an expired action keeps no preview")
+
+	require.Equal(t, "approved", pendingState(t, s, tenant, "approved-with-result"))
+	require.Equal(t, "approved", pendingState(t, s, tenant, "approved-recent"), "the cut is strict")
+	require.Equal(t, "pending", pendingState(t, s, tenant, "waiting"))
+	require.Equal(t, "done", pendingState(t, s, tenant, "done"))
+
+	n, err = s.ExpireStaleApprovedPending(ctx, cut)
+	require.NoError(t, err)
+	require.Zero(t, n, "a second call has nothing left to do")
+}

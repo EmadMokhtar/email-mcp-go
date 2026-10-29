@@ -867,3 +867,60 @@ func TestBackendCacheConcurrentRetireWhileRemoveWaits(t *testing.T) {
 		})
 	}
 }
+
+// Another process (the command line tool) can delete an account. Nothing asks
+// this process for that account again, so its backend, with the decrypted
+// password, would stay in memory until the restart. SweepIdle closes and drops
+// every backend that no call asked for in the idle time.
+func TestSweepIdleClosesOnlyBackendsThatNobodyUsed(t *testing.T) {
+	f := newFixture(t)
+	srv := imaptest.New(t)
+	idle := f.addAccount(f.tenant, "idle@example.com", serverSettings(srv), srv.Pass)
+	busy := f.addAccount(f.tenant, "busy@example.com", serverSettings(srv), srv.Pass)
+	clock := &testClock{now: testStart}
+	c := f.newCache()
+	c.now = clock.Now
+
+	idleBackend := mustMail(t, c, idle)
+	busyBackend := mustMail(t, c, busy)
+	// The busy account is asked for again 25 minutes later. That counts as a use.
+	clock.Advance(25 * time.Minute)
+	require.Same(t, busyBackend, mustMail(t, c, busy))
+
+	// Exactly 30 minutes after its last use, the idle backend is not idle yet.
+	clock.Advance(5 * time.Minute)
+	require.Zero(t, c.SweepIdle(30*time.Minute))
+	require.True(t, works(t, idleBackend))
+
+	clock.Advance(time.Millisecond)
+	require.Equal(t, 1, c.SweepIdle(30*time.Minute))
+
+	require.False(t, works(t, idleBackend), "the idle backend is closed")
+	require.True(t, works(t, busyBackend), "a backend that was used within the idle time stays")
+	require.Same(t, busyBackend, mustMail(t, c, busy))
+	fresh := mustMail(t, c, idle)
+	require.NotSame(t, idleBackend, fresh, "the next call builds a new backend")
+	require.True(t, works(t, fresh))
+}
+
+// A slot that a call holds (it builds a backend now) is in use, so the sweep
+// leaves it alone and does not wait for it.
+func TestSweepIdleSkipsASlotThatACallHolds(t *testing.T) {
+	f := newFixture(t)
+	srv := imaptest.New(t)
+	a := f.addAccount(f.tenant, "a@example.com", serverSettings(srv), srv.Pass)
+	clock := &testClock{now: testStart}
+	c := f.newCache()
+	c.now = clock.Now
+	first := mustMail(t, c, a)
+
+	s := c.slotFor(backendKey{tenant: a.TenantID, id: a.ID})
+	s.lock <- struct{}{} // a call holds the slot
+	clock.Advance(time.Hour)
+	require.Zero(t, c.SweepIdle(30*time.Minute))
+	<-s.lock
+
+	require.True(t, works(t, first))
+	require.Equal(t, 1, c.SweepIdle(30*time.Minute), "once the slot is free, the sweep takes it")
+	require.False(t, works(t, first))
+}

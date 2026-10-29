@@ -618,3 +618,34 @@ func TestDeleteAccountRemovesSecrets(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(ctx, "SELECT count(*) FROM account_secrets").Scan(&rows))
 	require.Zero(t, rows)
 }
+
+// CheckpointWAL copies the write-ahead log into the database file and cuts the
+// log to zero bytes. secure_delete does not clear old frames of the log, so
+// deleted data stays there until this runs.
+func TestCheckpointWALTruncatesTheLog(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	s, err := Open(ctx, dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	require.NoError(t, s.CreateAccount(ctx, testAccount(tenant, "a1", testNow)))
+
+	walSize := func() int64 {
+		t.Helper()
+		info, err := os.Stat(filepath.Join(dir, dbFileName+"-wal"))
+		require.NoError(t, err)
+		return info.Size()
+	}
+	require.Positive(t, walSize(), "the writes are in the log")
+
+	complete, err := s.CheckpointWAL(ctx)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Zero(t, walSize())
+
+	got, err := s.GetAccount(ctx, tenant, "a1")
+	require.NoError(t, err, "the data is in the database file")
+	require.Equal(t, account.AccountID("a1"), got.ID)
+}

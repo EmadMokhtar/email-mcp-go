@@ -303,6 +303,34 @@ func (s *Store) PrunePending(ctx context.Context, createdBefore, now time.Time) 
 	return int(n), nil
 }
 
+// ExpireStaleApprovedPending moves the approved actions that have no result id
+// and whose ExpiresAt is before expiresBefore (strictly earlier) to "expired",
+// and sets their sealed payload and preview to NULL. It returns how many it
+// changed.
+//
+// An action is approved only while it waits, so before its ExpiresAt. The
+// caller chooses expiresBefore so that the work after any approval (for example
+// a send, which can take some minutes) is surely over. Such a row is left over
+// from a program that stopped between the approval and the end of the action.
+// Nothing will ever end it, and Prune never deletes an approved row.
+//
+// It changes the actions of ALL tenants, on purpose: it is housekeeping for the
+// whole program. No call that is made for one user may use it.
+func (s *Store) ExpireStaleApprovedPending(ctx context.Context, expiresBefore time.Time) (int, error) {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE pending_actions SET state = ?, payload = NULL, preview = NULL
+		WHERE state = ? AND result_id = '' AND expires_at < ?`,
+		pendingStateExpired, pendingStateClaimed, expiresBefore.UnixMilli())
+	if err != nil {
+		return 0, fmt.Errorf("store: expire stale approved actions: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: expire stale approved actions: %w", err)
+	}
+	return int(n), nil
+}
+
 // scanPending reads one row with the columns of pendingColumns. Times are
 // returned in UTC.
 func scanPending(row rowScanner) (*PendingRow, error) {

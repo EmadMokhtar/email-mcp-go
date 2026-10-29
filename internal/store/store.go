@@ -137,6 +137,25 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// CheckpointWAL copies the write-ahead log into the database file and cuts the
+// log file to zero bytes (PRAGMA wal_checkpoint(TRUNCATE)).
+//
+// secure_delete overwrites deleted content in the database file, but not in old
+// frames of the log. A deleted message body can stay in the log until the log
+// is cut. Run this after a large delete, such as a prune.
+//
+// The checkpoint waits for the busy timeout when another connection (also of
+// another program) reads or writes. If it still cannot finish, complete is false
+// and err is nil: the next run tries again.
+func (s *Store) CheckpointWAL(ctx context.Context) (complete bool, err error) {
+	var busy, logFrames, checkpointed int
+	err = s.db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logFrames, &checkpointed)
+	if err != nil {
+		return false, fmt.Errorf("store: checkpoint the write-ahead log: %w", err)
+	}
+	return busy == 0, nil
+}
+
 // ensureDir creates dir with mode 0700 if it does not exist. It leaves an
 // existing directory as it is, so it never changes a mode the user chose.
 func ensureDir(dir string) error {

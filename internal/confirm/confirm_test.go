@@ -1559,3 +1559,48 @@ func TestPreviewKeepsTheAttachmentNames(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"figures.xlsx", "photo.png"}, got.Preview.Attachments, "the names are stored with the preview")
 }
+
+// An action that the server approved and never ended (the program stopped in
+// between) is expired once its time to be approved is over by more than the
+// grace time. A live send can still finish it before that.
+func TestExpireStaleApprovedEndsOnlyApprovalsThatNothingCanFinish(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+
+	// In band: it lives 10 minutes, and the user approves it at once.
+	f.clock.Set(testStart)
+	inBand, err := f.mgr.Create(ctx, f.tenant, f.acct, KindSend, []byte("in band"), testPreview(), InBandLifetime)
+	require.NoError(t, err)
+	f.approve(inBand, "in band")
+	finished := f.create("finished")
+	f.approve(finished, "finished")
+	require.NoError(t, f.mgr.Transition(ctx, f.tenant, finished.ID, StateApproved, StateDone, "item-1"))
+	waiting := f.create("waiting")
+
+	// 10 minutes of life and 15 minutes of grace have not passed yet.
+	f.clock.Set(testStart.Add(InBandLifetime + 15*time.Minute))
+	n, err := f.mgr.ExpireStaleApproved(ctx, 15*time.Minute)
+	require.NoError(t, err)
+	require.Zero(t, n)
+
+	f.clock.Set(testStart.Add(InBandLifetime + 15*time.Minute + time.Millisecond))
+	n, err = f.mgr.ExpireStaleApproved(ctx, 15*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	got, payload, err := f.mgr.Get(ctx, f.tenant, inBand.ID)
+	require.NoError(t, err)
+	require.Equal(t, StateExpired, got.State)
+	require.Nil(t, payload, "an expired action keeps no payload")
+
+	got, _, err = f.mgr.Get(ctx, f.tenant, finished.ID)
+	require.NoError(t, err)
+	require.Equal(t, StateDone, got.State)
+	require.Equal(t, "item-1", got.ResultID)
+	got, _, err = f.mgr.Get(ctx, f.tenant, waiting.ID)
+	require.NoError(t, err)
+	require.Equal(t, StatePending, got.State, "a waiting action is not touched")
+
+	_, err = f.mgr.ExpireStaleApproved(ctx, -time.Second)
+	require.Error(t, err, "a negative grace time is refused")
+}

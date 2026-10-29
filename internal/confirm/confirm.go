@@ -196,7 +196,8 @@ func HashPayload(kind Kind, payload []byte) [32]byte {
 // states and kinds mean, except that an action which has ended keeps no payload
 // and no preview. TransitionPending and ClaimPending are compare-and-set
 // statements that return store.ErrNotFound when they change nothing.
-// PrunePending works on the actions of all tenants.
+// PrunePending and ExpireStaleApprovedPending work on the actions of all
+// tenants.
 type PendingStore interface {
 	CreatePending(ctx context.Context, row *store.PendingRow, payload []byte, payloadKeyVersion int) error
 	GetPending(ctx context.Context, tenant account.TenantID, id string) (*store.PendingRow, error)
@@ -206,6 +207,7 @@ type PendingStore interface {
 	ClaimPending(ctx context.Context, tenant account.TenantID, id string, hash []byte, now time.Time) error
 	ExpirePending(ctx context.Context, tenant account.TenantID, id string, now time.Time) error
 	PrunePending(ctx context.Context, createdBefore, now time.Time) (int, error)
+	ExpireStaleApprovedPending(ctx context.Context, expiresBefore time.Time) (int, error)
 }
 
 var _ PendingStore = (*store.Store)(nil)
@@ -666,6 +668,35 @@ func (m *Manager) Prune(ctx context.Context, olderThan time.Duration) (int, erro
 	n, err := m.st.PrunePending(ctx, now.Add(-olderThan), now)
 	if err != nil {
 		return 0, fmt.Errorf("confirm: prune pending actions: %w", err)
+	}
+	return n, nil
+}
+
+// ExpireStaleApproved ends the approved actions that nothing will finish, and
+// returns how many it ended. Such an action is left over from a program that
+// stopped after the approval and before the action was done: the server took
+// it, but no outbox item or other result was recorded for it. Prune never
+// deletes an approved action, so without this it would stay "approved" (and
+// keep its secrets) for ever.
+//
+// An action is approved only while it waits, so before its ExpiresAt. An
+// approved action with no result id becomes "expired", and loses its payload and
+// preview, when its ExpiresAt is more than grace ago. grace must be longer than
+// the work that follows an approval can take (a send can take some minutes), so
+// that a program that is still working on the action can finish it. An action
+// that the user can approve until late (on the web page, up to 24 hours) is
+// ended only that much later.
+//
+// It works on the actions of ALL tenants, on purpose. It is housekeeping for the
+// whole program, and no call that is made for one user may use it. grace must
+// not be negative.
+func (m *Manager) ExpireStaleApproved(ctx context.Context, grace time.Duration) (int, error) {
+	if grace < 0 {
+		return 0, errors.New("confirm: the grace time for ExpireStaleApproved must not be negative")
+	}
+	n, err := m.st.ExpireStaleApprovedPending(ctx, m.now().Add(-grace))
+	if err != nil {
+		return 0, fmt.Errorf("confirm: expire stale approved actions: %w", err)
 	}
 	return n, nil
 }

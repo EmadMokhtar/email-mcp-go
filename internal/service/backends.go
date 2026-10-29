@@ -68,11 +68,14 @@ type slot struct {
 	// value in lock. It is a channel and not a mutex, so a call that waits can
 	// also stop when its context ends.
 	lock chan struct{}
-	// e and dead are read and written only by the holder of the slot.
+	// e, dead and lastUsed are read and written only by the holder of the slot.
 	e *backendEntry
-	// dead is true after Forget or Close took the slot out of the cache. A call
-	// that finds it set starts again with a new slot.
+	// dead is true after Forget, Close or SweepIdle took the slot out of the
+	// cache. A call that finds it set starts again with a new slot.
 	dead bool
+	// lastUsed is the time of the last call to Mail that got the backend of the
+	// slot. SweepIdle compares it with the idle time.
+	lastUsed time.Time
 }
 
 // retiredBackend is a backend that was replaced and waits to be closed.
@@ -97,6 +100,11 @@ type retiredBackend struct {
 // retireAfter. Forget (the account is deleted or disconnected) and Close (the
 // program ends) close at once, retired backends included.
 //
+// Another process can also delete an account. Nothing asks this process for
+// that account again, so its backend, and the password in it, would stay until
+// the program ends. SweepIdle closes the backends that no call asked for in a
+// while. The program calls it now and then.
+//
 // Each account has its own slot (see slot), so a slow build for one account does
 // not stop the others. The cache lock c.mu protects only the two maps. Nobody
 // holds it while waiting for a slot, or while reading the database.
@@ -109,10 +117,11 @@ type BackendCache struct {
 	local   bool
 	logger  *slog.Logger
 
-	// The three functions below are set by the constructor. Tests replace them.
+	// The four functions below are set by the constructor. Tests replace them.
 	decrypt    func(ctx context.Context, tenant account.TenantID, keyVersion int, aad string, sealed []byte) ([]byte, error)
 	newBackend func(cfg imapsmtp.Config, signer *signing.Signer) *imapsmtp.Backend
 	afterFunc  func(d time.Duration, f func()) (stop func() bool)
+	now        func() time.Time
 
 	// mu protects slots and retired.
 	mu      sync.Mutex
@@ -145,6 +154,7 @@ func NewBackendFactory(st SecretStore, v *secrets.Vault, signer *signing.Signer,
 		afterFunc: func(d time.Duration, f func()) func() bool {
 			return time.AfterFunc(d, f).Stop
 		},
+		now:     time.Now,
 		slots:   make(map[backendKey]*slot),
 		retired: make(map[*imapsmtp.Backend]retiredBackend),
 	}
@@ -187,6 +197,9 @@ func (c *BackendCache) mailOn(ctx context.Context, s *slot, key backendKey, a *a
 		return nil, true, nil
 	}
 	b, err = c.fill(ctx, s, key, a)
+	if err == nil {
+		s.lastUsed = c.now()
+	}
 	return b, false, err
 }
 
@@ -296,6 +309,48 @@ func (c *BackendCache) closeRetired(b *imapsmtp.Backend) {
 // backend for the account, so the backend of that call is closed too.
 func (c *BackendCache) Forget(id account.AccountID) {
 	c.remove(func(key backendKey) bool { return key.id == id })
+}
+
+// SweepIdle closes and removes the cached backends whose last call to Mail was
+// more than maxIdle ago, and returns how many it closed. It also removes the
+// empty slots of such accounts. A slot that a call holds right now (it builds a
+// backend) is in use: SweepIdle skips it and does not wait for it. The retired
+// backends are not touched: their timers close them.
+//
+// The idle time must be much longer than any use case runs with a backend that
+// it got from Mail (a send can take some minutes), because a backend that is
+// closed here fails every later call on it.
+func (c *BackendCache) SweepIdle(maxIdle time.Duration) int {
+	cutoff := c.now().Add(-maxIdle)
+	c.mu.Lock()
+	slots := make(map[backendKey]*slot, len(c.slots))
+	for key, s := range c.slots {
+		slots[key] = s
+	}
+	c.mu.Unlock()
+
+	closed := 0
+	for key, s := range slots {
+		select {
+		case s.lock <- struct{}{}:
+		default:
+			continue // a call holds the slot, so it is in use
+		}
+		if !s.dead && s.lastUsed.Before(cutoff) {
+			c.mu.Lock()
+			if c.slots[key] == s {
+				delete(c.slots, key)
+			}
+			c.mu.Unlock()
+			if s.e != nil {
+				c.closeEntry(s)
+				closed++
+			}
+			s.dead = true
+		}
+		<-s.lock
+	}
+	return closed
 }
 
 // Close closes every cached backend and every retired backend. Later calls to
