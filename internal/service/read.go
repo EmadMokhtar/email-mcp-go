@@ -8,13 +8,15 @@ import (
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
+	"github.com/EmadMokhtar/email-mcp-go/internal/mime"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 )
 
 // MaxAttachmentBytes is the largest attachment that GetAttachment returns:
 // 10 MB. The backend refuses a larger one. The MCP layer uses the same value to
-// check the answer again.
-const MaxAttachmentBytes = 10 << 20
+// check the answer again. It is the limit of mime.Build, so the two never
+// differ.
+const MaxAttachmentBytes = mime.MaxAttachmentBytes
 
 // The limits of ListAccounts when it asks the backends what they support.
 const (

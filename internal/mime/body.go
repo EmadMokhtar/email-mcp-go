@@ -15,8 +15,11 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
 )
 
-// maxAttachmentBytes is the most attachment data that one message can have.
-const maxAttachmentBytes = 10 * 1024 * 1024
+// MaxAttachmentBytes is the most attachment data that one message can have:
+// 10 MB. It is the one place of this limit (spec section 10.2): the service uses
+// it for GetAttachment and for the attachments of a forward, and the MCP layer
+// for the attachments of a tool call.
+const MaxAttachmentBytes = 10 << 20
 
 // bodies are the text forms of a message body. html is empty when the message
 // has no HTML form.
@@ -150,7 +153,7 @@ type attachment struct {
 
 // collectAttachments returns the attachments of the message: the original
 // ones for a forward that asks for them, then the new ones. It returns
-// mail.ErrTooLarge when the data is over maxAttachmentBytes in all. The file
+// mail.ErrTooLarge when the data is over MaxAttachmentBytes in all. The file
 // name of an original attachment comes from a third party, so it is cleaned
 // (see cleanOriginal). The file name of a new attachment is checked.
 func collectAttachments(c mail.Compose, bc BuildContext) ([]attachment, error) {
@@ -166,8 +169,8 @@ func collectAttachments(c mail.Compose, bc BuildContext) ([]attachment, error) {
 	for _, a := range in {
 		total += len(a.Data)
 	}
-	if total > maxAttachmentBytes {
-		return nil, fmt.Errorf("%w: attachments are over %d bytes", mail.ErrTooLarge, maxAttachmentBytes)
+	if total > MaxAttachmentBytes {
+		return nil, fmt.Errorf("%w: attachments are over %d bytes", mail.ErrTooLarge, MaxAttachmentBytes)
 	}
 
 	out := make([]attachment, 0, len(in))
