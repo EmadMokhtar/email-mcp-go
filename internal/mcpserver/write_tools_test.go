@@ -1291,3 +1291,26 @@ func TestOlderClientEmptyAnswerIsANo(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------- fix round 2
+
+// The read path wraps mime.ErrHTMLTooComplex in mail.ErrTooLarge. A read tool
+// must give the read advice, not the text for a message that is being written.
+func TestGetMessageWithHTMLTooComplex(t *testing.T) {
+	srv := imaptest.New(t)
+	srv.Append("INBOX", htmlMail("Deep", strings.Repeat("<div>", 1000)+"text"))
+	e := newEnv(t, envOptions{})
+	a := e.imapAccount(srv)
+	refs := searchRefs(t, e, a, "@inbox")
+	require.Len(t, refs, 1)
+
+	res := callIn(t, e, "get_message", map[string]any{"account": string(a.ID), "ref": refs[0]})
+
+	require.True(t, res.IsError)
+	require.Contains(t, textOf(t, res), `body_format "none"`)
+	require.NotContains(t, textOf(t, res), "simpler HTML")
+
+	wrapped := fmt.Errorf("%w: the HTML body is too complex (%w)", mail.ErrTooLarge, mime.ErrHTMLTooComplex)
+	require.Equal(t, codeTooLarge, toolError("get_message", wrapped).code)
+	require.Equal(t, codeBadMessage, toolError("send_message", mime.ErrHTMLTooComplex).code)
+}

@@ -1184,3 +1184,86 @@ func TestInBandActionExpiresWithItsRequestState(t *testing.T) {
 	require.NoError(t, env.svc.ApprovePending(ctx, web.SendID), "an action for the web page still waits")
 	require.Len(t, env.sender.sent(), 1)
 }
+
+// ---------------------------------------------------------------- the body that the user sees (fix round 2)
+
+// hiddenFiller is HTML that hides more than previewParseChars characters, so
+// the text after it is beyond any cut of the HTML.
+var hiddenFiller = `<div style="display:none">` + strings.Repeat("x", previewParseChars+1) + `</div>`
+
+// lateStyle is HTML whose style rule, after the filler, hides the decoy that
+// comes first.
+var lateStyle = `<p class="decoy">Decoy: nothing to do here.</p>` + hiddenFiller +
+	`<style>.decoy{display:none}</style><p>Please wire the money today.</p>`
+
+// draftWithHTML is a saved draft with a harmless text part and the given HTML
+// part.
+func draftWithHTML(html string) []byte {
+	return crlf("From: Me <me@example.com>\n" +
+		"To: Ann <ann@example.com>\n" +
+		"Subject: Two bodies\n" +
+		"MIME-Version: 1.0\n" +
+		"Content-Type: multipart/alternative; boundary=\"A\"\n" +
+		"\n" +
+		"--A\n" +
+		"Content-Type: text/plain; charset=utf-8\n" +
+		"\n" +
+		"Harmless text part.\n" +
+		"--A\n" +
+		"Content-Type: text/html; charset=utf-8\n" +
+		"\n" +
+		html + "\n" +
+		"--A--\n")
+}
+
+// The preview shows the text that comes from the whole HTML, as the recipient
+// sees it, also when the HTML is longer than the part of it that a cut would
+// keep.
+func TestPreviewUsesTheWholeHTML(t *testing.T) {
+	cases := map[string]string{
+		"text after a long hidden part": hiddenFiller + `<p>Please wire the money today.</p>`,
+		"a style rule after the cut":    lateStyle,
+	}
+	for name, html := range cases {
+		t.Run("a new message: "+name, func(t *testing.T) {
+			env := newWriteEnv(t)
+			a := env.account()
+			c := mail.Compose{To: []string{"bob@example.com"}, Subject: "S", HTMLBody: html}
+
+			_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+			require.NoError(t, err)
+			require.Contains(t, needs.Pending.Preview.BodyStart, "Please wire the money today.")
+			require.NotContains(t, needs.Pending.Preview.BodyStart, "Decoy")
+		})
+
+		t.Run("a saved draft: "+name, func(t *testing.T) {
+			env := newWriteEnv(t)
+			a := env.account()
+			env.backend.addMessage("d1", draftWithHTML(html), true)
+			draft := mail.Ref("d1")
+
+			_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+			require.NoError(t, err)
+			require.Contains(t, needs.Pending.Preview.BodyStart, "Please wire the money today.")
+			require.NotContains(t, needs.Pending.Preview.BodyStart, "Decoy")
+			require.NotContains(t, needs.Pending.Preview.BodyStart, "Harmless")
+		})
+	}
+}
+
+// A draft whose HTML cannot be turned into text is not sent. Its text part is
+// not shown instead: it can say something else than the HTML.
+func TestDraftWithHTMLTooComplexIsNotSent(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	env.backend.addMessage("d1", draftWithHTML(strings.Repeat("<div>", 1000)+"Please wire the money today."), true)
+	draft := mail.Ref("d1")
+
+	_, _, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+	require.ErrorIs(t, err, ErrDraftUnreadable)
+	require.Empty(t, env.waitingActions())
+	require.Empty(t, env.sender.sent())
+}

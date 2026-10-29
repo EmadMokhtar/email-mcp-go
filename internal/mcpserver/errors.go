@@ -125,14 +125,10 @@ func toolError(tool string, err error) *toolFailure {
 		reauth *service.ReauthError
 		arg    *argError
 	)
-	if errors.As(err, &ready) { // a handler made the failure itself
-		return ready
-	}
-	// The errors of mime.Build wrap no other known error, so they can come first.
-	if fail, ok := messageFailure(err); ok {
-		return fail
-	}
+	msgFail, isMsg := messageFailure(err)
 	switch {
+	case errors.As(err, &ready): // a handler made the failure itself
+		return ready
 	case errors.As(err, &perm):
 		return permissionFailure(perm)
 	case errors.As(err, &rate):
@@ -163,6 +159,11 @@ func toolError(tool string, err error) *toolFailure {
 		return tooLargeFailure(tool)
 	case errors.Is(err, mail.ErrUnsupported):
 		return failure(codeUnsupported, "This account or mail server does not support this operation. "+noRetry)
+	// The errors of a message that cannot be built come after mail.ErrTooLarge:
+	// the read path wraps mime.ErrHTMLTooComplex in mail.ErrTooLarge, and a read
+	// tool must give the advice for a read (body_format "none").
+	case isMsg:
+		return msgFail
 	// ErrNotADraft, ErrBodyAndHTML and ErrDraftUnreadable match ErrInvalidRequest
 	// too, so they come first.
 	case errors.Is(err, service.ErrBodyAndHTML):

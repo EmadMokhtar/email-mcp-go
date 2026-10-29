@@ -57,9 +57,11 @@ const (
 	maxForwardChars = 100000
 	// previewChars is the most characters of the body in a preview.
 	previewChars = 500
-	// previewParseChars is how much of the text and HTML of the message the
-	// preview reads, so that HTML with many tags still gives 500 characters of
-	// text.
+	// previewParseChars is how much of the text part of a new message the
+	// preview reads. The text part is already text, so 500 characters of it are
+	// enough; the rest is margin. The HTML is never cut: a cut can drop the end
+	// of a hidden element or a style rule, and then the preview shows text that
+	// the recipient does not see, or misses text that the recipient sees.
 	previewParseChars = 20000
 	// sendPayloadVersion is the version of the send payload format.
 	sendPayloadVersion = 1
@@ -103,9 +105,9 @@ var (
 	ErrBodyAndHTML = fmt.Errorf("%w: give body or html_body, not both; the text part is made from the HTML", ErrInvalidRequest)
 
 	// ErrDraftUnreadable means that a draft cannot be read in full (a header over
-	// a limit, too many parts, nesting that is too deep). Its attachments could
-	// then be missing from the preview, so it is not sent. It matches
-	// ErrInvalidRequest.
+	// a limit, too many parts, nesting that is too deep), or that its HTML cannot
+	// be turned into text. Its attachments or its text could then be missing
+	// from the preview, so it is not sent. It matches ErrInvalidRequest.
 	ErrDraftUnreadable = fmt.Errorf("%w: the draft cannot be read in full, so the user cannot see all of it. Write a new message", ErrInvalidRequest)
 
 	// ErrSendNotFound means that the account has no send with this id.
@@ -341,7 +343,7 @@ func auditRecipients(msg *mail.RawMessage) []string {
 // allow it, and makes its preview. When the message was built and a limit
 // refuses it, the message is returned with the error, for the audit entry.
 func (s *Service) prepareSend(ctx context.Context, b mail.Backend, a *account.Account, req *sendRequest) (*mail.RawMessage, confirm.Preview, error) {
-	msg, attachments, err := s.buildSend(ctx, b, a, req)
+	msg, content, err := s.buildSend(ctx, b, a, req)
 	if err != nil {
 		return nil, confirm.Preview{}, err
 	}
@@ -351,61 +353,98 @@ func (s *Service) prepareSend(ctx context.Context, b mail.Backend, a *account.Ac
 	if err := checkLimit(policy.CountSend, a.Limits, 1); err != nil {
 		return msg, confirm.Preview{}, err
 	}
-	return msg, previewOf(a, msg, attachments), nil
+	return msg, previewOf(a, msg, content), nil
+}
+
+// sendContent is what the preview shows of the content of a message.
+type sendContent struct {
+	// body is the cleaned text that the recipient sees: the text of the HTML
+	// when the message has HTML, the text part otherwise.
+	body string
+	// attachments are the file names of the attachments, in the order of the
+	// message.
+	attachments []string
 }
 
 // buildSend builds the message to send: from the Compose of the request, or from
-// the saved draft. It also returns the file names of the attachments of the
-// message, for the preview. A draft must have the draft state (ErrNotADraft),
-// be from the address of the account (ErrDraftNotFromAccount), and be readable
-// in full (ErrDraftUnreadable).
-func (s *Service) buildSend(ctx context.Context, b mail.Backend, a *account.Account, req *sendRequest) (*mail.RawMessage, []string, error) {
+// the saved draft. It also returns what the preview shows of its content. A
+// draft must have the draft state (ErrNotADraft), be from the address of the
+// account (ErrDraftNotFromAccount), and be readable in full, its HTML included
+// (ErrDraftUnreadable).
+func (s *Service) buildSend(ctx context.Context, b mail.Backend, a *account.Account, req *sendRequest) (*mail.RawMessage, sendContent, error) {
 	if req.compose != nil {
-		return s.buildMessage(ctx, b, a, *req.compose, false)
+		msg, names, err := s.buildMessage(ctx, b, a, *req.compose, false)
+		if err != nil {
+			return nil, sendContent{}, err
+		}
+		return msg, sendContent{body: composedBody(msg.Data), attachments: names}, nil
 	}
 	// Only a real draft is sent as it is. A received message with a From forged
 	// to the user's own address, or an old message in Sent, is not one. The
 	// check comes before the message is read.
 	head, err := b.GetMessage(ctx, req.draft, mail.BodyOptions{Format: mail.BodyNone})
 	if err != nil {
-		return nil, nil, err
+		return nil, sendContent{}, err
 	}
 	if !head.Draft {
-		return nil, nil, ErrNotADraft
+		return nil, sendContent{}, ErrNotADraft
 	}
 	raw, err := b.GetRaw(ctx, req.draft, maxDraftBytes)
 	if err != nil {
-		return nil, nil, err
+		return nil, sendContent{}, err
 	}
 	msg, err := mime.FromDraft(raw)
 	if err != nil {
-		return nil, nil, err
+		return nil, sendContent{}, err
 	}
 	if !strings.EqualFold(strings.TrimSpace(msg.From), selfAddress(a)) {
-		return nil, nil, ErrDraftNotFromAccount
+		return nil, sendContent{}, ErrDraftNotFromAccount
 	}
-	attachments, err := draftAttachments(msg.Data)
+	content, err := draftContent(msg.Data)
 	if err != nil {
-		return nil, nil, err
+		return nil, sendContent{}, err
 	}
-	return msg, attachments, nil
+	return msg, content, nil
 }
 
-// draftAttachments returns the file names of the attachments of a draft, in the
-// order of the message. A draft that the parser cannot read in full gives
-// ErrDraftUnreadable: a part that it skipped could be an attachment that the
-// user would not see. (The parser reads 1 MB of each header, 10000 parts and a
-// fixed depth; a draft that create_draft saved stays far below these.)
-func draftAttachments(data []byte) ([]string, error) {
-	parsed, err := mime.ParseMessage(bytes.NewReader(data), 1)
+// composedBody returns the cleaned text part of a message that mime.Build made.
+// Build makes that part from the whole HTML when the request has HTML (a request
+// with both a body and HTML is refused), so it is the text that the recipient
+// sees, with the block of a forward.
+func composedBody(data []byte) string {
+	parsed, _ := mime.ParseMessage(bytes.NewReader(data), previewParseChars)
+	if parsed == nil {
+		return ""
+	}
+	return mime.CleanUntrusted(parsed.Text)
+}
+
+// draftContent reads a whole draft for the preview: the text of its whole HTML
+// part (or its text part when it has no HTML), and the file names of its
+// attachments.
+//
+// It gives ErrDraftUnreadable when the parser cannot read the draft in full (a
+// part that it skipped could be an attachment that the user would not see; the
+// parser reads 1 MB of each header, 10000 parts and a fixed depth, and a draft
+// that create_draft saved stays far below these), and when the HTML cannot be
+// turned into text (mime.ErrHTMLTooComplex). In that case the text part is not
+// shown instead, because it can say something else than the HTML.
+func draftContent(data []byte) (sendContent, error) {
+	parsed, err := mime.ParseMessage(bytes.NewReader(data), 0)
 	if err != nil || parsed == nil || parsed.Incomplete {
-		return nil, ErrDraftUnreadable
+		return sendContent{}, ErrDraftUnreadable
+	}
+	body := parsed.Text
+	if parsed.HTML != "" {
+		if body, err = mime.HTMLToText(parsed.HTML); err != nil {
+			return sendContent{}, ErrDraftUnreadable
+		}
 	}
 	var names []string
 	for _, att := range parsed.Attachments {
 		names = append(names, att.Filename)
 	}
-	return names, nil
+	return sendContent{body: mime.CleanUntrusted(body), attachments: names}, nil
 }
 
 // buildMessage builds a new message, a reply or a forward from c. A reply reads
@@ -692,46 +731,33 @@ func (p *composePayload) compose() mail.Compose {
 // are cleaned of characters that a reader cannot see. Every value is valid UTF-8,
 // so the stored preview reads back the same, and the preview of the same message
 // built again is equal to it.
-func previewOf(a *account.Account, msg *mail.RawMessage, attachments []string) confirm.Preview {
-	subject, body := previewText(msg.Data)
+func previewOf(a *account.Account, msg *mail.RawMessage, content sendContent) confirm.Preview {
 	to := make([]string, len(msg.Recipients))
 	for i, r := range msg.Recipients {
 		to[i] = validText(r)
 	}
 	var names []string
-	for _, name := range attachments {
+	for _, name := range content.attachments {
 		names = append(names, validText(name))
 	}
 	return confirm.Preview{
 		Account:     validText(a.Address),
 		From:        validText(msg.From),
 		To:          to,
-		Subject:     subject,
-		BodyStart:   firstRunes(body, previewChars),
+		Subject:     previewSubject(msg.Data),
+		BodyStart:   firstRunes(validText(content.body), previewChars),
 		Count:       1,
 		Attachments: names,
 	}
 }
 
-// previewText returns the subject and the text of a message. When the message
-// has HTML, the text is the text of its HTML, made as mime.Build makes the text
-// part: most mail programs show the HTML, so that is what the user must see.
-// Otherwise it is the text part.
-func previewText(data []byte) (subject, body string) {
-	if m, err := netmail.ReadMessage(bytes.NewReader(data)); err == nil {
-		subject = mime.CleanUntrusted(mime.DecodeHeaderValue(m.Header.Get("Subject")))
+// previewSubject returns the cleaned subject of a message.
+func previewSubject(data []byte) string {
+	m, err := netmail.ReadMessage(bytes.NewReader(data))
+	if err != nil {
+		return ""
 	}
-	parsed, _ := mime.ParseMessage(bytes.NewReader(data), previewParseChars)
-	if parsed == nil {
-		return subject, ""
-	}
-	text := parsed.Text
-	if parsed.HTML != "" {
-		if t, err := mime.HTMLToText(parsed.HTML); err == nil {
-			text = t
-		}
-	}
-	return subject, mime.CleanUntrusted(text)
+	return mime.CleanUntrusted(mime.DecodeHeaderValue(m.Header.Get("Subject")))
 }
 
 // samePreview reports whether a message built again is the message of the
