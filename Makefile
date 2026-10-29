@@ -7,7 +7,8 @@
 BINARY := bin/email-mcp
 
 # Versions of the tools that "go run" downloads and builds on first use.
-# Keep them in sync with .github/workflows/ci.yml.
+# Keep them in sync with .github/workflows/ci.yml (and govulncheck also with
+# .github/workflows/release.yml).
 STATICCHECK_VERSION := v0.8.2
 GOVULNCHECK_VERSION := v1.9.0
 

@@ -1,55 +1,38 @@
-# Git
+# Files that "docker build ." does not send to the builder. The build needs
+# only the Go source, go.mod and go.sum. Patterns start at the repository root.
+
+# Git and CI
 .git/
 .gitignore
 .github/
 
-# Environment files
+# Environment files. They can hold passwords.
 .env
-.env.local
+.env.*
 
-# Build artifacts
+# Build output
+/email-mcp
+/email-mcp-go
 bin/
+dist/
 *.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-
-# Test binaries
 *.test
 *.out
 
-# Go workspace file
-go.work
+# TLS files of the interop test servers
+test/interop/certs/
 
-# IDE
-.vscode/
+# Editors, notes and docs
 .idea/
-*.swp
-*.swo
-*~
-
-# Documentation (keep README for context)
+.vscode/
+.superpowers/
+docs/
 *.md
-!README.md
-
-# CI/CD
-.gitlab-ci.yml
-.travis.yml
-
-# Logs
-*.log
-server.log
-
-# OS
+*.swp
+*~
 .DS_Store
-Thumbs.db
 
-# Scripts that are not needed in container
-*.sh
-install-claude.sh
-test_http.sh
-
-# Examples (optional - uncomment if you don't want examples in image)
-# examples/
-
+# Temporary files
+tmp/
+temp/
+*.log

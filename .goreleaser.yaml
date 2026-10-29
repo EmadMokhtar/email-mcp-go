@@ -1,0 +1,168 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+#
+# GoReleaser builds a release of email-mcp: the binaries for five platforms,
+# their archives, an SBOM (software bill of materials: the list of every module
+# inside a binary) for each archive, a checksums file signed with cosign, a
+# Homebrew cask in the tap repository, and a multi-platform container image on
+# GHCR (GitHub Container Registry).
+#
+# The release workflow (.github/workflows/release.yml) runs it for every tag
+# v*. To try it on your computer without publishing anything (cosign and syft
+# are not needed for this):
+#
+#   go run github.com/goreleaser/goreleaser/v2@v2.19.0 check
+#   go run github.com/goreleaser/goreleaser/v2@v2.19.0 release --snapshot --clean --skip=sign,sbom,publish
+#
+# Keep the GoReleaser version the same as in release.yml. The keys below are
+# the ones that the GoReleaser v2.19 documentation does not mark as
+# deprecated: homebrew_casks (not brews) and dockers_v2 (not dockers and
+# docker_manifests).
+version: 2
+
+project_name: email-mcp
+
+before:
+  hooks:
+    # Stop when go.mod or go.sum is not tidy. -diff prints the change and
+    # changes nothing.
+    - go mod tidy -diff
+
+builds:
+  - id: email-mcp
+    main: ./cmd/email-mcp
+    binary: email-mcp
+    env:
+      # A static binary: no C library is needed on the target computer.
+      - CGO_ENABLED=0
+    flags:
+      # Remove the file paths of the build machine from the binary, so the same
+      # source gives the same binary on any machine.
+      - -trimpath
+    ldflags:
+      # -s -w leave out the symbol table and the debug information.
+      # -X sets the version that "email-mcp version" prints and that the
+      # server sends to MCP clients.
+      - -s -w -X github.com/EmadMokhtar/email-mcp-go/internal/version.Version={{ .Version }}
+    targets:
+      - linux_amd64
+      - linux_arm64
+      - darwin_arm64
+      - darwin_amd64
+      - windows_amd64
+    # The time of the commit, not the time of the build, so a rebuild of the
+    # same commit gives the same files.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: email-mcp
+    ids:
+      - email-mcp
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+# One SBOM per archive, made with Syft (the default tool of "sboms").
+sboms:
+  - artifacts: archive
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# Sign the checksums file with cosign "keyless": in GitHub Actions, cosign gets
+# a short-lived certificate from Sigstore for the identity of the release
+# workflow, so there is no private key to keep. The checksums file lists every
+# archive and every SBOM, so this one signature covers all of them. The bundle
+# file holds the signature and the certificate. The README shows how to verify
+# it.
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+
+dockers_v2:
+  - id: email-mcp
+    ids:
+      - email-mcp
+    images:
+      - ghcr.io/emadmokhtar/email-mcp
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    dockerfile: Dockerfile
+    # Take the binary that this release built, not a new build from source
+    # (see the comment at the top of the Dockerfile).
+    build_args:
+      BINARY_FROM: release
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    # Docker attaches an SBOM to the published image. A snapshot builds with
+    # the local image store, which cannot keep that SBOM, so it has none.
+    sbom: "{{ not .IsSnapshot }}"
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: "MCP server for email over IMAP and SMTP"
+      org.opencontainers.image.source: "https://github.com/EmadMokhtar/email-mcp-go"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.created: "{{ .CommitDate }}"
+      org.opencontainers.image.licenses: MIT
+    annotations:
+      org.opencontainers.image.description: "MCP server for email over IMAP and SMTP"
+      org.opencontainers.image.source: "https://github.com/EmadMokhtar/email-mcp-go"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.licenses: MIT
+
+homebrew_casks:
+  - name: email-mcp
+    ids:
+      - email-mcp
+    binaries:
+      - email-mcp
+    homepage: "https://github.com/EmadMokhtar/email-mcp-go"
+    description: "MCP server for email over IMAP and SMTP"
+    repository:
+      owner: EmadMokhtar
+      name: homebrew-tap
+      # A token that may push to the tap repository. The GITHUB_TOKEN of the
+      # workflow can write only to this repository, so the release workflow
+      # passes a separate secret (see the README, "Making a release").
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_msg_template: "Update the email-mcp cask to {{ .Tag }}"
+    # Do not update the tap for a pre-release, such as v1.0.0-rc.1.
+    skip_upload: auto
+    hooks:
+      post:
+        # The binaries are not signed by Apple, so macOS would block a binary
+        # that has the "quarantine" mark of a download. Check the release with
+        # cosign first (see the README). install_steps uses the declarative
+        # steps of Homebrew (postflight_steps); .StagedPath becomes
+        # Homebrew's {{staged_path}}.
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/email-mcp"]
+          end
+
+release:
+  # Mark a tag such as v1.0.0-rc.1 as a pre-release on GitHub.
+  prerelease: auto
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
