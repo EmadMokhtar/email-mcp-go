@@ -74,6 +74,14 @@ var scopeLevels = map[string]account.Level{
 	"email:delete":   account.MailDelete,
 }
 
+// KnownScope reports whether policy knows the scope, for example "email:send".
+// Names are compared exactly. The tokens package uses it to refuse a token with
+// a scope that would have no effect.
+func KnownScope(scope string) bool {
+	_, ok := scopeLevels[scope]
+	return ok
+}
+
 // maxScopeLevel returns the highest mail level that the scopes allow. A nil
 // Scopes allows every level. Scopes that are empty, or that are all unknown,
 // allow level 0.

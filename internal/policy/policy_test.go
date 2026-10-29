@@ -363,6 +363,15 @@ func TestMaxScopeLevel(t *testing.T) {
 	require.Equal(t, account.MailDraft, maxScopeLevel(Scopes{"email:draft", "email:read", "nope"}))
 }
 
+func TestKnownScope(t *testing.T) {
+	for _, scope := range []string{"email:read", "email:organize", "email:draft", "email:send", "email:delete"} {
+		require.True(t, KnownScope(scope), scope)
+	}
+	for _, scope := range []string{"", "email", "email:*", "EMAIL:READ", "email:read ", "contacts:read"} {
+		require.False(t, KnownScope(scope), "%q", scope)
+	}
+}
+
 func TestIsTrashTarget(t *testing.T) {
 	require.True(t, IsTrashTarget("Trash", "Trash"))
 	require.True(t, IsTrashTarget("[Gmail]/Trash", "[Gmail]/Trash"))
