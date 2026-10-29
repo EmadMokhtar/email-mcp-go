@@ -1,6 +1,12 @@
 -- 0001_init: tenants, keys, accounts and account secrets.
 --
 -- All times are INTEGER Unix milliseconds in UTC. Ciphertext is stored as BLOB.
+--
+-- Warning for every new migration file: never rebuild (create, copy, drop,
+-- rename) a table that another table references with ON DELETE CASCADE. A file
+-- runs in a transaction, where SQLite ignores "PRAGMA foreign_keys = OFF", so the
+-- drop would delete the rows that reference it, for example every stored
+-- password in account_secrets. See the package comment in store.go.
 
 -- schema_migrations records which migration files have run. The migration code
 -- also creates this table before the first file, because it must read the table

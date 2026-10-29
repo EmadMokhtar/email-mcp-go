@@ -1,11 +1,33 @@
 // Package store keeps all data in one SQLite database. It is the only package
 // that talks to the database.
 //
-// Every query on tenant data has a "tenant_id = ?" condition. A caller can
-// never read or change the data of another tenant by guessing an id.
+// Every query that a caller makes for one tenant has a "tenant_id = ?"
+// condition. A caller can never read or change the data of another tenant by
+// guessing an id.
+//
+// A few queries work on all tenants on purpose. They are housekeeping or
+// lookups that find the tenant, and no tool call reaches them with an id of the
+// agent:
+//   - ListTenantKeys, ServerKey and ReplaceWrappedKeys (the master key and its
+//     rotation);
+//   - DueOutbox, NextOutboxDue and FailSendingOutbox (the outbox worker and its
+//     recovery);
+//   - PruneAudit, PrunePending and ExpireStaleApprovedPending (the daily
+//     clean-up);
+//   - APITokenByHash, UseWebSetupToken, WebSessionByHash and DeleteWebSession,
+//     which find a row by the hash of a secret (and return its tenant).
 //
 // Each task that needs new tables adds a migration file in the migrations
 // directory and its methods in a new file in this package.
+//
+// A warning for new migrations: never rebuild a table that another table
+// references with ON DELETE CASCADE (the SQLite way to change a column: create a
+// new table, copy, drop the old one, rename). Each file runs in a transaction,
+// and SQLite ignores "PRAGMA foreign_keys = OFF" inside a transaction. So the
+// DROP TABLE of the old accounts table, for example, would delete every row of
+// account_secrets (every stored password), and of the outbox, the pending
+// actions and the audit log. Use ALTER TABLE ... ADD COLUMN, or give such a
+// migration its own connection with foreign keys off, outside a transaction.
 package store
 
 import (
