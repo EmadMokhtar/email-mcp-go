@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -263,6 +264,37 @@ func TestOpenWiresEverything(t *testing.T) {
 	require.NoError(t, err)
 	require.Regexp(t, `^http://127\.0\.0\.1:\d+/connect$`, link)
 	require.NotContains(t, logs.String(), link, "the log never has a link")
+}
+
+// The log of the App writes Info and higher by default. Config.LogLevel lowers
+// the level, so a test can see every line of every part, Debug lines too.
+func TestOpenLogLevel(t *testing.T) {
+	for name, tc := range map[string]struct {
+		level     slog.Leveler
+		wantDebug bool
+	}{
+		"default is Info": {level: nil, wantDebug: false},
+		"Debug":           {level: slog.LevelDebug, wantDebug: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := &syncBuffer{}
+			a, err := Open(context.Background(), Config{
+				DataDir: t.TempDir(), KEKSource: "file:" + filepath.Join(t.TempDir(), "master.key"),
+				LogOutput: logs, LogLevel: tc.level,
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = a.CloseNow(context.Background()) })
+
+			a.Logger().Debug("debug line of the test")
+			slog.Debug("debug line of the default logger")
+			a.Logger().Info("info line of the test")
+
+			require.Contains(t, logs.String(), "info line of the test")
+			require.Equal(t, tc.wantDebug, strings.Contains(logs.String(), "debug line of the test"))
+			require.Equal(t, tc.wantDebug, strings.Contains(logs.String(), "debug line of the default logger"),
+				"the default logger of the program uses the same level")
+		})
+	}
 }
 
 func TestConfigDefaults(t *testing.T) {

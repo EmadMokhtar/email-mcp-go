@@ -108,6 +108,9 @@ type Config struct {
 	// LogOutput gets the log, as text. Nil means os.Stderr. It must never be
 	// standard output: on stdio, standard output carries the protocol.
 	LogOutput io.Writer
+	// LogLevel is the lowest level that the log writes. Nil means Info. It is
+	// the level of the default logger of the program too (see Open).
+	LogLevel slog.Leveler
 	// ExistingKeyOnly makes Open only load the master key, and never make one:
 	// a missing keychain entry or key file is an error that matches
 	// ErrNoMasterKey. A check that must not change the install (doctor) sets it.
@@ -240,7 +243,8 @@ type options struct {
 }
 
 // Open builds an App. In this order, it:
-//  1. sets the default logger of the program to a text log on Config.LogOutput;
+//  1. sets the default logger of the program to a text log on Config.LogOutput,
+//     at Config.LogLevel;
 //  2. opens the store in the data directory and makes sure the local tenant
 //     exists;
 //  3. finds the master key, or makes it on the first run (under a lock, see
@@ -267,7 +271,8 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 	if out == nil {
 		out = os.Stderr
 	}
-	log := slog.New(slog.NewTextHandler(out, nil))
+	// A nil Level in the options means Info.
+	log := slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(log)
 
 	cfg, err = cfg.resolve()
