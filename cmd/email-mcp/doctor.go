@@ -10,7 +10,9 @@ package main
 // missing, it stops before it opens anything. What it may write: when it opens
 // an existing database, app.Open runs the migrations that have not run yet,
 // adds the row of the local tenant when it is missing, and makes the server
-// key (wrapped by the existing master key) when the database has none.
+// key (wrapped by the existing master key) when the database has none. And an
+// account that needed to be reconnected, and whose logins work now, is marked
+// as connected again (Service.ProbeAccount).
 //
 // The checks, in order:
 //   - the data directory exists and has mode 0700;
