@@ -727,6 +727,37 @@ func TestSenderMarksTheAccountWhenTheServerRefusesTheLogin(t *testing.T) {
 	require.Equal(t, account.StatusOK, got.Status, "a busy server did not refuse the password")
 }
 
+// A send that started on the old backend before a reconnect committed, and
+// then fails with a refused login, does not mark the account: the mark would
+// undo the reconnect. A refused login on the credentials of now still marks it.
+func TestSenderDoesNotMarkAnAccountThatWasReconnectedDuringTheSend(t *testing.T) {
+	ta := openTest(t)
+	acct := ta.addAccount(t)
+	ctx := context.Background()
+	ta.factory.backend.sendErr = fmt.Errorf("smtp: login failed (reply code 535): %w", imapsmtp.ErrAuthFailed)
+	ta.factory.backend.onSend = func(n int) {
+		if n != 1 {
+			return
+		}
+		require.NoError(t, ta.store.ReconnectAccount(ctx, acct.TenantID, acct.ID, store.AccountReconnect{
+			Tested: *acct.Mail, SecretKind: "password", KeyVersion: 1, Sealed: []byte("sealed-new"),
+		}))
+	}
+
+	err := ta.sender(ctx, store.LocalTenantID, acct.ID, testMessage(), "")
+
+	require.ErrorIs(t, err, imapsmtp.ErrAuthFailed)
+	got, err := ta.store.GetAccount(ctx, store.LocalTenantID, acct.ID)
+	require.NoError(t, err)
+	require.Equal(t, account.StatusOK, got.Status, "the reconnect stays")
+	require.Contains(t, ta.logs.String(), "code=needs_reauth_skipped")
+
+	_ = ta.sender(ctx, store.LocalTenantID, acct.ID, testMessage(), "")
+	got, err = ta.store.GetAccount(ctx, store.LocalTenantID, acct.ID)
+	require.NoError(t, err)
+	require.Equal(t, account.StatusNeedsReauth, got.Status)
+}
+
 // ---------------------------------------------------------------- Run
 
 // A program that stopped in the middle of a send left its item in "sending".

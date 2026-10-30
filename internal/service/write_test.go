@@ -25,6 +25,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
+	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 )
 
@@ -899,6 +900,59 @@ func TestARefusedLoginMarksTheAccountForAReconnect(t *testing.T) {
 			require.ErrorAs(t, err, &reauth, "the next call does not reach the server")
 		})
 	}
+}
+
+// reconnectingBackend is a backend whose ListFolders runs during a reconnect:
+// during runs (the reconnect commits) while the call is in progress, and then
+// the call fails with a refused login, as a call on the old password does.
+type reconnectingBackend struct {
+	mail.Backend
+	during func()
+}
+
+func (b *reconnectingBackend) ListFolders(context.Context) ([]mail.Folder, error) {
+	if b.during != nil {
+		b.during()
+	}
+	return nil, fmt.Errorf("imap: login failed [AUTHENTICATIONFAILED]: %w", imapsmtp.ErrAuthFailed)
+}
+
+// A call that started on the old backend before a reconnect committed, and then
+// fails with a refused login, does not mark the account: the reconnect saved a
+// password that works, and the mark would undo it. A refused login on the
+// current credentials still marks the account.
+func TestARefusedLoginOfACallFromBeforeAReconnectDoesNotMarkTheAccount(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailOrganize))
+	ctx := context.Background()
+	backend := &reconnectingBackend{during: func() {
+		version, sealed, err := env.f.vault.Encrypt(ctx, a.TenantID, secretAAD(a), []byte("pw-new"))
+		require.NoError(t, err)
+		require.NoError(t, env.f.store.ReconnectAccount(ctx, a.TenantID, a.ID, store.AccountReconnect{
+			Tested: *a.Mail, SecretKind: passwordSecret, KeyVersion: version, Sealed: sealed,
+		}))
+	}}
+	env.factory.mu.Lock()
+	env.factory.byAccount = map[account.AccountID]mail.Backend{a.ID: backend}
+	env.factory.mu.Unlock()
+
+	_, err := env.svc.ListFolders(env.ctx(), a.ID)
+
+	require.ErrorIs(t, err, imapsmtp.ErrAuthFailed)
+	require.Equal(t, account.StatusOK, env.f.reload(a).Status, "the reconnect stays")
+	require.Contains(t, env.logs.String(), "code=needs_reauth_skipped")
+
+	// The next call reads the account after the reconnect. Its refused login is
+	// about the credentials of now, so it marks the account.
+	backend.during = nil
+	_, err = env.svc.ListFolders(env.ctx(), a.ID)
+	require.ErrorIs(t, err, imapsmtp.ErrAuthFailed)
+	require.Equal(t, account.StatusNeedsReauth, env.f.reload(a).Status)
+}
+
+// secretAAD is the associated data of the password of an account.
+func secretAAD(a *account.Account) string {
+	return secrets.AAD(string(a.TenantID), string(a.ID), passwordSecret)
 }
 
 // A busy server (INUSE or LIMIT) did not refuse the password, so the account

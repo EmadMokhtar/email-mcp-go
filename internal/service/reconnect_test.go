@@ -172,6 +172,7 @@ func TestReconnectSavesTheNewPassword(t *testing.T) {
 	got := e.reload(a)
 	want := *a
 	want.Status = account.StatusOK
+	want.CredentialsVersion = a.CredentialsVersion + 1
 	require.Equal(t, &want, got, "the id, the levels and the settings stay, and the status is ok")
 	require.Equal(t, srv.imap.Pass, e.storedPassword(t, a))
 	row, err := e.store.GetOutbox(bg, e.tenant, "queued1")

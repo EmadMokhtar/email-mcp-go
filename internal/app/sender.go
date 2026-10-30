@@ -23,17 +23,18 @@ const (
 	codeDraftOther          = "other"
 	codeNeedsReauthSet      = "needs_reauth_set"
 	codeNeedsReauthNotSaved = "needs_reauth_write_failed"
+	codeNeedsReauthSkipped  = "needs_reauth_skipped"
 )
 
 // statusTimeout is the time that the write of the account status gets after a
 // refused login. It runs even when the send has run out of time.
 const statusTimeout = 30 * time.Second
 
-// accountReader reads one account and sets its status. *store.Store implements
-// it.
+// accountReader reads one account and marks it for a reconnect. *store.Store
+// implements it.
 type accountReader interface {
 	GetAccount(ctx context.Context, tenant account.TenantID, id account.AccountID) (*account.Account, error)
-	SetAccountStatus(ctx context.Context, tenant account.TenantID, id account.AccountID, status account.Status) error
+	MarkNeedsReauth(ctx context.Context, tenant account.TenantID, id account.AccountID, credentialsVersion int) (bool, error)
 }
 
 // newSender returns the Sender of the outbox. It loads the account, gets its
@@ -90,14 +91,25 @@ func newSender(accounts accountReader, backends service.BackendFactory, log *slo
 
 // markNeedsReauth sets the status of the account to needs_reauth after the mail
 // server refused its stored login. The service then refuses every call on the
-// account until a test of the account works again. A failure is logged with a
-// fixed code.
+// account until a test of the account works again, or the user reconnects it.
+//
+// a is the account as the send read it, before it got its mail backend. The
+// mark is written only while the credentials version is still a's
+// (store.MarkNeedsReauth, one statement): a send that started on the old
+// password or pins before a reconnect committed does not undo the reconnect.
+// That case and a failure are logged with a fixed code.
 func markNeedsReauth(ctx context.Context, accounts accountReader, a *account.Account, log *slog.Logger) {
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statusTimeout)
 	defer cancel()
-	if err := accounts.SetAccountStatus(wctx, a.TenantID, a.ID, account.StatusNeedsReauth); err != nil {
+	marked, err := accounts.MarkNeedsReauth(wctx, a.TenantID, a.ID, a.CredentialsVersion)
+	if err != nil {
 		log.Error("outbox: the account could not be marked for a reconnect", "code", codeNeedsReauthNotSaved,
 			"error_types", errtype.Chain(err))
+		return
+	}
+	if !marked {
+		log.Info("outbox: the account changed after the send read it, so it is not marked for a reconnect",
+			"code", codeNeedsReauthSkipped)
 		return
 	}
 	log.Warn("outbox: the mail server refused the stored login, so the account needs to be reconnected",

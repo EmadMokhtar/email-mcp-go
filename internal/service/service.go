@@ -313,7 +313,14 @@ func (s *Service) mailBackend(ctx context.Context, id account.AccountID, act pol
 // the mail server refused its stored login (imapsmtp.ErrAuthFailed): an app
 // password was revoked, or the password changed. Then authorize refuses the
 // next call before it reaches the server (a *ReauthError), and the account
-// lists as needs_reauth until a test of the account works (ProbeAccount).
+// lists as needs_reauth until a test of the account works (ProbeAccount) or the
+// user reconnects it (ReconnectIMAPAccount).
+//
+// a is the account as the call read it, before it got its mail backend. The
+// mark is written only while the credentials version is still a's
+// (store.MarkNeedsReauth, one statement): a call that started on the old
+// password or pins before a reconnect committed does not undo the reconnect.
+// It then logs only the fixed code "needs_reauth_skipped".
 //
 // A busy server (imapsmtp.ErrServerBusy), a certificate that changed and every
 // other error do not mark the account. The status is written alone, so a save
@@ -326,8 +333,14 @@ func (s *Service) noteBackendError(ctx context.Context, a *account.Account, err 
 	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endTimeout)
 	defer cancel()
-	if err := s.d.Store.SetAccountStatus(wctx, a.TenantID, a.ID, account.StatusNeedsReauth); err != nil {
+	marked, err := s.d.Store.MarkNeedsReauth(wctx, a.TenantID, a.ID, a.CredentialsVersion)
+	if err != nil {
 		s.d.Logger.Error("service: the account could not be marked for a reconnect", "code", "needs_reauth_write_failed")
+		return
+	}
+	if !marked {
+		s.d.Logger.Info("service: the account changed after the call read it, so it is not marked for a reconnect",
+			"code", "needs_reauth_skipped")
 		return
 	}
 	s.d.Logger.Warn("service: the mail server refused the stored login, so the account needs to be reconnected",

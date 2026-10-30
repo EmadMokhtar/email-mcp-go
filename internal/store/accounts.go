@@ -15,11 +15,12 @@ import (
 // accountColumns lists the columns of the accounts table in the order that
 // scanAccount reads them.
 const accountColumns = `tenant_id, id, provider, address, display_name, mail, levels,
-	confirm_sends, confirm_deletes, autonomy_accepted_at, limits, status, created_at`
+	confirm_sends, confirm_deletes, autonomy_accepted_at, limits, status, created_at, credentials_version`
 
 // CreateAccount adds an account. It fails if the tenant does not exist or if the
 // tenant already has an account with the same id. It writes the first status
-// (a.Status); after that only SetAccountStatus and ReconnectAccount change it.
+// (a.Status); after that only SetAccountStatus, MarkNeedsReauth and
+// ReconnectAccount change it.
 //
 // The store keeps times as whole milliseconds.
 func (s *Store) CreateAccount(ctx context.Context, a *account.Account) error {
@@ -46,9 +47,10 @@ type execer interface {
 // of columns and the list of values exist once.
 func insertAccount(ctx context.Context, ex execer, a *account.Account, c accountColumnValues) error {
 	_, err := ex.ExecContext(ctx,
-		`INSERT INTO accounts (`+accountColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO accounts (`+accountColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		string(a.TenantID), string(a.ID), string(a.Provider), a.Address, a.DisplayName, c.mail, c.levels,
-		a.ConfirmSends, a.ConfirmDeletes, c.autonomyAcceptedAt, c.limits, string(a.Status), c.createdAt)
+		a.ConfirmSends, a.ConfirmDeletes, c.autonomyAcceptedAt, c.limits, string(a.Status), c.createdAt,
+		a.CredentialsVersion)
 	return err
 }
 
@@ -163,8 +165,9 @@ func (s *Store) ListAccounts(ctx context.Context, tenant account.TenantID) ([]*a
 }
 
 // UpdateAccount saves all fields of an account except its ids, its creation
-// time, its status and the pins of its mail server. It ignores a.Status and the
-// pins in a.Mail: only CreateAccount (the first values), SetAccountStatus and
+// time, its status, the pins of its mail server and its credentials version. It
+// ignores a.Status, the pins in a.Mail and a.CredentialsVersion: only
+// CreateAccount (the first values), SetAccountStatus, MarkNeedsReauth and
 // ReconnectAccount write them. So a save of the settings that read the account
 // before a failed login cannot write back the old status, and a save that read
 // it before a reconnect cannot write back the old pins, or bring back a pin
@@ -230,9 +233,10 @@ func (s *Store) UpdateAccount(ctx context.Context, a *account.Account) error {
 }
 
 // SetAccountStatus changes the status of an account, and nothing else. After
-// CreateAccount wrote the first status, only this function and ReconnectAccount
-// (which sets "ok" with the new password) change it: UpdateAccount does not
-// write it. It writes only the status column, so a save
+// CreateAccount wrote the first status, only this function, MarkNeedsReauth
+// (needs_reauth after a refused login, only for the credentials that the call
+// read) and ReconnectAccount (which sets "ok" with the new password) change it:
+// UpdateAccount does not write it. It writes only the status column, so a save
 // of the settings that runs at the same time keeps its values, and this change
 // is not lost by that save either. It refuses a status that the account package
 // does not know. It returns ErrNotFound if the tenant has no account with this
@@ -271,8 +275,10 @@ type AccountReconnect struct {
 
 // ReconnectAccount saves a reconnect of an account in one transaction: the two
 // pins of its mail server, the sealed secret when r.Sealed is not nil, and the
-// status "ok". It is the only call that changes the pins of an account after
-// CreateAccount. All of it is saved, or nothing is. It changes nothing else of
+// status "ok". It also adds one to the credentials version, so a refused login
+// of a call that started before the reconnect does not mark the account (see
+// MarkNeedsReauth). It is the only call that changes the pins of an account
+// after CreateAccount. All of it is saved, or nothing is. It changes nothing else of
 // the account: not its id, its other server settings, its levels, its switches
 // or its limits. The queued messages, the pending actions and the audit entries
 // of the account are other rows, and stay.
@@ -320,7 +326,8 @@ func (s *Store) ReconnectAccount(ctx context.Context, tenant account.TenantID, i
 		return fmt.Errorf("store: encode mail settings: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE accounts SET mail = ?, status = ? WHERE tenant_id = ? AND id = ?`,
+		`UPDATE accounts SET mail = ?, status = ?, credentials_version = credentials_version + 1
+		WHERE tenant_id = ? AND id = ?`,
 		string(mail), string(account.StatusOK), string(tenant), string(id)); err != nil {
 		return fmt.Errorf("store: reconnect account: %w", err)
 	}
@@ -340,6 +347,33 @@ func (s *Store) ReconnectAccount(ctx context.Context, tenant account.TenantID, i
 		return fmt.Errorf("store: reconnect account: %w", err)
 	}
 	return nil
+}
+
+// MarkNeedsReauth sets the status of an account to needs_reauth after the mail
+// server refused its stored login, but only while its credentials version is
+// still credentialsVersion: the value that the failing call read before it got
+// its mail backend. The check and the write are one statement, so a reconnect
+// cannot commit between them.
+//
+// It returns false, and changes nothing, when the version changed (a reconnect
+// saved a new password or new pins after the call read the account, so the
+// refused login was about old credentials), or when the tenant has no account
+// with this id.
+func (s *Store) MarkNeedsReauth(ctx context.Context, tenant account.TenantID, id account.AccountID, credentialsVersion int) (bool, error) {
+	if err := validateAccountIDs(tenant, id); err != nil {
+		return false, err
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE accounts SET status = ? WHERE tenant_id = ? AND id = ? AND credentials_version = ?`,
+		string(account.StatusNeedsReauth), string(tenant), string(id), credentialsVersion)
+	if err != nil {
+		return false, fmt.Errorf("store: mark account for a reconnect: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: mark account for a reconnect: %w", err)
+	}
+	return n == 1, nil
 }
 
 // DeleteAccount deletes an account and, through the foreign key, its secrets.
@@ -518,7 +552,7 @@ func scanAccount(row rowScanner) (*account.Account, error) {
 		createdAt          int64
 	)
 	err := row.Scan(&a.TenantID, &a.ID, &a.Provider, &a.Address, &a.DisplayName, &mail, &levels,
-		&a.ConfirmSends, &a.ConfirmDeletes, &autonomyAcceptedAt, &limits, &a.Status, &createdAt)
+		&a.ConfirmSends, &a.ConfirmDeletes, &autonomyAcceptedAt, &limits, &a.Status, &createdAt, &a.CredentialsVersion)
 	if err != nil {
 		return nil, err
 	}
