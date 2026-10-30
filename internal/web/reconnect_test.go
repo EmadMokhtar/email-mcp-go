@@ -331,3 +331,36 @@ func labelOfBox(t *testing.T, page, name string) string {
 	t.Fatalf("no label holds the box %q", name)
 	return ""
 }
+
+// A server that had no pin and is not on this computer follows the first-pin
+// rule of the connect flow: trusting its certificate also needs the "I
+// understand the risk" box, which is checked before any test.
+func TestReconnectFirstPinOfARemoteServerNeedsTheRiskBox(t *testing.T) {
+	c := newConnectFixture(t)
+	fingerprint := strings.Repeat("cd", 32)
+	c.probe.set(unknownIMAPCert(fingerprint))
+	server := account.MailServer{
+		IMAPHost: "imap.example.org", IMAPPort: 993, IMAPSecurity: account.SecurityTLS,
+		SMTPHost: "smtp.example.org", SMTPPort: 465, SMTPSecurity: account.SecurityTLS,
+		Username: "alice@example.org",
+	}
+	a := c.storedAccount("alice@example.org", server, marker, account.StatusOK)
+
+	resp, body := c.post(reconnectPath(a), url.Values{})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, msgTrustLabel, labelOfBox(t, body, "trust_imap"))
+	require.Len(t, inputNamed(t, body, "understand"), 1)
+	require.NotContains(t, visibleText(t, body), textChangedWarning, "a first pin is not a changed pin")
+	offer := offerOf(t, body, "imap")
+	probes := c.probe.count()
+
+	resp, body = c.post(reconnectPath(a), url.Values{"trust_imap": {"1"}, "imap_offer": {offer}})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), textUnderstand)
+	require.Equal(t, probes, c.probe.count(), "nothing was tested")
+	require.Empty(t, c.reload(a).Mail.PinnedIMAPCert)
+
+	resp, body = c.post(reconnectPath(a), url.Values{"trust_imap": {"1"}, "imap_offer": {offer}, "understand": {"1"}})
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode, body)
+	require.Equal(t, fingerprint, c.reload(a).Mail.PinnedIMAPCert)
+}
