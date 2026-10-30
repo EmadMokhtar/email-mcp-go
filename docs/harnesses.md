@@ -56,6 +56,20 @@ and `MCP_PROTOCOL_NEGOTIATION=legacy` keeps Claude Code on the older protocol.
 An app that answers the form by itself defeats the confirmation. Only use apps
 that show the form to you.
 
+## Agents that control a browser
+
+Some apps give the agent a browser-control tool, such as Claude in Chrome, or a
+Playwright MCP server that uses your browser profile. Such a tool acts in your
+signed-in browser, with its cookies. In the browser that `email-mcp setup`
+signed in, it can open the email-mcp web pages, raise the level of an account,
+turn off a confirmation, or press **Approve** on its own pending send. No code
+can tell a human click from an automated one.
+
+So run `email-mcp setup`, open the approval links and use the email-mcp web
+pages in a browser, or a browser profile, that no agent controls. Do not give
+browser-control tools access to that profile. See also
+[Security](../README.md#security-what-local-mode-protects-against).
+
 ## Claude Code
 
 Source: <https://code.claude.com/docs/en/mcp>, checked on 2026-10-29.

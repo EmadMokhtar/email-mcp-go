@@ -30,6 +30,7 @@ Google and Microsoft accounts with an app password.
 - [The master key](#the-master-key)
 - [Local HTTP mode](#local-http-mode)
 - [Moving from the old email-mcp](#moving-from-the-old-email-mcp)
+- [Known limitations](#known-limitations)
 - [Troubleshooting](#troubleshooting)
 - [Commands](#commands)
 - [Where the data lives](#where-the-data-lives)
@@ -296,6 +297,15 @@ But an agent that may run any shell command as you can do anything that you
 can do, also outside email-mcp. The next section shows how to limit that in
 Claude Code.
 
+**An agent that controls your browser is the same risk.** Browser-control
+tools, such as Claude in Chrome or a Playwright MCP server that uses your
+browser profile, act in your signed-in browser, with its cookies. Such a tool
+can open the email-mcp web pages there, raise the level of an account, turn off
+a confirmation, or press **Approve** on its own pending send. No code can tell
+a human click from an automated one. So run `email-mcp setup`, and use the
+email-mcp web pages, in a browser or a browser profile that no agent controls,
+and do not give browser-control tools access to that profile.
+
 ## Recommended Claude Code deny rules
 
 Claude Code has permission rules. A "deny" rule blocks a tool call. Deny rules
@@ -549,6 +559,14 @@ After the import:
 2. Remove the old `env` block (the `IMAP_*` and `SMTP_*` variables) from the
    config of your AI app, and register the server again as shown in the
    [Quick start](#2-add-it-to-claude-code).
+
+## Known limitations
+
+- After a long sleep of your computer (more than 15 minutes), a message that
+  was sent with no undo window may show "delivery unknown" even though it was
+  sent. It is never sent twice.
+- A changed password or a changed server certificate needs the account to be
+  removed and added again (see [Troubleshooting](#troubleshooting)).
 
 ## Troubleshooting
 
