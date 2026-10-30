@@ -14,7 +14,8 @@
 #   - the versions that release.yml gives to two installer actions:
 #     cosign-release (sigstore/cosign-installer) and syft-version
 #     (anchore/sbom-action/download-syft). Dependabot updates the actions, not
-#     these inputs.
+#     these inputs;
+#   - the golangci-lint version that ci.yml gives to golangci-lint-action.
 version: 2
 updates:
   - package-ecosystem: gomod

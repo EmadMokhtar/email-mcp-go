@@ -277,9 +277,14 @@ func serveHTTP(ctx context.Context, a *app.App, ln net.Listener, origins []strin
 		// contexts. A send that has started still finishes in the outbox.
 		_ = hs.Close()
 	}
-	<-served
+	serveErr := <-served
 	if err != nil {
 		return fmt.Errorf("stop the HTTP server: %w", err)
+	}
+	// After Shutdown, Serve returns http.ErrServerClosed. Any other error is a
+	// real failure of the server.
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		return fmt.Errorf("serve HTTP: %w", serveErr)
 	}
 	return nil
 }
