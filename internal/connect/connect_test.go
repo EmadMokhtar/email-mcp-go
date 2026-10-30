@@ -89,6 +89,10 @@ func TestErrorText(t *testing.T) {
 			err:  &service.ConnectionTestError{Err: fmt.Errorf("%s: %w", serverText, imapsmtp.ErrAuthFailed)},
 			text: TextAuthFailed, known: true,
 		},
+		"busy server": {
+			err:  &service.ConnectionTestError{Err: fmt.Errorf("%s: %w", serverText, imapsmtp.ErrServerBusy)},
+			text: TextServerBusy, known: true,
+		},
 		"no such host": {
 			err:  &service.ConnectionTestError{Err: &net.OpError{Op: "dial", Err: &net.DNSError{Err: serverText, IsNotFound: true}}},
 			text: TextHostNotFound, known: true,

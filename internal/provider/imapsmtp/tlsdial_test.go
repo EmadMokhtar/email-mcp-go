@@ -240,6 +240,8 @@ func TestLoginErrorMarksOnlyARefusedLogin(t *testing.T) {
 		"NO sorry":                          true,
 		"NO [UNAVAILABLE] try again later":  false,
 		"NO [SERVERBUG] something broke":    false,
+		"NO [INUSE] another session":        false,
+		"NO [LIMIT] too many connections":   false,
 		"BAD [AUTHENTICATIONFAILED] syntax": false,
 		"BAD unknown command":               false,
 	} {
@@ -251,6 +253,29 @@ func TestLoginErrorMarksOnlyARefusedLogin(t *testing.T) {
 
 		require.ErrorContains(t, err, "imap: login failed", answer)
 		require.Equal(t, refused, errors.Is(err, ErrAuthFailed), answer)
+	}
+}
+
+// INUSE and LIMIT say that the server is busy or has too many connections for
+// the user (RFC 5530). The password was not refused, so the account must not be
+// marked for a reconnect. The error says that the server is busy.
+func TestLoginErrorTellsABusyServer(t *testing.T) {
+	for answer, busy := range map[string]bool{
+		"NO [INUSE] server-text-41 for bob@example.com": true,
+		"NO [LIMIT] server-text-41 for bob@example.com": true,
+		"NO [AUTHENTICATIONFAILED] wrong":               false,
+		"NO [UNAVAILABLE] try again":                    false,
+	} {
+		fake := newFakeIMAP(t, "* OK ready\r\n", func(tag, cmd string) (string, fakeThen) {
+			return tag + " " + answer + "\r\n", fakeStay
+		})
+
+		_, err := dialIMAP(t.Context(), fake.plainConfig())
+
+		require.Equal(t, busy, errors.Is(err, ErrServerBusy), answer)
+		require.False(t, busy && errors.Is(err, ErrAuthFailed), "a busy server did not refuse the password")
+		require.NotContains(t, err.Error(), "server-text-41", "no free text of the server")
+		require.NotContains(t, err.Error(), "bob@example.com", "no free text of the server")
 	}
 }
 

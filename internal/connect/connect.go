@@ -37,6 +37,7 @@ const (
 	TextSettings      = "The server settings are not valid. Check the host names (without a port or a scheme), the ports (1 to 65535) and the security settings. A connection without encryption is allowed only to a server on this computer."
 	TextTestFailed    = "The connection test failed. Check the user name, the password and the server settings. Some providers need an app password."
 	TextAuthFailed    = "The server refused the user name or the password. Some providers need an app password, or IMAP access turned on in their settings."
+	TextServerBusy    = "The mail server is busy, or has too many connections for this account. Close other mail programs that use it, or try again in a few minutes."
 	TextCannotConnect = "Could not connect to the server. Check the host names and the ports."
 	TextHostNotFound  = "A server name was not found. Check the host names."
 	TextTimeout       = "A server did not answer in time. Check the host names and the ports, then try again."
@@ -139,6 +140,8 @@ func TestFailureText(err error) string {
 	switch {
 	case errors.Is(err, imapsmtp.ErrAuthFailed):
 		return TextAuthFailed
+	case errors.Is(err, imapsmtp.ErrServerBusy):
+		return TextServerBusy
 	case errors.As(err, &dnsErr):
 		return TextHostNotFound
 	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
