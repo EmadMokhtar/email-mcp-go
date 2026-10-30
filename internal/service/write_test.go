@@ -759,9 +759,111 @@ func TestMoveWhenTheAccountHasNoTrashFolder(t *testing.T) {
 	_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, mail.AliasTrash)
 	require.ErrorIs(t, err, ErrMoveToTrash, "@trash is refused even when no folder has the alias")
 
-	// A folder that is only called Trash is not the Trash folder: the backend's
-	// Trash would not use it either.
+	// A folder that is only called Trash is still refused (review of PR #3,
+	// item 1): on a server without SPECIAL-USE it is the user's real Trash, and
+	// a move there would skip the Trash confirmation and the Trash limit.
 	_, err = env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, "Trash")
+	require.ErrorIs(t, err, ErrMoveToTrash)
+	require.Empty(t, env.backend.moveCalls())
+}
+
+// A server without SPECIAL-USE flags no folder as Trash, but the user's Trash
+// is still there under a well-known name. A move to such a name, or to a folder
+// inside it, is refused whatever the flags say (review of PR #3, item 1).
+func TestMoveToAnUnflaggedTrashNameRefused(t *testing.T) {
+	slash := []mail.Folder{
+		{Name: "INBOX", Alias: mail.AliasInbox, Delimiter: '/'},
+		{Name: "Trash", Delimiter: '/'},
+		{Name: "Trash/Old", Delimiter: '/'},
+		{Name: "Deleted Items", Delimiter: '/'},
+		{Name: "Projects", Delimiter: '/'},
+	}
+	dot := []mail.Folder{
+		{Name: "INBOX", Alias: mail.AliasInbox, Delimiter: '.'},
+		{Name: "INBOX.Trash", Delimiter: '.'},
+		{Name: "INBOX.Trash.Old", Delimiter: '.'},
+		{Name: "INBOX.Projects", Delimiter: '.'},
+	}
+	for _, tc := range []struct {
+		folders []mail.Folder
+		target  string
+	}{
+		{slash, "Trash"},
+		{slash, "trash"},
+		{slash, "Trash/Old"},
+		{slash, "Trash/Not/Listed"},
+		{slash, "deleted items"},
+		{slash, "Deleted Items/x"},
+		{slash, "Deleted"},
+		{slash, "DELETED MESSAGES"},
+		{slash, "Bin"},
+		{slash, "rubbish"},
+		{slash, "INBOX/Trash"},
+		{dot, "INBOX.Trash"},
+		{dot, "inbox.trash"},
+		{dot, "INBOX.Trash.Old"},
+		{dot, "Trash"},
+		{dot, "Trash.Old"},
+		{dot, "INBOX.Bin"},
+		// A folder with no hierarchy: only the bare name counts.
+		{[]mail.Folder{{Name: "INBOX", Alias: mail.AliasInbox}, {Name: "Rubbish"}}, "Rubbish"},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			env := newWriteEnv(t)
+			a := env.account(level(account.MailDelete), autonomy)
+			env.backend.folders = tc.folders
+
+			_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, tc.target)
+
+			require.ErrorIs(t, err, ErrMoveToTrash)
+			require.Empty(t, env.backend.moveCalls())
+		})
+	}
+}
+
+// The name list matches a whole part of the name only, not a prefix: a folder
+// such as "Trash Talk" or "Binders" is a normal folder.
+func TestMoveToANameThatOnlyLooksLikeTrashAllowed(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailOrganize))
+	env.backend.folders = []mail.Folder{
+		{Name: "INBOX", Alias: mail.AliasInbox, Delimiter: '/'},
+		{Name: "Trash Talk", Delimiter: '/'},
+		{Name: "Binders", Delimiter: '/'},
+		{Name: "Projects", Delimiter: '/'},
+		{Name: "Projects/Trash", Delimiter: '/'},
+	}
+	targets := []string{"Trash Talk", "Binders", "Trashcan", "My Trash", "Deleted Items Old", "Projects/Trash",
+		"Projects/Bin", "INBOX/Projects", "Trash.Old"}
+	for _, target := range targets {
+		_, err := env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, target)
+		require.NoError(t, err, target)
+	}
+	require.Len(t, env.backend.moveCalls(), len(targets))
+}
+
+// create_folder uses the same check as move_messages for its parent, so a
+// parent under an unflagged Trash name is refused too.
+func TestCreateFolderInsideAnUnflaggedTrashRefused(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete), autonomy)
+	env.backend.folders = []mail.Folder{
+		{Name: "INBOX", Alias: mail.AliasInbox, Delimiter: '.'},
+		{Name: "Trash", Delimiter: '.'},
+		{Name: "INBOX.Deleted Items", Delimiter: '.'},
+		{Name: "Projects", Delimiter: '.'},
+	}
+	for _, parent := range []string{"Trash", "trash", "Trash.Old", "INBOX.Deleted Items", "inbox.deleted items"} {
+		_, err := env.svc.CreateFolder(env.ctx(), a.ID, "x", parent)
+		require.ErrorIs(t, err, ErrMoveToTrash, parent)
+		requireEntry(t, env.lastEntry(), "create_folder", audit.OutcomeRefused, "move_to_trash")
+	}
+	env.backend.mu.Lock()
+	created := slices.Clone(env.backend.created)
+	env.backend.mu.Unlock()
+	require.Empty(t, created, "the backend is not called")
+
+	_, err := env.svc.CreateFolder(env.ctx(), a.ID, "x", "Projects")
 	require.NoError(t, err)
 }
 

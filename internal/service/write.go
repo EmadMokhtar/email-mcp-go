@@ -488,9 +488,11 @@ func (s *Service) Tag(ctx context.Context, id account.AccountID, refs []mail.Ref
 // level with ErrMoveToTrash: the agent must use Trash, which asks the user when
 // the account wants it and counts toward the Trash limit. The Trash folder is
 // the one that the backend's own Trash uses (the folder with the alias
-// "@trash"), and every other folder that the backend marks as Trash. The target
-// is resolved the way the backend resolves it, and its name is compared without
-// regard to case, because some servers do not care about case (see inTrash).
+// "@trash"), every other folder that the backend marks as Trash, and every
+// folder with a well-known Trash name such as "Trash" or "Deleted Items", for a
+// server that marks no folder. The target is resolved the way the backend
+// resolves it, and its name is compared without regard to case, because some
+// servers do not care about case (see inTrash).
 func (s *Service) Move(ctx context.Context, id account.AccountID, refs []mail.Ref, folder string) ([]mail.Ref, error) {
 	acc, b, err := s.begin(ctx, id, policy.ActOrganize, toolMove)
 	if err != nil {
@@ -533,6 +535,12 @@ func refuseTrashTarget(ctx context.Context, b mail.Backend, folder string) error
 // folder and its hierarchy delimiter, such as "Trash/Old" for "Trash" and "/".
 // A server with no hierarchy (delimiter 0) has no folder inside another.
 //
+// A folder with a well-known Trash name counts too, whatever its flags say (see
+// hasTrashName). A server without SPECIAL-USE flags no folder as Trash, but the
+// user's Trash is still there, under a name such as "Trash" or "Deleted Items".
+// A move there would skip the Trash confirmation and the Trash limit. A normal
+// folder with such a name is refused too, which is the safe side.
+//
 // Case does not count, in the whole name and in the prefix. IMAP says that only
 // INBOX ignores case, and other names are exact. But some servers ignore case
 // in every name, and policy.IsTrashTarget compares exactly, so here the safe
@@ -550,20 +558,89 @@ func inTrash(folders []mail.Folder, name string) bool {
 			return true
 		}
 	}
+	return hasTrashName(folders, name)
+}
+
+// trashNames are the names that mail servers and clients commonly give to the
+// Trash folder. They are compared without regard to case.
+var trashNames = []string{"Trash", "Deleted", "Deleted Items", "Deleted Messages", "Bin", "Rubbish"}
+
+// isTrashName reports whether name is one of trashNames, without regard to
+// case. The whole name must match: "Trash Talk" and "Binders" do not.
+func isTrashName(name string) bool {
+	for _, t := range trashNames {
+		if strings.EqualFold(name, t) {
+			return true
+		}
+	}
 	return false
+}
+
+// hasTrashName reports whether the folder name, or its first level, is a
+// well-known Trash name (see trashNames).
+//
+// The first level is the first part of the name split by the hierarchy
+// delimiter, after one leading INBOX part is removed. So "Trash", "Trash/Old",
+// "INBOX.Trash" and "INBOX.Trash.Old" all count. The delimiter is the one that
+// the list gives for the folder. A name that is not in the list (a new name)
+// uses the delimiter of INBOX. The bare name is always checked too, so a server
+// with no hierarchy is covered.
+func hasTrashName(folders []mail.Folder, name string) bool {
+	if isTrashName(name) {
+		return true
+	}
+	delim, ok := folderDelimiter(folders, name)
+	if !ok {
+		delim, _ = folderDelimiter(folders, "INBOX")
+	}
+	if delim == 0 {
+		return false
+	}
+	sep := string(delim)
+	if rest, ok := cutPrefixFold(name, "INBOX"+sep); ok {
+		name = rest
+	}
+	first, _, _ := strings.Cut(name, sep)
+	return isTrashName(first)
+}
+
+// folderDelimiter returns the hierarchy delimiter of the folder with the name in
+// the list. An exact match comes first, then a match without regard to case.
+// ok is false when no folder in the list has the name.
+func folderDelimiter(folders []mail.Folder, name string) (delim rune, ok bool) {
+	for _, f := range folders {
+		if f.Name == name {
+			return f.Delimiter, true
+		}
+	}
+	for _, f := range folders {
+		if strings.EqualFold(f.Name, name) {
+			return f.Delimiter, true
+		}
+	}
+	return 0, false
 }
 
 // hasPrefixFold reports whether s starts with prefix, without regard to case.
 // It compares character by character, as strings.EqualFold does.
 func hasPrefixFold(s, prefix string) bool {
+	_, ok := cutPrefixFold(s, prefix)
+	return ok
+}
+
+// cutPrefixFold returns s without prefix, and true, when s starts with prefix
+// without regard to case. It compares character by character, as
+// strings.EqualFold does, so the part it removes can have another length in
+// bytes than prefix.
+func cutPrefixFold(s, prefix string) (string, bool) {
 	for _, p := range prefix {
 		r, size := utf8.DecodeRuneInString(s)
 		if size == 0 || !strings.EqualFold(string(r), string(p)) {
-			return false
+			return "", false
 		}
 		s = s[size:]
 	}
-	return true
+	return s, true
 }
 
 // resolveFolder returns the name of the folder that nameOrAlias means, the way
