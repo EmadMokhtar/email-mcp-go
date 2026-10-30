@@ -147,8 +147,6 @@ type accountRow struct {
 	Provider  string
 	MailLevel string
 	Status    string
-	// NeedsReconnect shows the link to the reconnect page.
-	NeedsReconnect bool
 }
 
 // connectPage is the data of the connect page. It has no field for the
@@ -287,8 +285,6 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 			Provider:  providerLabel(a.Provider),
 			MailLevel: a.Level(account.AreaMail).MailName(),
 			Status:    statusLabel(a.Status),
-
-			NeedsReconnect: a.Status == account.StatusNeedsReauth,
 		})
 	}
 	s.render(w, r, http.StatusOK, pageAccounts, page)

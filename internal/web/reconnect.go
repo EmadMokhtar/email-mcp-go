@@ -1,6 +1,7 @@
 package web
 
 // This file holds the reconnect page of an account (Service.ReconnectIMAPAccount).
+// The accounts page and the settings page of every account link to it.
 // It gives a connected account a new password, or accepts a new certificate of
 // one of its servers, and keeps the account: its id, its server settings, its
 // levels, its queued messages and its activity. Only the user does it, here or
