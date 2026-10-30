@@ -208,7 +208,9 @@ const (
 	// maxErrorText is the most characters of an error text that the outbox keeps.
 	maxErrorText = 300
 
-	// dueBatch is how many due items one query reads.
+	// dueBatch is how many due items one query reads. DueOutbox orders them
+	// round-robin by account, so one batch holds the first due item of up to
+	// dueBatch accounts.
 	dueBatch = 20
 
 	// defaultPoll is how often Drain looks at the clock while it waits.
@@ -655,7 +657,11 @@ type outboxAccount struct {
 // goroutine. So an account never has two sends at once, and its mail keeps its
 // order and its rate limits. The accounts run at the same time, with at most
 // maxParallelSends sends in progress in all. A stalled mail server of one
-// account then does not hold up the mail of the others in the batch.
+// account then does not hold up the mail of the others in the batch. The rows
+// come from DueOutbox, which orders them round-robin by account, so an account
+// with more due items than a batch holds does not keep the other accounts out
+// of the batch: each account with a due item has its first item in it (up to
+// dueBatch accounts).
 //
 // The goroutine of an account takes a free place first, and only then claims
 // its next item and sends it at once. A claimed item never waits for a place:

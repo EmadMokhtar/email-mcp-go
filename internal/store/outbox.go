@@ -144,17 +144,36 @@ func (s *Store) GetOutboxMessage(ctx context.Context, tenant account.TenantID, i
 }
 
 // DueOutbox returns up to limit queued items that are due at now: both
-// SendAfter and NextAttemptAt are not later than now. The item that has been
-// due the longest comes first.
+// SendAfter and NextAttemptAt are not later than now.
+//
+// The order is round-robin by account (an account is a tenant and an account
+// id), so the limit is fair: the first due item of every account comes before
+// the second due item of any account, and so on. An account with more due
+// items than the limit then does not keep the items of other accounts out of
+// the list. Inside one account, and among the items of the same round, the item
+// that has been due the longest comes first (then the oldest, then the lowest
+// id).
 //
 // It looks at the items of ALL tenants. This is on purpose: the worker of the
 // program sends the items of every tenant. No call that is made for one user
 // may use it.
 func (s *Store) DueOutbox(ctx context.Context, now time.Time, limit int) ([]*OutboxRow, error) {
+	// The inner query ranks each due item inside its account. It lists its
+	// columns by name and leaves out the message, so the ranked rows do not
+	// hold the sealed emails. The outer query reads the columns of
+	// outboxColumns from it.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+outboxColumns+` FROM outbox
-		WHERE status = ? AND send_after <= ? AND next_attempt_at <= ?
-		ORDER BY MAX(send_after, next_attempt_at), created_at, id
+		`SELECT `+outboxColumns+` FROM (
+			SELECT tenant_id, id, account_id, status, send_after, next_attempt_at, attempts,
+				error_text, draft_ref, created_at, sent_at, claimed_at,
+				ROW_NUMBER() OVER (
+					PARTITION BY tenant_id, account_id
+					ORDER BY MAX(send_after, next_attempt_at), created_at, id
+				) AS account_round
+			FROM outbox
+			WHERE status = ? AND send_after <= ? AND next_attempt_at <= ?
+		)
+		ORDER BY account_round, MAX(send_after, next_attempt_at), created_at, id
 		LIMIT ?`,
 		outboxQueued, now.UnixMilli(), now.UnixMilli(), limit)
 	if err != nil {
