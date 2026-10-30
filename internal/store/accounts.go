@@ -18,7 +18,8 @@ const accountColumns = `tenant_id, id, provider, address, display_name, mail, le
 	confirm_sends, confirm_deletes, autonomy_accepted_at, limits, status, created_at`
 
 // CreateAccount adds an account. It fails if the tenant does not exist or if the
-// tenant already has an account with the same id.
+// tenant already has an account with the same id. It writes the first status
+// (a.Status); after that only SetAccountStatus changes it.
 //
 // The store keeps times as whole milliseconds.
 func (s *Store) CreateAccount(ctx context.Context, a *account.Account) error {
@@ -161,8 +162,12 @@ func (s *Store) ListAccounts(ctx context.Context, tenant account.TenantID) ([]*a
 	return accounts, nil
 }
 
-// UpdateAccount saves all fields of an account except its ids and its creation
-// time. It returns ErrNotFound if the tenant has no account with this id.
+// UpdateAccount saves all fields of an account except its ids, its creation
+// time and its status. It does not write the status, so a save of the settings
+// that read the account before a failed login cannot write back the old status:
+// only SetAccountStatus changes the status (CreateAccount writes the first one).
+// It ignores a.Status. It returns ErrNotFound if the tenant has no account with
+// this id.
 func (s *Store) UpdateAccount(ctx context.Context, a *account.Account) error {
 	if err := validateAccountIDs(a.TenantID, a.ID); err != nil {
 		return err
@@ -173,10 +178,10 @@ func (s *Store) UpdateAccount(ctx context.Context, a *account.Account) error {
 	}
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE accounts SET provider = ?, address = ?, display_name = ?, mail = ?, levels = ?,
-			confirm_sends = ?, confirm_deletes = ?, autonomy_accepted_at = ?, limits = ?, status = ?
+			confirm_sends = ?, confirm_deletes = ?, autonomy_accepted_at = ?, limits = ?
 		WHERE tenant_id = ? AND id = ?`,
 		string(a.Provider), a.Address, a.DisplayName, c.mail, c.levels,
-		a.ConfirmSends, a.ConfirmDeletes, c.autonomyAcceptedAt, c.limits, string(a.Status),
+		a.ConfirmSends, a.ConfirmDeletes, c.autonomyAcceptedAt, c.limits,
 		string(a.TenantID), string(a.ID))
 	if err != nil {
 		return fmt.Errorf("store: update account: %w", err)
@@ -184,11 +189,13 @@ func (s *Store) UpdateAccount(ctx context.Context, a *account.Account) error {
 	return requireOneRow(result, "update account")
 }
 
-// SetAccountStatus changes the status of an account, and nothing else. It writes
-// only the status column, so a save of the settings that runs at the same time
-// keeps its values, and this change is not lost by that save either. It refuses
-// a status that the account package does not know. It returns ErrNotFound if
-// the tenant has no account with this id.
+// SetAccountStatus changes the status of an account, and nothing else. It is the
+// only place that changes the status after CreateAccount wrote the first one:
+// UpdateAccount does not write it. It writes only the status column, so a save
+// of the settings that runs at the same time keeps its values, and this change
+// is not lost by that save either. It refuses a status that the account package
+// does not know. It returns ErrNotFound if the tenant has no account with this
+// id.
 func (s *Store) SetAccountStatus(ctx context.Context, tenant account.TenantID, id account.AccountID, status account.Status) error {
 	if err := validateAccountIDs(tenant, id); err != nil {
 		return err
