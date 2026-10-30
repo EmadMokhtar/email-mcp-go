@@ -19,7 +19,9 @@ package main
 //   - the database file exists, and it and its write-ahead log files have mode
 //     0600;
 //   - the master key of EMAIL_MCP_KEK exists and opens the stored keys (the
-//     App opens);
+//     App opens). When the App does not open because a newer email-mcp wrote
+//     the database (store.ErrNewerSchema), the check is named "database
+//     schema" instead;
 //   - each account logs in to its IMAP and SMTP servers, with its stored
 //     settings, password and pins (Service.ProbeAccount).
 //
@@ -43,6 +45,10 @@ const (
 	wantDirMode  fs.FileMode = 0o700
 	wantFileMode fs.FileMode = 0o600
 )
+
+// schemaName is the name of the check that fails when a newer email-mcp wrote
+// the database (store.ErrNewerSchema).
+const schemaName = "database schema"
 
 // msgNoMasterKey is the reason of the master key check when the key does not
 // exist.
@@ -98,6 +104,12 @@ func runDoctor(ctx context.Context, c *cli, args []string) int {
 	switch {
 	case errors.Is(err, app.ErrNoMasterKey):
 		d.fail(keyName, "%s", msgNoMasterKey)
+		return exitError
+	case errors.Is(err, store.ErrNewerSchema):
+		// The key is not the problem: a newer email-mcp wrote the database.
+		// app.Open returns the error of store.Open as it is, and the text of
+		// ErrNewerSchema is fixed.
+		d.fail(schemaName, "%s", store.ErrNewerSchema.Error())
 		return exitError
 	case err != nil:
 		d.fail(keyName, "%v", err)
