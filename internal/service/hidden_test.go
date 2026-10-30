@@ -20,6 +20,10 @@ var hiddenAddresses = []string{
 	"dan\u200b@example.com",   // zero width space
 	"erin\u034f@example.com",  // combining grapheme joiner
 	"fay@example.com\u2060",   // word joiner
+	// Removed since the review of PR #3 (item 3).
+	"gus\U0001D173@example.com", // musical symbol begin beam (Cf)
+	"hal\u180b@example.com",     // Mongolian free variation selector
+	"ivy\ufffc@example.com",     // object replacement character
 }
 
 // requireNothingQueued checks that no action waits, no message was sent, and

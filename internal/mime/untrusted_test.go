@@ -2,6 +2,7 @@ package mime
 
 import (
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,16 @@ func isRemovedRune(r rune) bool {
 		r == 0x115F, r == 0x1160,     // Hangul fillers
 		r == 0x180E,              // Mongolian vowel separator
 		r == 0x3164, r == 0xFFA0, // Hangul fillers
-		r == 0xFEFF: // byte order mark
+		r == 0xFEFF,                // byte order mark
+		r >= 0x180B && r <= 0x180F, // Mongolian free variation selectors and vowel separator
+		r == 0x17B4, r == 0x17B5,   // Khmer inherent vowels
+		r == 0xFFFC,                // object replacement character
+		r >= 0xFFF0 && r <= 0xFFF8, // unassigned, next to the interlinear annotation
+		r == 0x2065:                // unassigned, among the invisible operators
+		return true
+	case r == 0x200C, r == 0x200D: // ZWNJ and ZWJ are kept
+		return false
+	case unicode.Is(unicode.Cf, r): // every other format character
 		return true
 	}
 	isControl := r < 0x20 || (r >= 0x7F && r <= 0x9F)
@@ -75,7 +85,8 @@ func TestCleanUntrustedKeepsRunesOutsideTheRanges(t *testing.T) {
 	// Each rune sits right next to a removed range.
 	for _, r := range []rune{
 		0x00AC, 0x00AE, // around the soft hyphen
-		0x180D, 0x180F, // around the Mongolian vowel separator
+		0x180A, 0x1810, // around the Mongolian variation selectors and vowel separator
+		0x17B3, 0x17B6, // around the Khmer inherent vowels
 		0x200A, 0x2010, // around the zero width space and the direction marks
 		0x202F,         // after the bidi overrides
 		0x205F,         // before the word joiner
@@ -85,7 +96,7 @@ func TestCleanUntrustedKeepsRunesOutsideTheRanges(t *testing.T) {
 		0x115E, 0x1161, // around the Hangul fillers (1161 is a normal vowel)
 		0x3163, 0x3165, // around the Hangul filler
 		0xFF9F, 0xFFA1, // around the halfwidth Hangul filler
-		0xFFF8, 0xFFFC, // around the interlinear annotation
+		0xFFEE, 0xFFFD, // around the unassigned code points, the interlinear annotation and U+FFFC
 		0xFF01,  // after the byte order mark
 		0xE0080, // after the tag characters
 		0xE01F0, // after the variation selectors supplement
@@ -165,4 +176,79 @@ func TestCleanUntrustedIsIdempotent(t *testing.T) {
 	once := CleanUntrusted(in)
 	require.Equal(t, once, CleanUntrusted(once))
 	require.Equal(t, "a\n"+"\U0000FFFD"+"b", once)
+}
+
+// The review of PR #3 (item 3) showed that format characters outside the list
+// passed. Now every character of the Unicode category Cf goes, except ZWNJ and
+// ZWJ, and so do a few characters that are not Cf but are invisible.
+func TestCleanUntrustedRemovesEveryFormatCharacter(t *testing.T) {
+	named := []struct {
+		name string
+		r    rune
+	}{
+		{"musical symbol begin beam (Cf)", 0x1D173},
+		{"musical symbol end phrase (Cf)", 0x1D17A},
+		{"shorthand format letter overlap (Cf)", 0x1BCA0},
+		{"shorthand format up step (Cf)", 0x1BCA3},
+		{"Egyptian hieroglyph vertical joiner (Cf)", 0x13430},
+		{"Arabic number sign (Cf)", 0x0600},
+		{"Arabic end of ayah (Cf)", 0x06DD},
+		{"Syriac abbreviation mark (Cf)", 0x070F},
+		{"language tag (Cf)", 0xE0001},
+		{"Mongolian free variation selector one", 0x180B},
+		{"Mongolian free variation selector three", 0x180D},
+		{"Mongolian free variation selector four", 0x180F},
+		{"Khmer vowel inherent aq", 0x17B4},
+		{"Khmer vowel inherent aa", 0x17B5},
+		{"object replacement character", 0xFFFC},
+		{"unassigned U+2065", 0x2065},
+		{"unassigned U+FFF0", 0xFFF0},
+		{"unassigned U+FFF8", 0xFFF8},
+	}
+	for _, tc := range named {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, "ab", CleanUntrusted("a"+string(tc.r)+"b"), "U+%04X", tc.r)
+		})
+	}
+	// Every Cf code point that Go knows.
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if !unicode.Is(unicode.Cf, r) || r == 0x200C || r == 0x200D {
+			continue
+		}
+		require.Equal(t, "ab", CleanUntrusted("a"+string(r)+"b"), "U+%04X", r)
+	}
+	// The unassigned code points in the two format ranges, and nothing else
+	// there that is assigned and visible.
+	for _, rg := range [][2]rune{{0x2060, 0x206F}, {0xFFF0, 0xFFF8}} {
+		for r := rg[0]; r <= rg[1]; r++ {
+			require.Equal(t, "ab", CleanUntrusted("a"+string(r)+"b"), "U+%04X", r)
+		}
+	}
+}
+
+// Since Go 1.25, unicode.C holds the unassigned code points (Cn) too, so
+// isUnassigned uses the Cn table and not "in no other category".
+func TestIsUnassigned(t *testing.T) {
+	require.True(t, unicode.Is(unicode.C, 0x2065), "unicode.C holds Cn")
+	require.True(t, isUnassigned(0x2065))
+	require.True(t, isUnassigned(0xFFF0))
+	require.False(t, isUnassigned('a'))
+	require.False(t, isUnassigned(0x200B), "Cf is assigned")
+	require.False(t, isUnassigned(0xE000), "private use is assigned")
+	require.False(t, isUnassigned(0x0000), "Cc is assigned")
+}
+
+// ZWNJ, ZWJ and VS16 stay, also in the text that needs them.
+func TestCleanUntrustedKeepsTheJoinersAfterTheFormatRule(t *testing.T) {
+	for _, in := range []string{
+		"\u200c", "\u200d", "\ufe0f",
+		// Persian "nemi-khaham" (I do not want) with a ZWNJ.
+		"\u0646\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645",
+		// Rainbow flag: white flag, VS16, ZWJ, rainbow.
+		"\U0001F3F3\uFE0F\u200D\U0001F308",
+		// Woman technologist: woman, ZWJ, laptop.
+		"\U0001F469\u200D\U0001F4BB",
+	} {
+		require.Equal(t, in, CleanUntrusted(in), "%q", in)
+	}
 }
