@@ -125,7 +125,13 @@ func TestLoginErrorNeverRepeatsThePassword(t *testing.T) {
 	const password = "hunter2-hunter2"
 	// This server repeats the password in its answer and then drops the
 	// connection, so a LOGOUT after the failure would fail as well.
-	fake := newFakeIMAP(t, "* OK ready\r\n", func(tag, cmd string) (string, fakeThen) {
+	//
+	// The greeting lists the capabilities. Without them, go-imap sends its own
+	// CAPABILITY command right after the greeting. This server would answer
+	// that command and close, and WaitGreeting could then report "connection
+	// closed before greeting", because it picks one of two ready channels at
+	// random.
+	fake := newFakeIMAP(t, "* OK [CAPABILITY IMAP4rev1] ready\r\n", func(tag, cmd string) (string, fakeThen) {
 		return tag + " NO login failed for " + password + "\r\n", fakeClose
 	})
 	cfg := fake.plainConfig()
