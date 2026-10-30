@@ -426,17 +426,44 @@ func TestUpdateAccount(t *testing.T) {
 	changed.ConfirmDeletes = false
 	changed.Mail.IMAPHost = "imap.other.example.com"
 	changed.Limits.SendsPerHour = 3
-	changed.Status = account.StatusNeedsReauth
 	accepted := testNow.Add(time.Minute)
 	changed.AutonomyAcceptedAt = &accepted
 	// The creation time never changes, even if the caller changes it.
 	changed.CreatedAt = testNow.Add(24 * time.Hour)
+	// The status never changes either: only SetAccountStatus writes it.
+	changed.Status = account.StatusNeedsReauth
 	require.NoError(t, s.UpdateAccount(ctx, changed))
 
 	got, err := s.GetAccount(ctx, tenant, "acct1")
 	require.NoError(t, err)
 	changed.CreatedAt = testNow
+	changed.Status = account.StatusOK
 	require.Equal(t, changed, got)
+}
+
+// A settings save that read the account before a failed login must not write
+// back the old status (follow-up N-1). The login failure sets needs_reauth with
+// SetAccountStatus; the save that comes after it with the old copy keeps it.
+func TestUpdateAccountKeepsAStatusSetAfterTheRead(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	require.NoError(t, s.CreateAccount(ctx, testAccount(tenant, "acct1", testNow)))
+
+	old, err := s.GetAccount(ctx, tenant, "acct1")
+	require.NoError(t, err)
+	require.Equal(t, account.StatusOK, old.Status)
+
+	require.NoError(t, s.SetAccountStatus(ctx, tenant, "acct1", account.StatusNeedsReauth))
+
+	old.Limits.SendsPerHour = 7
+	require.NoError(t, s.UpdateAccount(ctx, old))
+
+	got, err := s.GetAccount(ctx, tenant, "acct1")
+	require.NoError(t, err)
+	require.Equal(t, 7, got.Limits.SendsPerHour, "the setting is saved")
+	require.Equal(t, account.StatusNeedsReauth, got.Status, "the status set after the read stays")
 }
 
 // SetAccountStatus writes the status only. A save of the settings that read the
