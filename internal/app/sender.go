@@ -113,26 +113,46 @@ func markNeedsReauth(ctx context.Context, accounts accountReader, a *account.Acc
 //     treated as unknown too. (The provider wraps the case after the end of the
 //     data in ErrDeliveryUnknown already. This keeps the rule even if it did
 //     not.)
-//   - a *imapsmtp.RecipientRejectedError with a 5xx code: the server refused a
-//     recipient for good, and a retry gets the same answer.
+//   - a 5xx reply code at a step of the transaction: a *imapsmtp.ReplyError for
+//     MAIL FROM, DATA or the end of the data (for example "554 rejected as
+//     spam"), and a *imapsmtp.RecipientRejectedError for RCPT TO. The server
+//     refused the message for good, and a retry gets the same answer. A 5xx
+//     at the end of the data is a sure refusal, not an unknown delivery: the
+//     provider never wraps it in ErrDeliveryUnknown.
+//   - imapsmtp.ErrSMTPUTF8Unsupported: an address has non-ASCII characters
+//     and the server does not offer SMTPUTF8. Nothing was sent, and a retry
+//     gets the same answer.
 //   - imapsmtp.ErrInvalidMessage: the provider refused the message before it
 //     connected (an address that cannot go into an SMTP command). A retry gets
 //     the same answer.
 //
-// Any other error means that the server did not take the message, and a retry
-// is safe.
+// The test uses the types of the errors and never their text. Any other error
+// means that the server did not take the message, and a retry is safe: a 4xx
+// reply code, a 5xx reply code before the transaction (to the hello or
+// STARTTLS), and a network error before the data was sent.
 func sendError(err error) error {
-	var rejected *imapsmtp.RecipientRejectedError
+	var (
+		rejected *imapsmtp.RecipientRejectedError
+		reply    *imapsmtp.ReplyError
+	)
 	switch {
 	case errors.Is(err, imapsmtp.ErrDeliveryUnknown),
 		errors.Is(err, imapsmtp.ErrInvalidMessage),
+		errors.Is(err, imapsmtp.ErrSMTPUTF8Unsupported),
 		errors.Is(err, context.Canceled),
 		errors.Is(err, context.DeadlineExceeded),
-		errors.As(err, &rejected) && rejected.Code >= 500 && rejected.Code <= 599:
+		errors.As(err, &rejected) && isPermanentCode(rejected.Code),
+		errors.As(err, &reply) && reply.InTransaction() && isPermanentCode(reply.Code):
 		return outbox.Permanent(err)
 	default:
 		return err
 	}
+}
+
+// isPermanentCode reports whether an SMTP reply code is a permanent refusal: a
+// code from 500 to 599.
+func isPermanentCode(code int) bool {
+	return code >= 500 && code <= 599
 }
 
 // discardReason returns a fixed code for a failed discard. The text of the error

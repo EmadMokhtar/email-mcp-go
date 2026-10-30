@@ -592,6 +592,20 @@ func TestSenderMarksUnknownDeliveryAndHardRefusalsPermanent(t *testing.T) {
 		"cancelled":               {err: fmt.Errorf("smtp: %w", context.Canceled), permanent: true},
 		"connection refused":      {err: errors.New("smtp: dial: connection refused")},
 		"message cannot be sent":  {err: fmt.Errorf("%w: recipient 1 of 1 is not a valid address", imapsmtp.ErrInvalidMessage), permanent: true},
+
+		// Review of PR #3, item 4: a 5xx reply at any step of the transaction
+		// is permanent, and a 4xx reply stays one to retry.
+		"MAIL FROM refused (5xx)":   {err: &imapsmtp.ReplyError{Step: imapsmtp.StepMailFrom, Code: 550}, permanent: true},
+		"MAIL FROM refused (4xx)":   {err: &imapsmtp.ReplyError{Step: imapsmtp.StepMailFrom, Code: 451}},
+		"RCPT TO refused (5xx)":     {err: &imapsmtp.ReplyError{Step: imapsmtp.StepRcptTo, Code: 553}, permanent: true},
+		"RCPT TO refused (4xx)":     {err: &imapsmtp.ReplyError{Step: imapsmtp.StepRcptTo, Code: 452}},
+		"DATA refused (5xx)":        {err: &imapsmtp.ReplyError{Step: imapsmtp.StepData, Code: 554}, permanent: true},
+		"DATA refused (4xx)":        {err: &imapsmtp.ReplyError{Step: imapsmtp.StepData, Code: 451}},
+		"end of data refused (5xx)": {err: &imapsmtp.ReplyError{Step: imapsmtp.StepEndOfData, Code: 554}, permanent: true},
+		"end of data refused (4xx)": {err: &imapsmtp.ReplyError{Step: imapsmtp.StepEndOfData, Code: 452}},
+		"wrapped 5xx refusal":       {err: fmt.Errorf("send: %w", &imapsmtp.ReplyError{Step: imapsmtp.StepEndOfData, Code: 550}), permanent: true},
+		"hello refused (5xx)":       {err: &imapsmtp.ReplyError{Step: "hello", Code: 554}},
+		"no SMTPUTF8":               {err: imapsmtp.ErrSMTPUTF8Unsupported, permanent: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ta := openTest(t)
@@ -609,6 +623,23 @@ func TestSenderMarksUnknownDeliveryAndHardRefusalsPermanent(t *testing.T) {
 			require.Empty(t, ta.factory.backend.discardedRefs(), "a draft is discarded only after a send")
 		})
 	}
+}
+
+// A 554 at the end of the data is a sure refusal: the outbox tries the message
+// once and then marks it failed, with no retry (review of PR #3, item 4).
+func TestOutboxFailsAMessageThatTheServerRefusesAtTheEndOfData(t *testing.T) {
+	ta := openTest(t)
+	acct := ta.addAccount(t)
+	ta.factory.backend.sendErr = &imapsmtp.ReplyError{Step: imapsmtp.StepEndOfData, Code: 554}
+
+	item, err := ta.Outbox.Enqueue(context.Background(), store.LocalTenantID, acct.ID, testMessage(), time.Second, "")
+	require.NoError(t, err)
+	require.NoError(t, ta.Close(context.Background()))
+
+	require.Equal(t, 1, ta.factory.backend.sentCount(), "tried once")
+	status, errText := outboxStatus(t, ta.dir, item.ID)
+	require.Equal(t, "failed", status)
+	require.Contains(t, errText, "554")
 }
 
 func TestSenderDiscardsTheDraftAfterTheSend(t *testing.T) {

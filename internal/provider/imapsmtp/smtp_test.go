@@ -517,9 +517,90 @@ func TestSendNeedsSMTPUTF8ForNonASCIIAddresses(t *testing.T) {
 	err := b.Send(t.Context(), raw)
 
 	// The test server does not offer SMTPUTF8. The client must not send an
-	// address that the server cannot read.
+	// address that the server cannot read. A retry gets the same answer, so
+	// the error has a type that says so (review of PR #3, item 4).
 	require.ErrorContains(t, err, "SMTPUTF8")
+	require.ErrorIs(t, err, ErrSMTPUTF8Unsupported)
+	requireNoneOf(t, err.Error(), "jörg", "example.com")
 	require.Empty(t, smtpSrv.Messages())
+}
+
+// stepReplyFake returns a fake SMTP server that answers the step with reply and
+// every other step with success. The step is "MAIL", "RCPT", "DATA" or "."
+// (the end of the data).
+func stepReplyFake(t *testing.T, step, reply string) *fakeSMTP {
+	t.Helper()
+	inData := false
+	return newFakeSMTP(t, "220 fake ESMTP ready\r\n", func(line string) (string, fakeThen) {
+		if inData {
+			if line == "." {
+				inData = false
+				if step == "." {
+					return reply, fakeStay
+				}
+				return "250 ok\r\n", fakeStay
+			}
+			return "", fakeStay
+		}
+		verb := smtpVerb(line)
+		switch verb {
+		case "EHLO":
+			return "250-fake\r\n250 AUTH PLAIN\r\n", fakeStay
+		case "AUTH":
+			return "235 2.7.0 accepted\r\n", fakeStay
+		case "RSET":
+			return "250 ok\r\n", fakeStay
+		}
+		if verb == step {
+			return reply, fakeStay
+		}
+		switch verb {
+		case "MAIL", "RCPT":
+			return "250 ok\r\n", fakeStay
+		case "DATA":
+			inData = true
+			return "354 go ahead\r\n", fakeStay
+		}
+		return "502 unexpected\r\n", fakeStay
+	})
+}
+
+// Each step of the transaction that the server refuses with a reply code gives
+// an error with the step and the code, which the caller can test with
+// errors.As. The text of the server stays out (review of PR #3, item 4).
+func TestSendRefusalAtEachStepHasAReplyError(t *testing.T) {
+	for _, tc := range []struct {
+		step, wantStep string
+	}{
+		{"MAIL", StepMailFrom},
+		{"DATA", StepData},
+		{".", StepEndOfData},
+	} {
+		for _, code := range []int{451, 552, 554} {
+			t.Run(fmt.Sprintf("%s %d", tc.wantStep, code), func(t *testing.T) {
+				fake := stepReplyFake(t, tc.step, fmt.Sprintf("%d 5.7.1 refused for <leak-bob@example.com>\r\n", code))
+				b := newSMTPBackend(t, fake.config(account.SecurityPlain))
+
+				err := b.Send(t.Context(), outgoing("one", "Lunch", "bob@example.com"))
+
+				var reply *ReplyError
+				require.ErrorAs(t, err, &reply)
+				require.Equal(t, tc.wantStep, reply.Step)
+				require.Equal(t, code, reply.Code)
+				require.NotErrorIs(t, err, ErrDeliveryUnknown, "the server said no for sure")
+				require.ErrorContains(t, err, fmt.Sprint(code))
+				requireNoneOf(t, err.Error(), "leak-bob", "example.com", "refused for", "<", ">")
+			})
+		}
+	}
+
+	// RCPT TO keeps its own error, with the place of the recipient.
+	fake := stepReplyFake(t, "RCPT", "550 5.1.1 no such user <leak-bob@example.com>\r\n")
+	b := newSMTPBackend(t, fake.config(account.SecurityPlain))
+	err := b.Send(t.Context(), outgoing("one", "Lunch", "bob@example.com"))
+	var rejected *RecipientRejectedError
+	require.ErrorAs(t, err, &rejected)
+	require.Equal(t, 550, rejected.Code)
 }
 
 // ---------------------------------------------------------------- one send, never two

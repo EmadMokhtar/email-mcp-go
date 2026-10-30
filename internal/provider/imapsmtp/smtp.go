@@ -50,6 +50,54 @@ var ErrDeliveryUnknown = errors.New("smtp: the server did not confirm the messag
 // answer. Check it with errors.Is.
 var ErrInvalidMessage = errors.New("smtp: the message cannot be sent as it is")
 
+// ErrSMTPUTF8Unsupported means that an address of the message has non-ASCII
+// characters, and the SMTP server does not offer SMTPUTF8, which such an
+// address needs. Send found it after the hello, before it sent MAIL FROM, so
+// nothing was sent. A retry to the same server gets the same answer. Check it
+// with errors.Is.
+var ErrSMTPUTF8Unsupported = errors.New("smtp: an address has non-ASCII characters, and the server does not support SMTPUTF8")
+
+// The steps of an SMTP transaction, as ReplyError names them.
+const (
+	StepMailFrom  = "MAIL FROM"
+	StepRcptTo    = "RCPT TO"
+	StepData      = "DATA"
+	StepEndOfData = "end of data"
+)
+
+// ReplyError means that the SMTP server answered a step of the conversation
+// with a reply code that is not a success. Step is the name of the step, such
+// as StepMailFrom or StepEndOfData, and Code is the reply code: one that starts
+// with 4 is a temporary refusal, and one that starts with 5 is a permanent one.
+// The error never holds the text of the server, which can repeat the user name
+// or an address. Check it with errors.As.
+//
+// A refused recipient gives a *RecipientRejectedError instead, which also says
+// which recipient it was.
+type ReplyError struct {
+	Step string
+	Code int
+}
+
+func (e *ReplyError) Error() string {
+	if e.Step == StepEndOfData {
+		return fmt.Sprintf("smtp: the server did not accept the message (reply code %d)", e.Code)
+	}
+	return fmt.Sprintf("smtp: %s failed (reply code %d)", e.Step, e.Code)
+}
+
+// InTransaction reports whether the step is one of the mail transaction: MAIL
+// FROM, RCPT TO, DATA or the end of the data. A refusal there is about this
+// message. A refusal at an earlier step (the hello or STARTTLS) is about the
+// connection.
+func (e *ReplyError) InTransaction() bool {
+	switch e.Step {
+	case StepMailFrom, StepRcptTo, StepData, StepEndOfData:
+		return true
+	}
+	return false
+}
+
 // RecipientRejectedError means the SMTP server refused one recipient, so the
 // message was not sent to anyone. The error names the recipient by its place in
 // RawMessage.Recipients. It never holds the address or the text of the server:
@@ -97,6 +145,11 @@ func (e *RecipientRejectedError) Error() string {
 // or the answer is garbled or has another code than 250, nobody can tell
 // whether the server took the message. The error then wraps ErrDeliveryUnknown.
 // The error never holds the text of the server.
+//
+// A reply code that refuses MAIL FROM, DATA or the end of the data gives a
+// *ReplyError with the step and the code, and a refused recipient gives a
+// *RecipientRejectedError. An address with non-ASCII characters, on a server
+// that does not offer SMTPUTF8, gives ErrSMTPUTF8Unsupported.
 //
 // A new SMTP connection is made for every call. The time limit of the whole
 // conversation is CommandTimeout plus the time that the data needs at
@@ -171,12 +224,18 @@ func isASCII(list ...string) bool {
 func sendOn(c *smtp.Client, raw *mail.RawMessage) error {
 	opts := &smtp.MailOptions{
 		Size: int64(len(raw.Data)),
-		// An address with non-ASCII characters needs SMTPUTF8. go-smtp fails
-		// before it sends the command when the server does not offer it.
+		// An address with non-ASCII characters needs SMTPUTF8. go-smtp also
+		// fails before it sends the command when the server does not offer it,
+		// but with an error that has no type. The check here gives one.
 		UTF8: !isASCII(append([]string{raw.From}, raw.Recipients...)...),
 	}
+	if opts.UTF8 {
+		if ok, _ := c.Extension("SMTPUTF8"); !ok {
+			return ErrSMTPUTF8Unsupported
+		}
+	}
 	if err := c.Mail(raw.From, opts); err != nil {
-		return smtpStepError("MAIL FROM", err)
+		return smtpStepError(StepMailFrom, err)
 	}
 	for i, to := range raw.Recipients {
 		err := c.Rcpt(to, nil)
@@ -191,7 +250,7 @@ func sendOn(c *smtp.Client, raw *mail.RawMessage) error {
 			_ = c.Reset()
 			return &RecipientRejectedError{Index: i, Total: len(raw.Recipients), Code: reply.Code}
 		}
-		return smtpStepError("RCPT TO", err)
+		return smtpStepError(StepRcptTo, err)
 	}
 
 	w, err := c.Data()
@@ -200,24 +259,25 @@ func sendOn(c *smtp.Client, raw *mail.RawMessage) error {
 		if errors.As(err, &reply) {
 			_ = c.Reset()
 		}
-		return smtpStepError("DATA", err)
+		return smtpStepError(StepData, err)
 	}
 	if _, err := w.Write(raw.Data); err != nil {
 		// w is not closed on purpose. Closing it would end the message with the
 		// final dot, and the server could take a message that is cut short.
-		return smtpStepError("DATA", err)
+		return smtpStepError(StepData, err)
 	}
 	if _, err := w.CloseWithResponse(); err != nil {
 		// Only a reply code from 400 to 599 says for sure that the server did not
-		// take the message. A code such as 251 is a success code that is not the
-		// one that SMTP defines for the end of data, so the server may have
+		// take the message, so only that is a *ReplyError, and never
+		// ErrDeliveryUnknown. A code such as 251 is a success code that is not
+		// the one that SMTP defines for the end of data, so the server may have
 		// taken the message. The cause goes through smtpStepError, which leaves
 		// out the line that the server sent: it can hold an address.
 		var reply *smtp.SMTPError
 		if errors.As(err, &reply) && reply.Code >= 400 && reply.Code <= 599 {
-			return fmt.Errorf("smtp: the server did not accept the message (reply code %d)", reply.Code)
+			return &ReplyError{Step: StepEndOfData, Code: reply.Code}
 		}
-		return fmt.Errorf("%w: %w", ErrDeliveryUnknown, smtpStepError("end of data", err))
+		return fmt.Errorf("%w: %w", ErrDeliveryUnknown, smtpStepError(StepEndOfData, err))
 	}
 	return nil
 }
@@ -524,7 +584,8 @@ func smtpLoginError(err error) error {
 // smtpStepError describes the failure of one step of the SMTP conversation. It
 // keeps what helps a person: the step, the reply code of the server, the
 // certificate error, the network error. It leaves out the text of the server,
-// which can repeat the user name or an address.
+// which can repeat the user name or an address. A reply code gives a
+// *ReplyError.
 func smtpStepError(step string, err error) error {
 	var (
 		certErr  *CertificateUnknownError
@@ -536,7 +597,7 @@ func smtpStepError(step string, err error) error {
 		// The text of the error says what is wrong and starts with "smtp:".
 		return err
 	case errors.As(err, &reply):
-		return fmt.Errorf("smtp: %s failed (reply code %d)", step, reply.Code)
+		return &ReplyError{Step: step, Code: reply.Code}
 	case errors.As(err, &protoErr):
 		// The text of a ProtocolError is the line that the server sent.
 		return fmt.Errorf("smtp: %s failed: the server sent a reply that is not valid", step)
