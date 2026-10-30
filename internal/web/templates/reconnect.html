@@ -1,0 +1,51 @@
+{{/*
+  The reconnect page of an account (see reconnect.go). The user, never the
+  agent, gives the account a new password or accepts a new certificate here.
+
+  The page data has no password field, so the page never shows the password.
+  The password input never gets a value attribute. A box to accept a
+  certificate is never ticked by the server, except to keep a choice that the
+  user made in the same form.
+*/}}
+{{define "title"}}Reconnect an account · email-mcp{{end}}
+{{define "content"}}
+{{$csrf := .CSRFToken}}
+{{with .Data}}
+<h1>Reconnect {{.Address}}</h1>
+<p><a href="/">Back to the accounts</a></p>
+{{if .Error}}<p role="alert"><strong>{{.Error}}</strong></p>{{end}}
+<p>Status: {{.Status}}.</p>
+<p>Reconnect the account after you changed its password, or after its mail server got a new certificate. The account keeps its id, its server settings, its permissions, its queued messages and its activity. To change the server settings (the hosts, the ports or the security), remove the account and add it again.</p>
+<p>On a computer without a browser, run <code>{{.Command}}</code>.</p>
+
+<form method="post" action="/accounts/{{.ID}}/reconnect">
+{{template "csrf_field" $csrf}}
+<p><label for="password">New password or app password</label><br>
+<input id="password" name="password" type="password" autocomplete="off"></p>
+<p>Leave it empty to keep the stored password. The new password is saved, encrypted, only after the test passes. This page never keeps it, so type it again each time you test.</p>
+{{if .Certs}}
+<fieldset>
+<legend>Certificates</legend>
+{{range .Certs}}
+<section>
+<h2>{{.Name}} server {{.Host}}:{{.Port}}</h2>
+<p>{{.Problem}}</p>
+{{if .OldFingerprint}}<p>Trusted until now, SHA-256 fingerprint: <code>{{.OldFingerprint}}</code></p>{{end}}
+{{if .Fingerprint}}<p>Shown now, SHA-256 fingerprint: <code>{{.Fingerprint}}</code></p>{{end}}
+{{if .CanChange}}
+{{if .Warning}}<p><strong>{{.Warning}}</strong></p>{{end}}
+<input type="hidden" name="{{.Field}}_offer" value="{{.Offer}}">
+<p><label><input type="checkbox" name="trust_{{.Field}}" value="1"{{if .Checked}} checked{{end}}> {{.Label}}</label></p>
+{{end}}
+</section>
+{{end}}
+{{if .Understand}}
+<p>A server that is not on this computer should have a certificate that an authority signed. A certificate that no authority signed can mean that someone on the network reads your mail and your password. Trust it only if your provider gave you this fingerprint.</p>
+<p><label><input type="checkbox" name="understand" value="1"{{if .UnderstandChecked}} checked{{end}}> I understand the risk</label></p>
+{{end}}
+</fieldset>
+{{end}}
+<p><button type="submit">Test the connection and save</button></p>
+</form>
+{{end}}
+{{end}}

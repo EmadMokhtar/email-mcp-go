@@ -1,6 +1,7 @@
 {{/*
   The accounts page: the accounts of the tenant of the session, one card each.
-  It shows no secret, no server setting and no user name.
+  It shows no secret, no server setting and no user name. An account that
+  needs to be reconnected has a link to its reconnect page.
 */}}
 {{define "title"}}Accounts · email-mcp{{end}}
 {{define "content"}}
@@ -21,7 +22,10 @@
 <span class="tag is-medium {{if .Connected}}is-success{{else}}is-warning{{end}} is-light">{{.Status}}</span>
 </div>
 </div>
-<a class="button" href="/accounts/{{.ID}}/settings">Permissions and settings</a>
+<div class="buttons">
+{{if .NeedsReconnect}}<a class="button is-warning" href="/accounts/{{.ID}}/reconnect">Reconnect</a>
+{{end}}<a class="button" href="/accounts/{{.ID}}/settings">Permissions and settings</a>
+</div>
 </div>
 </li>
 {{end}}
