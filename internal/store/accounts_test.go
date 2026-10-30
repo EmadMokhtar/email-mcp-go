@@ -230,3 +230,39 @@ func TestReconnectAccountRefusesChangedSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte("sealed-old"), sealed)
 }
+
+// A settings save that read the account before a reconnect must not write back
+// the old pins, and must not bring back a pin that the reconnect removed:
+// UpdateAccount keeps the pins that are stored now. Only CreateAccount and
+// ReconnectAccount write pins.
+func TestUpdateAccountKeepsThePinsStoredNow(t *testing.T) {
+	for name, newPin := range map[string]string{"a new pin": strings.Repeat("cc", 32), "a removed pin": ""} {
+		t.Run(name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			tenant, err := s.EnsureLocalTenant(ctx)
+			require.NoError(t, err)
+			a := testAccount(tenant, "acct1", testNow)
+			a.Mail.PinnedIMAPCert = strings.Repeat("aa", 32)
+			a.Mail.PinnedSMTPCert = strings.Repeat("bb", 32)
+			require.NoError(t, s.CreateAccountWithSecret(ctx, a, "password", 1, []byte("sealed")))
+
+			old, err := s.GetAccount(ctx, tenant, "acct1")
+			require.NoError(t, err)
+			require.NoError(t, s.ReconnectAccount(ctx, tenant, "acct1", AccountReconnect{
+				Tested: *old.Mail, PinnedIMAPCert: newPin, PinnedSMTPCert: old.Mail.PinnedSMTPCert, SecretKind: "password",
+			}))
+
+			old.Limits.SendsPerHour = 7
+			old.Mail.SaveSentCopy = !old.Mail.SaveSentCopy
+			require.NoError(t, s.UpdateAccount(ctx, old))
+
+			got, err := s.GetAccount(ctx, tenant, "acct1")
+			require.NoError(t, err)
+			require.Equal(t, 7, got.Limits.SendsPerHour, "the setting is saved")
+			require.Equal(t, old.Mail.SaveSentCopy, got.Mail.SaveSentCopy, "the setting is saved")
+			require.Equal(t, newPin, got.Mail.PinnedIMAPCert, "the pin of the reconnect stays")
+			require.Equal(t, strings.Repeat("bb", 32), got.Mail.PinnedSMTPCert)
+		})
+	}
+}

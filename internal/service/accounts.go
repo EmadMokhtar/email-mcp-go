@@ -249,9 +249,9 @@ func (s *Service) CreateIMAPAccount(ctx context.Context, address string, server 
 //     AcceptAutonomyRisk is false (ErrAutonomyNotAccepted). This holds for
 //     every such save, also when the user accepted before;
 //  4. sets AutonomyAcceptedAt to now when the save has both confirmations off;
-//  5. saves the account, but not its status (store.UpdateAccount does not
-//     write it), so a failed login that set needs_reauth after step 2 keeps
-//     that status;
+//  5. saves the account, but not its status or its pins (store.UpdateAccount
+//     does not write them), so a failed login that set needs_reauth after
+//     step 2 keeps that status, and a reconnect after step 2 keeps its pins;
 //  6. writes the audit entry "settings_changed", and "autonomy_accepted" when
 //     the user accepted the risk of full autonomy.
 //
