@@ -366,3 +366,58 @@ func TestReconnectFirstPinOfARemoteServerNeedsTheRiskBox(t *testing.T) {
 	require.Equal(t, http.StatusSeeOther, resp.StatusCode, body)
 	require.Equal(t, fingerprint, c.reload(a).Mail.PinnedIMAPCert)
 }
+
+// When an authority now signs the certificate of a pinned server, the step
+// offers to stop pinning. Its box has its own label, which says that any
+// certificate that an authority signs for the host is then accepted, and keeps
+// the warning. The offer says that it is a removal, and the pin goes.
+func TestReconnectRemoveStepShowsTheRemoveLabel(t *testing.T) {
+	c := newConnectFixture(t)
+	fingerprint := strings.Repeat("cd", 32)
+	c.probe.set(func(_ context.Context, cfg imapsmtp.Config) (*imapsmtp.ProbeResult, error) {
+		if cfg.Server.PinnedIMAPCert == oldPin {
+			return &imapsmtp.ProbeResult{SMTPOK: true, IMAPCert: &imapsmtp.CertificateUnknownError{
+				Protocol: "imap", Host: cfg.Server.IMAPHost, FingerprintSHA256: fingerprint, Pinned: true,
+			}}, nil
+		}
+		return &imapsmtp.ProbeResult{IMAPOK: true, SMTPOK: true}, nil
+	})
+	server := account.MailServer{
+		IMAPHost: "imap.example.org", IMAPPort: 993, IMAPSecurity: account.SecurityTLS,
+		SMTPHost: "smtp.example.org", SMTPPort: 465, SMTPSecurity: account.SecurityTLS,
+		Username: "alice@example.org", PinnedIMAPCert: oldPin,
+	}
+	a := c.storedAccount("alice@example.org", server, marker, account.StatusOK)
+
+	resp, body := c.post(reconnectPath(a), url.Values{})
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	label := labelOfBox(t, body, "trust_imap")
+	require.Equal(t, msgRemoveLabel, label)
+	require.Contains(t, label, connect.TextRemovePin)
+	require.Contains(t, strings.ToLower(label), strings.ToLower(textChangedWarning), "the warning stays")
+	require.NotEqual(t, msgReplaceLabel, label)
+	offer := offerOf(t, body, "imap")
+	var got certOffer
+	require.NoError(t, c.signer.Open(purposeCertOffer, offer, &got))
+	require.True(t, got.Remove)
+
+	// With the box ticked, the pin goes.
+	resp, body = c.post(reconnectPath(a), url.Values{"trust_imap": {"1"}, "imap_offer": {offer}})
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode, body)
+	require.Empty(t, c.reload(a).Mail.PinnedIMAPCert, "the pin is removed")
+}
+
+// A replace step keeps the replace label.
+func TestReconnectReplaceStepShowsTheReplaceLabel(t *testing.T) {
+	c := newConnectFixture(t)
+	imapSrv, smtpSrv := imaptest.New(t), smtptest.New(t)
+	server := pinnedServer(imapSrv, smtpSrv)
+	server.PinnedIMAPCert = oldPin
+	a := c.storedAccount("alice@example.org", server, imapSrv.Pass, account.StatusOK)
+
+	_, body := c.post(reconnectPath(a), url.Values{})
+
+	require.Equal(t, msgReplaceLabel, labelOfBox(t, body, "trust_imap"))
+	require.NotContains(t, body, connect.TextRemovePin)
+}

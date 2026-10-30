@@ -105,9 +105,10 @@ const certOfferTTL = 10 * time.Minute
 // id). The keys are short to keep the form small.
 //
 // An offer of the reconnect page (reconnect.go) also names the account and the
-// pin that the user saw as the old one (empty when the server had none). The
-// connect flow takes only offers without an account, and the reconnect page
-// only offers for its account and its stored pin.
+// pin that the user saw as the old one (empty when the server had none), and
+// says whether it offers to stop pinning (Remove) instead of trusting this one
+// certificate. The connect flow takes only offers without an account, and the
+// reconnect page only offers for its account and its stored pin.
 type certOffer struct {
 	Session     []byte `json:"s"`
 	Protocol    string `json:"p"`
@@ -116,6 +117,7 @@ type certOffer struct {
 	Fingerprint string `json:"f"`
 	Account     string `json:"a,omitempty"`
 	Old         string `json:"o,omitempty"`
+	Remove      bool   `json:"r,omitempty"`
 }
 
 // The defaults of the settings form when the user types the settings.
@@ -235,6 +237,7 @@ type protocol struct {
 	cert      func(*service.CertificateError) *imapsmtp.CertificateUnknownError
 	reconnect func(*service.ReconnectCertificateError) *service.ReconnectCertificate
 	decision  func(*service.Reconnect) *string
+	remove    func(*service.Reconnect) *bool
 }
 
 // protocols are the two servers, IMAP first.
@@ -250,6 +253,7 @@ var protocols = []protocol{
 			return e.IMAP
 		},
 		decision: func(r *service.Reconnect) *string { return &r.PinnedIMAPCert },
+		remove:   func(r *service.Reconnect) *bool { return &r.RemoveIMAPPin },
 	},
 	{
 		name: "SMTP", field: "smtp",
@@ -262,6 +266,7 @@ var protocols = []protocol{
 			return e.SMTP
 		},
 		decision: func(r *service.Reconnect) *string { return &r.PinnedSMTPCert },
+		remove:   func(r *service.Reconnect) *bool { return &r.RemoveSMTPPin },
 	},
 }
 
@@ -544,7 +549,7 @@ func (s *Server) openOffer(sess session, p protocol, server account.MailServer, 
 		return certOffer{}, false
 	}
 	ok := subtle.ConstantTimeCompare(o.Session, sess.hash) == 1 &&
-		o.Account == "" && o.Old == "" &&
+		o.Account == "" && o.Old == "" && !o.Remove &&
 		o.Protocol == p.field &&
 		o.Host == p.host(&server) &&
 		o.Port == p.port(&server) &&
