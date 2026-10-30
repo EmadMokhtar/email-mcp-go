@@ -46,6 +46,12 @@ func TestCheckCertificate(t *testing.T) {
 			cert:    imapsmtp.CertificateUnknownError{FingerprintSHA256: fingerprint, Pinned: true},
 			problem: TextCertPinChanged,
 		},
+		// The check of the new certificate fills Reason for a wrong pin too. A
+		// wrong pin is still never a first pin: only a reconnect may change it.
+		"a pin that did not match, with an unknown authority": {
+			cert:    imapsmtp.CertificateUnknownError{FingerprintSHA256: fingerprint, Pinned: true, Reason: x509.UnknownAuthorityError{}},
+			problem: TextCertPinChanged,
+		},
 		"a host name that does not match": {
 			cert:    imapsmtp.CertificateUnknownError{FingerprintSHA256: fingerprint, Reason: x509.HostnameError{Host: "localhost"}},
 			problem: TextCertWrongHost,
@@ -109,7 +115,9 @@ func TestErrorText(t *testing.T) {
 			err:  &service.ConnectionTestError{Err: errors.New(serverText)},
 			text: TextTestFailed, known: true,
 		},
-		"database": {err: errors.New("store: disk full")},
+		"stale certificate decision": {err: service.ErrCertificateDecisionStale, text: TextDecisionStale, known: true},
+		"account changed":            {err: service.ErrAccountChanged, text: TextAccountChanged, known: true},
+		"database":                   {err: errors.New("store: disk full")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			text, known := ErrorText(tc.err)
@@ -118,6 +126,70 @@ func TestErrorText(t *testing.T) {
 			require.NotContains(t, text, "secret")
 		})
 	}
+}
+
+// In a reconnect, the user may replace or remove a pin only for a certificate
+// whose only problem is the pin and an unknown authority. A first pin follows
+// the rules of a new account. The text names the problem, and a replace or a
+// remove needs the warning.
+func TestCheckReconnect(t *testing.T) {
+	fp := strings.Repeat("ab", 32)
+	old := strings.Repeat("cd", 32)
+	for name, tc := range map[string]struct {
+		cert       imapsmtp.CertificateUnknownError
+		oldPin     string
+		problem    string
+		change     service.PinChange
+		replacePin bool
+	}{
+		"changed pin, unknown authority": {
+			cert: imapsmtp.CertificateUnknownError{FingerprintSHA256: fp, Pinned: true, Reason: x509.UnknownAuthorityError{}}, oldPin: old,
+			problem: TextCertReplace, change: service.PinChangeReplace, replacePin: true,
+		},
+		"changed pin, signed by an authority": {
+			cert: imapsmtp.CertificateUnknownError{FingerprintSHA256: fp, Pinned: true}, oldPin: old,
+			problem: TextCertRemove, change: service.PinChangeRemove, replacePin: true,
+		},
+		"changed pin, wrong host": {
+			cert: imapsmtp.CertificateUnknownError{FingerprintSHA256: fp, Pinned: true, Reason: x509.HostnameError{}}, oldPin: old,
+			problem: TextCertChangedWrongHost, change: service.PinChangeRefused,
+		},
+		"changed pin, expired": {
+			cert:    imapsmtp.CertificateUnknownError{FingerprintSHA256: fp, Pinned: true, Reason: x509.CertificateInvalidError{Reason: x509.Expired}},
+			oldPin:  old,
+			problem: TextCertChangedExpired, change: service.PinChangeRefused,
+		},
+		"changed pin, another problem": {
+			cert: imapsmtp.CertificateUnknownError{FingerprintSHA256: fp, Pinned: true, Reason: errors.New("bad")}, oldPin: old,
+			problem: TextCertChangedInvalid, change: service.PinChangeRefused,
+		},
+		"first pin": {
+			cert:    imapsmtp.CertificateUnknownError{FingerprintSHA256: fp, Reason: x509.UnknownAuthorityError{}},
+			problem: TextCertUnknown, change: service.PinChangeAdd,
+		},
+		"first pin, wrong host": {
+			cert:    imapsmtp.CertificateUnknownError{FingerprintSHA256: fp, Reason: x509.HostnameError{}},
+			problem: TextCertWrongHost, change: service.PinChangeRefused,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := CheckReconnect(&service.ReconnectCertificate{Host: "imap.example.com", Port: 993, OldPin: tc.oldPin, Cert: &tc.cert,
+				Change: service.ReconnectPinChange(&tc.cert)})
+			require.Equal(t, tc.problem, got.Problem)
+			require.Equal(t, tc.change, got.Change)
+			require.Equal(t, tc.change != service.PinChangeRefused, got.CanChange())
+			require.Equal(t, tc.replacePin, got.ReplacesPin())
+			require.Equal(t, fp, got.Fingerprint)
+			require.Equal(t, tc.oldPin, got.OldFingerprint)
+		})
+	}
+
+	// The change comes from the service. A change that the service refused is
+	// never offered, whatever the certificate looks like.
+	refused := CheckReconnect(&service.ReconnectCertificate{OldPin: old, Change: service.PinChangeRefused,
+		Cert: &imapsmtp.CertificateUnknownError{FingerprintSHA256: fp, Pinned: true, Reason: x509.UnknownAuthorityError{}}})
+	require.False(t, refused.CanChange())
+	require.NotEqual(t, TextCertReplace, refused.Problem)
 }
 
 func TestPlainOnThisComputer(t *testing.T) {

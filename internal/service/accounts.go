@@ -2,7 +2,8 @@ package service
 
 // This file holds the use cases that connect, change and remove an account.
 // The web interface and the command line tool use them. The user, never the
-// agent, calls them: no MCP tool reaches UpdateSettings or RemoveAccount.
+// agent, calls them: no MCP tool reaches UpdateSettings or RemoveAccount. The
+// reconnect of an account is in reconnect.go.
 
 import (
 	"context"
@@ -37,8 +38,8 @@ const (
 // activity page offers them as a filter.
 var auditTools = []string{
 	toolApprovePending, toolCancelSend, toolConnectAccount, toolCreateDraft, toolCreateFolder,
-	toolCreateTag, toolCreateToken, toolDiscardDraft, toolMove, toolRejectPending, toolRemoveAccount,
-	toolRevokeToken, toolSend, toolSetFlags, toolTag, toolTrash, toolUpdateSettings,
+	toolCreateTag, toolCreateToken, toolDiscardDraft, toolMove, toolReconnectAccount, toolRejectPending,
+	toolRemoveAccount, toolRevokeToken, toolSend, toolSetFlags, toolTag, toolTrash, toolUpdateSettings,
 }
 
 // AuditTools returns the names of the tools that the service writes in the
@@ -504,21 +505,10 @@ func (s *Service) ProbeAccount(ctx context.Context, id account.AccountID) error 
 	if a.Mail == nil {
 		return errors.New("service: the account has no mail server settings")
 	}
-	keyVersion, sealed, err := s.d.Store.GetAccountSecret(ctx, p.Tenant, a.ID, passwordSecret)
-	if errors.Is(err, store.ErrNotFound) {
-		return errors.New("service: the account has no stored password")
-	}
+	password, err := s.storedPassword(ctx, a)
 	if err != nil {
-		return fmt.Errorf("service: read the account password: %w", err)
+		return err
 	}
-	plain, err := s.d.Vault.Decrypt(ctx, p.Tenant, keyVersion, secrets.AAD(string(p.Tenant), string(a.ID), passwordSecret), sealed)
-	if err != nil {
-		return fmt.Errorf("service: decrypt the account password: %w", err)
-	}
-	password := secrets.Secret(plain)
-	// The Secret holds its own copy of the text. Clear the bytes of the
-	// plaintext.
-	clear(plain)
 	if err := s.probe(ctx, *a.Mail, password); err != nil {
 		return err
 	}

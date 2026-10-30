@@ -178,8 +178,11 @@ func TestDialCertificateErrorSaysWhyItFailed(t *testing.T) {
 		var certErr *CertificateUnknownError
 		require.ErrorAs(t, err, &certErr)
 		require.True(t, certErr.Pinned)
-		require.NoError(t, certErr.Reason)
-		require.NoError(t, certErr.Unwrap())
+		require.Equal(t, srv.CertSHA256, certErr.FingerprintSHA256, "the fingerprint of the certificate now")
+		// The new certificate is also checked as if no pin was set. Its name and
+		// time are right, and no known authority signed it.
+		var unknownAuthority x509.UnknownAuthorityError
+		require.ErrorAs(t, certErr.Reason, &unknownAuthority)
 	})
 
 	t.Run("self-signed certificate", func(t *testing.T) {
@@ -387,6 +390,72 @@ func TestDialCertificateReasonDoesNotDependOnPlatform(t *testing.T) {
 			require.Equal(t, x509.Expired, invalid.Reason)
 			var unknownAuthority x509.UnknownAuthorityError
 			require.False(t, errors.As(err, &unknownAuthority), "an invalid time must not look like an unknown authority")
+		})
+	}
+}
+
+// A certificate that is not the pinned one is refused in every case. The error
+// also says what the check without a pin finds for the new certificate, so a
+// reconnect can tell whether the user may replace the pin (only an unknown
+// authority), remove it (a known authority signs it for the host), or neither
+// (a wrong host name, or a time out of range).
+func TestDialWrongPinChecksTheNewCertificate(t *testing.T) {
+	oldPin := strings.Repeat("0", 64)
+	now := time.Now()
+
+	t.Run("a known authority signs it for the host", func(t *testing.T) {
+		srv := imaptest.New(t)
+		cfg := testConfig(srv, account.SecurityTLS)
+		cfg.RootCAs = srv.CertPool
+		cfg.Server.PinnedIMAPCert = oldPin
+
+		_, err := dialIMAP(t.Context(), cfg)
+
+		var certErr *CertificateUnknownError
+		require.ErrorAs(t, err, &certErr, "a wrong pin is refused, even for a certificate that is valid without a pin")
+		require.True(t, certErr.Pinned)
+		require.Equal(t, srv.CertSHA256, certErr.FingerprintSHA256)
+		require.NoError(t, certErr.Reason, "the check without a pin passes")
+	})
+
+	t.Run("for another host", func(t *testing.T) {
+		srv := imaptest.New(t)
+		cfg := testConfig(srv, account.SecurityTLS)
+		cfg.RootCAs = srv.CertPool
+		cfg.Server.IMAPHost = "localhost" // the certificate is for 127.0.0.1 only
+		cfg.Server.PinnedIMAPCert = oldPin
+
+		_, err := dialIMAP(t.Context(), cfg)
+
+		var certErr *CertificateUnknownError
+		require.ErrorAs(t, err, &certErr)
+		require.True(t, certErr.Pinned)
+		var hostnameErr x509.HostnameError
+		require.ErrorAs(t, certErr.Reason, &hostnameErr)
+		var unknownAuthority x509.UnknownAuthorityError
+		require.False(t, errors.As(certErr.Reason, &unknownAuthority))
+	})
+
+	for name, window := range map[string][2]time.Time{
+		"expired":       {now.Add(-48 * time.Hour), now.Add(-time.Hour)},
+		"not valid yet": {now.Add(time.Hour), now.Add(48 * time.Hour)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			host, port := startHandshakeServer(t, window[0], window[1])
+			cfg := baseConfig()
+			cfg.Server.IMAPHost, cfg.Server.IMAPPort, cfg.Server.IMAPSecurity = host, port, account.SecurityTLS
+			cfg.Server.PinnedIMAPCert = oldPin
+
+			_, err := dialIMAP(t.Context(), cfg)
+
+			var certErr *CertificateUnknownError
+			require.ErrorAs(t, err, &certErr)
+			require.True(t, certErr.Pinned)
+			var invalid x509.CertificateInvalidError
+			require.ErrorAs(t, certErr.Reason, &invalid)
+			require.Equal(t, x509.Expired, invalid.Reason)
+			var unknownAuthority x509.UnknownAuthorityError
+			require.False(t, errors.As(certErr.Reason, &unknownAuthority))
 		})
 	}
 }

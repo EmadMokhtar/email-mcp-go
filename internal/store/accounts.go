@@ -19,7 +19,7 @@ const accountColumns = `tenant_id, id, provider, address, display_name, mail, le
 
 // CreateAccount adds an account. It fails if the tenant does not exist or if the
 // tenant already has an account with the same id. It writes the first status
-// (a.Status); after that only SetAccountStatus changes it.
+// (a.Status); after that only SetAccountStatus and ReconnectAccount change it.
 //
 // The store keeps times as whole milliseconds.
 func (s *Store) CreateAccount(ctx context.Context, a *account.Account) error {
@@ -165,7 +165,8 @@ func (s *Store) ListAccounts(ctx context.Context, tenant account.TenantID) ([]*a
 // UpdateAccount saves all fields of an account except its ids, its creation
 // time and its status. It does not write the status, so a save of the settings
 // that read the account before a failed login cannot write back the old status:
-// only SetAccountStatus changes the status (CreateAccount writes the first one).
+// only SetAccountStatus and ReconnectAccount change the status (CreateAccount
+// writes the first one).
 // It ignores a.Status. It returns ErrNotFound if the tenant has no account with
 // this id.
 func (s *Store) UpdateAccount(ctx context.Context, a *account.Account) error {
@@ -189,9 +190,10 @@ func (s *Store) UpdateAccount(ctx context.Context, a *account.Account) error {
 	return requireOneRow(result, "update account")
 }
 
-// SetAccountStatus changes the status of an account, and nothing else. It is the
-// only place that changes the status after CreateAccount wrote the first one:
-// UpdateAccount does not write it. It writes only the status column, so a save
+// SetAccountStatus changes the status of an account, and nothing else. After
+// CreateAccount wrote the first status, only this function and ReconnectAccount
+// (which sets "ok" with the new password) change it: UpdateAccount does not
+// write it. It writes only the status column, so a save
 // of the settings that runs at the same time keeps its values, and this change
 // is not lost by that save either. It refuses a status that the account package
 // does not know. It returns ErrNotFound if the tenant has no account with this
@@ -210,6 +212,94 @@ func (s *Store) SetAccountStatus(ctx context.Context, tenant account.TenantID, i
 		return fmt.Errorf("store: set account status: %w", err)
 	}
 	return requireOneRow(result, "set account status")
+}
+
+// AccountReconnect is what ReconnectAccount saves.
+type AccountReconnect struct {
+	// Tested are the mail settings that the reconnect tested, as it read them
+	// from the store.
+	Tested account.MailServer
+	// PinnedIMAPCert and PinnedSMTPCert are the pins to store. An empty pin
+	// means no pin.
+	PinnedIMAPCert, PinnedSMTPCert string
+	// SecretKind is the kind of the secret to replace, such as "password".
+	SecretKind string
+	// KeyVersion and Sealed are the new sealed secret. A nil Sealed keeps the
+	// stored secret, and KeyVersion is not used then.
+	KeyVersion int
+	Sealed     []byte
+}
+
+// ReconnectAccount saves a reconnect of an account in one transaction: the two
+// pins of its mail server, the sealed secret when r.Sealed is not nil, and the
+// status "ok". All of it is saved, or nothing is. It changes nothing else of
+// the account: not its id, its other server settings, its levels, its switches
+// or its limits. The queued messages, the pending actions and the audit entries
+// of the account are other rows, and stay.
+//
+// The transaction takes the write lock when it starts, and then reads the
+// account. When the stored server settings are not r.Tested, the test of the
+// reconnect was made with other settings: another program changed them
+// meanwhile. It returns ErrConflict then, and saves nothing. SaveSentCopy does
+// not count, because the settings page may change it at any time: the save
+// keeps the stored value.
+//
+// It returns ErrNotFound when the tenant has no account with this id.
+func (s *Store) ReconnectAccount(ctx context.Context, tenant account.TenantID, id account.AccountID, r AccountReconnect) error {
+	if err := validateAccountIDs(tenant, id); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: reconnect account: %w", err)
+	}
+	// Rollback after a successful Commit does nothing.
+	defer func() { _ = tx.Rollback() }()
+
+	a, err := scanAccount(tx.QueryRowContext(ctx,
+		`SELECT `+accountColumns+` FROM accounts WHERE tenant_id = ? AND id = ?`, string(tenant), string(id)))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("store: reconnect account: %w", err)
+	}
+	if a.Mail == nil {
+		return ErrConflict
+	}
+	stored := *a.Mail
+	tested := r.Tested
+	tested.SaveSentCopy = stored.SaveSentCopy
+	if stored != tested {
+		return ErrConflict
+	}
+	stored.PinnedIMAPCert = r.PinnedIMAPCert
+	stored.PinnedSMTPCert = r.PinnedSMTPCert
+	mail, err := json.Marshal(stored)
+	if err != nil {
+		return fmt.Errorf("store: encode mail settings: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE accounts SET mail = ?, status = ? WHERE tenant_id = ? AND id = ?`,
+		string(mail), string(account.StatusOK), string(tenant), string(id)); err != nil {
+		return fmt.Errorf("store: reconnect account: %w", err)
+	}
+	if r.Sealed != nil {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO account_secrets (tenant_id, account_id, kind, key_version, sealed, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT (tenant_id, account_id, kind) DO UPDATE SET
+				key_version = excluded.key_version,
+				sealed = excluded.sealed,
+				updated_at = excluded.updated_at`,
+			string(tenant), string(id), r.SecretKind, r.KeyVersion, r.Sealed, time.Now().UnixMilli()); err != nil {
+			return fmt.Errorf("store: reconnect account secret: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: reconnect account: %w", err)
+	}
+	return nil
 }
 
 // DeleteAccount deletes an account and, through the foreign key, its secrets.

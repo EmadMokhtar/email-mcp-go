@@ -2,6 +2,7 @@ package main
 
 // This file holds the "account" commands: add, list, remove and test. They are
 // for a computer without a browser. The web interface does the same work.
+// "account reconnect" is in reconnect.go.
 
 import (
 	"context"
@@ -28,6 +29,8 @@ var (
 var accountCommands = []command{
 	{name: "add", summary: "connect an IMAP and SMTP account (the password is read from standard input)", run: runAccountAdd},
 	{name: "list", summary: "list the connected accounts", run: runAccountList},
+	{name: "reconnect", summary: "give an account a new password or trust its new certificate, and keep the account: " +
+		"reconnect ID (the password is read from standard input; empty keeps the stored one)", run: runAccountReconnect},
 	{name: "remove", summary: "remove an account: remove ID [--yes]", run: runAccountRemove},
 	{name: "test", summary: "test the connection of an account: test ID", run: runAccountTest},
 }
@@ -62,7 +65,7 @@ func runGroup(ctx context.Context, c *cli, group string, commands []command, arg
 func printGroupUsage(w io.Writer, group string, commands []command) {
 	_, _ = fmt.Fprintf(w, "Usage:\n  email-mcp %s <command> [flags]\n\nCommands:\n", group)
 	for _, cmd := range commands {
-		_, _ = fmt.Fprintf(w, "  %-8s %s\n", cmd.name, cmd.summary)
+		_, _ = fmt.Fprintf(w, "  %-9s %s\n", cmd.name, cmd.summary)
 	}
 }
 

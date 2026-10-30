@@ -15,12 +15,12 @@ import (
 )
 
 // userOnlyCalls are the service calls that only the user may make, on the web
-// page: changing the permissions, removing an account, approving, rejecting and
-// showing a pending action, and making or revoking an access token. A
-// prompt-injected agent must never reach them.
+// page: changing the permissions, removing or reconnecting an account,
+// approving, rejecting and showing a pending action, and making or revoking an
+// access token. A prompt-injected agent must never reach them.
 var userOnlyCalls = []string{
-	"UpdateSettings", "RemoveAccount", "ApprovePending", "RejectPending", "PendingDetail", "PendingApprovals",
-	"CreateToken", "RevokeToken",
+	"UpdateSettings", "RemoveAccount", "ReconnectIMAPAccount", "ApprovePending", "RejectPending", "PendingDetail",
+	"PendingApprovals", "CreateToken", "RevokeToken",
 }
 
 // userOnlyImports are the packages that only the user's side may use: the web
