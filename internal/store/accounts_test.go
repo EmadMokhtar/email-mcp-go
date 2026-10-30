@@ -163,7 +163,8 @@ func TestReconnectAccount(t *testing.T) {
 	wantMail.PinnedIMAPCert = newIMAP
 	want.Mail = &wantMail
 	want.Status = account.StatusOK
-	require.Equal(t, &want, got, "only the pins and the status changed")
+	want.CredentialsVersion = 1
+	require.Equal(t, &want, got, "only the pins, the status and the credentials version changed")
 	version, sealed, err := s.GetAccountSecret(ctx, tenant, "acct1", "password")
 	require.NoError(t, err)
 	require.Equal(t, 2, version)
@@ -265,4 +266,54 @@ func TestUpdateAccountKeepsThePinsStoredNow(t *testing.T) {
 			require.Equal(t, strings.Repeat("bb", 32), got.Mail.PinnedSMTPCert)
 		})
 	}
+}
+
+// MarkNeedsReauth sets needs_reauth only while the credentials version is the
+// one that the caller read: a refused login of a call that started before a
+// reconnect does not undo the reconnect. The check and the write are one
+// statement. ReconnectAccount raises the version, and UpdateAccount never
+// writes it.
+func TestMarkNeedsReauthOnlyForTheCredentialsThatTheCallRead(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	ensureTestTenant(t, s, "other")
+	require.NoError(t, s.CreateAccountWithSecret(ctx, testAccount(tenant, "acct1", testNow), "password", 1, []byte("sealed")))
+	read, err := s.GetAccount(ctx, tenant, "acct1")
+	require.NoError(t, err)
+	require.Zero(t, read.CredentialsVersion)
+
+	// A reconnect after the read: the call's version is old.
+	require.NoError(t, s.ReconnectAccount(ctx, tenant, "acct1", AccountReconnect{
+		Tested: *read.Mail, SecretKind: "password", KeyVersion: 1, Sealed: []byte("sealed-new"),
+	}))
+	marked, err := s.MarkNeedsReauth(ctx, tenant, "acct1", read.CredentialsVersion)
+	require.NoError(t, err)
+	require.False(t, marked)
+	got, err := s.GetAccount(ctx, tenant, "acct1")
+	require.NoError(t, err)
+	require.Equal(t, account.StatusOK, got.Status, "the reconnect stays")
+	require.Equal(t, 1, got.CredentialsVersion)
+
+	// UpdateAccount does not write the version.
+	got.CredentialsVersion = 99
+	require.NoError(t, s.UpdateAccount(ctx, got))
+	got, err = s.GetAccount(ctx, tenant, "acct1")
+	require.NoError(t, err)
+	require.Equal(t, 1, got.CredentialsVersion)
+
+	// With the version of now, the mark is written.
+	marked, err = s.MarkNeedsReauth(ctx, tenant, "acct1", got.CredentialsVersion)
+	require.NoError(t, err)
+	require.True(t, marked)
+	got, err = s.GetAccount(ctx, tenant, "acct1")
+	require.NoError(t, err)
+	require.Equal(t, account.StatusNeedsReauth, got.Status)
+
+	marked, err = s.MarkNeedsReauth(ctx, "other", "acct1", 1)
+	require.NoError(t, err)
+	require.False(t, marked, "another tenant cannot mark it")
+	_, err = s.MarkNeedsReauth(ctx, tenant, "a|b", 1)
+	require.ErrorIs(t, err, ErrInvalidID)
 }
