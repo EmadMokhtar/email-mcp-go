@@ -810,20 +810,33 @@ func TestDailyJobsPruneAndCheckpoint(t *testing.T) {
 	recent := audit.Entry{Tenant: store.LocalTenantID, Tool: "list_accounts", Outcome: audit.OutcomeOK}
 	require.NoError(t, audit.New(ta.store, ta.vault, nil).Record(ctx, recent))
 
+	// The first run at the start uses a passive checkpoint, and it can prune
+	// the rows and leave an empty log file before any TRUNCATE run. So the wait
+	// also needs the log line of a TRUNCATE run (review of PR #3, item 5).
+	// ta.logs locks, so reading it here while the jobs write is safe.
 	walPath := filepath.Join(ta.dir, "email-mcp.db-wal")
 	require.Eventually(t, func() bool {
 		_, _, err := ta.confirm.Get(ctx, store.LocalTenantID, waited.ID)
 		entries, listErr := ta.audit.List(ctx, store.LocalTenantID, audit.Filter{Limit: 10})
 		info, statErr := os.Stat(walPath)
 		return errors.Is(err, confirm.ErrNotFound) && listErr == nil && len(entries) == 1 &&
-			statErr == nil && info.Size() == 0
-	}, 5*time.Second, 10*time.Millisecond, "the old rows are pruned and the log is cut")
+			statErr == nil && info.Size() == 0 && hasTruncateRun(ta.logs.String())
+	}, 5*time.Second, 10*time.Millisecond, "the old rows are pruned, the log is cut, and a TRUNCATE run is done")
 
 	entries, err := ta.audit.List(ctx, store.LocalTenantID, audit.Filter{Limit: 10})
 	require.NoError(t, err)
 	require.Equal(t, "list_accounts", entries[0].Tool, "a recent entry stays")
-	require.Contains(t, ta.logs.String(), "daily jobs done")
-	require.Contains(t, ta.logs.String(), "checkpoint=truncate")
+}
+
+// hasTruncateRun reports whether the log holds the line of a run of the daily
+// jobs that used a TRUNCATE checkpoint.
+func hasTruncateRun(logs string) bool {
+	for line := range strings.Lines(logs) {
+		if strings.Contains(line, "daily jobs done") && strings.Contains(line, "checkpoint=truncate") {
+			return true
+		}
+	}
+	return false
 }
 
 // At start-up the jobs use a passive checkpoint: a TRUNCATE checkpoint waits for
