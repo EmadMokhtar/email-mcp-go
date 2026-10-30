@@ -428,6 +428,56 @@ func TestOutboxDueAndNextDue(t *testing.T) {
 	require.Equal(t, now.Add(10*time.Minute), next, "the retry of b comes before d")
 }
 
+// DueOutbox is fair across accounts: the first due item of every account comes
+// before the second due item of any account. An account with a full batch of
+// due items then does not hold back the item of another account until the end
+// of that batch. Inside one account the order stays: the item that has been
+// due the longest comes first.
+func TestOutboxDueIsRoundRobinByAccount(t *testing.T) {
+	s, acctA := newOutboxStore(t)
+	ctx := context.Background()
+	acctB := account.AccountID("acct2")
+	require.NoError(t, s.CreateAccount(ctx, testAccount(LocalTenantID, acctB, outboxStart)))
+	// The same account id in another tenant is another account.
+	other := account.TenantID("other")
+	ensureTestTenant(t, s, other)
+	require.NoError(t, s.CreateAccount(ctx, testAccount(other, acctA, outboxStart)))
+
+	// Account A has 25 due items, created in the reverse order of their due
+	// times. B has one item, due later than all items of A.
+	var wantA []string
+	for i := 24; i >= 0; i-- {
+		createOutbox(t, s, outboxItem(fmt.Sprintf("a%02d", i), acctA, outboxStart.Add(time.Duration(i)*time.Second)))
+	}
+	for i := range 25 {
+		wantA = append(wantA, fmt.Sprintf("a%02d", i))
+	}
+	createOutbox(t, s, outboxItem("b", acctB, outboxStart.Add(time.Minute)))
+	theirs := outboxItem("theirs", acctA, outboxStart.Add(2*time.Minute))
+	theirs.Tenant = other
+	createOutbox(t, s, theirs)
+	now := outboxStart.Add(time.Hour)
+
+	due, err := s.DueOutbox(ctx, now, 20)
+	require.NoError(t, err)
+	require.Len(t, due, 20)
+	ids := outboxIDs(due)
+	require.Equal(t, []string{"a00", "b", "theirs"}, ids[:3],
+		"the first item of each account comes first, in the order of their due times")
+	require.Equal(t, wantA[1:18], ids[3:], "the other items of A keep their order")
+
+	// Without a limit that cuts, every item of A is there, in its order.
+	all, err := s.DueOutbox(ctx, now, 100)
+	require.NoError(t, err)
+	var gotA []string
+	for _, row := range all {
+		if row.Tenant == LocalTenantID && row.Account == acctA {
+			gotA = append(gotA, row.ID)
+		}
+	}
+	require.Equal(t, wantA, gotA)
+}
+
 func outboxIDs(rows []*OutboxRow) []string {
 	ids := make([]string, len(rows))
 	for i, r := range rows {
