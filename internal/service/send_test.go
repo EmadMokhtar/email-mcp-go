@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -296,6 +297,28 @@ func TestKnownRecipientsRecordedWhenTheCheckIsOff(t *testing.T) {
 	_, needs, err := env.svc.Send(ctx, a.ID, &c, nil, ConfirmInBand, nil)
 	require.NoError(t, err)
 	require.Nil(t, needs)
+}
+
+// The key of the known-recipient hashes now comes from
+// secrets.Vault.DerivedServerKey (review of PR #3, item 7). The stored hash must
+// stay the same as with the code that recipientHashes had inline before, or
+// every known recipient would look new.
+func TestKnownRecipientHashesDidNotChange(t *testing.T) {
+	env := newWriteEnv(t)
+	ctx := env.ctx()
+	serverKey, err := env.f.vault.ServerKey(ctx)
+	require.NoError(t, err)
+
+	// The code that recipientHashes had inline before.
+	km := hmac.New(sha256.New, serverKey)
+	_, _ = km.Write([]byte("known-recipients/v1"))
+	h := hmac.New(sha256.New, km.Sum(nil))
+	_, _ = h.Write([]byte("ann@example.com"))
+	want := h.Sum(nil)
+
+	got, err := env.svc.recipientHashes(ctx, []string{" Ann@Example.com "})
+	require.NoError(t, err)
+	require.Equal(t, [][]byte{want}, got)
 }
 
 func TestKnownRecipientsStoredHashed(t *testing.T) {

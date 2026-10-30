@@ -973,17 +973,14 @@ func firstRunes(s string, n int) string {
 
 // recipientHashes returns the keyed hash of each address, each address once.
 // The hash is HMAC-SHA-256 of the lower-cased address, with a key that is the
-// HMAC-SHA-256 of knownRecipientsLabel under the server key. Without the server
-// key, nobody can test an address against the stored hashes.
+// HMAC-SHA-256 of knownRecipientsLabel under the server key (see
+// secrets.Vault.DerivedServerKey). Without the server key, nobody can test an
+// address against the stored hashes.
 func (s *Service) recipientHashes(ctx context.Context, addresses []string) ([][]byte, error) {
-	serverKey, err := s.d.Vault.ServerKey(ctx)
+	key, err := s.d.Vault.DerivedServerKey(ctx, knownRecipientsLabel)
 	if err != nil {
 		return nil, fmt.Errorf("service: read the server key: %w", err)
 	}
-	defer clear(serverKey)
-	km := hmac.New(sha256.New, serverKey)
-	_, _ = km.Write([]byte(knownRecipientsLabel)) // a write to a hash never fails
-	key := km.Sum(nil)
 	defer clear(key)
 
 	seen := make(map[string]bool, len(addresses))

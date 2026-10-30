@@ -306,12 +306,10 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 		return nil, err
 	}
 	vault := secrets.NewVault(st, kek)
-	serverKey, err := vault.ServerKey(ctx)
+	signer, err := newSigner(ctx, vault)
 	if err != nil {
 		return nil, err
 	}
-	signer := signing.New(serverKey)
-	clear(serverKey)
 
 	// A nil cfg.Now means time.Now in each part.
 	limiter := &policy.Limiter{Store: st, Now: cfg.Now}
@@ -372,6 +370,24 @@ func open(ctx context.Context, cfg Config, opts options) (_ *App, err error) {
 		jobEvery:   jobEvery,
 		sweepEvery: backendSweepEvery,
 	}, nil
+}
+
+// signingKeyLabel is the label of the key of the token signer, which is
+// derived from the server key (see secrets.Vault.DerivedServerKey). A change of
+// the label makes every token that was sealed before stop working.
+const signingKeyLabel = "signing/v1"
+
+// newSigner returns the signer of the tokens (page tokens, cursors, request
+// states and the tokens of the web pages). Its key is derived from the server
+// key with signingKeyLabel, so the raw server key is never a key itself, and a
+// value made for another use of the server key is never a valid signature.
+func newSigner(ctx context.Context, vault *secrets.Vault) (*signing.Signer, error) {
+	key, err := vault.DerivedServerKey(ctx, signingKeyLabel)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(key) // signing.New keeps its own copy
+	return signing.New(key), nil
 }
 
 // Logger returns the logger of the App. It writes to Config.LogOutput.

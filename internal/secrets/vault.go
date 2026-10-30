@@ -3,7 +3,9 @@ package secrets
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -144,6 +146,25 @@ func (v *Vault) ServerKey(ctx context.Context) ([]byte, error) {
 		}
 	}
 	return bytes.Clone(key), nil
+}
+
+// DerivedServerKey returns a 32-byte key for one use of the server key: the
+// HMAC-SHA-256 of label under the server key. Each use has its own label, such
+// as "signing/v1" for the token signer, so the key of one use tells nothing
+// about the key of another, and a value made for one use is not valid for
+// another. The raw server key is never used as a key itself.
+//
+// The caller gets its own copy and should clear it after use. The copy of the
+// server key that this reads is cleared here.
+func (v *Vault) DerivedServerKey(ctx context.Context, label string) ([]byte, error) {
+	serverKey, err := v.ServerKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(serverKey)
+	m := hmac.New(sha256.New, serverKey)
+	_, _ = m.Write([]byte(label)) // a write to a hash never fails
+	return m.Sum(nil), nil
 }
 
 // RewrapAll wraps every tenant key and the server key again, with newKEK. The

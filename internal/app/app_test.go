@@ -787,6 +787,28 @@ func TestRunExpiresStaleApprovedActions(t *testing.T) {
 // The daily jobs prune old pending actions and old audit entries, expire stale
 // approvals, and cut the write-ahead log. They run at start and then at every
 // interval.
+// The signer of the App uses a key that is derived from the server key with
+// its own label, not the raw server key (review of PR #3, item 7). A token that
+// it seals does not open with a signer made from the raw server key.
+func TestSignerUsesADerivedKey(t *testing.T) {
+	ta := openTest(t)
+	ctx := context.Background()
+	signer, err := newSigner(ctx, ta.vault)
+	require.NoError(t, err)
+	token, err := signer.Seal(signing.PurposeCursor, "value", time.Minute)
+	require.NoError(t, err)
+
+	serverKey, err := ta.vault.ServerKey(ctx)
+	require.NoError(t, err)
+	var got string
+	require.ErrorIs(t, signing.New(serverKey).Open(signing.PurposeCursor, token, &got), signing.ErrInvalid)
+
+	derived, err := ta.vault.DerivedServerKey(ctx, "signing/v1")
+	require.NoError(t, err)
+	require.NoError(t, signing.New(derived).Open(signing.PurposeCursor, token, &got))
+	require.Equal(t, "value", got)
+}
+
 func TestDailyJobsPruneAndCheckpoint(t *testing.T) {
 	ta := openTest(t)
 	ta.jobEvery = 20 * time.Millisecond

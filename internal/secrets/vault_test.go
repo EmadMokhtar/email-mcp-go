@@ -3,6 +3,8 @@ package secrets
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -440,6 +442,43 @@ func TestVaultEncryptFailsForUnknownTenant(t *testing.T) {
 }
 
 // --- server key ---
+
+// DerivedServerKey gives one key for each label (review of PR #3, item 7). For
+// the label of the known-recipient hashes, it gives the same key as the code
+// that the service had before, so the stored hashes still match.
+func TestDerivedServerKey(t *testing.T) {
+	ctx := context.Background()
+	f := newVaultFixture(t)
+	v := NewVault(f.st, f.kek)
+	serverKey, err := v.ServerKey(ctx)
+	require.NoError(t, err)
+
+	// The code that recipientHashes had inline before.
+	km := hmac.New(sha256.New, serverKey)
+	_, _ = km.Write([]byte("known-recipients/v1"))
+	old := km.Sum(nil)
+
+	known, err := v.DerivedServerKey(ctx, "known-recipients/v1")
+	require.NoError(t, err)
+	require.Equal(t, old, known)
+	require.Len(t, known, 32)
+
+	signingKey, err := v.DerivedServerKey(ctx, "signing/v1")
+	require.NoError(t, err)
+	require.Len(t, signingKey, 32)
+	require.NotEqual(t, known, signingKey, "each label has its own key")
+	require.NotEqual(t, serverKey, signingKey, "the raw server key is not used")
+
+	// The caller gets its own copy: clearing it changes nothing for the next
+	// call, and the cached server key is not cleared.
+	clear(signingKey)
+	again, err := v.DerivedServerKey(ctx, "signing/v1")
+	require.NoError(t, err)
+	require.NotEqual(t, make([]byte, 32), again)
+	still, err := v.ServerKey(ctx)
+	require.NoError(t, err)
+	require.Equal(t, serverKey, still)
+}
 
 func TestVaultServerKeyStable(t *testing.T) {
 	ctx := context.Background()
