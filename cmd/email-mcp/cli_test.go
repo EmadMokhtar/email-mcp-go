@@ -1161,6 +1161,27 @@ func TestDoctorNeverMakesAKey(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist, "no key file was made")
 }
 
+// A database that a newer email-mcp wrote has a migration version that this
+// binary does not know. doctor reports it under "database schema" with the
+// fixed text of store.ErrNewerSchema, not under "master key": the key is not
+// the problem (follow-up N-2).
+func TestDoctorReportsANewerSchema(t *testing.T) {
+	dir, keyPath := newCLIEnv(t)
+	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)
+	addAccount(t, dir, keyPath, alice, srv.server(), srv.imap.Pass)
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dir, "email-mcp.db"))+"?_pragma=busy_timeout(5000)")
+	require.NoError(t, err)
+	_, err = db.ExecContext(context.Background(), "INSERT INTO schema_migrations (version) VALUES (9999)")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	r := runCLI(t, nil, "", "doctor", "--data-dir", dir)
+
+	require.Equal(t, exitError, r.code)
+	require.Equal(t, "database schema: FAIL "+store.ErrNewerSchema.Error(), doctorLine(t, r.stdout, "database schema"))
+	require.NotContains(t, r.stdout, "master key")
+}
+
 // ---------------------------------------------------------------- key rotate
 
 // rotateFixture is a data directory with an account on local servers, opened

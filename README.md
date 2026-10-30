@@ -585,7 +585,8 @@ exits with 1 when a check fails. It checks:
 2. that the database file and its write-ahead log files exist and have mode
    0600;
 3. that the master key of `EMAIL_MCP_KEK` exists and opens the stored keys.
-   `doctor` never makes a new key;
+   `doctor` never makes a new key. When a newer email-mcp wrote the database,
+   this line is `database schema: FAIL ...` instead;
 4. that every account can log in to its IMAP and SMTP servers.
 
 Common fixes:
@@ -595,6 +596,8 @@ Common fixes:
 - **A wrong mode.** The line prints the exact `chmod` command that fixes it.
 - **The master key does not exist.** `EMAIL_MCP_KEK` is not the same as when
   you connected the account. Use the same value as the AI app config.
+- **`database schema` fails.** A newer email-mcp used this data folder. Install
+  that version or a newer one.
 - **An account fails.** Run `email-mcp account test <id>` for the details.
   `email-mcp account list` shows the ids.
 - **The agent says that the mail server refused the stored login, or that the
