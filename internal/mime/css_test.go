@@ -958,3 +958,158 @@ func TestUnescapeCSS(t *testing.T) {
 		})
 	}
 }
+
+// cssHidingTricks are styles that hide the text of an element in other ways
+// than display, opacity, visibility and font size (review of PR #3, item 2).
+// Each one is put on an element that holds the word "secret".
+var cssHidingTricks = []struct{ name, markup string }{
+	// A colour that cannot be seen.
+	{"color transparent", `<div style="color:transparent">secret</div>`},
+	{"color transparent in capitals and important", `<div style="COLOR : TRANSPARENT !important">secret</div>`},
+	{"rgba with alpha 0", `<div style="color:rgba(0,0,0,0)">secret</div>`},
+	{"rgba with alpha 0.0 and spaces", `<div style="color: rgba( 255 , 255 , 255 , 0.0 )">secret</div>`},
+	{"rgba with a negative alpha", `<div style="color:rgba(0,0,0,-1)">secret</div>`},
+	{"rgb with four values", `<div style="color:rgb(0,0,0,0)">secret</div>`},
+	{"rgb space syntax alpha 0", `<div style="color:rgb(0 0 0 / 0)">secret</div>`},
+	{"rgb space syntax alpha 0 percent", `<div style="color:rgb(0 0 0 / 0%)">secret</div>`},
+	{"rgb space syntax alpha none", `<div style="color:rgb(0 0 0 / none)">secret</div>`},
+	{"hsla with alpha 0", `<div style="color:hsla(0,0%,0%,0)">secret</div>`},
+	{"hsl space syntax alpha 0", `<div style="color:hsl(0 0% 0% / 0)">secret</div>`},
+	{"oklch with alpha 0", `<div style="color:oklch(0.5 0.1 200 / 0)">secret</div>`},
+	{"short hex with alpha 0", `<div style="color:#fff0">secret</div>`},
+	{"short hex with alpha 0 in capitals", `<div style="color:#FFF0">secret</div>`},
+	{"long hex with alpha 00", `<div style="color:#FFFFFF00">secret</div>`},
+	{"colour from a style rule", `<style>.c{color:transparent}</style><div class="c">secret</div>`},
+
+	// Text moved off the page.
+	{"absolute left -9999px", `<div style="position:absolute;left:-9999px">secret</div>`},
+	{"fixed top -100px", `<div style="position:fixed;top:-100px">secret</div>`},
+	{"absolute right -5em", `<div style="position:absolute;right:-5em">secret</div>`},
+	{"absolute bottom -5rem", `<div style="position:absolute;bottom:-5rem">secret</div>`},
+	{"absolute left -100 percent", `<div style="position:absolute;left:-100%">secret</div>`},
+	{"absolute left -2in", `<div style="position:absolute;left:-2in">secret</div>`},
+	{"absolute left -1e4px", `<div style="position:absolute;left:-1e4px">secret</div>`},
+	{"absolute left without a unit", `<div style="position:absolute;left:-9999">secret</div>`},
+	{"absolute left -100.5px", `<div style="position:absolute;left:-100.5px">secret</div>`},
+	{"position in capitals and important", `<div style="POSITION: ABSOLUTE !important; LEFT : -9999PX">secret</div>`},
+	{"offset before position", `<div style="top:-500px;position:absolute">secret</div>`},
+	{"relative left -9999px", `<div style="position:relative;left:-9999px">secret</div>`},
+	{"position in a rule and offset inline", `<style>.p{position:absolute}</style><div class="p" style="left:-9999px">secret</div>`},
+	{"text-indent -9999px", `<div style="text-indent:-9999px">secret</div>`},
+	{"text-indent -5em", `<div style="text-indent:-5em">secret</div>`},
+	{"text-indent -100 percent", `<div style="text-indent:-100%">secret</div>`},
+	{"text-indent in capitals and important", `<div style="TEXT-INDENT: -9999PX !IMPORTANT">secret</div>`},
+
+	// Text clipped away.
+	{"clip rect zero with commas", `<div style="position:absolute;clip:rect(0,0,0,0)">secret</div>`},
+	{"clip rect zero with spaces", `<div style="clip:rect(0 0 0 0)">secret</div>`},
+	{"clip rect 1px each side", `<div style="clip:rect(1px, 1px, 1px, 1px)">secret</div>`},
+	{"clip rect zero height", `<div style="clip:rect(0px, 10px, 0px, 0px)">secret</div>`},
+	{"clip rect zero width", `<div style="clip:rect(0, 0, 10px, 0)">secret</div>`},
+	{"clip rect zero height with auto", `<div style="clip:rect(5px, auto, 5px, auto)">secret</div>`},
+	{"clip rect in capitals with spaces", `<div style="CLIP: RECT( 0PX , 0PX , 0PX , 0PX )">secret</div>`},
+	{"clip-path inset 50 percent", `<div style="clip-path:inset(50%)">secret</div>`},
+	{"clip-path inset 100 percent on one side", `<div style="clip-path:inset(0 0 0 100%)">secret</div>`},
+	{"clip-path inset with round", `<div style="clip-path:inset(50% round 4px)">secret</div>`},
+	{"clip-path circle 0", `<div style="clip-path:circle(0)">secret</div>`},
+	{"clip-path circle 0px at center", `<div style="clip-path:circle(0px at 50% 50%)">secret</div>`},
+	{"clip-path ellipse 0 0", `<div style="clip-path:ellipse(0 0)">secret</div>`},
+	{"clip-path ellipse one radius 0", `<div style="clip-path:ellipse(10px 0 at center)">secret</div>`},
+	{"webkit clip-path inset 50 percent", `<div style="-webkit-clip-path:inset(50%)">secret</div>`},
+
+	// Text scaled to nothing.
+	{"scale 0", `<div style="transform:scale(0)">secret</div>`},
+	{"scale 0 and 1", `<div style="transform:scale(0, 1)">secret</div>`},
+	{"scale 1 and 0", `<div style="transform:scale(1, 0)">secret</div>`},
+	{"scale -0", `<div style="transform:scale(-0)">secret</div>`},
+	{"scaleX 0", `<div style="transform:scaleX(0)">secret</div>`},
+	{"scaleY 0", `<div style="transform:scaleY(0.0)">secret</div>`},
+	{"scale 0 after another function", `<div style="transform:translateX(10px) scale(0)">secret</div>`},
+	{"scale in capitals with spaces", `<div style="TRANSFORM: SCALE( 0 ) !important">secret</div>`},
+	{"scale3d with x 0", `<div style="transform:scale3d(0, 1, 1)">secret</div>`},
+	{"webkit transform scale 0", `<div style="-webkit-transform:scale(0)">secret</div>`},
+	{"scale property 0", `<div style="scale:0">secret</div>`},
+	{"scale property 1 0", `<div style="scale:1 0">secret</div>`},
+
+	// A box of zero width that clips what does not fit.
+	{"width 0 and overflow hidden", `<div style="width:0;overflow:hidden">secret</div>`},
+	{"max-width 0 and overflow clip", `<div style="max-width:0;overflow:clip">secret</div>`},
+	{"width 0px and overflow-x hidden", `<div style="width:0px;overflow-x:hidden">secret</div>`},
+	{"overflow first and width -0", `<div style="overflow:hidden;width:-0">secret</div>`},
+	{"width 0 in a rule and overflow inline", `<style>.w{width:0}</style><div class="w" style="overflow:hidden">secret</div>`},
+	{"height 0 in a rule and overflow inline", `<style>.h{height:0}</style><div class="h" style="overflow:hidden">secret</div>`},
+
+	// Content that is not drawn.
+	{"content-visibility hidden", `<div style="content-visibility:hidden">secret</div>`},
+	{"content-visibility hidden in capitals", `<div style="Content-Visibility: HIDDEN">secret</div>`},
+
+	// Attributes that hide.
+	{"hidden attribute", `<div hidden>secret</div>`},
+	{"hidden until-found", `<div hidden="until-found">secret</div>`},
+	{"aria-hidden with display none", `<div aria-hidden="true" style="display:none">secret</div>`},
+}
+
+// cssNearMisses are styles that look like the tricks above but show the text.
+var cssNearMisses = []string{
+	"position:absolute;left:-10px",
+	"position:absolute;left:-99px",
+	"position:absolute;top:-4em",
+	"position:absolute;left:-99%",
+	"position:absolute;left:0",
+	"position:absolute;left:9999px",
+	"left:-9999px", // without position, an offset does nothing
+	"position:static;left:-9999px",
+	"text-indent:-1em",
+	"text-indent:-10px",
+	"text-indent:20px",
+	"color:rgba(0,0,0,0.5)",
+	"color:rgb(0 0 0 / 50%)",
+	"color:hsla(0,0%,0%,0.1)",
+	"color:#000",
+	"color:#0001",
+	"color:#00000001",
+	"color:#000000",
+	"color:red",
+	"transform:scale(0.5)",
+	"transform:scale(1, 0.5)",
+	"transform:rotate(0)",
+	"transform:translate(0, 0)",
+	"transform:translateX(0) scale(1)",
+	"scale:1",
+	"width:0",
+	"max-width:0",
+	"width:10px;overflow:hidden",
+	"overflow:hidden",
+	"clip-path:inset(10%)",
+	"clip-path:inset(0 49% 0 0)",
+	"clip-path:circle(50%)",
+	"clip-path:ellipse(10px 20px)",
+	"clip:rect(0, 10px, 10px, 0)",
+	"clip:auto",
+	"clip:rect(auto, auto, auto, auto)",
+	"content-visibility:auto",
+	"content-visibility:visible",
+}
+
+func TestCSSHidingTricksAreHidden(t *testing.T) {
+	for _, tc := range cssHidingTricks {
+		t.Run(tc.name, func(t *testing.T) {
+			text := htmlText(t, `<p>visible</p>`+tc.markup)
+			require.NotContains(t, text, "secret")
+			require.Equal(t, "visible", text)
+
+			html := visibleHTML(t, `<p>visible</p>`+tc.markup)
+			require.NotContains(t, html, "secret")
+			require.Contains(t, html, "<p>visible</p>")
+		})
+	}
+}
+
+func TestCSSNearMissesStayVisible(t *testing.T) {
+	for _, style := range cssNearMisses {
+		t.Run(style, func(t *testing.T) {
+			require.Equal(t, "shown", htmlText(t, `<p style="`+style+`">shown</p>`))
+			require.Equal(t, "<p>shown</p>", visibleHTML(t, `<p style="`+style+`">shown</p>`))
+		})
+	}
+}

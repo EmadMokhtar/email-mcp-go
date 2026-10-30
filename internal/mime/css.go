@@ -2,6 +2,7 @@ package mime
 
 import (
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -123,11 +124,21 @@ func (m sizeCandidates) smallest(parent, root float64) float64 {
 // than a browser, which picks one value. The cost is that text which a sender
 // hides and then shows again on the same element is dropped. The gain is that
 // no way of ordering or marking declarations can show hidden text.
+//
+// The same is true for the declarations that hide only together, such as a zero
+// height and clipped overflow (see hideParts): each half can come from another
+// source, for example the height from a rule and the overflow from the style
+// attribute.
 type styleEffect struct {
 	// drop means the element and everything in it is not shown, and nothing
-	// inside can show itself again. display:none, a zero opacity and a zero
-	// height with clipped overflow work like this.
+	// inside can show itself again. display:none, a zero opacity, a transparent
+	// colour, an empty clip and the other declarations that parseStyle lists
+	// work like this. So do the pairs in parts (see dropped).
 	drop bool
+
+	// parts are the halves of the pairs of declarations that hide only
+	// together.
+	parts hideParts
 
 	// Values of visibility from the declarations.
 	hidden         bool // hidden or collapse
@@ -139,11 +150,40 @@ type styleEffect struct {
 // merge adds the effect of other declarations that apply to the same element.
 func (e styleEffect) merge(o styleEffect) styleEffect {
 	e.drop = e.drop || o.drop
+	e.parts |= o.parts
 	e.hidden = e.hidden || o.hidden
 	e.visible = e.visible || o.visible
 	e.sameVisibility = e.sameVisibility || o.sameVisibility
 	e.sizes = e.sizes.merge(o.sizes)
 	return e
+}
+
+// dropped reports whether the element and everything in it is not shown: a
+// declaration drops it, or both halves of a pair in parts are there.
+func (e styleEffect) dropped() bool {
+	return e.drop || e.parts.hide()
+}
+
+// hideParts are declarations that hide an element only together with another
+// one. Each one is a bit.
+type hideParts uint8
+
+const (
+	zeroHeight hideParts = 1 << iota // height or max-height of zero or less
+	zeroWidth                        // width or max-width of zero or less
+	clipY                            // overflow hidden or clip in the vertical direction
+	clipX                            // overflow hidden or clip in the horizontal direction
+	positioned                       // position absolute, fixed or relative
+	farOffset                        // left, top, right or bottom far below zero (see farNegative)
+)
+
+// hide reports whether the parts hide the element: a zero height with
+// vertical clipping, a zero width with horizontal clipping, or a position with
+// an offset that moves the element far off the page.
+func (p hideParts) hide() bool {
+	return p&(zeroHeight|clipY) == zeroHeight|clipY ||
+		p&(zeroWidth|clipX) == zeroWidth|clipX ||
+		p&(positioned|farOffset) == positioned|farOffset
 }
 
 // invisible works out the visibility of the element, given the one of its
@@ -182,9 +222,32 @@ func isGlobalKeyword(v string) bool {
 // the inside of a rule. It looks for:
 //   - display:none
 //   - opacity of zero or less
-//   - max-height:0 or height:0, together with overflow of hidden or clip
+//   - content-visibility:hidden
+//   - a colour that cannot be seen: transparent, a colour function whose alpha
+//     is zero or less or none (rgba(0,0,0,0), rgb(0 0 0 / 0%), hsla(…, 0) and
+//     the other colour functions), #RGBA with alpha 0 and #RRGGBBAA with
+//     alpha 00 (see invisibleColor)
+//   - text-indent far below zero (see farNegative)
+//   - clip:rect(…) with zero or negative width or height (see emptyClipRect)
+//   - clip-path (and -webkit-clip-path) with inset(…) that has a value of 50%
+//     or more, or circle(…) or ellipse(…) with a radius of zero (see
+//     emptyClipPath)
+//   - transform (and -webkit-transform, -ms-transform) with scale(…),
+//     scaleX(…), scaleY(…) or scale3d(…) that is zero in a direction of the
+//     page, and the scale property with a zero (see scalesToZero)
+//   - max-height:0 or height:0, together with overflow of hidden or clip in
+//     the vertical direction; max-width:0 or width:0, together with overflow
+//     of hidden or clip in the horizontal direction (and the logical names
+//     block-size, inline-size, overflow-block and overflow-inline)
+//   - position absolute, fixed or relative, together with left, top, right,
+//     bottom or one of the inset properties far below zero (see farNegative)
 //   - visibility:hidden and visibility:collapse, and the other values
 //   - the font size, from font-size and from the font shorthand
+//
+// All but the last two hide the element with everything in it (see
+// styleEffect.drop). A colour is inherited in a browser, so a child could set
+// its own colour and show its text. Here it cannot: that is stricter than a
+// browser, on the safe side.
 //
 // Names and values are matched the way a browser does it: ignoring case,
 // white space, comments and escapes. Whatever follows a "!" that is not inside
@@ -192,7 +255,6 @@ func isGlobalKeyword(v string) bool {
 // does not change anything here (see styleEffect).
 func parseStyle(style string) styleEffect {
 	var e styleEffect
-	zeroHeight, clipped := false, false
 	for _, decl := range declarations(stripCSSComments(style)) {
 		name, value, ok := strings.Cut(decl, ":")
 		if !ok {
@@ -220,6 +282,36 @@ func parseStyle(style string) styleEffect {
 			if n, _, ok := numberWithUnit(value); ok && n <= 0 {
 				e.drop = true
 			}
+		case "content-visibility":
+			if value == "hidden" {
+				e.drop = true
+			}
+		case "color":
+			if invisibleColor(value) {
+				e.drop = true
+			}
+		case "text-indent":
+			// The length can come with the keywords hanging and each-line.
+			if anyWord(value, farNegative) {
+				e.drop = true
+			}
+		case "clip":
+			if emptyClipRect(value) {
+				e.drop = true
+			}
+		case "clip-path", "-webkit-clip-path":
+			if emptyClipPath(value) {
+				e.drop = true
+			}
+		case "transform", "-webkit-transform", "-ms-transform":
+			if scalesToZero(value) {
+				e.drop = true
+			}
+		case "scale":
+			// "scale: x [y [z]]". Only x and y matter for text on the page.
+			if words := strings.Fields(value); slices.ContainsFunc(words[:min(2, len(words))], isZeroScale) {
+				e.drop = true
+			}
 		case "font-size":
 			if f, ok := parseFontSize(value, true); ok {
 				e.sizes = e.sizes.add(f)
@@ -228,22 +320,346 @@ func parseStyle(style string) styleEffect {
 			if f, ok := fontShorthandSize(value); ok {
 				e.sizes = e.sizes.add(f)
 			}
-		case "max-height", "height":
-			if n, _, ok := numberWithUnit(value); ok && n <= 0 {
-				zeroHeight = true
+		case "max-height", "height", "max-block-size", "block-size":
+			if isZeroOrLess(value) {
+				e.parts |= zeroHeight
 			}
-		case "overflow", "overflow-y":
-			// With two values the second one is for the vertical direction.
+		case "max-width", "width", "max-inline-size", "inline-size":
+			if isZeroOrLess(value) {
+				e.parts |= zeroWidth
+			}
+		case "overflow":
+			// With two values the first one is for the horizontal direction and
+			// the second one for the vertical direction. One value is for both.
 			if words := strings.Fields(value); len(words) > 0 {
-				last := words[len(words)-1]
-				clipped = clipped || last == "hidden" || last == "clip"
+				if clips(words[0]) {
+					e.parts |= clipX
+				}
+				if clips(words[len(words)-1]) {
+					e.parts |= clipY
+				}
+			}
+		case "overflow-x", "overflow-inline":
+			if clips(value) {
+				e.parts |= clipX
+			}
+		case "overflow-y", "overflow-block":
+			if clips(value) {
+				e.parts |= clipY
+			}
+		case "position":
+			switch value {
+			case "absolute", "fixed", "relative":
+				e.parts |= positioned
+			}
+		case "left", "top", "right", "bottom",
+			"inset", "inset-block", "inset-inline",
+			"inset-block-start", "inset-block-end", "inset-inline-start", "inset-inline-end":
+			// The inset shorthands have up to four values.
+			if anyWord(value, farNegative) {
+				e.parts |= farOffset
 			}
 		}
 	}
-	if zeroHeight && clipped {
-		e.drop = true
-	}
 	return e
+}
+
+// clips reports whether an overflow value cuts off what does not fit.
+func clips(v string) bool {
+	return v == "hidden" || v == "clip"
+}
+
+// isZeroOrLess reports whether v is a number of zero or less, with or without
+// a unit, such as "0", "0px", "-0" or "0.0em".
+func isZeroOrLess(v string) bool {
+	n, _, ok := numberWithUnit(v)
+	return ok && n <= 0
+}
+
+// anyWord reports whether test is true for a word of v.
+func anyWord(v string, test func(string) bool) bool {
+	return slices.ContainsFunc(strings.Fields(v), test)
+}
+
+// farNegative reports whether v is a length that moves an element or a line
+// of text far off the page: below zero by at least 100px (in any absolute unit,
+// or as a number with no unit, which a page without a doctype reads as
+// pixels), 5em, 5rem, 10ex, 10ch or 100%. Small negative values are used for
+// normal layout, so they do not count. A unit that is not known here counts
+// like pixels, which is the safe side.
+func farNegative(v string) bool {
+	n, unit, ok := numberWithUnit(v)
+	if !ok || n >= 0 {
+		return false
+	}
+	d := -n
+	if px, ok := absoluteUnits[unit]; ok {
+		return d*px >= 100
+	}
+	switch unit {
+	case "em", "rem":
+		return d >= 5
+	case "ex", "ch":
+		return d/2 >= 5
+	case "%":
+		return d >= 100
+	case "vw", "vh", "vmin", "vmax":
+		// The size of the window is not known. Take 1000 pixels.
+		return d*10 >= 100
+	}
+	return d >= 100
+}
+
+// invisibleColor reports whether a colour value cannot be seen: transparent, a
+// hex colour with an alpha of zero (#RGBA or #RRGGBBAA), or a colour function
+// whose alpha is zero or less, or none. The alpha of a function is the value
+// after "/", or the fourth value of rgb, rgba, hsl and hsla with commas.
+func invisibleColor(v string) bool {
+	if v == "transparent" {
+		return true
+	}
+	if hex, ok := strings.CutPrefix(v, "#"); ok {
+		for i := range len(hex) {
+			if !isHex(hex[i]) {
+				return false
+			}
+		}
+		switch len(hex) {
+		case 4:
+			return hex[3] == '0'
+		case 8:
+			return hex[6:] == "00"
+		}
+		return false
+	}
+	fns := cssFunctions(v)
+	if len(fns) != 1 {
+		return false
+	}
+	f := fns[0]
+	alpha := ""
+	switch f.name {
+	case "rgb", "rgba", "hsl", "hsla":
+		if parts := splitCSS(f.args, ','); len(parts) == 4 {
+			alpha = parts[3]
+		}
+	case "hwb", "lab", "lch", "oklab", "oklch", "color":
+	default:
+		return false
+	}
+	if parts := splitCSS(f.args, '/'); len(parts) == 2 {
+		alpha = parts[1]
+	}
+	alpha = strings.TrimSpace(alpha)
+	if alpha == "none" {
+		return true
+	}
+	n, unit, ok := numberWithUnit(alpha)
+	return ok && (unit == "" || unit == "%") && n <= 0
+}
+
+// emptyClipRect reports whether a clip value is rect(top, right, bottom, left)
+// with a width (right - left) or a height (bottom - top) of zero or less. The
+// values may be written with commas or with spaces. auto is the edge of the
+// element, which is not known here, so a size with auto does not count. Two
+// values in units that cannot be compared (such as em and px) do not count
+// either.
+func emptyClipRect(v string) bool {
+	fns := cssFunctions(v)
+	if len(fns) != 1 || fns[0].name != "rect" {
+		return false
+	}
+	edges := fns[0].values()
+	if len(edges) != 4 {
+		return false
+	}
+	top, right, bottom, left := edges[0], edges[1], edges[2], edges[3]
+	if w, ok := lengthDifference(left, right); ok && w <= 0 {
+		return true
+	}
+	h, ok := lengthDifference(top, bottom)
+	return ok && h <= 0
+}
+
+// lengthDifference returns b - a for two lengths, and false when it cannot be
+// worked out: a value is auto or not a length, or the units cannot be
+// compared.
+func lengthDifference(a, b string) (float64, bool) {
+	na, ua, oka := numberWithUnit(a)
+	nb, ub, okb := numberWithUnit(b)
+	if !oka || !okb {
+		return 0, false
+	}
+	pa, pxa := lengthPixels(na, ua)
+	pb, pxb := lengthPixels(nb, ub)
+	switch {
+	case pxa && pxb:
+		return pb - pa, true
+	case ua == ub:
+		return nb - na, true
+	}
+	return 0, false
+}
+
+// lengthPixels returns a length in pixels, and false when the unit is relative
+// to something that is not known here. Zero is zero in every unit, and a number
+// with no unit is pixels (as on a page without a doctype).
+func lengthPixels(n float64, unit string) (float64, bool) {
+	if n == 0 || unit == "" {
+		return n, true
+	}
+	if px, ok := absoluteUnits[unit]; ok {
+		return n * px, true
+	}
+	return 0, false
+}
+
+// emptyClipPath reports whether a clip-path value leaves nothing to see:
+// inset(…) with a value of 50% or more, or circle(…) or ellipse(…) with a
+// radius of zero or less. A value of 50% on two sides of a box that face each
+// other leaves nothing. Any value of 50% is counted, which can also hide a box
+// that keeps half of its width; that is the safe side. A length in pixels is
+// not counted, because the size of the box is not known.
+func emptyClipPath(v string) bool {
+	for _, f := range cssFunctions(v) {
+		switch f.name {
+		case "inset":
+			// The values before "round" are the four sides. The values after it
+			// are the radius of the corners.
+			for _, w := range f.values() {
+				if w == "round" {
+					break
+				}
+				if n, unit, ok := numberWithUnit(w); ok && unit == "%" && n >= 50 {
+					return true
+				}
+			}
+		case "circle", "ellipse":
+			// The radii come before "at" and the position of the centre.
+			for _, w := range f.values() {
+				if w == "at" {
+					break
+				}
+				if isZeroOrLess(w) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// scalesToZero reports whether a transform value has a scale function that is
+// zero in a direction of the page: scale(0), scale(0, y), scale(x, 0),
+// scaleX(0), scaleY(0), or scale3d with a zero x or y. The names are already
+// in lower case.
+func scalesToZero(v string) bool {
+	for _, f := range cssFunctions(v) {
+		vals := f.values()
+		switch f.name {
+		case "scale", "scale3d":
+			if slices.ContainsFunc(vals[:min(2, len(vals))], isZeroScale) {
+				return true
+			}
+		case "scalex", "scaley":
+			if len(vals) > 0 && isZeroScale(vals[0]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isZeroScale reports whether v is a scale of zero: "0", "-0", "0.0" or "0%".
+func isZeroScale(v string) bool {
+	n, unit, ok := numberWithUnit(v)
+	return ok && (unit == "" || unit == "%") && n == 0
+}
+
+// cssFunction is a function in a CSS value, such as rgba(0, 0, 0, 0). The name
+// is in lower case.
+type cssFunction struct {
+	name string
+	args string // the text between the brackets
+}
+
+// values returns the arguments of the function, split at commas and white
+// space. The empty parts are left out.
+func (f cssFunction) values() []string {
+	return strings.FieldsFunc(f.args, func(c rune) bool { return c == ',' || isASCIISpace(c) })
+}
+
+// cssFunctions returns the functions in a value, in order: "translateX(1px)
+// scale(0)" gives translatex and scale. The words between the functions are
+// left out, and so is everything after a function name with no "(". A
+// function that is not closed runs to the end of the value, as in a browser.
+// The value must already be in lower case.
+func cssFunctions(v string) []cssFunction {
+	var fns []cssFunction
+	for i := 0; i < len(v); {
+		open := openBracket(v, i)
+		if open >= len(v) {
+			break
+		}
+		start := open
+		for start > i && isCSSNameByte(v[start-1]) {
+			start--
+		}
+		end := closeBracket(v, open)
+		fns = append(fns, cssFunction{name: v[start:open], args: v[open+1 : end]})
+		i = end + 1
+	}
+	return fns
+}
+
+// openBracket returns the position of the first "(" at or after i that is not
+// inside a string or after a backslash, or len(s) if there is none.
+func openBracket(s string, i int) int {
+	for i < len(s) {
+		switch s[i] {
+		case '\\':
+			i += 2
+			continue
+		case '"', '\'':
+			i = endOfString(s, i)
+			continue
+		case '(':
+			return i
+		}
+		i++
+	}
+	return len(s)
+}
+
+// closeBracket returns the position of the ")" that closes the "(" at s[open],
+// or len(s) if it is missing. Brackets inside are skipped, like the braces in
+// matchBrace.
+func closeBracket(s string, open int) int {
+	depth := 0
+	for i := open; i < len(s); {
+		switch s[i] {
+		case '\\':
+			i += 2
+			continue
+		case '"', '\'':
+			i = endOfString(s, i)
+			continue
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+		i++
+	}
+	return len(s)
+}
+
+// isCSSNameByte reports whether c can be part of a function name.
+func isCSSNameByte(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_'
 }
 
 // numberWithUnit splits a value such as "0.5px" or "1e3px" into the number

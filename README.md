@@ -567,6 +567,8 @@ After the import:
   sent. It is never sent twice.
 - A changed password or a changed server certificate needs the account to be
   removed and added again (see [Troubleshooting](#troubleshooting)).
+- In HTML mail, text coloured like its background (for example white text on
+  a white background) is not detected as hidden, so the agent can read it.
 
 ## Troubleshooting
 

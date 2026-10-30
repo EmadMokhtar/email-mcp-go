@@ -23,8 +23,11 @@ import (
 //     more), and images, including their alt text;
 //   - elements with the hidden attribute or aria-hidden="true";
 //   - elements, with everything inside, that a style hides as a whole:
-//     display:none, an opacity of zero or less, and a height of zero with
-//     clipped overflow (see parseStyle);
+//     display:none, an opacity of zero or less, content-visibility:hidden, a
+//     colour that cannot be seen (transparent, or an alpha of zero), a
+//     position that moves the element far off the page, a text-indent far
+//     below zero, a clip or clip-path that leaves nothing, a scale of zero,
+//     and a height or width of zero with clipped overflow (see parseStyle);
 //   - text that has no readable size, or is not visible, because of the
 //     inherited properties font-size and visibility. Children inherit them,
 //     but a child can set its own value: text in a child with font-size:13px
@@ -56,11 +59,15 @@ import (
 // that hide a whole element, are applied even if something else would show the
 // element again.
 //
-// It does not find text that is hidden in other ways. Colour tricks, such as
-// white text on a white background, are not detected. The same is true for
-// small but not tiny fonts, text moved off the page, zero width, and text
-// clipped away. The default styles of the browser are not applied, and sizes
-// that need a calculation (calc, var) are not worked out.
+// It does not find text that is hidden in other ways. Text coloured like its
+// background, such as white text on a white background, is not detected, and
+// neither is a colour with a small alpha that is not zero. The same is true
+// for small but not tiny fonts, text moved off the page by a small offset or
+// by a margin, a box that is small but not zero, a clip or clip-path that
+// leaves a small part or uses a shape that is not read here (polygon, path,
+// url), a transform other than a scale (matrix, for example), filters, and
+// text placed behind other content. The default styles of the browser are not
+// applied, and values that need a calculation (calc, var) are not worked out.
 //
 // Links are written as "text (url)". The url is parsed and shown with spaces,
 // round brackets and other unsafe characters written as %XX, so that it is one
@@ -244,7 +251,7 @@ func (v *visibility) classify(n *xhtml.Node) (effect styleEffect, shown bool) {
 	if style, ok := attributeValue(n, "style"); ok {
 		effect = effect.merge(parseStyle(style))
 	}
-	return effect, !effect.drop
+	return effect, !effect.dropped()
 }
 
 // push opens an element with the given effect and works out its properties.
