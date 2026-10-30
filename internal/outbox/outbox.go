@@ -26,6 +26,11 @@
 // An item with no undo window (window 0) skips "queued": it is stored as
 // "sending" at once, so that no worker can take it before its own caller sends
 // it.
+//
+// A worker sends for several accounts at the same time, so a slow mail server
+// of one account does not hold up the mail of the others. Each account has at
+// most one send in progress in a pass of the worker, and the pass has at most
+// four in all (see sendBatch).
 package outbox
 
 import (
@@ -36,6 +41,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -77,6 +83,12 @@ import (
 // The Sender should have a deadline of its own that is much shorter than 13
 // minutes. After 15 minutes another program that uses the same database may take
 // the item for a send that was interrupted and mark it failed.
+//
+// The worker calls the Sender from several goroutines at the same time, for
+// different accounts, so it must be safe for that. In one pass of the worker,
+// two calls for the same account never run at the same time. (An inline send
+// of Enqueue with window 0 runs in the goroutine of its caller, so it can run
+// at the same time as a send of the worker for the same account.)
 type Sender func(ctx context.Context, tenant account.TenantID, acct account.AccountID, msg *mail.RawMessage, draft mail.Ref) error
 
 // Status is the state of an item.
@@ -210,6 +222,10 @@ const (
 	// recoverEvery is how often Run looks for interrupted items. It uses the
 	// clock of the outbox.
 	recoverEvery = time.Minute
+
+	// maxParallelSends is the most sends that one pass runs at the same time,
+	// over all accounts. An account never has more than one. See sendBatch.
+	maxParallelSends = 4
 
 	// storeTimeout is the time that the outbox gives to a database call that it
 	// makes after the end of a send, or to a claim. The call does not use the
@@ -491,12 +507,16 @@ func (o *Outbox) RecoverInterrupted(ctx context.Context) (int, error) {
 //
 // Run takes the items of all tenants.
 //
-// The context of Run only stops new claims. It does not stop a send that is
-// running: the Sender gets a context that this one cannot cancel, with a deadline
-// of 13 minutes after its claim. Run returns after that send has finished and its
-// result is written. If the program cannot wait so long, it may exit. The item then stays
-// "sending", and RecoverInterrupted marks it failed after 15 minutes (the
-// delivery is unknown). It is never sent twice.
+// A pass sends for several accounts at the same time: at most one send for
+// each account, and at most four in all. An item is claimed right before its
+// own send.
+//
+// The context of Run only stops new claims. It does not stop the sends that are
+// running: each Sender call gets a context that this one cannot cancel, with a
+// deadline of 13 minutes after its claim. Run returns after those sends have
+// finished and their results are written. If the program cannot wait so long,
+// it may exit. The items then stay "sending", and RecoverInterrupted marks them
+// failed after 15 minutes (the delivery is unknown). They are never sent twice.
 //
 // To stop the program: cancel the context of Run, wait until Run has returned,
 // and only then call Drain with a new context. See Sender.
@@ -544,9 +564,10 @@ func (o *Outbox) Run(ctx context.Context, tick time.Duration) error {
 // program stops, cancel the context of Run and wait for Run to return before
 // Drain.
 //
-// Like the context of Run, the context of Drain only stops new claims. A send
-// that Drain has started is finished, and its result is written, before Drain
-// returns ctx.Err().
+// Like Run, Drain sends for several accounts at the same time (at most one
+// send for each account, and at most four in all). Like the context of Run, the
+// context of Drain only stops new claims. Every send that Drain has started is
+// finished, and its result is written, before Drain returns ctx.Err().
 //
 // While it waits, Drain looks at the clock at least once a second. maxWait is
 // also a limit in real time, so Drain returns when maxWait is over even if the
@@ -596,10 +617,11 @@ func (o *Outbox) Drain(ctx context.Context, maxWait time.Duration) error {
 }
 
 // sendDue sends the items that are due now and returns how many it claimed. It
-// stops claiming when no due item is left, or when ctx ends. A send that has
-// started is finished first. It returns an error only if a database call that
-// finds or claims items fails. A failure of one item is logged, and the next item
-// is still sent.
+// stops claiming when no due item is left, or when ctx ends. The sends of
+// different accounts run at the same time (see sendBatch). Every send that it
+// started is finished, and its result is written, before it returns. It
+// returns an error only if a database call that finds or claims items fails. A
+// failure of one item is logged, and the other items are still sent.
 func (o *Outbox) sendDue(ctx context.Context) (int, error) {
 	total := 0
 	for ctx.Err() == nil {
@@ -607,25 +629,11 @@ func (o *Outbox) sendDue(ctx context.Context) (int, error) {
 		if err != nil {
 			return total, fmt.Errorf("outbox: find due items: %w", err)
 		}
-		claimedNow := 0
-		for _, row := range rows {
-			if ctx.Err() != nil {
-				return total + claimedNow, nil
-			}
-			claimed, err := o.claim(ctx, row)
-			if errors.Is(err, store.ErrNotFound) {
-				// Another worker claimed it first, or the user cancelled it.
-				continue
-			}
-			if err != nil {
-				return total + claimedNow, fmt.Errorf("outbox: claim item: %w", err)
-			}
-			claimedNow++
-			if err := o.deliver(ctx, claimed, nil); err != nil {
-				o.warn("outbox: could not finish a send", "id", row.ID, "code", "finish_failed", "error_types", errtype.Chain(err))
-			}
-		}
+		claimedNow, err := o.sendBatch(ctx, rows)
 		total += claimedNow
+		if err != nil {
+			return total, err
+		}
 		// Stop when this query found no item to claim (the others are taken), or
 		// when it found fewer than a full batch (there is no more).
 		if claimedNow == 0 || len(rows) < dueBatch {
@@ -633,6 +641,111 @@ func (o *Outbox) sendDue(ctx context.Context) (int, error) {
 		}
 	}
 	return total, nil
+}
+
+// outboxAccount names the account of an item.
+type outboxAccount struct {
+	tenant account.TenantID
+	acct   account.AccountID
+}
+
+// sendBatch claims and sends the rows, and returns how many it claimed.
+//
+// The rows of one account are sent one after another, in their order, by one
+// goroutine. So an account never has two sends at once, and its mail keeps its
+// order and its rate limits. The accounts run at the same time, with at most
+// maxParallelSends sends in progress in all. A stalled mail server of one
+// account then does not hold up the mail of the others in the batch.
+//
+// The goroutine of an account takes a free place first, and only then claims
+// its next item and sends it at once. A claimed item never waits for a place:
+// it is "sending", and RecoverInterrupted fails an item that stays "sending"
+// for too long.
+//
+// ctx stops new claims only. A send that has started is finished, and its
+// result is written, before sendBatch returns. A database error of a claim also
+// stops new claims, in every account, and sendBatch returns it after the sends
+// in progress have finished. Each claim, and each write of a result, is a
+// statement of its own: no database transaction stays open during a send.
+func (o *Outbox) sendBatch(ctx context.Context, rows []*store.OutboxRow) (int, error) {
+	var order []outboxAccount
+	queues := map[outboxAccount][]*store.OutboxRow{}
+	for _, row := range rows {
+		key := outboxAccount{tenant: row.Tenant, acct: row.Account}
+		if _, ok := queues[key]; !ok {
+			order = append(order, key)
+		}
+		queues[key] = append(queues[key], row)
+	}
+
+	// claimCtx ends with ctx, or when a claim fails. It stops new claims only:
+	// deliver gets ctx, so a failed claim elsewhere does not release an item
+	// that was claimed already.
+	claimCtx, stopClaims := context.WithCancel(ctx)
+	defer stopClaims()
+	places := make(chan struct{}, maxParallelSends)
+
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex // protects claimed and claimErr
+		claimed  int
+		claimErr error
+	)
+	for _, key := range order {
+		wg.Go(func() {
+			for _, row := range queues[key] {
+				select {
+				case places <- struct{}{}:
+				case <-claimCtx.Done():
+					return
+				}
+				ok, err := o.claimAndDeliver(ctx, claimCtx, row)
+				<-places
+				if err != nil {
+					mu.Lock()
+					if claimErr == nil {
+						claimErr = err
+					}
+					mu.Unlock()
+					stopClaims()
+					return
+				}
+				if !ok {
+					if claimCtx.Err() != nil {
+						return
+					}
+					continue
+				}
+				mu.Lock()
+				claimed++
+				mu.Unlock()
+			}
+		})
+	}
+	wg.Wait()
+	return claimed, claimErr
+}
+
+// claimAndDeliver claims one due item and sends it. It returns false when it
+// did not claim the item: claimCtx has ended, another worker claimed it first,
+// or the user cancelled it. The error is the error of a claim that failed. A
+// failure after the claim is logged, and is not returned.
+func (o *Outbox) claimAndDeliver(ctx, claimCtx context.Context, row *store.OutboxRow) (bool, error) {
+	if claimCtx.Err() != nil {
+		return false, nil
+	}
+	claimed, err := o.claim(ctx, row)
+	if errors.Is(err, store.ErrNotFound) {
+		// Another worker claimed it first, or the user cancelled it.
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("outbox: claim item: %w", err)
+	}
+	if err := o.deliver(ctx, claimed, nil); err != nil {
+		o.warn("outbox: could not finish a send", "id", row.ID, "code", "finish_failed", "error_types", errtype.Chain(err))
+	}
+	return true, nil
 }
 
 // claim claims one due item. The call uses a context that ctx cannot cancel.

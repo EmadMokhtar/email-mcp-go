@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2028,5 +2029,262 @@ func TestNoSendWhenLessThanTheMinimumBudgetIsLeft(t *testing.T) {
 			require.Equal(t, 1, f.sender.count())
 			require.Equal(t, StatusSent, f.status(item.ID))
 		})
+	}
+}
+
+// ---- Parallel sends (review of PR #3, item 6) ----
+
+// gatedSender is a Sender that can hold the sends of an account until the test
+// releases them. It counts the sends in progress, in all and for each account,
+// and keeps the highest counts. It records the body of each send by account.
+type gatedSender struct {
+	mu          sync.Mutex
+	gates       map[account.AccountID]chan struct{}
+	inFlight    int
+	peak        int
+	accountNow  map[account.AccountID]int
+	accountPeak map[account.AccountID]int
+	bodies      map[account.AccountID][]string
+	finished    int
+	delay       time.Duration
+}
+
+func newGatedSender() *gatedSender {
+	return &gatedSender{
+		gates:       map[account.AccountID]chan struct{}{},
+		accountNow:  map[account.AccountID]int{},
+		accountPeak: map[account.AccountID]int{},
+		bodies:      map[account.AccountID][]string{},
+	}
+}
+
+// hold makes the sends of the account wait until release is called. release
+// may be called more than once.
+func (s *gatedSender) hold(acct account.AccountID) (release func()) {
+	gate := make(chan struct{})
+	s.mu.Lock()
+	s.gates[acct] = gate
+	s.mu.Unlock()
+	var once sync.Once
+	return func() { once.Do(func() { close(gate) }) }
+}
+
+func (s *gatedSender) send(_ context.Context, _ account.TenantID, acct account.AccountID, msg *mail.RawMessage, _ mail.Ref) error {
+	s.mu.Lock()
+	s.inFlight++
+	s.peak = max(s.peak, s.inFlight)
+	s.accountNow[acct]++
+	s.accountPeak[acct] = max(s.accountPeak[acct], s.accountNow[acct])
+	gate, delay := s.gates[acct], s.delay
+	s.mu.Unlock()
+
+	if gate != nil {
+		<-gate
+	}
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inFlight--
+	s.accountNow[acct]--
+	s.finished++
+	_, body, _ := strings.Cut(string(msg.Data), "\r\n\r\n")
+	s.bodies[acct] = append(s.bodies[acct], body)
+	return nil
+}
+
+// counts returns the sends in progress now, the highest number at once, and
+// the number of sends that have finished.
+func (s *gatedSender) counts() (now, peak, finished int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inFlight, s.peak, s.finished
+}
+
+// inFlightFor returns the number of sends of the account in progress now.
+func (s *gatedSender) inFlightFor(acct account.AccountID) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.accountNow[acct]
+}
+
+// highestForOneAccount returns the highest number of sends of one account that
+// were in progress at once.
+func (s *gatedSender) highestForOneAccount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	highest := 0
+	for _, n := range s.accountPeak {
+		highest = max(highest, n)
+	}
+	return highest
+}
+
+// addAccount adds an account to the tenant of the fixture.
+func (f *fixture) addAccount(address string) account.AccountID {
+	f.t.Helper()
+	a := account.NewIMAPAccount(f.tenant, address, account.MailServer{}, testStart)
+	require.NoError(f.t, f.store.CreateAccount(context.Background(), a))
+	return a.ID
+}
+
+// enqueueFor queues a message in an account of the fixture tenant.
+func (f *fixture) enqueueFor(acct account.AccountID, body string, window time.Duration) *Item {
+	f.t.Helper()
+	item, err := f.ob.Enqueue(context.Background(), f.tenant, acct, testMessage(body), window, "")
+	require.NoError(f.t, err)
+	return item
+}
+
+// drainAsync starts Drain with no waiting in a goroutine. The channel gets its
+// result.
+func drainAsync(ctx context.Context, ob *Outbox) <-chan error {
+	done := make(chan error, 1)
+	go func() { done <- ob.Drain(ctx, 0) }()
+	return done
+}
+
+// A stalled mail server of one account must not hold up the mail of another
+// account: the due message of account B is sent while the send of account A
+// waits.
+func TestSendDueSendsAnotherAccountWhileOneIsStalled(t *testing.T) {
+	f := newFixture(t)
+	acctB := f.addAccount("home@example.com")
+	gs := newGatedSender()
+	releaseA := gs.hold(f.acct)
+	t.Cleanup(releaseA)
+	ob := New(f.store, f.vault, gs.send, f.clock.Now)
+
+	a := f.enqueueFor(f.acct, "for A", 5*time.Second) // due first
+	b := f.enqueueFor(acctB, "for B", 10*time.Second)
+	f.clock.Advance(10 * time.Second)
+	done := drainAsync(context.Background(), ob)
+
+	require.Eventually(t, func() bool { return gs.inFlightFor(f.acct) == 1 }, 5*time.Second, 5*time.Millisecond,
+		"the send of A starts and is held")
+	require.Eventually(t, func() bool { return f.status(b.ID) == StatusSent }, 5*time.Second, 5*time.Millisecond,
+		"the message of B is sent while the send of A is held")
+	require.Equal(t, StatusSending, f.status(a.ID))
+	require.Equal(t, 1, gs.inFlightFor(f.acct), "A is still held")
+	select {
+	case err := <-done:
+		t.Fatalf("sendDue returned while a send that it started was running: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	releaseA()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Drain did not return")
+	}
+	require.Equal(t, StatusSent, f.status(a.ID))
+}
+
+// At most maxParallelSends sends run at once, and only the items that are
+// being sent are claimed: the others stay "queued" until their own send
+// starts. A context that ends stops new claims, and the sends that started
+// finish first.
+func TestSendDueCapsTheSendsInProgress(t *testing.T) {
+	f := newFixture(t)
+	gs := newGatedSender()
+	accounts := []account.AccountID{f.acct}
+	for i := range 5 {
+		accounts = append(accounts, f.addAccount(fmt.Sprintf("a%d@example.com", i)))
+	}
+	var releases []func()
+	for _, acct := range accounts {
+		releases = append(releases, gs.hold(acct))
+	}
+	releaseAll := func() {
+		for _, r := range releases {
+			r()
+		}
+	}
+	t.Cleanup(releaseAll)
+	ob := New(f.store, f.vault, gs.send, f.clock.Now)
+
+	var ids []string
+	for i, acct := range accounts {
+		for j := range 2 {
+			ids = append(ids, f.enqueueFor(acct, fmt.Sprintf("body %d-%d", i, j), 10*time.Second).ID)
+		}
+	}
+	f.clock.Advance(10 * time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := drainAsync(ctx, ob)
+
+	require.Eventually(t, func() bool {
+		now, _, _ := gs.counts()
+		return now == maxParallelSends
+	}, 5*time.Second, 5*time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // a fifth send would start now
+	now, peak, _ := gs.counts()
+	require.Equal(t, maxParallelSends, now)
+	require.Equal(t, maxParallelSends, peak, "never more than the cap")
+
+	statuses := map[Status]int{}
+	for _, id := range ids {
+		statuses[f.status(id)]++
+	}
+	require.Equal(t, map[Status]int{StatusSending: maxParallelSends, StatusQueued: len(ids) - maxParallelSends}, statuses,
+		"an item is claimed right before its send, never early")
+
+	// The end of the context stops new claims. The held sends finish first.
+	cancel()
+	select {
+	case err := <-done:
+		t.Fatalf("Drain returned while sends were running: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	releaseAll()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Drain did not return")
+	}
+	_, peak, finished := gs.counts()
+	require.Equal(t, maxParallelSends, finished, "no send starts after the context ended")
+	require.Equal(t, maxParallelSends, peak)
+	require.Equal(t, 1, gs.highestForOneAccount())
+	statuses = map[Status]int{}
+	for _, id := range ids {
+		statuses[f.status(id)]++
+	}
+	require.Equal(t, map[Status]int{StatusSent: maxParallelSends, StatusQueued: len(ids) - maxParallelSends}, statuses)
+}
+
+// Two items of one account are never sent at the same time, and they go out
+// in their order. Accounts send in parallel up to the cap.
+func TestSendDueSendsOneAtATimeForEachAccount(t *testing.T) {
+	f := newFixture(t)
+	gs := newGatedSender()
+	gs.delay = 5 * time.Millisecond
+	accounts := []account.AccountID{f.acct, f.addAccount("b@example.com"), f.addAccount("c@example.com")}
+	ob := New(f.store, f.vault, gs.send, f.clock.Now)
+	for j := range 4 {
+		for i, acct := range accounts {
+			f.enqueueFor(acct, fmt.Sprintf("%d-%d", i, j), time.Duration(j+1)*time.Second)
+		}
+	}
+	f.clock.Advance(time.Minute)
+
+	require.NoError(t, ob.Drain(context.Background(), 0))
+
+	_, peak, finished := gs.counts()
+	require.Equal(t, 12, finished)
+	require.Equal(t, 1, gs.highestForOneAccount(), "one send at a time for each account")
+	require.LessOrEqual(t, peak, maxParallelSends)
+	for i, acct := range accounts {
+		gs.mu.Lock()
+		got := slices.Clone(gs.bodies[acct])
+		gs.mu.Unlock()
+		want := []string{fmt.Sprintf("%d-0", i), fmt.Sprintf("%d-1", i), fmt.Sprintf("%d-2", i), fmt.Sprintf("%d-3", i)}
+		require.Equal(t, want, got, "the mail of one account goes out in its order")
 	}
 }
