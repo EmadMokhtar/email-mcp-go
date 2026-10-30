@@ -117,8 +117,10 @@ func TestReconnectPageShowsTheCommandLineHint(t *testing.T) {
 	}
 }
 
-// The accounts page shows a "Reconnect" link for an account that needs to be
-// reconnected, and the settings page links to the reconnect page.
+// The accounts page shows a "Reconnect" link for every account: a changed
+// certificate does not mark the account, and the user may know that the
+// password changed before anything fails. The settings page links to the
+// reconnect page too.
 func TestAccountsPageLinksToReconnect(t *testing.T) {
 	c := newConnectFixture(t)
 	server := pinnedServer(imaptest.New(t), smtptest.New(t))
@@ -129,7 +131,7 @@ func TestAccountsPageLinksToReconnect(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, body, `href="`+reconnectPath(broken)+`"`)
-	require.NotContains(t, body, `href="`+reconnectPath(fine)+`"`, "only an account that needs it")
+	require.Contains(t, body, `href="`+reconnectPath(fine)+`"`, "an account with the status ok has the link too")
 	require.Contains(t, visibleText(t, body), "Reconnect")
 
 	_, body = do(t, c.browser, newRequest(t, http.MethodGet, c.base+"/accounts/"+string(fine.ID)+"/settings", nil))

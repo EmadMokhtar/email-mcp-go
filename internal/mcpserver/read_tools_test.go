@@ -486,7 +486,7 @@ func TestToolErrorMapping(t *testing.T) {
 		{
 			name:     "needs reauth with a link",
 			err:      reauth,
-			contains: []string{"reconnect", "https://mcp.test/settings/a1?area=mail&level=2"},
+			contains: []string{"reconnect", "https://mcp.test/settings/a1?area=mail&level=2", "accounts page"},
 			ends:     endUntilUser, wantsCode: "needs_reauth",
 		},
 		{
@@ -513,7 +513,8 @@ func TestToolErrorMapping(t *testing.T) {
 		{
 			name:     "needs reauth names the reconnect and the test command",
 			err:      &service.ReauthError{},
-			contains: []string{"reconnect the account", "email-mcp settings", "email-mcp account reconnect <id>", "email-mcp account test <id>"},
+			contains: []string{"reconnect the account", "Reconnect link", "accounts page", "settings page",
+				"email-mcp account reconnect <id>", "email-mcp account test <id>"},
 			hasNo:    []string{"remove the account", "add it again"},
 			ends:     endUntilUser, wantsCode: "needs_reauth",
 		},
@@ -521,7 +522,8 @@ func TestToolErrorMapping(t *testing.T) {
 			name: "the server refused the stored login",
 			err: fmt.Errorf("pool: %w", fmt.Errorf("imap: login failed [AUTHENTICATIONFAILED] for bob@secret-host.example: %w",
 				imapsmtp.ErrAuthFailed)),
-			contains: []string{"refused the stored login", "reconnect the account", "email-mcp account reconnect <id>", "email-mcp account test <id>"},
+			contains: []string{"refused the stored login", "reconnect the account", "Reconnect link", "accounts page",
+				"settings page", "email-mcp account reconnect <id>", "email-mcp account test <id>"},
 			hasNo:    []string{"secret-host", "AUTHENTICATIONFAILED", "bob@", "remove the account", "add it again"},
 			ends:     endUntilUser, wantsCode: "auth_failed",
 		},
@@ -530,7 +532,8 @@ func TestToolErrorMapping(t *testing.T) {
 			err: fmt.Errorf("imap: dial: %w", &imapsmtp.CertificateUnknownError{
 				Protocol: "imap", Host: "secret-host.example", FingerprintSHA256: "ab12cd", Pinned: true,
 			}),
-			contains: []string{"certificate", "changed", "reconnect the account", "email-mcp account reconnect <id>"},
+			contains: []string{"certificate", "changed", "reconnect the account", "Reconnect link", "accounts page",
+				"settings page", "email-mcp account reconnect <id>"},
 			hasNo:    []string{"secret-host", "ab12cd", "remove the account", "add it again"},
 			ends:     endUntilUser, wantsCode: "certificate_changed",
 		},

@@ -610,8 +610,9 @@ Common fixes:
   test works (the server only refused for a short time), the account is marked
   as connected again. Otherwise, see the next point.
 - **The password or the certificate changed.** Reconnect the account. In the
-  browser, the accounts page shows a **Reconnect** link for an account that
-  needs it, and the settings page of every account has one. Without a browser,
+  browser, every account has a **Reconnect** link on the accounts page and on
+  its settings page. Use it also when you know that the password changed
+  before anything fails. Without a browser,
   run `email-mcp account reconnect <id>`, which reads the password from
   standard input like `account add`. Type the new password, or leave it empty
   to keep the stored one. The test must pass before anything is saved. The

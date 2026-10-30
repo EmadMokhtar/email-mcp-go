@@ -91,10 +91,11 @@ const (
 )
 
 // accountReconnect is how an error text names the two ways in which the user
-// reconnects an account: the web pages, and the command for a computer without
-// a browser. Only the user can reconnect: no tool does it.
-const accountReconnect = "in the email-mcp settings (the Reconnect link of the account) or with " +
-	"`email-mcp account reconnect <id>`"
+// reconnects an account: the Reconnect link of the web pages, and the command
+// for a computer without a browser. Every account has the link, on the accounts
+// page and on its settings page. Only the user can reconnect: no tool does it.
+const accountReconnect = "with the Reconnect link of the account on the email-mcp accounts page or on its " +
+	"settings page, or with `email-mcp account reconnect <id>`"
 
 // accountTest is how an error text names the command that tests an account.
 // A test that works marks an account that needed to be reconnected as
@@ -360,11 +361,12 @@ func rateLimitFailure(r *policy.RateLimitError) *toolFailure {
 // change (the server refused it for a short time).
 func reauthFailure(link string) *toolFailure {
 	text := "The account needs to be reconnected: the mail server refused its stored login. Ask the user to " +
-		"reconnect the account with its new password, in the email-mcp settings"
+		"reconnect the account with its new password: with the Reconnect link of the account on the email-mcp " +
+		"accounts page or on its settings page"
 	if link != "" {
-		text += " at " + link
+		text += " (" + link + ")"
 	}
-	text += " (the Reconnect link of the account) or with `email-mcp account reconnect <id>`. If the password did " +
-		"not change, " + accountTest + " marks the account as connected again once the server accepts it. " + accountID
+	text += ", or with `email-mcp account reconnect <id>`. If the password did not change, " + accountTest +
+		" marks the account as connected again once the server accepts it. " + accountID
 	return failure(codeNeedsReauth, text+" "+noRetryUntilUser)
 }
