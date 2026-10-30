@@ -511,12 +511,12 @@ func TestToolErrorMapping(t *testing.T) {
 			ends:     endUntilUser, wantsCode: "needs_reauth",
 		},
 		{
-			name:     "needs reauth names the reconnect and the test command",
-			err:      &service.ReauthError{},
+			name: "needs reauth names the reconnect and the test command",
+			err:  &service.ReauthError{},
 			contains: []string{"reconnect the account", "Reconnect link", "accounts page", "settings page",
 				"email-mcp account reconnect <id>", "email-mcp account test <id>"},
-			hasNo:    []string{"remove the account", "add it again"},
-			ends:     endUntilUser, wantsCode: "needs_reauth",
+			hasNo: []string{"remove the account", "add it again"},
+			ends:  endUntilUser, wantsCode: "needs_reauth",
 		},
 		{
 			name: "the server refused the stored login",
@@ -524,8 +524,8 @@ func TestToolErrorMapping(t *testing.T) {
 				imapsmtp.ErrAuthFailed)),
 			contains: []string{"refused the stored login", "reconnect the account", "Reconnect link", "accounts page",
 				"settings page", "email-mcp account reconnect <id>", "email-mcp account test <id>"},
-			hasNo:    []string{"secret-host", "AUTHENTICATIONFAILED", "bob@", "remove the account", "add it again"},
-			ends:     endUntilUser, wantsCode: "auth_failed",
+			hasNo: []string{"secret-host", "AUTHENTICATIONFAILED", "bob@", "remove the account", "add it again"},
+			ends:  endUntilUser, wantsCode: "auth_failed",
 		},
 		{
 			name: "a pinned certificate changed",
@@ -534,8 +534,8 @@ func TestToolErrorMapping(t *testing.T) {
 			}),
 			contains: []string{"certificate", "changed", "reconnect the account", "Reconnect link", "accounts page",
 				"settings page", "email-mcp account reconnect <id>"},
-			hasNo:    []string{"secret-host", "ab12cd", "remove the account", "add it again"},
-			ends:     endUntilUser, wantsCode: "certificate_changed",
+			hasNo: []string{"secret-host", "ab12cd", "remove the account", "add it again"},
+			ends:  endUntilUser, wantsCode: "certificate_changed",
 		},
 		{
 			name:      "a busy server",
