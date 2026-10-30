@@ -694,6 +694,10 @@ func TestSendFinalReplyKeepsServerTextOutOfTheError(t *testing.T) {
 			require.Equal(t, tc.unknown, errors.Is(err, ErrDeliveryUnknown), "%v", err)
 			if tc.unknown {
 				require.ErrorContains(t, err, "may have been delivered")
+				// A ReplyError means a refusal, and this reply was not one.
+				var reply *ReplyError
+				require.False(t, errors.As(err, &reply), "%v", err)
+				require.NotContains(t, err.Error(), "did not accept")
 			}
 			if tc.code != "" {
 				require.ErrorContains(t, err, tc.code)

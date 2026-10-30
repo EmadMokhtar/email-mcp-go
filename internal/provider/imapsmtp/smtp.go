@@ -584,8 +584,9 @@ func smtpLoginError(err error) error {
 // smtpStepError describes the failure of one step of the SMTP conversation. It
 // keeps what helps a person: the step, the reply code of the server, the
 // certificate error, the network error. It leaves out the text of the server,
-// which can repeat the user name or an address. A reply code gives a
-// *ReplyError.
+// which can repeat the user name or an address. A reply code from 400 to 599
+// gives a *ReplyError, because only those codes are a refusal. Another code
+// (for example 251 after the end of the data) is kept in a plain error.
 func smtpStepError(step string, err error) error {
 	var (
 		certErr  *CertificateUnknownError
@@ -596,8 +597,10 @@ func smtpStepError(step string, err error) error {
 	case errors.As(err, &certErr):
 		// The text of the error says what is wrong and starts with "smtp:".
 		return err
-	case errors.As(err, &reply):
+	case errors.As(err, &reply) && reply.Code >= 400 && reply.Code <= 599:
 		return &ReplyError{Step: step, Code: reply.Code}
+	case errors.As(err, &reply):
+		return fmt.Errorf("smtp: %s failed (reply code %d)", step, reply.Code)
 	case errors.As(err, &protoErr):
 		// The text of a ProtocolError is the line that the server sent.
 		return fmt.Errorf("smtp: %s failed: the server sent a reply that is not valid", step)
