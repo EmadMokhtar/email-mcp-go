@@ -69,6 +69,11 @@ import (
 // text placed behind other content. The default styles of the browser are not
 // applied, and values that need a calculation (calc, var) are not worked out.
 //
+// It also drops some text that a browser shows. A table cell with width:0 or
+// max-width:0 and clipped overflow is hidden here, but some mails use that
+// style to cut a long line with an ellipsis, and a browser shows the start of
+// the line. The rule is kept, because a cell is an easy place to hide text.
+//
 // Links are written as "text (url)". The url is parsed and shown with spaces,
 // round brackets and other unsafe characters written as %XX, so that it is one
 // word. It is shown only for http, https and mailto, only if it is no longer
