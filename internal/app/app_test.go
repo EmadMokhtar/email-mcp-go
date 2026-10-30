@@ -670,6 +670,32 @@ func TestSenderDoesNotCallTheServerForAnAccountThatNeedsReauth(t *testing.T) {
 	require.Zero(t, ta.factory.backend.sentCount())
 }
 
+// When the SMTP server refuses the stored login, the outbox marks the account
+// for a reconnect, as the service does for its own calls. The error is not
+// permanent: the user may fix the account (email-mcp account test) before the
+// next try. A busy server does not mark the account.
+func TestSenderMarksTheAccountWhenTheServerRefusesTheLogin(t *testing.T) {
+	ta := openTest(t)
+	acct := ta.addAccount(t)
+	ta.factory.backend.sendErr = fmt.Errorf("smtp: login failed (reply code 535): %w", imapsmtp.ErrAuthFailed)
+
+	err := ta.sender(context.Background(), store.LocalTenantID, acct.ID, testMessage(), "")
+
+	require.ErrorIs(t, err, imapsmtp.ErrAuthFailed)
+	require.False(t, outbox.IsPermanent(err))
+	got, err := ta.store.GetAccount(context.Background(), store.LocalTenantID, acct.ID)
+	require.NoError(t, err)
+	require.Equal(t, account.StatusNeedsReauth, got.Status)
+	require.Contains(t, ta.logs.String(), "code=needs_reauth_set")
+
+	other := ta.addAccount(t, func(a *account.Account) { a.Address = "other@example.com" })
+	ta.factory.backend.sendErr = fmt.Errorf("imap: login failed [INUSE]: %w", imapsmtp.ErrServerBusy)
+	_ = ta.sender(context.Background(), store.LocalTenantID, other.ID, testMessage(), "")
+	got, err = ta.store.GetAccount(context.Background(), store.LocalTenantID, other.ID)
+	require.NoError(t, err)
+	require.Equal(t, account.StatusOK, got.Status, "a busy server did not refuse the password")
+}
+
 // ---------------------------------------------------------------- Run
 
 // A program that stopped in the middle of a send left its item in "sending".

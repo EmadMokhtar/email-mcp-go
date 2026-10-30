@@ -145,21 +145,24 @@ func (s *Service) capabilities(ctx context.Context, a *account.Account) mail.Cap
 
 // ListFolders returns the folders of the account.
 func (s *Service) ListFolders(ctx context.Context, id account.AccountID) ([]mail.Folder, error) {
-	b, err := s.mailBackend(ctx, id, policy.ActRead)
+	a, b, err := s.mailBackend(ctx, id, policy.ActRead)
 	if err != nil {
 		return nil, err
 	}
-	return b.ListFolders(ctx)
+	folders, err := b.ListFolders(ctx)
+	s.noteBackendError(ctx, a, err)
+	return folders, err
 }
 
 // ListTags returns the tags of the account. The bool says whether the account
 // supports tags. When it does not, the list is empty and there is no error.
 func (s *Service) ListTags(ctx context.Context, id account.AccountID) ([]mail.Tag, bool, error) {
-	b, err := s.mailBackend(ctx, id, policy.ActRead)
+	a, b, err := s.mailBackend(ctx, id, policy.ActRead)
 	if err != nil {
 		return nil, false, err
 	}
 	tags, err := b.ListTags(ctx)
+	s.noteBackendError(ctx, a, err)
 	if errors.Is(err, mail.ErrUnsupported) {
 		return nil, false, nil
 	}
@@ -172,43 +175,51 @@ func (s *Service) ListTags(ctx context.Context, id account.AccountID) ([]mail.Ta
 // Search returns one page of the messages that match the query. The backend
 // limits the number of results of a page.
 func (s *Service) Search(ctx context.Context, id account.AccountID, q mail.Query, page mail.PageToken) (mail.Page[mail.Summary], error) {
-	b, err := s.mailBackend(ctx, id, policy.ActRead)
+	a, b, err := s.mailBackend(ctx, id, policy.ActRead)
 	if err != nil {
 		return mail.Page[mail.Summary]{}, err
 	}
-	return b.Search(ctx, q, page)
+	res, err := b.Search(ctx, q, page)
+	s.noteBackendError(ctx, a, err)
+	return res, err
 }
 
 // NewMessages returns the messages of a folder that changed since the cursor,
 // the cursor to use next, and whether the old cursor was reset. See
 // mail.Backend.Changes.
 func (s *Service) NewMessages(ctx context.Context, id account.AccountID, folder string, c mail.Cursor) ([]mail.Summary, mail.Cursor, bool, error) {
-	b, err := s.mailBackend(ctx, id, policy.ActRead)
+	a, b, err := s.mailBackend(ctx, id, policy.ActRead)
 	if err != nil {
 		return nil, "", false, err
 	}
-	return b.Changes(ctx, folder, c)
+	changed, next, reset, err := b.Changes(ctx, folder, c)
+	s.noteBackendError(ctx, a, err)
+	return changed, next, reset, err
 }
 
 // GetMessage returns one message. The options control which body part is
 // returned and how much of it.
 func (s *Service) GetMessage(ctx context.Context, id account.AccountID, ref mail.Ref, opts mail.BodyOptions) (*mail.Message, error) {
-	b, err := s.mailBackend(ctx, id, policy.ActRead)
+	a, b, err := s.mailBackend(ctx, id, policy.ActRead)
 	if err != nil {
 		return nil, err
 	}
-	return b.GetMessage(ctx, ref, opts)
+	msg, err := b.GetMessage(ctx, ref, opts)
+	s.noteBackendError(ctx, a, err)
+	return msg, err
 }
 
 // GetAttachment returns one attachment of a message. It asks the backend for at
 // most 10 MB. For a larger attachment it returns the error of the backend as it
 // is (it matches mail.ErrTooLarge).
 func (s *Service) GetAttachment(ctx context.Context, id account.AccountID, ref mail.Ref, attachmentID string) (*mail.Attachment, error) {
-	b, err := s.mailBackend(ctx, id, policy.ActRead)
+	a, b, err := s.mailBackend(ctx, id, policy.ActRead)
 	if err != nil {
 		return nil, err
 	}
-	return b.GetAttachment(ctx, ref, attachmentID, MaxAttachmentBytes)
+	att, err := b.GetAttachment(ctx, ref, attachmentID, MaxAttachmentBytes)
+	s.noteBackendError(ctx, a, err)
+	return att, err
 }
 
 // ListStoredAccounts returns the accounts of the tenant of the caller as the

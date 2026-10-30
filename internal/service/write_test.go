@@ -24,6 +24,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
 	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
+	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 )
 
@@ -762,6 +763,60 @@ func TestMoveWhenTheAccountHasNoTrashFolder(t *testing.T) {
 	// Trash would not use it either.
 	_, err = env.svc.Move(env.ctx(), a.ID, []mail.Ref{"r1"}, "Trash")
 	require.NoError(t, err)
+}
+
+// ---------------------------------------------------------------- a refused login
+
+// When the mail server refuses the stored login (an app password was revoked),
+// the service marks the account as needing a reconnect. The next call is then
+// refused before it reaches the server (ReauthError), and list_accounts shows
+// needs_reauth. This holds for reads and for writes.
+func TestARefusedLoginMarksTheAccountForAReconnect(t *testing.T) {
+	refused := fmt.Errorf("imap: login failed [AUTHENTICATIONFAILED]: %w", imapsmtp.ErrAuthFailed)
+	for name, call := range map[string]func(env *writeEnv, id account.AccountID) error{
+		"a read": func(env *writeEnv, id account.AccountID) error {
+			_, err := env.svc.ListFolders(env.ctx(), id)
+			return err
+		},
+		"a write": func(env *writeEnv, id account.AccountID) error {
+			return env.svc.SetFlags(env.ctx(), id, []mail.Ref{"r1"}, mail.FlagChange{Seen: new(true)})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := newWriteEnv(t)
+			a := env.account(level(account.MailOrganize))
+			env.backend.setErr("ListFolders", refused)
+			env.backend.setErr("SetFlags", refused)
+
+			err := call(env, a.ID)
+			require.ErrorIs(t, err, imapsmtp.ErrAuthFailed)
+			require.Equal(t, account.StatusNeedsReauth, env.f.reload(a).Status)
+
+			err = call(env, a.ID)
+			var reauth *ReauthError
+			require.ErrorAs(t, err, &reauth, "the next call does not reach the server")
+		})
+	}
+}
+
+// A busy server (INUSE or LIMIT) did not refuse the password, so the account
+// stays connected. So does any other error.
+func TestOtherBackendErrorsDoNotMarkTheAccount(t *testing.T) {
+	for name, err := range map[string]error{
+		"busy":    fmt.Errorf("imap: login failed [INUSE]: %w", imapsmtp.ErrServerBusy),
+		"network": &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset")},
+		"pin":     &imapsmtp.CertificateUnknownError{Host: "imap.example.com", Pinned: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := newWriteEnv(t)
+			a := env.account(level(account.MailOrganize))
+			env.backend.setErr("ListFolders", err)
+
+			_, got := env.svc.ListFolders(env.ctx(), a.ID)
+			require.ErrorIs(t, got, err)
+			require.Equal(t, account.StatusOK, env.f.reload(a).Status)
+		})
+	}
 }
 
 // ---------------------------------------------------------------- drafts

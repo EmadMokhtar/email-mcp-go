@@ -34,6 +34,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/mime"
 	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
+	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 )
@@ -83,7 +84,16 @@ const (
 	codeBodyAndHTML         = "body_and_html"
 	codeDraftUnreadable     = "draft_unreadable"
 	codeHiddenAddress       = "hidden_address"
+	// The codes of a mail server that refuses the account.
+	codeAuthFailed         = "auth_failed"
+	codeCertificateChanged = "certificate_changed"
+	codeServerBusy         = "server_busy"
 )
+
+// accountTest is how an error text names the command that tests an account.
+// A test that works marks an account that needed to be reconnected as
+// connected again.
+const accountTest = "`email-mcp account test <id>`, where <id> is the account id of this call"
 
 // toolFailure is the error that a handler wrapper gives to the SDK. The SDK
 // puts its text in a tool result with isError set. It has no structured
@@ -126,6 +136,7 @@ func toolError(tool string, err error) *toolFailure {
 		rate   *policy.RateLimitError
 		reauth *service.ReauthError
 		arg    *argError
+		cert   *imapsmtp.CertificateUnknownError
 	)
 	msgFail, isMsg := messageFailure(err)
 	switch {
@@ -154,6 +165,21 @@ func toolError(tool string, err error) *toolFailure {
 	case errors.Is(err, mail.ErrPartial):
 		return failure(codePartial, "The change was made in part or in full before an error stopped it, "+
 			"so the refs may have changed. Search again to see the current state. "+noRepeat)
+	// The mail server refuses the account. These come after mail.ErrPartial: a
+	// change that was made in part must be reported as such.
+	case errors.Is(err, imapsmtp.ErrAuthFailed):
+		return failure(codeAuthFailed, "The mail server refused the stored login of this account: the password or "+
+			"the app password may have been changed or revoked. Ask the user to run "+accountTest+". If the test "+
+			"fails, the user must remove the account and add it again in the email-mcp settings. "+noRetryUntilUser)
+	case errors.As(err, &cert) && cert.Pinned:
+		return failure(codeCertificateChanged, "The mail server showed a certificate that is not the one that the "+
+			"user trusted for this account. It may have changed (some local mail servers make a new one when they "+
+			"are installed again), or someone may be between this program and the server. Ask the user to run "+
+			accountTest+", which shows the certificate. To trust a new certificate, the user must remove the account "+
+			"and add it again. "+noRetryUntilUser)
+	case errors.Is(err, imapsmtp.ErrServerBusy):
+		return failure(codeServerBusy, "The mail server is busy, or has too many connections for this account "+
+			"(for example from other mail programs). Try again later.")
 	case errors.Is(err, mail.ErrRefStale):
 		return failure(codeStaleRef, "The message ref is out of date: the message may have been moved or deleted. "+
 			"Search again to get a fresh ref. "+noRepeat)
@@ -318,8 +344,14 @@ func rateLimitFailure(r *policy.RateLimitError) *toolFailure {
 // reauthFailure builds the text for an account that must be reconnected. link is
 // the field of the *service.ReauthError, or empty. All text of the error itself
 // is left out.
+//
+// There is no way to replace the password or the certificate of an account in
+// place yet. So the text names the account test, which marks the account as
+// connected again when the login works again, and else the remove and add.
 func reauthFailure(link string) *toolFailure {
-	text := "The account needs to be reconnected. Ask the user to reconnect it in the email-mcp settings"
+	text := "The account needs to be reconnected: the mail server refused its stored login. Ask the user to run " +
+		accountTest + ". When the test works, the account is marked as connected again. If it fails, the user must " +
+		"remove the account and add it again in the email-mcp settings"
 	if link != "" {
 		text += " at " + link
 	}

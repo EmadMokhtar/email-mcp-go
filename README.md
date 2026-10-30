@@ -576,12 +576,23 @@ Common fixes:
 - **The master key does not exist.** `EMAIL_MCP_KEK` is not the same as when
   you connected the account. Use the same value as the AI app config.
 - **An account fails.** Run `email-mcp account test <id>` for the details.
-  `email-mcp account list` shows the ids. A changed password needs the account
-  to be connected again.
-- **A certificate changed.** A pinned certificate (see
-  [Quick start](#1-connect-an-account-in-the-browser)) that changes is refused.
-  Check with the provider or the bridge, then remove and connect the account
-  again.
+  `email-mcp account list` shows the ids.
+- **The agent says that the mail server refused the stored login, or that the
+  account needs to be reconnected.** When the mail server refuses the stored
+  password (for example an app password was revoked), email-mcp marks the
+  account as "needs to be reconnected" and stops calling the server for it. Run
+  `email-mcp account test <id>`. If the test works (the server only refused
+  for a short time), the account is marked as connected again. If it fails,
+  see the next point.
+- **The password or the certificate changed.** There is no way yet to give an
+  account a new password or to trust a new certificate in place. Remove the
+  account (`email-mcp account remove <id>`, or on its settings page) and add
+  it again. This deletes the messages that the account still has queued and
+  its activity history, and the account gets a new id, so update any setting
+  that names the old id. A pinned certificate (see
+  [Quick start](#1-connect-an-account-in-the-browser)) that changes is refused:
+  check with the provider or the bridge first, because a changed certificate
+  can also be an attack.
 
 More help:
 

@@ -474,11 +474,14 @@ func validPin(pin string) bool {
 // its stored password: the same test as CreateIMAPAccount makes before it saves.
 // The command line tool calls it ("account test" and "doctor").
 //
-// It changes nothing: not the account, not its status, not the cached backend,
-// and it writes no audit entry. It returns nil when both logins work. A failed
-// test gives a *ConnectionTestError, and a certificate that is not accepted (for
-// example one that does not match the pin) gives a *CertificateError. It
-// returns ErrAccountNotFound when the tenant has no such account.
+// It returns nil when both logins work. Then an account that needed to be
+// reconnected (the mail server had refused its login, see noteBackendError) is
+// marked as connected again. Only the status is written. Otherwise it changes
+// nothing: not the account, not the cached backend, and it writes no audit
+// entry. A failed test gives a *ConnectionTestError, and a certificate that is
+// not accepted (for example one that does not match the pin) gives a
+// *CertificateError. It returns ErrAccountNotFound when the tenant has no such
+// account.
 //
 // The password is never logged and never put in an error.
 func (s *Service) ProbeAccount(ctx context.Context, id account.AccountID) error {
@@ -514,5 +517,13 @@ func (s *Service) ProbeAccount(ctx context.Context, id account.AccountID) error 
 	// The Secret holds its own copy of the text. Clear the bytes of the
 	// plaintext.
 	clear(plain)
-	return s.probe(ctx, *a.Mail, password)
+	if err := s.probe(ctx, *a.Mail, password); err != nil {
+		return err
+	}
+	if a.Status == account.StatusNeedsReauth {
+		if err := s.d.Store.SetAccountStatus(ctx, p.Tenant, a.ID, account.StatusOK); err != nil {
+			return fmt.Errorf("service: mark the account as connected: %w", err)
+		}
+	}
+	return nil
 }

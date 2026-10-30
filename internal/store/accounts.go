@@ -184,6 +184,27 @@ func (s *Store) UpdateAccount(ctx context.Context, a *account.Account) error {
 	return requireOneRow(result, "update account")
 }
 
+// SetAccountStatus changes the status of an account, and nothing else. It writes
+// only the status column, so a save of the settings that runs at the same time
+// keeps its values, and this change is not lost by that save either. It refuses
+// a status that the account package does not know. It returns ErrNotFound if
+// the tenant has no account with this id.
+func (s *Store) SetAccountStatus(ctx context.Context, tenant account.TenantID, id account.AccountID, status account.Status) error {
+	if err := validateAccountIDs(tenant, id); err != nil {
+		return err
+	}
+	if status != account.StatusOK && status != account.StatusNeedsReauth {
+		return fmt.Errorf("store: unknown account status %q", status)
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE accounts SET status = ? WHERE tenant_id = ? AND id = ?`,
+		string(status), string(tenant), string(id))
+	if err != nil {
+		return fmt.Errorf("store: set account status: %w", err)
+	}
+	return requireOneRow(result, "set account status")
+}
+
 // DeleteAccount deletes an account and, through the foreign key, its secrets.
 // It returns ErrNotFound if the tenant has no account with this id.
 func (s *Store) DeleteAccount(ctx context.Context, tenant account.TenantID, id account.AccountID) error {

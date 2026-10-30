@@ -133,6 +133,7 @@ func (s *Service) sendDetail(ctx context.Context, id account.AccountID, stored c
 		return nil, err
 	}
 	_, _, detail, err := s.rebuildApproval(ctx, b, acc.Account, stored, payload)
+	s.noteBackendError(ctx, acc.Account, err)
 	return detail, err
 }
 

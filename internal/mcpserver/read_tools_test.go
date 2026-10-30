@@ -19,6 +19,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
+	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/imaptest"
@@ -508,6 +509,36 @@ func TestToolErrorMapping(t *testing.T) {
 			contains: []string{"reconnect"},
 			hasNo:    []string{"evil.example", "http"},
 			ends:     endUntilUser, wantsCode: "needs_reauth",
+		},
+		{
+			name:     "needs reauth names the test command",
+			err:      &service.ReauthError{},
+			contains: []string{"email-mcp account test", "remove the account and add it again"},
+			ends:     endUntilUser, wantsCode: "needs_reauth",
+		},
+		{
+			name: "the server refused the stored login",
+			err: fmt.Errorf("pool: %w", fmt.Errorf("imap: login failed [AUTHENTICATIONFAILED] for bob@secret-host.example: %w",
+				imapsmtp.ErrAuthFailed)),
+			contains: []string{"refused the stored login", "email-mcp account test"},
+			hasNo:    []string{"secret-host", "AUTHENTICATIONFAILED", "bob@"},
+			ends:     endUntilUser, wantsCode: "auth_failed",
+		},
+		{
+			name: "a pinned certificate changed",
+			err: fmt.Errorf("imap: dial: %w", &imapsmtp.CertificateUnknownError{
+				Protocol: "imap", Host: "secret-host.example", FingerprintSHA256: "ab12cd", Pinned: true,
+			}),
+			contains: []string{"certificate", "changed", "email-mcp account test"},
+			hasNo:    []string{"secret-host", "ab12cd"},
+			ends:     endUntilUser, wantsCode: "certificate_changed",
+		},
+		{
+			name:      "a busy server",
+			err:       fmt.Errorf("imap: login failed [INUSE]: %w", imapsmtp.ErrServerBusy),
+			contains:  []string{"busy", "too many connections", "Try again later"},
+			hasNo:     []string{"INUSE", "account test", "reconnect"},
+			wantsCode: "server_busy",
 		},
 		{
 			name:      "no principal",

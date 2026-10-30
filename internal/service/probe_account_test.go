@@ -39,6 +39,26 @@ func TestProbeAccountUsesTheStoredSettingsAndPins(t *testing.T) {
 	require.Empty(t, entries)
 }
 
+// A test that works marks an account that needed to be reconnected as connected
+// again: the user ran "email-mcp account test" after the mail server refused
+// the login, and the login works now. A test that fails changes nothing.
+func TestProbeAccountThatWorksClearsNeedsReauth(t *testing.T) {
+	refused := func(context.Context, imapsmtp.Config) (*imapsmtp.ProbeResult, error) {
+		return nil, fmt.Errorf("imap login: %w", imapsmtp.ErrAuthFailed)
+	}
+	failing := newConnectEnv(t, true, refused)
+	a := failing.addAccount(failing.tenant, "alice@example.com", exampleServer(), connectPassword,
+		func(a *account.Account) { a.Status = account.StatusNeedsReauth })
+	require.Error(t, failing.svc.ProbeAccount(failing.userCtx(failing.tenant), a.ID))
+	require.Equal(t, account.StatusNeedsReauth, failing.reload(a).Status, "a failed test changes nothing")
+
+	e := newConnectEnv(t, true, probeOK)
+	a = e.addAccount(e.tenant, "alice@example.com", exampleServer(), connectPassword,
+		func(a *account.Account) { a.Status = account.StatusNeedsReauth })
+	require.NoError(t, e.svc.ProbeAccount(e.userCtx(e.tenant), a.ID))
+	require.Equal(t, account.StatusOK, e.reload(a).Status)
+}
+
 // An account of another tenant, or an id that does not exist, is not found, and
 // nothing is tested.
 func TestProbeAccountOfAnotherTenantIsNotFound(t *testing.T) {

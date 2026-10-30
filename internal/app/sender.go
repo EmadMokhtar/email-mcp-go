@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
@@ -17,14 +18,22 @@ import (
 
 // Fixed codes for the log of the sender.
 const (
-	codeDraftDiscardFailed = "draft_discard_failed"
-	codeDraftNotADraft     = "not_a_draft"
-	codeDraftOther         = "other"
+	codeDraftDiscardFailed  = "draft_discard_failed"
+	codeDraftNotADraft      = "not_a_draft"
+	codeDraftOther          = "other"
+	codeNeedsReauthSet      = "needs_reauth_set"
+	codeNeedsReauthNotSaved = "needs_reauth_write_failed"
 )
 
-// accountReader reads one account. *store.Store implements it.
+// statusTimeout is the time that the write of the account status gets after a
+// refused login. It runs even when the send has run out of time.
+const statusTimeout = 30 * time.Second
+
+// accountReader reads one account and sets its status. *store.Store implements
+// it.
 type accountReader interface {
 	GetAccount(ctx context.Context, tenant account.TenantID, id account.AccountID) (*account.Account, error)
+	SetAccountStatus(ctx context.Context, tenant account.TenantID, id account.AccountID, status account.Status) error
 }
 
 // newSender returns the Sender of the outbox. It loads the account, gets its
@@ -39,6 +48,11 @@ type accountReader interface {
 // The outbox retries every error that is not permanent, so the sender marks as
 // permanent each error after which a retry could send the message twice, or
 // could never work. See sendError.
+//
+// When the mail server refuses the stored login (imapsmtp.ErrAuthFailed), the
+// sender marks the account as needing a reconnect, as the service does for its
+// own calls. The error stays one that the outbox retries: the user may fix the
+// account before the next try.
 func newSender(accounts accountReader, backends service.BackendFactory, log *slog.Logger) outbox.Sender {
 	return func(ctx context.Context, tenant account.TenantID, acct account.AccountID, msg *mail.RawMessage, draft mail.Ref) error {
 		a, err := accounts.GetAccount(ctx, tenant, acct)
@@ -59,6 +73,9 @@ func newSender(accounts accountReader, backends service.BackendFactory, log *slo
 			return err
 		}
 		if err := b.Send(ctx, msg); err != nil {
+			if errors.Is(err, imapsmtp.ErrAuthFailed) {
+				markNeedsReauth(ctx, accounts, a, log)
+			}
 			return sendError(err)
 		}
 		if draft != "" {
@@ -69,6 +86,22 @@ func newSender(accounts accountReader, backends service.BackendFactory, log *slo
 		}
 		return nil
 	}
+}
+
+// markNeedsReauth sets the status of the account to needs_reauth after the mail
+// server refused its stored login. The service then refuses every call on the
+// account until a test of the account works again. A failure is logged with a
+// fixed code.
+func markNeedsReauth(ctx context.Context, accounts accountReader, a *account.Account, log *slog.Logger) {
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statusTimeout)
+	defer cancel()
+	if err := accounts.SetAccountStatus(wctx, a.TenantID, a.ID, account.StatusNeedsReauth); err != nil {
+		log.Error("outbox: the account could not be marked for a reconnect", "code", codeNeedsReauthNotSaved,
+			"error_types", errtype.Chain(err))
+		return
+	}
+	log.Warn("outbox: the mail server refused the stored login, so the account needs to be reconnected",
+		"code", codeNeedsReauthSet)
 }
 
 // sendError marks the errors of Send that the outbox must not retry:

@@ -294,15 +294,44 @@ func (s *Service) permissionError(ctx context.Context, a *account.Account, d pol
 	return &PermissionError{Decision: d, Link: s.settingsLink(ctx, a.ID, account.AreaMail, d.Required)}
 }
 
-// mailBackend authorizes act and returns the mail backend of the account.
-func (s *Service) mailBackend(ctx context.Context, id account.AccountID, act policy.Action) (mail.Backend, error) {
+// mailBackend authorizes act and returns the account and its mail backend.
+func (s *Service) mailBackend(ctx context.Context, id account.AccountID, act policy.Action) (*account.Account, mail.Backend, error) {
 	acc, err := s.authorize(ctx, id, act)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// The factory errors already name this package. Wrapping them again would
 	// give "service: ... service: ...".
-	return s.d.Backends.Mail(ctx, acc.Account)
+	b, err := s.d.Backends.Mail(ctx, acc.Account)
+	if err != nil {
+		return nil, nil, err
+	}
+	return acc.Account, b, nil
+}
+
+// noteBackendError marks the account as needing a reconnect when err says that
+// the mail server refused its stored login (imapsmtp.ErrAuthFailed): an app
+// password was revoked, or the password changed. Then authorize refuses the
+// next call before it reaches the server (a *ReauthError), and the account
+// lists as needs_reauth until a test of the account works (ProbeAccount).
+//
+// A busy server (imapsmtp.ErrServerBusy), a certificate that changed and every
+// other error do not mark the account. The status is written alone, so a save
+// of the settings at the same time is not undone. The write runs even when ctx
+// has ended. A failure is logged with a code: the next call then tries the
+// server again, and is refused again.
+func (s *Service) noteBackendError(ctx context.Context, a *account.Account, err error) {
+	if a == nil || a.Status == account.StatusNeedsReauth || !errors.Is(err, imapsmtp.ErrAuthFailed) {
+		return
+	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endTimeout)
+	defer cancel()
+	if err := s.d.Store.SetAccountStatus(wctx, a.TenantID, a.ID, account.StatusNeedsReauth); err != nil {
+		s.d.Logger.Error("service: the account could not be marked for a reconnect", "code", "needs_reauth_write_failed")
+		return
+	}
+	s.d.Logger.Warn("service: the mail server refused the stored login, so the account needs to be reconnected",
+		"code", "needs_reauth_set")
 }
 
 // settingsLink returns the settings address for an area and a level, or an

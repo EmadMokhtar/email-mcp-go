@@ -439,6 +439,38 @@ func TestUpdateAccount(t *testing.T) {
 	require.Equal(t, changed, got)
 }
 
+// SetAccountStatus writes the status only. A save of the settings that read the
+// account before keeps its values, and the status is not lost either.
+func TestSetAccountStatus(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	ensureTestTenant(t, s, "other")
+	original := testAccount(tenant, "acct1", testNow)
+	require.NoError(t, s.CreateAccount(ctx, original))
+
+	require.NoError(t, s.SetAccountStatus(ctx, tenant, "acct1", account.StatusNeedsReauth))
+	got, err := s.GetAccount(ctx, tenant, "acct1")
+	require.NoError(t, err)
+	want := *original
+	want.Status = account.StatusNeedsReauth
+	require.Equal(t, &want, got, "only the status changed")
+
+	require.NoError(t, s.SetAccountStatus(ctx, tenant, "acct1", account.StatusOK))
+	got, err = s.GetAccount(ctx, tenant, "acct1")
+	require.NoError(t, err)
+	require.Equal(t, original, got)
+
+	require.ErrorIs(t, s.SetAccountStatus(ctx, "other", "acct1", account.StatusNeedsReauth), ErrNotFound,
+		"another tenant cannot change it")
+	require.ErrorIs(t, s.SetAccountStatus(ctx, tenant, "missing", account.StatusNeedsReauth), ErrNotFound)
+	require.Error(t, s.SetAccountStatus(ctx, tenant, "acct1", account.Status("broken")), "an unknown status is refused")
+	got, err = s.GetAccount(ctx, tenant, "acct1")
+	require.NoError(t, err)
+	require.Equal(t, original, got)
+}
+
 func TestUpdateAccountNotFound(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

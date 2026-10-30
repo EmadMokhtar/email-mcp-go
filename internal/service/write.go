@@ -260,11 +260,14 @@ func (s *Service) recordOutcome(ctx context.Context, acc access, tool string, co
 }
 
 // finish records the end of a call on the account of acc: "ok" with detail when
-// err is nil, and the outcome and the code of err otherwise.
+// err is nil, and the outcome and the code of err otherwise. An error that says
+// that the mail server refused the stored login marks the account for a
+// reconnect (see noteBackendError).
 func (s *Service) finish(ctx context.Context, acc access, tool string, count int, recipients []string, detail string, err error) {
 	outcome := audit.OutcomeOK
 	if err != nil {
 		outcome, detail = auditCode(err)
+		s.noteBackendError(ctx, acc.Account, err)
 	}
 	s.recordOutcome(ctx, acc, tool, count, recipients, outcome, detail)
 }
