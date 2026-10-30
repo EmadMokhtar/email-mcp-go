@@ -90,10 +90,19 @@ const (
 	codeServerBusy         = "server_busy"
 )
 
+// accountReconnect is how an error text names the two ways in which the user
+// reconnects an account: the web pages, and the command for a computer without
+// a browser. Only the user can reconnect: no tool does it.
+const accountReconnect = "in the email-mcp settings (the Reconnect link of the account) or with " +
+	"`email-mcp account reconnect <id>`"
+
 // accountTest is how an error text names the command that tests an account.
 // A test that works marks an account that needed to be reconnected as
-// connected again.
-const accountTest = "`email-mcp account test <id>`, where <id> is the account id of this call"
+// connected again, so it is enough when the password did not change.
+const accountTest = "`email-mcp account test <id>`"
+
+// accountID says what <id> is in the commands of a text.
+const accountID = "<id> is the account id of this call."
 
 // toolFailure is the error that a handler wrapper gives to the SDK. The SDK
 // puts its text in a tool result with isError set. It has no structured
@@ -169,14 +178,15 @@ func toolError(tool string, err error) *toolFailure {
 	// change that was made in part must be reported as such.
 	case errors.Is(err, imapsmtp.ErrAuthFailed):
 		return failure(codeAuthFailed, "The mail server refused the stored login of this account: the password or "+
-			"the app password may have been changed or revoked. Ask the user to run "+accountTest+". If the test "+
-			"fails, the user must remove the account and add it again in the email-mcp settings. "+noRetryUntilUser)
+			"the app password may have been changed or revoked. Ask the user to reconnect the account with the new "+
+			"password, "+accountReconnect+". If the password did not change, "+accountTest+" marks the account as "+
+			"connected again once the server accepts it. "+accountID+" "+noRetryUntilUser)
 	case errors.As(err, &cert) && cert.Pinned:
 		return failure(codeCertificateChanged, "The mail server showed a certificate that is not the one that the "+
 			"user trusted for this account. It may have changed (some local mail servers make a new one when they "+
-			"are installed again), or someone may be between this program and the server. Ask the user to run "+
-			accountTest+", which shows the certificate. To trust a new certificate, the user must remove the account "+
-			"and add it again. "+noRetryUntilUser)
+			"are installed again), or someone may be between this program and the server. Ask the user to reconnect "+
+			"the account, "+accountReconnect+": it shows the old and the new certificate, and the user decides. "+
+			accountID+" "+noRetryUntilUser)
 	case errors.Is(err, imapsmtp.ErrServerBusy):
 		return failure(codeServerBusy, "The mail server is busy, or has too many connections for this account "+
 			"(for example from other mail programs). Try again later.")
@@ -345,15 +355,16 @@ func rateLimitFailure(r *policy.RateLimitError) *toolFailure {
 // the field of the *service.ReauthError, or empty. All text of the error itself
 // is left out.
 //
-// There is no way to replace the password or the certificate of an account in
-// place yet. So the text names the account test, which marks the account as
-// connected again when the login works again, and else the remove and add.
+// The text names the reconnect, which saves a new password and keeps the
+// account, and the account test, which is enough when the password did not
+// change (the server refused it for a short time).
 func reauthFailure(link string) *toolFailure {
-	text := "The account needs to be reconnected: the mail server refused its stored login. Ask the user to run " +
-		accountTest + ". When the test works, the account is marked as connected again. If it fails, the user must " +
-		"remove the account and add it again in the email-mcp settings"
+	text := "The account needs to be reconnected: the mail server refused its stored login. Ask the user to " +
+		"reconnect the account with its new password, in the email-mcp settings"
 	if link != "" {
 		text += " at " + link
 	}
-	return failure(codeNeedsReauth, text+". "+noRetryUntilUser)
+	text += " (the Reconnect link of the account) or with `email-mcp account reconnect <id>`. If the password did " +
+		"not change, " + accountTest + " marks the account as connected again once the server accepts it. " + accountID
+	return failure(codeNeedsReauth, text+" "+noRetryUntilUser)
 }
