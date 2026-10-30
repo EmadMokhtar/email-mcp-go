@@ -286,7 +286,9 @@ func parseStyle(style string) styleEffect {
 			if value == "hidden" {
 				e.drop = true
 			}
-		case "color":
+		case "color", "-webkit-text-fill-color":
+			// Apple Mail and Chromium paint the text with the fill colour when it
+			// is set, so a transparent fill hides the text as color does.
 			if invisibleColor(value) {
 				e.drop = true
 			}
