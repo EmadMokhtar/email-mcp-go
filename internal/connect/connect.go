@@ -6,7 +6,8 @@
 //     chosen by the type of the error, never from the text of the error, so the
 //     text of a mail server never reaches the user;
 //   - the decision whether the user may be offered to trust (pin) a
-//     certificate that a server showed (CheckCertificate);
+//     certificate that a server showed (CheckCertificate), and, in a
+//     reconnect, to replace or remove a pin (CheckReconnect);
 //   - the cleaning of a host name as the service tests it (CleanHost);
 //   - whether a server on this computer is set to a plain (unencrypted)
 //     connection (PlainOnThisComputer);
@@ -55,6 +56,28 @@ const (
 	TextCertExpired    = "The certificate has expired or is not valid yet. This certificate cannot be trusted here."
 	TextCertPinChanged = "The certificate is not the one you chose to trust. Someone on the network may have changed it. This certificate cannot be trusted here."
 	TextCertInvalid    = "The certificate is not valid. This certificate cannot be trusted here."
+)
+
+// The fixed texts of a reconnect (service.Service.ReconnectIMAPAccount).
+const (
+	// TextCertReplace is the problem of a certificate that is not the pinned
+	// one, and that the user may trust instead.
+	TextCertReplace = "The certificate is not the one you chose to trust. Its host name and its dates are right, and no authority that this computer trusts signed it."
+	// TextCertRemove is the problem of a certificate that is not the pinned
+	// one, and that an authority signs for the host: the pin may go.
+	TextCertRemove = "The certificate is not the one you chose to trust. An authority that this computer trusts signed it for this host, so this server does not need a trusted fingerprint any more."
+	// The problems of a certificate that is not the pinned one, and that can
+	// never be trusted.
+	TextCertChangedWrongHost = "The certificate is not the one you chose to trust, and it is not for this host name. This certificate cannot be trusted here."
+	TextCertChangedExpired   = "The certificate is not the one you chose to trust, and it has expired or is not valid yet. This certificate cannot be trusted here."
+	TextCertChangedInvalid   = "The certificate is not the one you chose to trust, and it is not valid. This certificate cannot be trusted here."
+	// TextCertChangedWarning is the warning that the user sees before they
+	// replace or remove a pin.
+	TextCertChangedWarning = "A changed certificate can mean that someone is in the middle of the connection and can read your password and your mail. Accept the new certificate only if you know why it changed (for example, the mail bridge was installed again) and you checked the new fingerprint through another channel."
+	// TextDecisionStale is the text of service.ErrCertificateDecisionStale.
+	TextDecisionStale = "The certificate of a server changed during the reconnect. Start again to see the certificate that the server shows now."
+	// TextAccountChanged is the text of service.ErrAccountChanged.
+	TextAccountChanged = "The server settings of the account changed during the reconnect. Try again."
 )
 
 // Certificate is the decision about a certificate that a server showed and the
@@ -106,13 +129,89 @@ func CheckCertificate(c *imapsmtp.CertificateUnknownError) Certificate {
 	return out
 }
 
+// ReconnectCheck is the decision about a certificate that a server showed in a
+// reconnect, and what the user sees about it.
+type ReconnectCheck struct {
+	// Fingerprint is the SHA-256 of the new certificate in lower-case hex. It
+	// is empty when the value is not a SHA-256.
+	Fingerprint string
+	// OldFingerprint is the pin of the server before the reconnect: the
+	// certificate that the user trusted. It is empty when there was none.
+	OldFingerprint string
+	// Problem is a fixed text that says what is wrong with the certificate.
+	Problem string
+	// Change is what the user may do about it.
+	Change service.PinChange
+}
+
+// CanChange reports whether the user may be offered the change.
+func (c ReconnectCheck) CanChange() bool { return c.Change != service.PinChangeRefused }
+
+// ReplacesPin reports whether the change replaces or removes a pin that the
+// user trusted before. The user must then see the old and the new fingerprint
+// and TextCertChangedWarning, and confirm in the stronger way.
+func (c ReconnectCheck) ReplacesPin() bool {
+	return c.Change == service.PinChangeReplace || c.Change == service.PinChangeRemove
+}
+
+// CheckReconnect describes a certificate of a *service.ReconnectCertificateError.
+// The change is the one that the service decided (service.ReconnectPinChange);
+// this function never allows more. A first pin uses the texts of
+// CheckCertificate.
+//
+// The caller shows the host and the port of rc (the stored settings), the old
+// and the new fingerprint, and never another value of the server.
+func CheckReconnect(rc *service.ReconnectCertificate) ReconnectCheck {
+	out := ReconnectCheck{Change: rc.Change}
+	if account.IsFingerprint(rc.OldPin) {
+		out.OldFingerprint = rc.OldPin
+	}
+	c := rc.Cert
+	if c == nil {
+		out.Change, out.Problem = service.PinChangeRefused, TextCertInvalid
+		return out
+	}
+	if account.IsFingerprint(c.FingerprintSHA256) {
+		out.Fingerprint = c.FingerprintSHA256
+	}
+	var (
+		hostname x509.HostnameError
+		invalid  x509.CertificateInvalidError
+	)
+	switch {
+	case rc.Change == service.PinChangeReplace:
+		out.Problem = TextCertReplace
+	case rc.Change == service.PinChangeRemove:
+		out.Problem = TextCertRemove
+	case !c.Pinned:
+		check := CheckCertificate(c)
+		out.Problem = check.Problem
+		if rc.Change == service.PinChangeRefused && check.CanTrust {
+			// The service refused what the certificate alone would allow.
+			out.Problem = TextCertInvalid
+		}
+	case errors.As(c.Reason, &hostname):
+		out.Problem = TextCertChangedWrongHost
+	case errors.As(c.Reason, &invalid) && invalid.Reason == x509.Expired:
+		out.Problem = TextCertChangedExpired
+	default:
+		out.Problem = TextCertChangedInvalid
+	}
+	return out
+}
+
 // ErrorText returns the fixed text for an error of
-// service.Service.CreateIMAPAccount, other than a *service.CertificateError.
-// known is false for an error that is not about the input or the test, such as
-// a failure of the database.
+// service.Service.CreateIMAPAccount or service.Service.ReconnectIMAPAccount,
+// other than a *service.CertificateError or a
+// *service.ReconnectCertificateError. known is false for an error that is not
+// about the input or the test, such as a failure of the database.
 func ErrorText(err error) (text string, known bool) {
 	var testErr *service.ConnectionTestError
 	switch {
+	case errors.Is(err, service.ErrCertificateDecisionStale):
+		return TextDecisionStale, true
+	case errors.Is(err, service.ErrAccountChanged):
+		return TextAccountChanged, true
 	case errors.Is(err, service.ErrInvalidAddress):
 		return TextAddress, true
 	case errors.Is(err, service.ErrNoPassword):

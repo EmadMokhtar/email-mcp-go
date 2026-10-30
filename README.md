@@ -634,7 +634,7 @@ More help:
 | `email-mcp serve` | Serves MCP over stdio. This is what AI apps run. |
 | `email-mcp serve --http 127.0.0.1:8765` | Serves MCP over local HTTP at `/mcp`. |
 | `email-mcp setup` | Signs your browser in to the local web pages, and serves them until Ctrl-C. |
-| `email-mcp account add\|list\|remove\|test` | Manages accounts without a browser. `remove <id>` asks first; add `--yes` without a terminal. |
+| `email-mcp account add\|list\|reconnect\|remove\|test` | Manages accounts without a browser. `reconnect <id>` gives an account a new password or trusts its new certificate, and keeps the account. `remove <id>` asks first; add `--yes` without a terminal. |
 | `email-mcp token create\|list\|revoke` | Manages the tokens of local HTTP mode. |
 | `email-mcp import-env [path]` | Imports the account of an old `.env` file. |
 | `email-mcp key rotate --to file:<path>\|keychain` | Changes the master key. |

@@ -31,6 +31,10 @@ import (
 // certificate that has expired or is not valid yet (x509.CertificateInvalidError
 // with the reason x509.Expired).
 //
+// A wrong pin is a different case. Only a reconnect of the account, after the
+// user saw the old and the new fingerprint and confirmed, may change the pin:
+// see Reason for what the check of the new certificate found.
+//
 // The name and the time are checked before the chain, on every platform. So
 // an unknown authority means that the name matches and the time is valid.
 type CertificateUnknownError struct {
@@ -45,8 +49,15 @@ type CertificateUnknownError struct {
 	FingerprintSHA256 string
 	// Pinned is true when a pin was set and the certificate did not match it.
 	Pinned bool
-	// Reason is the error from the certificate check when no pin was set. It
-	// is nil when Pinned is true.
+	// Reason is the error from the certificate check without a pin: the name,
+	// then the time, then the chain. When Pinned is false, it is why the
+	// certificate was not accepted.
+	//
+	// When Pinned is true, the certificate was refused because it is not the
+	// pinned one, and nothing else changes that. Reason is then the result of
+	// the same check of the new certificate, made only so that a reconnect can
+	// tell what the user may do: nil means that a known authority signs it for
+	// the host and its time is valid.
 	Reason error
 }
 
@@ -290,8 +301,10 @@ func newPinnedTLSConfig(cfg Config, host, protocol, pin string) *tls.Config {
 // the error.
 //
 // With a pin, the leaf must have exactly that fingerprint, and nothing else
-// is checked. Without a pin, the leaf must be valid for host and chain to the
-// root certificates.
+// makes it accepted. A leaf with another fingerprint is refused; the check
+// without a pin still runs on it, only to fill the Reason of the error (see
+// CertificateUnknownError). Without a pin, the leaf must be valid for host and
+// chain to the root certificates.
 func verifyCertificate(cfg Config, host, protocol, pin string) func(tls.ConnectionState) error {
 	pin = strings.ToLower(strings.TrimSpace(pin))
 	return func(state tls.ConnectionState) error {
@@ -304,36 +317,49 @@ func verifyCertificate(cfg Config, host, protocol, pin string) func(tls.Connecti
 
 		if pin != "" {
 			if subtle.ConstantTimeCompare([]byte(fingerprint), []byte(pin)) != 1 {
-				return &CertificateUnknownError{Protocol: protocol, Host: host, FingerprintSHA256: fingerprint, Pinned: true}
+				return &CertificateUnknownError{
+					Protocol: protocol, Host: host, FingerprintSHA256: fingerprint, Pinned: true,
+					Reason: checkWithoutPin(cfg, host, state),
+				}
 			}
 			return nil
 		}
 
-		// Check the name and the time before the chain. The system verifier of
-		// macOS and Windows reports "unknown authority" for every self-signed
-		// certificate, also when the name is wrong or the certificate has
-		// expired. These checks give the same reason on every platform.
-		if err := leaf.VerifyHostname(host); err != nil {
-			return &CertificateUnknownError{Protocol: protocol, Host: host, FingerprintSHA256: fingerprint, Reason: err}
-		}
-		if err := checkValidTime(leaf, time.Now()); err != nil {
-			return &CertificateUnknownError{Protocol: protocol, Host: host, FingerprintSHA256: fingerprint, Reason: err}
-		}
-
-		intermediates := x509.NewCertPool()
-		for _, cert := range state.PeerCertificates[1:] {
-			intermediates.AddCert(cert)
-		}
-		_, err := leaf.Verify(x509.VerifyOptions{
-			DNSName:       host,
-			Roots:         cfg.RootCAs, // nil means the system roots
-			Intermediates: intermediates,
-		})
-		if err != nil {
+		if err := checkWithoutPin(cfg, host, state); err != nil {
 			return &CertificateUnknownError{Protocol: protocol, Host: host, FingerprintSHA256: fingerprint, Reason: err}
 		}
 		return nil
 	}
+}
+
+// checkWithoutPin checks the leaf certificate of the server as a connection
+// without a pin does: it must be valid for host now, and chain to cfg.RootCAs
+// (or the system roots). It returns nil when the certificate passes, or the
+// reason when it does not. The caller makes sure that the server showed a
+// certificate.
+//
+// The name and the time are checked before the chain. The system verifier of
+// macOS and Windows reports "unknown authority" for every self-signed
+// certificate, also when the name is wrong or the certificate has expired.
+// These checks give the same reason on every platform.
+func checkWithoutPin(cfg Config, host string, state tls.ConnectionState) error {
+	leaf := state.PeerCertificates[0]
+	if err := leaf.VerifyHostname(host); err != nil {
+		return err
+	}
+	if err := checkValidTime(leaf, time.Now()); err != nil {
+		return err
+	}
+	intermediates := x509.NewCertPool()
+	for _, cert := range state.PeerCertificates[1:] {
+		intermediates.AddCert(cert)
+	}
+	_, err := leaf.Verify(x509.VerifyOptions{
+		DNSName:       host,
+		Roots:         cfg.RootCAs, // nil means the system roots
+		Intermediates: intermediates,
+	})
+	return err
 }
 
 // checkValidTime returns an x509.CertificateInvalidError with the reason

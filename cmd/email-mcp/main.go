@@ -30,7 +30,7 @@ type command struct {
 var commands = []command{
 	{name: "serve", summary: "serve MCP over stdio, or over local HTTP with --http", run: runServe},
 	{name: "setup", summary: "sign a browser in to the local web interface, and serve it until Ctrl-C", run: runSetup},
-	{name: "account", summary: "add, list, remove or test an account, without a browser (account help)", run: runAccount},
+	{name: "account", summary: "add, list, reconnect, remove or test an account, without a browser (account help)", run: runAccount},
 	{name: "token", summary: "create, list or revoke an access token of serve --http (token help)", run: runToken},
 	{name: "import-env", summary: "import the account of a .env file of the old email-mcp: import-env [path]", run: runImportEnv},
 	{name: "key", summary: "change the master key: key rotate --to file:<path>|keychain", run: runKey},

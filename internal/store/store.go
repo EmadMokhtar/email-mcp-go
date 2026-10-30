@@ -61,10 +61,11 @@ var ErrNotFound = errors.New("not found")
 // it as it was. See PutTenantKey and PutServerKey.
 var ErrExists = errors.New("already exists")
 
-// ErrConflict means that the keys in the database are not the keys that the
+// ErrConflict means that the rows in the database are not the ones that the
 // caller expected. ReplaceWrappedKeys returns it when the set of stored keys
-// changed after the caller listed them. The call changed nothing, and the
-// caller should start again.
+// changed after the caller listed them, and ReconnectAccount when the server
+// settings of the account changed after the caller tested them. The call
+// changed nothing, and the caller should start again.
 var ErrConflict = errors.New("conflict")
 
 // ErrNewerSchema means that a newer email-mcp has used the database: it holds a
