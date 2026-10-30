@@ -163,21 +163,54 @@ func (s *Store) ListAccounts(ctx context.Context, tenant account.TenantID) ([]*a
 }
 
 // UpdateAccount saves all fields of an account except its ids, its creation
-// time and its status. It does not write the status, so a save of the settings
-// that read the account before a failed login cannot write back the old status:
-// only SetAccountStatus and ReconnectAccount change the status (CreateAccount
-// writes the first one).
-// It ignores a.Status. It returns ErrNotFound if the tenant has no account with
-// this id.
+// time, its status and the pins of its mail server. It ignores a.Status and the
+// pins in a.Mail: only CreateAccount (the first values), SetAccountStatus and
+// ReconnectAccount write them. So a save of the settings that read the account
+// before a failed login cannot write back the old status, and a save that read
+// it before a reconnect cannot write back the old pins, or bring back a pin
+// that the reconnect removed.
+//
+// The pins come from the stored row. The transaction takes the write lock when
+// it starts, so the row cannot change between that read and the write. It
+// returns ErrNotFound if the tenant has no account with this id.
 func (s *Store) UpdateAccount(ctx context.Context, a *account.Account) error {
 	if err := validateAccountIDs(a.TenantID, a.ID); err != nil {
 		return err
 	}
-	c, err := encodeAccount(a)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: update account: %w", err)
+	}
+	// Rollback after a successful Commit does nothing.
+	defer func() { _ = tx.Rollback() }()
+
+	var storedMail sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT mail FROM accounts WHERE tenant_id = ? AND id = ?`,
+		string(a.TenantID), string(a.ID)).Scan(&storedMail)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("store: update account: %w", err)
+	}
+	save := *a
+	if a.Mail != nil {
+		mail := *a.Mail
+		mail.PinnedIMAPCert, mail.PinnedSMTPCert = "", ""
+		if storedMail.Valid {
+			var stored account.MailServer
+			if err := json.Unmarshal([]byte(storedMail.String), &stored); err != nil {
+				return fmt.Errorf("store: decode mail settings: %w", err)
+			}
+			mail.PinnedIMAPCert, mail.PinnedSMTPCert = stored.PinnedIMAPCert, stored.PinnedSMTPCert
+		}
+		save.Mail = &mail
+	}
+	c, err := encodeAccount(&save)
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx,
+	result, err := tx.ExecContext(ctx,
 		`UPDATE accounts SET provider = ?, address = ?, display_name = ?, mail = ?, levels = ?,
 			confirm_sends = ?, confirm_deletes = ?, autonomy_accepted_at = ?, limits = ?
 		WHERE tenant_id = ? AND id = ?`,
@@ -187,7 +220,13 @@ func (s *Store) UpdateAccount(ctx context.Context, a *account.Account) error {
 	if err != nil {
 		return fmt.Errorf("store: update account: %w", err)
 	}
-	return requireOneRow(result, "update account")
+	if err := requireOneRow(result, "update account"); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: update account: %w", err)
+	}
+	return nil
 }
 
 // SetAccountStatus changes the status of an account, and nothing else. After
@@ -232,7 +271,8 @@ type AccountReconnect struct {
 
 // ReconnectAccount saves a reconnect of an account in one transaction: the two
 // pins of its mail server, the sealed secret when r.Sealed is not nil, and the
-// status "ok". All of it is saved, or nothing is. It changes nothing else of
+// status "ok". It is the only call that changes the pins of an account after
+// CreateAccount. All of it is saved, or nothing is. It changes nothing else of
 // the account: not its id, its other server settings, its levels, its switches
 // or its limits. The queued messages, the pending actions and the audit entries
 // of the account are other rows, and stay.

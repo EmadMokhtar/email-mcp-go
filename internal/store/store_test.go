@@ -430,14 +430,17 @@ func TestUpdateAccount(t *testing.T) {
 	changed.AutonomyAcceptedAt = &accepted
 	// The creation time never changes, even if the caller changes it.
 	changed.CreatedAt = testNow.Add(24 * time.Hour)
-	// The status never changes either: only SetAccountStatus writes it.
+	// The status never changes either: only SetAccountStatus writes it. The
+	// pins neither: only a reconnect writes them.
 	changed.Status = account.StatusNeedsReauth
+	changed.Mail.PinnedSMTPCert = "ab" + changed.Mail.IMAPHost
 	require.NoError(t, s.UpdateAccount(ctx, changed))
 
 	got, err := s.GetAccount(ctx, tenant, "acct1")
 	require.NoError(t, err)
 	changed.CreatedAt = testNow
 	changed.Status = account.StatusOK
+	changed.Mail.PinnedSMTPCert = ""
 	require.Equal(t, changed, got)
 }
 
