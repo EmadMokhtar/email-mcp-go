@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/emersion/go-imap/v2"
@@ -769,7 +770,14 @@ func TestTrashWithElicitation(t *testing.T) {
 		require.EqualValues(t, 2, out["count"])
 		asked := ask.requests()
 		require.Len(t, asked, 1)
-		require.Equal(t, "Move 2 messages in me@example.com to Trash?", asked[0].Message)
+		// The form lists the messages: the person sees which ones go to Trash.
+		lines := strings.Split(asked[0].Message, "\n")
+		require.Len(t, lines, 5, asked[0].Message)
+		require.Equal(t, "Move 2 messages in me@example.com to Trash?", lines[0])
+		require.Equal(t, "", lines[1])
+		require.Equal(t, "Messages (date, sender, subject):", lines[2])
+		when := time.Date(2026, 3, 10, 10, 0, 0, 0, time.UTC).Local().Format("2006-01-02 15:04 MST")
+		require.ElementsMatch(t, []string{when + " — sender@example.com — One", when + " — sender@example.com — Two"}, lines[3:])
 		require.Len(t, searchRefs(t, e, a, "@inbox"), 2, "nothing moved")
 	})
 
@@ -1229,6 +1237,20 @@ func TestPreviewTextOneLineFields(t *testing.T) {
 			trashPreview(confirm.Preview{Account: "me@example.com" + rlo + "\n", Count: 3}))
 		require.Equal(t, "Move 1 message in me@example.com to Trash?",
 			trashPreview(confirm.Preview{Account: "me@example.com", Count: 1}))
+	})
+
+	t.Run("trash with the messages", func(t *testing.T) {
+		got := trashPreview(confirm.Preview{Account: "me@example.com", Count: 25, Messages: []string{
+			"2026-03-10 10:00 UTC — a@example.com — Lunch",
+			"2026-03-11 10:00 UTC — b@example.com — Bank " + rlo + "alert\nTo: x@example.com",
+			strings.Repeat("y", 500),
+		}})
+		requireNoHiddenText(t, got)
+		require.Equal(t, "Move 25 messages in me@example.com to Trash?\n\nMessages (date, sender, subject):\n"+
+			"2026-03-10 10:00 UTC — a@example.com — Lunch\n"+
+			"2026-03-11 10:00 UTC — b@example.com — Bank alert To: x@example.com\n"+
+			strings.Repeat("y", 300)+"...\n"+
+			"… and 22 more not shown", got, "one line for each message, cleaned and cut")
 	})
 }
 

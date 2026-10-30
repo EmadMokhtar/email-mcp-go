@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -348,6 +349,23 @@ func (p *pageFixture) trashApproval(a *account.Account, refs ...mail.Ref) string
 	return ""
 }
 
+// A Trash action of more than 20 messages lists 20, and says how many more
+// there are.
+func TestTrashApprovalPageSaysHowManyAreNotListed(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account(func(a *account.Account) { a.Levels[account.AreaMail] = account.MailDelete })
+	refs := make([]mail.Ref, 23)
+	for i := range refs {
+		refs[i] = mail.Ref(fmt.Sprintf("r%02d", i))
+	}
+
+	id := p.trashApproval(a, refs...)
+	_, body := p.get(approvalPath(id))
+
+	require.Equal(t, 20, strings.Count(body, "<li>(no date) — alice@example.com — Question</li>"))
+	require.Contains(t, visibleText(t, body), "… and 3 more not shown")
+}
+
 func TestTrashApprovalPage(t *testing.T) {
 	p := newPageFixture(t)
 	a := p.account(func(a *account.Account) { a.Levels[account.AreaMail] = account.MailDelete })
@@ -356,6 +374,8 @@ func TestTrashApprovalPage(t *testing.T) {
 	resp, body := p.get(approvalPath(id))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, visibleText(t, body), "Move 2 messages of me@example.com to Trash")
+	// The page lists the messages, so the person sees which ones go to Trash.
+	require.Equal(t, 2, strings.Count(body, "<li>(no date) — alice@example.com — Question</li>"), body)
 	requireButtons(t, body, id)
 	require.Empty(t, p.backends.backend.trashCalls(), "showing the page moves nothing")
 

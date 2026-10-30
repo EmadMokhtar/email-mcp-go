@@ -775,9 +775,10 @@ func (s *Service) endWaiting(ctx context.Context, t account.TenantID, id string)
 //  3. The limits that can never allow the request: a Trash limit of 0, or more
 //     messages than the limit of a day.
 //  4. The confirmation, when the account has ConfirmDeletes. A first call
-//     stores the request and returns a NeedsConfirmation (in band) or
-//     "pending_approval" with a link (fallback). A second call with an answer
-//     acts only when the user accepted.
+//     reads the head of each message (see trashLines), stores the request with
+//     a preview that lists the messages, and returns a NeedsConfirmation (in
+//     band) or "pending_approval" with a link (fallback). A second call with an
+//     answer acts only when the user accepted.
 //  5. The limiter counts the messages at the moment of the move, so a request
 //     that is declined or refused uses no quota.
 //
@@ -836,7 +837,12 @@ func (s *Service) Trash(ctx context.Context, id account.AccountID, refs []mail.R
 		res, err := s.trashNow(ctx, acc, b, refs, "", detailNoConfirmation)
 		return res, nil, err
 	}
-	preview := confirm.Preview{Account: acc.Account.Address, Count: n}
+	lines, err := trashLines(ctx, b, refs)
+	if err != nil {
+		s.finish(ctx, acc, toolTrash, n, nil, "", err)
+		return nil, nil, err
+	}
+	preview := confirm.Preview{Account: acc.Account.Address, Count: n, Messages: lines}
 	a, err := s.ask(ctx, acc, toolTrash, confirm.KindTrash, payload, preview, mode, nil, "confirm_deletes")
 	if err != nil {
 		return nil, nil, err
@@ -845,6 +851,78 @@ func (s *Service) Trash(ctx context.Context, id account.AccountID, refs []mail.R
 		return nil, &NeedsConfirmation{Pending: a.pending, RequestState: a.state}, nil
 	}
 	return &TrashResult{Status: TrashPendingApproval, Count: n, ApprovalLink: a.link}, nil, nil
+}
+
+// The limits of the preview of a Trash action.
+const (
+	// trashPreviewMessages is the most messages that the preview of a Trash
+	// action lists. The preview says how many more there are.
+	trashPreviewMessages = 20
+	// trashPreviewSubjectChars is the most characters of a subject in the list.
+	trashPreviewSubjectChars = 100
+	// trashLineGone is the line of a message that was not found.
+	trashLineGone = "(not found: it may have been moved or deleted already)"
+)
+
+// trashLines returns the lines of the preview of a Trash action: one line for
+// each of the first 20 refs (see trashLine), so the user sees which messages go
+// to Trash and not only how many.
+//
+// It reads the head of each message once, when the user is asked. The answer
+// and the approval do not read them again and compare nothing: the action is
+// bound to the refs themselves (the folder, the UIDVALIDITY and the UID of each
+// message), which are its payload, and an IMAP message cannot change under its
+// UID.
+//
+// A message that is not found (it was moved or deleted, or its ref is out of
+// date) gets a line that says so, and the request goes on. Any other error (for
+// example a server that does not answer) stops the request, and nothing is
+// asked.
+func trashLines(ctx context.Context, b mail.Backend, refs []mail.Ref) ([]string, error) {
+	n := min(len(refs), trashPreviewMessages)
+	lines := make([]string, 0, n)
+	for _, ref := range refs[:n] {
+		m, err := b.GetMessage(ctx, ref, mail.BodyOptions{Format: mail.BodyNone})
+		switch {
+		case errors.Is(err, mail.ErrNotFound), errors.Is(err, mail.ErrRefStale):
+			lines = append(lines, trashLineGone)
+		case err != nil:
+			return nil, err
+		default:
+			lines = append(lines, trashLine(m.Summary))
+		}
+	}
+	return lines, nil
+}
+
+// trashLine is one line of the preview of a Trash action: "date — sender —
+// subject". The date is in the local time of this computer. The sender is the
+// address only: the sender chooses the display name, so it could pose as
+// someone else. Every part comes from a third party, so it is cleaned with
+// mime.CleanUntrusted and put on one line, and the subject is cut.
+func trashLine(s mail.Summary) string {
+	date := "(no date)"
+	if !s.Date.IsZero() {
+		date = s.Date.Local().Format("2006-01-02 15:04 MST")
+	}
+	from := oneLineText(s.From.Email)
+	if from == "" {
+		from = "(no sender)"
+	}
+	subject := oneLineText(s.Subject)
+	if short := firstRunes(subject, trashPreviewSubjectChars); len(short) < len(subject) {
+		subject = short + "..."
+	}
+	if subject == "" {
+		subject = "(no subject)"
+	}
+	return date + " — " + from + " — " + subject
+}
+
+// oneLineText cleans s with mime.CleanUntrusted and puts it on one line: every
+// run of white space becomes one space, and the ends lose theirs.
+func oneLineText(s string) string {
+	return strings.Join(strings.Fields(mime.CleanUntrusted(s)), " ")
 }
 
 // trashNow counts the messages against the Trash limit and moves them. pendingID

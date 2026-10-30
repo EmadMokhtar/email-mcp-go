@@ -238,8 +238,9 @@ When a confirmation is needed, the server shows you what will happen. For a
 send: who it goes to, the subject, the attachments and the first 500
 characters of the text. In that preview, long runs of blank space are made
 short, so blank lines cannot push the text out of view, and a last line says
-how many characters are not shown. The approval page shows the whole text. It
-asks in one of two ways:
+how many characters are not shown. The approval page shows the whole text.
+For a move to the Trash: the date, the sender address and the subject of each
+message (up to 20, and how many more). It asks in one of two ways:
 
 - **In the AI app ("in band").** The app shows a small form with one box,
   "Confirm". The app must support MCP elicitation (a way for a server to ask the

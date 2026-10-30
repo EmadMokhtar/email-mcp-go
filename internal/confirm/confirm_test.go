@@ -859,6 +859,27 @@ func TestCreateRefusesBadInput(t *testing.T) {
 	require.Empty(t, listed, "a refused action must leave nothing behind")
 }
 
+// A Trash preview keeps at most 20 message lines. The count stays the number of
+// messages, so a channel can say how many are not listed.
+func TestCreateKeepsAtMost20MessageLines(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	lines := make([]string, 25)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %d", i)
+	}
+	p, err := f.mgr.Create(ctx, f.tenant, f.acct, KindTrash, ModeApproval, []byte("r1"),
+		Preview{Account: "work", Count: 30, Messages: lines})
+	require.NoError(t, err)
+
+	require.Equal(t, lines[:20], p.Preview.Messages)
+	require.Equal(t, "… and 10 more not shown", p.Preview.MoreMessagesText())
+	lines[0] = "changed by the caller"
+	got, _, err := f.mgr.Get(ctx, f.tenant, p.ID)
+	require.NoError(t, err)
+	require.Equal(t, "line 0", got.Preview.Messages[0], "Create keeps its own copy, and stores it")
+}
+
 func TestCreateKeepsAtMost500CharactersOfTheBody(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)

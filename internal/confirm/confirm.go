@@ -118,6 +118,8 @@ const (
 	storeTimeout = 30 * time.Second
 	// maxBodyStart is the most characters of the body that a preview keeps.
 	maxBodyStart = 500
+	// maxMessages is the most message lines that a preview keeps.
+	maxMessages = 20
 )
 
 // The lifetimes of an action. The mode of the action chooses one.
@@ -179,6 +181,11 @@ type Preview struct {
 	BodyMore int `json:"body_more,omitempty"`
 	// Count is the number of messages the action affects.
 	Count int `json:"count"`
+	// Messages are the lines of the preview of a Trash action, one for each
+	// message: its date, its sender address and its subject, cleaned and on one
+	// line. Create keeps at most 20. When Count is larger, each channel that
+	// shows them shows MoreMessagesText after them.
+	Messages []string `json:"messages,omitempty"`
 	// Attachments are the file names of the attachments of a send, in the order
 	// of the message. They are part of what the user approves.
 	Attachments []string `json:"attachments,omitempty"`
@@ -196,6 +203,16 @@ func (p Preview) MoreCharsText() string {
 	default:
 		return fmt.Sprintf("… and %d more characters not shown", p.BodyMore)
 	}
+}
+
+// MoreMessagesText returns the line that a channel shows after Messages when
+// the action moves more messages than the preview lists, such as "… and 5 more
+// not shown". It returns "" when the preview lists no message or all of them.
+func (p Preview) MoreMessagesText() string {
+	if len(p.Messages) == 0 || p.Count <= len(p.Messages) {
+		return ""
+	}
+	return fmt.Sprintf("… and %d more not shown", p.Count-len(p.Messages))
 }
 
 // Pending is an action that needs the user's confirmation. It does not hold the
@@ -298,7 +315,7 @@ func NewManager(st PendingStore, v *secrets.Vault, s *signing.Signer, now func()
 // Create stores an action that waits for the user, and returns it in the state
 // "pending". The payload and the preview are stored encrypted. Create keeps at
 // most 500 characters of the preview body, and adds the characters that it cuts
-// to BodyMore.
+// to BodyMore. It keeps at most 20 message lines.
 //
 // The mode says how the user answers the action, and it sets how long the
 // action waits: InBandLifetime for ModeInBand, ApprovalLifetime for
@@ -337,6 +354,7 @@ func (m *Manager) createWithLifetime(ctx context.Context, tenant account.TenantI
 	// Own the preview, so a later change by the caller does not change it.
 	p.To = slices.Clone(p.To)
 	p.Attachments = slices.Clone(p.Attachments)
+	p.Messages = slices.Clone(p.Messages[:min(len(p.Messages), maxMessages)])
 	if short := firstChars(p.BodyStart, maxBodyStart); len(short) < len(p.BodyStart) {
 		// What is cut is not shown, so it counts toward BodyMore.
 		p.BodyMore += utf8.RuneCountInString(p.BodyStart[len(short):])

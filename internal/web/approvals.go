@@ -116,6 +116,11 @@ type approvalPage struct {
 	// BodyNote says that Body is only the stored start of the text, because
 	// the whole message could not be built. It is empty otherwise.
 	BodyNote string
+
+	// The messages of a Trash action: one line for each (date, sender address,
+	// subject), at most 20, and a line that says how many more there are.
+	Messages     []string
+	MoreMessages string
 }
 
 // handleApprovals lists the actions of the tenant of the session that wait for
@@ -237,6 +242,9 @@ func approvalOf(svc *service.Service, ctx context.Context, id string) (approvalP
 	}
 	if !page.Waiting || !page.Send {
 		page.CanApprove = page.Waiting
+		if page.Waiting {
+			page.Messages, page.MoreMessages = p.Preview.Messages, p.Preview.MoreMessagesText()
+		}
 		return page, true, nil
 	}
 	if detail != nil {

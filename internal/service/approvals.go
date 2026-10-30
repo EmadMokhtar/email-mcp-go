@@ -169,6 +169,7 @@ func cleanPreview(p confirm.Preview) confirm.Preview {
 	p.Subject = mime.CleanUntrusted(p.Subject)
 	p.BodyStart = mime.CleanUntrusted(p.BodyStart)
 	p.Attachments = cleanAll(p.Attachments)
+	p.Messages = cleanAll(p.Messages)
 	return p
 }
 

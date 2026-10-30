@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -837,6 +838,70 @@ func TestTrashNeedsConfirmation(t *testing.T) {
 	require.Equal(t, [][]mail.Ref{{"r1", "r2"}}, env.backend.trashCalls())
 	requireEntry(t, env.lastEntry(), "trash_messages", audit.OutcomeOK, "confirmed_in_band")
 	require.Equal(t, 2, env.lastEntry().Count)
+}
+
+// The person must see which messages go to Trash, not only how many. The first
+// call reads the head of each message once and stores up to 20 lines (date,
+// sender address, subject) in the encrypted preview. A message that is gone
+// gets a line that says so. The answer does not read the messages again: the
+// action is bound to its refs (folder, UIDVALIDITY and UID).
+func TestTrashPreviewListsTheMessages(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete)) // ConfirmDeletes is on
+	date := time.Date(2026, 3, 10, 9, 30, 0, 0, time.UTC)
+	refs := []mail.Ref{"gone"}
+	for i := 1; i <= 21; i++ {
+		ref := mail.Ref(fmt.Sprintf("m%02d", i))
+		refs = append(refs, ref)
+		env.backend.originals[ref] = &mail.Message{Summary: mail.Summary{
+			Ref: ref, Date: date, Subject: fmt.Sprintf("Note %d", i),
+			From: mail.Address{Name: "Your Bank", Email: "alerts@bank.example"},
+		}}
+	}
+	env.backend.originals["m01"].Subject = "New sign-in \u202eto your bank\nTo: someone@example.com"
+	env.backend.originals["m02"].Subject = strings.Repeat("s", 150)
+	env.backend.originals["m03"].Subject = ""
+	env.backend.originals["m03"].Date = time.Time{}
+
+	_, needs, err := env.svc.Trash(env.ctx(), a.ID, refs, ConfirmInBand, nil)
+	require.NoError(t, err)
+
+	p := needs.Pending.Preview
+	require.Equal(t, 22, p.Count)
+	require.Len(t, p.Messages, 20, "at most 20 lines")
+	require.Equal(t, "… and 2 more not shown", p.MoreMessagesText())
+	when := date.Local().Format("2006-01-02 15:04 MST")
+	require.Equal(t, "(not found: it may have been moved or deleted already)", p.Messages[0], "a gone message does not stop the request")
+	require.Equal(t, when+" — alerts@bank.example — New sign-in to your bank To: someone@example.com", p.Messages[1],
+		"cleaned, on one line, and the address without the display name")
+	require.Equal(t, when+" — alerts@bank.example — "+strings.Repeat("s", 100)+"...", p.Messages[2], "a long subject is cut")
+	require.Equal(t, "(no date) — alerts@bank.example — (no subject)", p.Messages[3])
+	require.Equal(t, when+" — alerts@bank.example — Note 19", p.Messages[19])
+	stored := env.pending(needs.Pending.ID)
+	require.Equal(t, p.Messages, stored.Preview.Messages, "the lines are stored with the action")
+
+	reads := env.backend.getCalls
+	res, _, err := env.svc.Trash(env.ctx(), a.ID, refs, ConfirmInBand, &ConfirmAnswer{RequestState: needs.RequestState, Accepted: true})
+	require.NoError(t, err)
+	require.Equal(t, TrashDone, res.Status)
+	require.Equal(t, reads, env.backend.getCalls, "the answer does not read the messages again")
+	require.Len(t, env.backend.trashCalls()[0], 22)
+}
+
+// A message that cannot be read for another reason than "not found" (the
+// server does not answer) stops the request: nothing is asked.
+func TestTrashPreviewFailsWhenTheServerFails(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account(level(account.MailDelete))
+	down := &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset")}
+	env.backend.setErr("GetMessage", down)
+
+	_, needs, err := env.svc.Trash(env.ctx(), a.ID, []mail.Ref{"m1"}, ConfirmInBand, nil)
+
+	require.ErrorIs(t, err, down)
+	require.Nil(t, needs)
+	require.Empty(t, env.waitingActions())
+	require.Empty(t, env.backend.trashCalls())
 }
 
 func TestTrashDeclined(t *testing.T) {

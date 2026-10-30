@@ -63,6 +63,10 @@ const (
 	previewNameChars = 100
 	// previewNames is the most attachment names that a preview lists.
 	previewNames = 10
+	// previewLineChars is the most characters of one message line of a Trash
+	// preview. The service already cuts the subject; this also bounds a long
+	// sender address.
+	previewLineChars = 300
 )
 
 // errBadAnswer is the failure for a second call that has only one of the two
@@ -247,13 +251,35 @@ func attachmentList(names []string) string {
 	return fmt.Sprintf("%d (%s)", len(names), list)
 }
 
-// trashPreview is the text of the form for a move to Trash.
+// trashPreview is the text of the form for a move to Trash. When the preview
+// lists the messages, they come after a blank line and a label, one line for
+// each message. The lines come from the messages, so each one is cleaned, put
+// on one line and cut, and a line cannot pose as another one. When the action
+// moves more messages than the list holds, a last line says how many more.
+//
+//	Move <n> messages in <account> to Trash?
+//
+//	Messages (date, sender, subject):
+//	<date> — <sender address> — <subject>
+//	... (at most 20 lines)
+//	… and <n> more not shown
 func trashPreview(p confirm.Preview) string {
 	noun := "messages"
 	if p.Count == 1 {
 		noun = "message"
 	}
-	return fmt.Sprintf("Move %d %s in %s to Trash?", p.Count, noun, oneLine(p.Account))
+	text := fmt.Sprintf("Move %d %s in %s to Trash?", p.Count, noun, oneLine(p.Account))
+	if len(p.Messages) == 0 {
+		return text
+	}
+	lines := make([]string, 0, len(p.Messages)+1)
+	for _, m := range p.Messages {
+		lines = append(lines, cut(oneLine(m), previewLineChars))
+	}
+	if more := p.MoreMessagesText(); more != "" {
+		lines = append(lines, more)
+	}
+	return text + "\n\nMessages (date, sender, subject):\n" + strings.Join(lines, "\n")
 }
 
 // oneLine cleans s and puts it on one line: every run of white space (line
