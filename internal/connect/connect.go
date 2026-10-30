@@ -71,6 +71,9 @@ const (
 	TextCertChangedWrongHost = "The certificate is not the one you chose to trust, and it is not for this host name. This certificate cannot be trusted here."
 	TextCertChangedExpired   = "The certificate is not the one you chose to trust, and it has expired or is not valid yet. This certificate cannot be trusted here."
 	TextCertChangedInvalid   = "The certificate is not the one you chose to trust, and it is not valid. This certificate cannot be trusted here."
+	// TextRemovePin says what a removal of a pin does. The user sees it before
+	// they remove a pin.
+	TextRemovePin = "From now on, any certificate that an authority this computer trusts signs for this host is accepted."
 	// TextCertChangedWarning is the warning that the user sees before they
 	// replace or remove a pin.
 	TextCertChangedWarning = "A changed certificate can mean that someone is in the middle of the connection and can read your password and your mail. Accept the new certificate only if you know why it changed (for example, the mail bridge was installed again) and you checked the new fingerprint through another channel."

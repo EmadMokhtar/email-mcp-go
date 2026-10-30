@@ -61,9 +61,16 @@ type Reconnect struct {
 	//
 	// A decision counts only for the server that shows a certificate with this
 	// fingerprint in this test, and only when ReconnectPinChange allows a
-	// change for that certificate. For PinChangeRemove the pin is removed. The
-	// caller sets a decision only after the user confirmed it.
+	// change for that certificate. The caller sets a decision only after the
+	// user confirmed it.
 	PinnedIMAPCert, PinnedSMTPCert string
+	// RemoveIMAPPin and RemoveSMTPPin say that the decision of that server is
+	// to stop pinning (the user agreed that any certificate that an authority
+	// signs for the host is accepted), and not to trust this one certificate.
+	// A decision with the flag counts only for PinChangeRemove, and one without
+	// it only for PinChangeAdd or PinChangeReplace. So the pin goes only when
+	// the user agreed to that.
+	RemoveIMAPPin, RemoveSMTPPin bool
 }
 
 // ReconnectResult says what a reconnect changed.
@@ -182,6 +189,7 @@ type reconnectSide struct {
 	pin      func(*account.MailServer) *string
 	cert     func(*imapsmtp.ProbeResult) *imapsmtp.CertificateUnknownError
 	decision string
+	remove   bool
 	report   **ReconnectCertificate
 }
 
@@ -195,9 +203,10 @@ type reconnectSide struct {
 //     same test as CreateIMAPAccount). A server whose certificate is not
 //     accepted fails at the TLS handshake, so it never gets the password;
 //  3. for each server whose certificate was not accepted, takes the decision
-//     of r for it only when its fingerprint is the one that the server showed
-//     and ReconnectPinChange allows a change. Otherwise it returns a
-//     *ReconnectCertificateError, with what the user needs to see to decide;
+//     of r for it only when its fingerprint is the one that the server showed,
+//     ReconnectPinChange allows a change, and the kind of the decision (stop
+//     pinning, or trust this certificate) is that change. Otherwise it returns
+//     a *ReconnectCertificateError, with what the user needs to see to decide;
 //  4. when a pin changed, tests again with the new pins, so the login of that
 //     server is tested too, under the new trust;
 //  5. seals a new password with the key of the tenant, and saves the pins, the
@@ -253,7 +262,9 @@ func (s *Service) ReconnectIMAPAccount(ctx context.Context, id account.AccountID
 	}
 
 	tested := *a.Mail
-	next, err := s.reconnectPins(ctx, tested, password, imapDecision, smtpDecision)
+	next, err := s.reconnectPins(ctx, tested, password,
+		pinDecision{fingerprint: imapDecision, remove: r.RemoveIMAPPin},
+		pinDecision{fingerprint: smtpDecision, remove: r.RemoveSMTPPin})
 	if err != nil {
 		return nil, err
 	}
@@ -298,11 +309,17 @@ func (s *Service) ReconnectIMAPAccount(ctx context.Context, id account.AccountID
 	return res, nil
 }
 
+// pinDecision is the decision of the user about the certificate of one server.
+type pinDecision struct {
+	fingerprint string // empty means no decision
+	remove      bool   // the user agreed to stop pinning
+}
+
 // reconnectPins tests the stored settings with the password, and returns the
 // settings with the pins that the decisions change. It returns an error when a
 // login fails, when a server shows a certificate that no decision allows, or
 // when a decision is for a server that shows no new certificate.
-func (s *Service) reconnectPins(ctx context.Context, tested account.MailServer, password secrets.Secret, imapDecision, smtpDecision string) (account.MailServer, error) {
+func (s *Service) reconnectPins(ctx context.Context, tested account.MailServer, password secrets.Secret, imapDecision, smtpDecision pinDecision) (account.MailServer, error) {
 	res, err := s.d.Probe(ctx, imapsmtp.Config{Server: tested, Password: password, Local: s.d.Local, Logger: s.d.Logger})
 	switch {
 	case err != nil:
@@ -322,14 +339,14 @@ func (s *Service) reconnectPins(ctx context.Context, tested account.MailServer, 
 			port:     func(m *account.MailServer) int { return m.IMAPPort },
 			pin:      func(m *account.MailServer) *string { return &m.PinnedIMAPCert },
 			cert:     func(r *imapsmtp.ProbeResult) *imapsmtp.CertificateUnknownError { return r.IMAPCert },
-			decision: imapDecision, report: &certErr.IMAP,
+			decision: imapDecision.fingerprint, remove: imapDecision.remove, report: &certErr.IMAP,
 		},
 		{
 			host:     func(m *account.MailServer) string { return m.SMTPHost },
 			port:     func(m *account.MailServer) int { return m.SMTPPort },
 			pin:      func(m *account.MailServer) *string { return &m.PinnedSMTPCert },
 			cert:     func(r *imapsmtp.ProbeResult) *imapsmtp.CertificateUnknownError { return r.SMTPCert },
-			decision: smtpDecision, report: &certErr.SMTP,
+			decision: smtpDecision.fingerprint, remove: smtpDecision.remove, report: &certErr.SMTP,
 		},
 	}
 	for _, side := range sides {
@@ -344,7 +361,8 @@ func (s *Service) reconnectPins(ctx context.Context, tested account.MailServer, 
 			continue
 		}
 		change := ReconnectPinChange(c)
-		if change != PinChangeRefused && side.decision != "" && side.decision == c.FingerprintSHA256 {
+		agreed := side.decision != "" && side.decision == c.FingerprintSHA256 && (change == PinChangeRemove) == side.remove
+		if change != PinChangeRefused && agreed {
 			if change == PinChangeRemove {
 				*side.pin(&next) = ""
 			} else {

@@ -14,7 +14,9 @@ package main
 //   - A server whose pinned certificate changed may get a new pin, or lose its
 //     pin, only when connect.CheckReconnect allows it. The user sees the host
 //     and port, the old and the new fingerprint, and the warning
-//     connect.TextCertChangedWarning. On a terminal the user types "yes", for
+//     connect.TextCertChangedWarning; before a removal also what it does
+//     (connect.TextRemovePin). The decision says which of the two the user
+//     agreed to. On a terminal the user types "yes", for
 //     any host. Without a terminal, --trust-fingerprint must be the new
 //     fingerprint that the server showed in this run, and
 //     --replace-pinned-certificate is the second explicit confirmation.
@@ -131,11 +133,12 @@ func (c *cli) failReconnect(cmd string, err error) {
 }
 
 // reconnectCert is one certificate of a *service.ReconnectCertificateError, with
-// the decision field of the request that belongs to its server.
+// the decision fields of the request that belong to its server.
 type reconnectCert struct {
 	side
 	check    connect.ReconnectCheck
 	decision *string
+	remove   *bool
 }
 
 // decideReconnect shows each certificate that the test did not accept and
@@ -147,14 +150,15 @@ func (c *cli) decideReconnect(cmd string, r *service.Reconnect, certErr *service
 		name     string
 		rc       *service.ReconnectCertificate
 		decision *string
+		remove   *bool
 	}{
-		{"IMAP", certErr.IMAP, &r.PinnedIMAPCert},
-		{"SMTP", certErr.SMTP, &r.PinnedSMTPCert},
+		{"IMAP", certErr.IMAP, &r.PinnedIMAPCert, &r.RemoveIMAPPin},
+		{"SMTP", certErr.SMTP, &r.PinnedSMTPCert, &r.RemoveSMTPPin},
 	} {
 		if s.rc != nil {
 			certs = append(certs, reconnectCert{
 				side:  side{name: s.name, host: s.rc.Host, port: s.rc.Port},
-				check: connect.CheckReconnect(s.rc), decision: s.decision,
+				check: connect.CheckReconnect(s.rc), decision: s.decision, remove: s.remove,
 			})
 		}
 	}
@@ -183,6 +187,7 @@ func (c *cli) decideReconnect(cmd string, r *service.Reconnect, certErr *service
 	}
 	for _, s := range certs {
 		*s.decision = s.check.Fingerprint
+		*s.remove = s.check.Change == service.PinChangeRemove
 	}
 	return true
 }
@@ -202,16 +207,17 @@ func (c *cli) describeReconnect(s reconnectCert) {
 }
 
 // decideReplacePin asks the user whether to replace (or remove) the pin of a
-// server whose pinned certificate changed. It always shows the warning. On a
-// terminal the user must type "yes". Without a terminal, --trust-fingerprint
-// must name the new fingerprint, and --replace-pinned-certificate must be
-// given too.
+// server whose pinned certificate changed. It always shows the warning, and for
+// a removal what the removal does (connect.TextRemovePin). On a terminal the
+// user must type "yes". Without a terminal, --trust-fingerprint must name the
+// new fingerprint, and --replace-pinned-certificate must be given too.
 func (c *cli) decideReplacePin(cmd string, s reconnectCert, opts reconnectOptions) bool {
 	c.printf("%s\n", connect.TextCertChangedWarning)
 	question := fmt.Sprintf("Trust the new certificate of the %s server %s:%d instead of the old one?", s.name, s.host, s.port)
 	if s.check.Change == service.PinChangeRemove {
-		question = fmt.Sprintf("Stop pinning a certificate for the %s server %s:%d, and check it with the authorities "+
-			"that this computer trusts?", s.name, s.host, s.port)
+		c.printf("%s\n", connect.TextRemovePin)
+		question = fmt.Sprintf("Stop pinning a certificate for the %s server %s:%d, so that any certificate that an "+
+			"authority this computer trusts signs for this host is accepted?", s.name, s.host, s.port)
 	}
 	if !c.sys.isTerminal() {
 		fingerprint := s.check.Fingerprint
@@ -226,8 +232,13 @@ func (c *cli) decideReplacePin(cmd string, s reconnectCert, opts reconnectOption
 				"--replace-pinned-certificate. Nothing was saved.\n", cmd, s.name)
 			return false
 		}
-		c.printf("Accepted the new certificate of the %s server: it matches --trust-fingerprint, and "+
-			"--replace-pinned-certificate is given.\n", s.name)
+		if s.check.Change == service.PinChangeRemove {
+			c.printf("Stopped pinning a certificate for the %s server: the certificate of now matches "+
+				"--trust-fingerprint, and --replace-pinned-certificate is given.\n", s.name)
+		} else {
+			c.printf("Accepted the new certificate of the %s server: it matches --trust-fingerprint, and "+
+				"--replace-pinned-certificate is given.\n", s.name)
+		}
 		return true
 	}
 	c.printf("%s\n", msgCheckFingerprint)

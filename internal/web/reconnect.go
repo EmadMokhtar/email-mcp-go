@@ -18,9 +18,11 @@ package web
 // The decision about a certificate is a signed offer token, the same one as the
 // connect flow uses (purpose "cert_offer", 10 minutes), bound to the session,
 // the account, the protocol, the host, the port, the old pin and the new
-// fingerprint. To replace or remove a pin, the box's label states the warning
-// that a changed certificate can mean that someone is in the middle of the
-// connection. A first pin of a server that is not on this computer also needs
+// fingerprint, and whether it offers to stop pinning. To replace or remove a
+// pin, the box's label states the warning that a changed certificate can mean
+// that someone is in the middle of the connection; the label of a removal also
+// says that any certificate that an authority signs for the host is then
+// accepted. A first pin of a server that is not on this computer also needs
 // the "I understand the risk" box, as in the connect flow.
 //
 // The password is never kept between requests, never put in a page, a log, a
@@ -53,8 +55,14 @@ const (
 const (
 	// msgReplaceLabel is the label of the box that accepts a certificate in
 	// place of a pinned one. It states the warning.
-	msgReplaceLabel = "Accept the new certificate of this server instead of the one I trusted. I understand that a " +
-		"changed certificate can mean that someone is in the middle of the connection and can read my password and my mail."
+	msgReplaceLabel = "Accept the new certificate of this server instead of the one I trusted. " + msgChangedRisk
+	// msgRemoveLabel is the label of the box that stops pinning a certificate
+	// for the server. It says what the removal does (connect.TextRemovePin),
+	// and states the warning.
+	msgRemoveLabel = "Stop pinning a certificate for this server. " + connect.TextRemovePin + " " + msgChangedRisk
+	// msgChangedRisk is the warning in the label of a replace or a remove.
+	msgChangedRisk = "I understand that a changed certificate can mean that someone is in the middle of the " +
+		"connection and can read my password and my mail."
 	// msgTrustLabel is the label of the box that pins the certificate of a
 	// server that had no pin.
 	msgTrustLabel = "Trust this certificate"
@@ -176,6 +184,7 @@ func (s *Server) handleSaveReconnect(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		*p.decision(&req) = offer.Fingerprint
+		*p.remove(&req) = offer.Remove
 		prompt := reconnectPrompt{
 			Name: p.name, Field: p.field, Host: offer.Host, Port: offer.Port,
 			Fingerprint: connect.GroupFingerprint(offer.Fingerprint), Problem: msgAccepted,
@@ -183,7 +192,7 @@ func (s *Server) handleSaveReconnect(w http.ResponseWriter, r *http.Request) {
 		}
 		if offer.Old != "" {
 			prompt.OldFingerprint = connect.GroupFingerprint(offer.Old)
-			prompt.Label, prompt.Warning = msgReplaceLabel, connect.TextCertChangedWarning
+			prompt.Label, prompt.Warning = changeLabel(offer.Remove), connect.TextCertChangedWarning
 		} else if !account.IsLoopbackHost(offer.Host) {
 			needUnderstand = true
 		}
@@ -285,18 +294,28 @@ func (s *Server) reconnectPromptFor(sess session, a *account.Account, p protocol
 	if !check.CanChange() {
 		return prompt, nil
 	}
+	remove := check.Change == service.PinChangeRemove
 	token, err := s.d.Signer.Seal(purposeCertOffer, certOffer{
 		Session: sess.hash, Protocol: p.field, Host: rc.Host, Port: rc.Port, Fingerprint: check.Fingerprint,
-		Account: string(a.ID), Old: check.OldFingerprint,
+		Account: string(a.ID), Old: check.OldFingerprint, Remove: remove,
 	}, certOfferTTL)
 	if err != nil {
 		return reconnectPrompt{}, fmt.Errorf("web: seal a certificate offer: %w", err)
 	}
 	prompt.CanChange, prompt.Offer, prompt.Label = true, token, msgTrustLabel
 	if check.ReplacesPin() {
-		prompt.Label, prompt.Warning = msgReplaceLabel, connect.TextCertChangedWarning
+		prompt.Label, prompt.Warning = changeLabel(remove), connect.TextCertChangedWarning
 	}
 	return prompt, nil
+}
+
+// changeLabel returns the label of the box that replaces a pin, or that
+// removes it when remove is true.
+func changeLabel(remove bool) string {
+	if remove {
+		return msgRemoveLabel
+	}
+	return msgReplaceLabel
 }
 
 // openReconnectOffer checks an offer token that came back with a ticked box on

@@ -951,6 +951,41 @@ func TestAccountReconnectUnknownID(t *testing.T) {
 	require.Equal(t, exitUsage, r.code)
 }
 
+// The question to remove a pin says what the removal does: from then on, any
+// certificate that an authority signs for the host is accepted. It differs
+// from the question to replace a pin, and the decision says which one the user
+// agreed to.
+func TestAccountReconnectAsksAboutRemovingAPin(t *testing.T) {
+	fingerprint := strings.Repeat("cd", 32)
+	certErr := &service.ReconnectCertificateError{IMAP: &service.ReconnectCertificate{
+		Host: "imap.example.org", Port: 993, OldPin: oldPin, Change: service.PinChangeRemove,
+		Cert: &imapsmtp.CertificateUnknownError{Protocol: "imap", Host: "imap.example.org", FingerprintSHA256: fingerprint, Pinned: true},
+	}}
+	f := &fakeSystem{terminal: true}
+	var out, errOut syncBuffer
+	c := &cli{stdin: strings.NewReader("yes\n"), stdout: &out, stderr: &errOut, sys: f.system()}
+	var r service.Reconnect
+
+	require.True(t, c.decideReconnect("account reconnect", &r, certErr, reconnectOptions{}))
+
+	require.Contains(t, out.String(), connect.TextRemovePin)
+	require.Contains(t, out.String(), connect.TextCertChangedWarning)
+	require.Contains(t, out.String(), "Stop pinning")
+	require.NotContains(t, out.String(), "instead of the old one")
+	require.Equal(t, service.Reconnect{PinnedIMAPCert: fingerprint, RemoveIMAPPin: true}, r)
+
+	// A replace asks the other question, and the decision is not a removal.
+	certErr.IMAP.Change = service.PinChangeReplace
+	certErr.IMAP.Cert.Reason = x509.UnknownAuthorityError{}
+	out = syncBuffer{}
+	c = &cli{stdin: strings.NewReader("yes\n"), stdout: &out, stderr: &errOut, sys: f.system()}
+	r = service.Reconnect{}
+	require.True(t, c.decideReconnect("account reconnect", &r, certErr, reconnectOptions{}))
+	require.Contains(t, out.String(), "instead of the old one")
+	require.NotContains(t, out.String(), connect.TextRemovePin)
+	require.Equal(t, service.Reconnect{PinnedIMAPCert: fingerprint}, r)
+}
+
 // setStatus sets the status of a stored account, as a refused login does.
 func setStatus(t *testing.T, dir string, a *account.Account, status account.Status) {
 	t.Helper()

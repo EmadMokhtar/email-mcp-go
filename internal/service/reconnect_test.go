@@ -259,6 +259,13 @@ func TestReconnectReplacesAChangedPinOnlyWithTheConfirmation(t *testing.T) {
 	require.NotContains(t, err.Error(), srv.imap.Pass)
 	e.requireUnchanged(t, a, before, sealedBefore, 0)
 
+	// A decision to remove the pin does not replace it.
+	_, err = e.svc.ReconnectIMAPAccount(ctx, a.ID, Reconnect{
+		Password: secrets.Secret(srv.imap.Pass), PinnedIMAPCert: srv.imap.CertSHA256, RemoveIMAPPin: true,
+	})
+	require.ErrorAs(t, err, &certErr)
+	e.requireUnchanged(t, a, before, sealedBefore, 0)
+
 	// The user confirmed the new certificate. The decision may be in upper case.
 	res, err := e.svc.ReconnectIMAPAccount(ctx, a.ID, Reconnect{
 		Password: secrets.Secret(srv.imap.Pass), PinnedIMAPCert: " " + strings.ToUpper(srv.imap.CertSHA256) + " ",
@@ -417,16 +424,22 @@ func TestReconnectRemovesThePinForACertificateThatAnAuthoritySigns(t *testing.T)
 	require.ErrorAs(t, err, &certErr)
 	require.Equal(t, PinChangeRemove, certErr.IMAP.Change)
 
-	res, err := e.svc.ReconnectIMAPAccount(ctx, a.ID, Reconnect{PinnedIMAPCert: fingerprint})
+	// A decision to replace the pin does not remove it: the user agreed to
+	// trust one certificate, not every certificate that an authority signs.
+	_, err = e.svc.ReconnectIMAPAccount(ctx, a.ID, Reconnect{PinnedIMAPCert: fingerprint})
+	require.ErrorAs(t, err, &certErr)
+	require.Equal(t, oldPin, e.reload(a).Mail.PinnedIMAPCert)
+
+	res, err := e.svc.ReconnectIMAPAccount(ctx, a.ID, Reconnect{PinnedIMAPCert: fingerprint, RemoveIMAPPin: true})
 	require.NoError(t, err)
 	require.Equal(t, &ReconnectResult{PinChanged: true}, res)
 	got := e.reload(a)
 	require.Empty(t, got.Mail.PinnedIMAPCert, "the pin is removed")
 	require.Equal(t, server.PinnedSMTPCert, got.Mail.PinnedSMTPCert)
 	calls := e.probe.configs()
-	require.Len(t, calls, 3)
-	require.Empty(t, calls[2].Server.PinnedIMAPCert, "the second test ran without the pin")
-	require.Equal(t, server.PinnedSMTPCert, calls[2].Server.PinnedSMTPCert)
+	require.Len(t, calls, 4)
+	require.Empty(t, calls[3].Server.PinnedIMAPCert, "the second test ran without the pin")
+	require.Equal(t, server.PinnedSMTPCert, calls[3].Server.PinnedSMTPCert)
 }
 
 // The input is checked before any test, and an account of another tenant is
