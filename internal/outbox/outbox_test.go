@@ -2259,6 +2259,69 @@ func TestSendDueCapsTheSendsInProgress(t *testing.T) {
 	require.Equal(t, map[Status]int{StatusSent: maxParallelSends, StatusQueued: len(ids) - maxParallelSends}, statuses)
 }
 
+// failClaimStore fails the claim of one item with a database error. The claim
+// waits until ready is closed, so a test can choose when it fails.
+type failClaimStore struct {
+	*store.Store
+	failID string
+	ready  chan struct{}
+	err    error
+}
+
+func (s *failClaimStore) ClaimOutbox(ctx context.Context, tenant account.TenantID, id string, now time.Time) (*store.OutboxRow, error) {
+	if id == s.failID {
+		<-s.ready
+		return nil, s.err
+	}
+	return s.Store.ClaimOutbox(ctx, tenant, id, now)
+}
+
+// A database error of a claim in one account stops new claims in every
+// account. A send that has started in another account still finishes, and
+// sendDue returns the error only after it.
+func TestSendDueStopsAllClaimsWhenAClaimFails(t *testing.T) {
+	f := newFixture(t)
+	acctB := f.addAccount("home@example.com")
+	gs := newGatedSender()
+	releaseA := gs.hold(f.acct)
+	t.Cleanup(releaseA)
+	dbErr := errors.New("database is broken")
+	failing := &failClaimStore{Store: f.store, ready: make(chan struct{}), err: dbErr}
+	var once sync.Once
+	letClaimFail := func() { once.Do(func() { close(failing.ready) }) }
+	t.Cleanup(letClaimFail)
+	ob := New(failing, f.vault, gs.send, f.clock.Now)
+
+	a1 := f.enqueueFor(f.acct, "first for A", 5*time.Second)
+	a2 := f.enqueueFor(f.acct, "second for A", 6*time.Second)
+	b := f.enqueueFor(acctB, "for B", 7*time.Second)
+	failing.failID = b.ID
+	f.clock.Advance(10 * time.Second)
+	done := drainAsync(context.Background(), ob)
+
+	require.Eventually(t, func() bool { return gs.inFlightFor(f.acct) == 1 }, 5*time.Second, 5*time.Millisecond,
+		"the first send of A starts and is held")
+	letClaimFail()
+	select {
+	case err := <-done:
+		t.Fatalf("sendDue returned while a send that it started was running: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	releaseA()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, dbErr)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Drain did not return")
+	}
+	require.Equal(t, StatusSent, f.status(a1.ID), "the send that started finished")
+	require.Equal(t, StatusQueued, f.status(a2.ID), "no claim after the failed claim")
+	require.Equal(t, StatusQueued, f.status(b.ID))
+	_, _, finished := gs.counts()
+	require.Equal(t, 1, finished)
+}
+
 // Two items of one account are never sent at the same time, and they go out
 // in their order. Accounts send in parallel up to the cap.
 func TestSendDueSendsOneAtATimeForEachAccount(t *testing.T) {
