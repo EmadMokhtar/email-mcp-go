@@ -1,0 +1,38 @@
+{{/*
+  The activity page: the audit log of the tenant, newest first (see
+  activity.go). Every text is written as text; the client name is not trusted.
+*/}}
+{{define "title"}}Activity · email-mcp{{end}}
+{{define "content"}}
+<h1>Activity</h1>
+{{with .Data}}
+<form method="get" action="/activity">
+<p><label for="account">Account</label>
+<select id="account" name="account">
+<option value="">All accounts</option>
+{{range .Accounts}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
+{{end}}</select>
+<label for="tool">Tool</label>
+<select id="tool" name="tool">
+<option value="">All tools</option>
+{{range .Tools}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
+{{end}}</select>
+<label for="limit">Entries</label>
+<input id="limit" name="limit" value="{{.Limit}}" inputmode="numeric">
+<button type="submit">Show</button></p>
+</form>
+{{if .Entries}}
+<table>
+<thead>
+<tr><th scope="col">Time</th><th scope="col">Account</th><th scope="col">Client</th><th scope="col">Tool</th><th scope="col">Items</th><th scope="col">Outcome</th><th scope="col">Detail</th><th scope="col">Recipients</th></tr>
+</thead>
+<tbody>
+{{range .Entries}}<tr><td>{{.Time}}</td><td>{{.Account}}</td><td><code>{{.Client}}</code></td><td>{{.Tool}}</td><td>{{.Count}}</td><td>{{.Outcome}}</td><td>{{.Detail}}</td><td>{{.Recipients}}</td></tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>No activity yet.</p>
+{{end}}
+{{end}}
+{{end}}

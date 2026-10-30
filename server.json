@@ -1,0 +1,13 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.EmadMokhtar/email-mcp",
+  "title": "email-mcp",
+  "description": "Your IMAP and SMTP mail for AI agents, with permission levels and confirmed sends.",
+  "version": "0.1.0",
+  "websiteUrl": "https://github.com/EmadMokhtar/email-mcp-go#readme",
+  "repository": {
+    "url": "https://github.com/EmadMokhtar/email-mcp-go",
+    "source": "github",
+    "id": "1092804996"
+  }
+}

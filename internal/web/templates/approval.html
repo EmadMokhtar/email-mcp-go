@@ -1,0 +1,54 @@
+{{/*
+  The page of one action that waits for the user (see approvals.go), with its
+  Reject button while it waits, and its Approve button only when the page
+  shows the whole action (.CanApprove).
+
+  Every text of the message is cleaned by the service and written here as
+  text. The HTML of a message is never put in this page: Body is the text that
+  the recipient sees, in a <pre> so that its lines stay as they are. The lines
+  of the messages of a Trash action are cleaned the same way.
+*/}}
+{{define "title"}}Approval · email-mcp{{end}}
+{{define "content"}}
+{{$csrf := .CSRFToken}}
+<h1>Approval</h1>
+<p><a href="/approvals">Back to the approvals</a></p>
+{{with .Data}}
+{{if .Error}}<p role="alert"><strong>{{.Error}}</strong></p>{{end}}
+{{if .State}}<p role="status">{{.State}}</p>{{end}}
+{{if .Account}}
+{{if .Send}}
+<h2>Send a message from {{.Account}}</h2>
+{{if .Waiting}}
+<dl>
+<dt>From</dt><dd>{{.From}}</dd>
+<dt>To (every recipient, Bcc included)</dt><dd><ul>{{range .Recipients}}<li>{{.}}</li>{{end}}</ul></dd>
+<dt>Subject</dt><dd>{{.Subject}}</dd>
+<dt>Attachments</dt><dd>{{if .Attachments}}<ul>{{range .Attachments}}<li>{{.}}</li>{{end}}</ul>{{else}}None{{end}}</dd>
+</dl>
+<h3>Text</h3>
+{{if .BodyNote}}<p>{{.BodyNote}}</p>{{end}}
+<pre>{{.Body}}</pre>
+{{end}}
+{{else}}
+<h2>Move {{.Count}} {{if eq .Count 1}}message{{else}}messages{{end}} of {{.Account}} to Trash</h2>
+{{if .Messages}}
+<h3>Messages (date, sender, subject)</h3>
+<ul>{{range .Messages}}<li>{{.}}</li>{{end}}</ul>
+{{if .MoreMessages}}<p>{{.MoreMessages}}</p>{{end}}
+{{end}}
+{{end}}
+{{if .Waiting}}
+<p>This request expires on {{.Expires}}.</p>
+{{if .CanApprove}}<form method="post" action="/approvals/{{.ID}}/approve">
+{{template "csrf_field" $csrf}}
+<p><button type="submit">Approve</button></p>
+</form>
+{{end}}<form method="post" action="/approvals/{{.ID}}/reject">
+{{template "csrf_field" $csrf}}
+<p><button type="submit">Reject</button></p>
+</form>
+{{end}}
+{{end}}
+{{end}}
+{{end}}

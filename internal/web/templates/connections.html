@@ -1,0 +1,47 @@
+{{/*
+  The connections page: the access tokens of the local HTTP server (see
+  connections.go). A new token is shown once, on the answer to the POST that
+  made it. The list never holds a token.
+*/}}
+{{define "title"}}Connections · email-mcp{{end}}
+{{define "content"}}
+{{$csrf := .CSRFToken}}
+<h1>Connections</h1>
+<p>An MCP client that connects over HTTP needs an access token. Give each client its own token, with only the permissions it needs.</p>
+{{with .Data}}
+{{if .Error}}<p role="alert"><strong>{{.Error}}</strong></p>{{end}}
+{{if .NewToken}}
+<p role="status"><strong>{{.CopyOnce}}</strong></p>
+<p><code>{{.NewToken}}</code></p>
+{{end}}
+
+<h2>New token</h2>
+<form method="post" action="/connections">
+{{template "csrf_field" $csrf}}
+<p><label for="name">Name</label><br>
+<input id="name" name="name" value="{{.Name}}" maxlength="128" required></p>
+<fieldset>
+<legend>Permissions</legend>
+{{range .Scopes}}<p><input type="checkbox" id="scope_{{.Value}}" name="scope" value="{{.Value}}"{{if .Selected}} checked{{end}}>
+<label for="scope_{{.Value}}">{{.Label}}</label></p>
+{{end}}</fieldset>
+<p><button type="submit">Make a token</button></p>
+</form>
+
+<h2>Tokens</h2>
+{{if .Tokens}}
+<table>
+<thead>
+<tr><th scope="col">Name</th><th scope="col">Permissions</th><th scope="col">Made</th><th scope="col">Status</th></tr>
+</thead>
+<tbody>
+{{range .Tokens}}<tr><td>{{.Name}}</td><td>{{.Scopes}}</td><td>{{.Created}}</td><td>{{if .Revoked}}Revoked on {{.Revoked}}{{else}}
+<form method="post" action="/connections/{{.ID}}/revoke">{{template "csrf_field" $csrf}}<button type="submit">Revoke</button></form>{{end}}</td></tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>No token yet.</p>
+{{end}}
+{{end}}
+{{end}}

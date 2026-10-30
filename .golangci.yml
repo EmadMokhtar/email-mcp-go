@@ -1,0 +1,31 @@
+# golangci-lint v2 configuration.
+version: "2"
+
+run:
+  # Also lint the interop test (test/interop), which has this build tag. It
+  # is linted only: it runs nightly against Docker servers (interop.yml).
+  build-tags:
+    - interop
+
+linters:
+  # The standard set is errcheck, govet, ineffassign, staticcheck and unused.
+  default: standard
+  enable:
+    # Security checks: weak crypto, unsafe file permissions, SQL built from
+    # strings, and similar problems.
+    - gosec
+  exclusions:
+    paths:
+      # Code of other projects that is copied here (see the README in the
+      # directory). It is upstream code with a small patch, and the linters
+      # find things in it that upstream accepts. Its tests are not checked
+      # either. The standalone staticcheck of the Makefile and of the CI is
+      # turned off there by a staticcheck.conf in the directory.
+      - internal/thirdparty
+
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    paths:
+      - internal/thirdparty

@@ -4,8 +4,11 @@
 *.dll
 *.so
 *.dylib
-email-mcp
-email-mcp-go
+# Anchored to the repo root. An unanchored "email-mcp" would also match the
+# cmd/email-mcp/ source directory and hide new files in it from git.
+/email-mcp
+/email-mcp-go
+/bin/
 
 # Test binary, built with `go test -c`
 *.test
@@ -43,3 +46,7 @@ build/
 # Temporary files
 tmp/
 temp/
+
+# TLS files of the interop test servers. go run ./test/interop/gencerts makes
+# them for each run. They are never committed.
+/test/interop/certs/
