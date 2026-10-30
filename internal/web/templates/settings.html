@@ -66,6 +66,10 @@
 <p><button type="submit">Save</button></p>
 </form>
 
+<h2>Reconnect the account</h2>
+<p>After you change the password of this account, or when its mail server gets a new certificate, reconnect it. It keeps its settings, its queued messages and its activity.</p>
+<p><a href="/accounts/{{.ID}}/reconnect">Reconnect the account</a></p>
+
 <h2>Remove the account</h2>
 <form method="post" action="/accounts/{{.ID}}/remove">
 {{template "csrf_field" $csrf}}

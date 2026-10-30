@@ -103,12 +103,19 @@ const certOfferTTL = 10 * time.Minute
 // port. The token is signed, so the browser cannot change it, and it is
 // readable, so it holds nothing secret (the session hash is not the session
 // id). The keys are short to keep the form small.
+//
+// An offer of the reconnect page (reconnect.go) also names the account and the
+// pin that the user saw as the old one (empty when the server had none). The
+// connect flow takes only offers without an account, and the reconnect page
+// only offers for its account and its stored pin.
 type certOffer struct {
 	Session     []byte `json:"s"`
 	Protocol    string `json:"p"`
 	Host        string `json:"h"`
 	Port        int    `json:"n"`
 	Fingerprint string `json:"f"`
+	Account     string `json:"a,omitempty"`
+	Old         string `json:"o,omitempty"`
 }
 
 // The defaults of the settings form when the user types the settings.
@@ -140,6 +147,8 @@ type accountRow struct {
 	Provider  string
 	MailLevel string
 	Status    string
+	// NeedsReconnect shows the link to the reconnect page.
+	NeedsReconnect bool
 }
 
 // connectPage is the data of the connect page. It has no field for the
@@ -219,13 +228,15 @@ type certPrompt struct {
 // protocol is one of the two servers of an account, with the parts of the form
 // and of the settings that belong to it.
 type protocol struct {
-	name     string // "IMAP" or "SMTP"
-	field    string // "imap" or "smtp"
-	host     func(*account.MailServer) string
-	port     func(*account.MailServer) int
-	security func(*account.MailServer) account.Security
-	pin      func(*account.MailServer) *string
-	cert     func(*service.CertificateError) *imapsmtp.CertificateUnknownError
+	name      string // "IMAP" or "SMTP"
+	field     string // "imap" or "smtp"
+	host      func(*account.MailServer) string
+	port      func(*account.MailServer) int
+	security  func(*account.MailServer) account.Security
+	pin       func(*account.MailServer) *string
+	cert      func(*service.CertificateError) *imapsmtp.CertificateUnknownError
+	reconnect func(*service.ReconnectCertificateError) *service.ReconnectCertificate
+	decision  func(*service.Reconnect) *string
 }
 
 // protocols are the two servers, IMAP first.
@@ -237,6 +248,10 @@ var protocols = []protocol{
 		security: func(m *account.MailServer) account.Security { return m.IMAPSecurity },
 		pin:      func(m *account.MailServer) *string { return &m.PinnedIMAPCert },
 		cert:     func(e *service.CertificateError) *imapsmtp.CertificateUnknownError { return e.IMAP },
+		reconnect: func(e *service.ReconnectCertificateError) *service.ReconnectCertificate {
+			return e.IMAP
+		},
+		decision: func(r *service.Reconnect) *string { return &r.PinnedIMAPCert },
 	},
 	{
 		name: "SMTP", field: "smtp",
@@ -245,6 +260,10 @@ var protocols = []protocol{
 		security: func(m *account.MailServer) account.Security { return m.SMTPSecurity },
 		pin:      func(m *account.MailServer) *string { return &m.PinnedSMTPCert },
 		cert:     func(e *service.CertificateError) *imapsmtp.CertificateUnknownError { return e.SMTP },
+		reconnect: func(e *service.ReconnectCertificateError) *service.ReconnectCertificate {
+			return e.SMTP
+		},
+		decision: func(r *service.Reconnect) *string { return &r.PinnedSMTPCert },
 	},
 }
 
@@ -268,6 +287,8 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 			Provider:  providerLabel(a.Provider),
 			MailLevel: a.Level(account.AreaMail).MailName(),
 			Status:    statusLabel(a.Status),
+
+			NeedsReconnect: a.Status == account.StatusNeedsReauth,
 		})
 	}
 	s.render(w, r, http.StatusOK, pageAccounts, page)
@@ -519,13 +540,15 @@ func (s *Server) promptFor(sess session, p protocol, server account.MailServer, 
 // made for this session, and its protocol, host and port are the ones posted
 // now (cleaned as the form is). So a pin that the page never offered, an offer
 // of another session, and an offer that the user moved to another host or port
-// are refused.
+// are refused. An offer of the reconnect page (it names an account) is refused
+// too.
 func (s *Server) openOffer(sess session, p protocol, server account.MailServer, token string) (certOffer, bool) {
 	var o certOffer
 	if token == "" || s.d.Signer.Open(purposeCertOffer, token, &o) != nil {
 		return certOffer{}, false
 	}
 	ok := subtle.ConstantTimeCompare(o.Session, sess.hash) == 1 &&
+		o.Account == "" && o.Old == "" &&
 		o.Protocol == p.field &&
 		o.Host == p.host(&server) &&
 		o.Port == p.port(&server) &&

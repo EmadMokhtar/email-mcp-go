@@ -1,6 +1,7 @@
 {{/*
   The accounts page: the accounts of the tenant of the session. It shows no
-  secret, no server setting and no user name.
+  secret, no server setting and no user name. An account that needs to be
+  reconnected has a link to its reconnect page.
 */}}
 {{define "title"}}Accounts · email-mcp{{end}}
 {{define "content"}}
@@ -12,7 +13,7 @@
 <tr><th scope="col">Address</th><th scope="col">Provider</th><th scope="col">Mail level</th><th scope="col">Status</th><th scope="col">Settings</th></tr>
 </thead>
 <tbody>
-{{range .Accounts}}<tr><td>{{.Address}}</td><td>{{.Provider}}</td><td>{{.MailLevel}}</td><td>{{.Status}}</td><td><a href="/accounts/{{.ID}}/settings">Permissions and settings</a></td></tr>
+{{range .Accounts}}<tr><td>{{.Address}}</td><td>{{.Provider}}</td><td>{{.MailLevel}}</td><td>{{.Status}}{{if .NeedsReconnect}} <a href="/accounts/{{.ID}}/reconnect">Reconnect</a>{{end}}</td><td><a href="/accounts/{{.ID}}/settings">Permissions and settings</a></td></tr>
 {{end}}
 </tbody>
 </table>

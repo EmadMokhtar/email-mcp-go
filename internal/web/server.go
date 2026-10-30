@@ -179,6 +179,8 @@ var routes = []route{
 	{"GET /accounts/{id}/settings", (*Server).handleAccountSettings},
 	{"POST /accounts/{id}/settings", (*Server).handleSaveAccountSettings},
 	{"POST /accounts/{id}/remove", (*Server).handleRemoveAccount},
+	{"GET /accounts/{id}/reconnect", (*Server).handleReconnect},
+	{"POST /accounts/{id}/reconnect", (*Server).handleSaveReconnect},
 	{"GET /approvals", (*Server).handleApprovals},
 	{"GET /approvals/{id}", (*Server).handleApproval},
 	{"POST /approvals/{id}/approve", (*Server).handleApprove},
