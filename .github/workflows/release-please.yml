@@ -1,0 +1,59 @@
+name: Release Please
+
+# release-please reads the Conventional Commits on main and keeps one release
+# pull request open, "chore(main): release X.Y.Z". That pull request updates
+# CHANGELOG.md, .release-please-manifest.json and the version in server.json.
+# Merge it to make a release: on that push, release-please creates the tag
+# vX.Y.Z and a draft GitHub release with the changelog. The tag starts
+# release.yml, and GoReleaser uploads the files into the draft and publishes
+# it (see .goreleaser.yaml and the README, "Making a release").
+#
+# The settings are in release-please-config.json.
+on:
+  push:
+    branches:
+      - main
+
+# release-please calls the GitHub API with its own token (see below), so the
+# GITHUB_TOKEN of this workflow needs no write permission.
+permissions:
+  contents: read
+
+# Two pushes close together must not update the release pull request at the
+# same time.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+# Every action is pinned by full commit SHA. The comment after the SHA is the
+# release tag. To update an action, look up the SHA of the new tag first.
+
+jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # A deployment environment. Keep RELEASE_PLEASE_TOKEN as a secret of this
+    # environment, and allow only the branch main to deploy to it: then no
+    # other workflow or branch can read the token (see the README).
+    environment: release-please
+    permissions:
+      contents: read
+    steps:
+      # The token is not GITHUB_TOKEN on purpose. GitHub starts no workflow
+      # for a pull request or a tag that GITHUB_TOKEN creates. Then the
+      # required checks of main (ci.yml) would never run on the release pull
+      # request, and the tag would not start release.yml.
+      - name: RELEASE_PLEASE_TOKEN is set
+        env:
+          TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "The secret RELEASE_PLEASE_TOKEN of the environment release-please is not set. See the README, \"Making a release\"." >&2
+            exit 1
+          fi
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

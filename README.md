@@ -714,8 +714,12 @@ gh attestation verify oci://ghcr.io/emadmokhtar/email-mcp:0.1.0 --repo EmadMokht
 
 ## Making a release
 
-For maintainers. The workflow `.github/workflows/release.yml` runs for every
-tag that starts with `v`.
+For maintainers. Releases come from
+[release-please](https://github.com/googleapis/release-please), which reads the
+[Conventional Commits](https://www.conventionalcommits.org/) on `main`. The
+workflow `.github/workflows/release-please.yml` keeps one release pull request
+open, and `.github/workflows/release.yml` builds and publishes every tag that
+starts with `v`.
 
 Once, before the first release:
 
@@ -726,19 +730,50 @@ Once, before the first release:
    named `release`. Allow only tags that match `v*` to deploy to it. Add the
    token there as the secret `HOMEBREW_TAP_GITHUB_TOKEN`. The release job uses
    this environment, so no other workflow can read the token.
+4. Make a second fine-grained personal access token for release-please. Give
+   it access to this repository only, with the permissions **Contents**,
+   **Pull requests** and **Issues** (for the labels of the release pull
+   request), all "Read and write". The `GITHUB_TOKEN` of the workflow is not
+   enough: GitHub starts no workflow for a pull request or a tag that
+   `GITHUB_TOKEN` creates. Then the required checks would never run on the
+   release pull request, and the tag would not start `release.yml`.
+5. Make a second environment named `release-please`. Allow only the branch
+   `main` to deploy to it. Add the token there as the secret
+   `RELEASE_PLEASE_TOKEN`. Renew the token before it expires.
 
 For each release:
 
-1. Set `version` in `server.json` to the new version without the `v`, for
-   example `0.1.0`, and commit it. The workflow stops when it does not match
-   the tag.
-2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+1. Merge pull requests into `main` as usual. Their titles must be Conventional
+   Commits, because a squash merge makes the title the commit message.
+2. release-please opens or updates the pull request
+   `chore(main): release X.Y.Z`. It adds the changes to `CHANGELOG.md` and sets
+   the version in `.release-please-manifest.json` and `server.json`.
+3. When you want to release, merge that pull request. release-please then
+   pushes the tag `vX.Y.Z` and creates a draft GitHub release with the
+   changelog.
+4. The tag starts `release.yml`. Approve the deployment to the `release`
+   environment when GitHub asks for it.
 
-The workflow then runs `go vet`, the tests and `govulncheck` (a check for known
-vulnerabilities). Then GoReleaser builds, signs and publishes the release, the
-Homebrew cask and the image, and the workflow adds the attestations. A tag
-with a pre-release part, such as `v0.2.0-rc.1`, makes a GitHub pre-release, and
-does not update the tap or the `latest` image tag.
+How the version goes up while it is below 1.0.0: `fix:` and `perf:` raise the
+patch number (0.1.0 → 0.1.1). `feat:` and breaking changes (`feat!:` or a
+`BREAKING CHANGE:` footer) raise the minor number (0.1.0 → 0.2.0). Other types,
+such as `docs:`, `ci:` and the `build(deps):` pull requests of Dependabot, make
+no release alone and do not show in the changelog. To choose the version
+yourself, for example a pre-release, put the footer `Release-As: 0.2.0-rc.1` in
+the message of a commit on `main`.
+
+`release.yml` runs `go vet`, the tests and `govulncheck` (a check for known
+vulnerabilities), and checks that `server.json` has the version of the tag.
+Then GoReleaser builds and signs the files, uploads them into the draft
+release and publishes it, together with the Homebrew cask and the image. The
+workflow adds the attestations. A tag with a pre-release part, such as
+`v0.2.0-rc.1`, makes a GitHub pre-release, and does not update the tap or the
+`latest` image tag.
+
+A tag pushed by hand still makes a release: GoReleaser then creates the
+release itself. Set `version` in `server.json` and in
+`.release-please-manifest.json` to the version first. Otherwise release-please
+counts from the old version and proposes a release that already exists.
 
 To try the build on your computer without publishing anything:
 

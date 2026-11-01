@@ -171,6 +171,16 @@ homebrew_casks:
 release:
   # Mark a tag such as v1.0.0-rc.1 as a pre-release on GitHub.
   prerelease: auto
+  # release-please (.github/workflows/release-please.yml) creates a draft
+  # release with the name of the tag, such as v0.2.0, before this runs. Upload
+  # the files into that draft and publish it, instead of making a second
+  # release. For a tag pushed by hand there is no draft, and GoReleaser
+  # creates the release as before.
+  use_existing_draft: true
+  # Keep the release notes that release-please wrote from CHANGELOG.md. This
+  # is the default; it is written here because use_existing_draft depends on
+  # it. A release that GoReleaser creates itself gets the changelog below.
+  mode: keep-existing
 
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot"
