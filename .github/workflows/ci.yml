@@ -56,10 +56,19 @@ jobs:
           # Build golangci-lint with the Go of this job, the same way as a
           # local "go run", so its type checker always knows that Go.
           install-mode: goinstall
-      # Check .goreleaser.yaml on every pull request. Otherwise a bad key
-      # shows up only in release.yml, after the release tag exists, and a tag
-      # cannot be moved. It is a step of this job, so the required check
-      # "lint" covers it. Keep the version the same as in release.yml.
+
+  # Check .goreleaser.yaml on every pull request. Otherwise a bad key shows up
+  # only in release.yml, after the release tag exists, and a tag cannot be
+  # moved. This is its own job with no Go setup: "goreleaser check" needs no
+  # Go, and a job that runs GoReleaser must not restore a cache (zizmor,
+  # cache-poisoning). Keep the version the same as in release.yml.
+  goreleaser:
+    name: goreleaser check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: goreleaser check
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
