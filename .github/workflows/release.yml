@@ -3,6 +3,11 @@ name: Release
 # Builds and publishes a release for every tag that starts with "v", such as
 # v0.1.0. It never runs for a pull request.
 #
+# Normally release-please (release-please.yml) pushes the tag when its release
+# pull request is merged, and creates a draft release for it at the same time.
+# GoReleaser uploads the files into that draft and publishes it. A tag pushed
+# by hand works too: then GoReleaser creates the release.
+#
 # What it publishes (see .goreleaser.yaml):
 #   - a GitHub release with the archives of five platforms, one SBOM per
 #     archive, checksums.txt and its cosign signature bundle;
@@ -68,7 +73,7 @@ jobs:
           want="${TAG#v}"
           got="$(jq -r .version server.json)"
           if [ "$got" != "$want" ]; then
-            echo "server.json has version $got, but the tag needs $want. Update server.json and tag again." >&2
+            echo "server.json has version $got, but the tag needs $want. A tag cannot be moved or deleted (ruleset \"release tags\"), so fix server.json on main and release the next version." >&2
             exit 1
           fi
 

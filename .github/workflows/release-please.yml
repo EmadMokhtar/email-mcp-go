@@ -1,0 +1,69 @@
+name: Release Please
+
+# release-please reads the Conventional Commits on main and keeps one release
+# pull request open, "chore(main): release X.Y.Z". That pull request updates
+# CHANGELOG.md, .release-please-manifest.json and the version in server.json.
+# Merge it to make a release: on that push, release-please creates the tag
+# vX.Y.Z and a draft GitHub release with the changelog. The tag starts
+# release.yml, and GoReleaser uploads the files into the draft and publishes
+# it (see .goreleaser.yaml and the README, "Making a release").
+#
+# The settings are in release-please-config.json.
+on:
+  push:
+    branches:
+      - main
+
+# release-please calls the GitHub API with a token of a GitHub App (see
+# below), so the GITHUB_TOKEN of this workflow needs no write permission.
+permissions:
+  contents: read
+
+# Two pushes close together must not update the release pull request at the
+# same time.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+# Every action is pinned by full commit SHA. The comment after the SHA is the
+# release tag. To update an action, look up the SHA of the new tag first.
+#
+# No step puts a ${{ }} value into a "run:" script. Values go through "env:"
+# and are used as quoted shell variables.
+
+jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # A deployment environment. Keep the secrets of the GitHub App in this
+    # environment, and allow only the branch main to deploy to it: then no
+    # other workflow or branch can read them (see the README).
+    environment: release-please
+    permissions:
+      contents: read
+    steps:
+      # The token is not GITHUB_TOKEN on purpose. GitHub starts no workflow
+      # for a pull request or a tag that GITHUB_TOKEN creates. Then the
+      # required checks of main (ci.yml) would never run on the release pull
+      # request, and the tag would not start release.yml.
+      #
+      # This is a token for this repository only, with only the two
+      # permissions that release-please needs. It expires after one hour and
+      # is revoked when the job ends. The action stops with a clear error when
+      # a secret is empty (see the README, "Making a release").
+      - name: get a token of the GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+          # Commits on the release branch, the tag and the release.
+          permission-contents: write
+          # The release pull request and its labels.
+          permission-pull-requests: write
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

@@ -15,7 +15,11 @@
 #     cosign-release (sigstore/cosign-installer) and syft-version
 #     (anchore/sbom-action/download-syft). Dependabot updates the actions, not
 #     these inputs;
-#   - the golangci-lint version that ci.yml gives to golangci-lint-action.
+#   - the golangci-lint version that ci.yml gives to golangci-lint-action;
+#   - the release-please version in the "$schema" URL of
+#     release-please-config.json. Keep it the same as the release-please
+#     version inside googleapis/release-please-action (release-please.yml).
+#     Dependabot updates the action, not this URL.
 version: 2
 updates:
   - package-ecosystem: gomod
@@ -24,6 +28,13 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # The Go modules are inside the released binary and image. The prefix
+    # "fix" makes release-please count an update, also a security update, as
+    # a fix: it then proposes a patch release that ships it. Without it,
+    # Dependabot writes "build(deps):", which release-please leaves out.
+    commit-message:
+      prefix: fix
+      include: scope
     groups:
       go-modules:
         patterns:

@@ -714,8 +714,12 @@ gh attestation verify oci://ghcr.io/emadmokhtar/email-mcp:0.1.0 --repo EmadMokht
 
 ## Making a release
 
-For maintainers. The workflow `.github/workflows/release.yml` runs for every
-tag that starts with `v`.
+For maintainers. Releases come from
+[release-please](https://github.com/googleapis/release-please), which reads the
+[Conventional Commits](https://www.conventionalcommits.org/) on `main`. The
+workflow `.github/workflows/release-please.yml` keeps one release pull request
+open, and `.github/workflows/release.yml` builds and publishes every tag that
+starts with `v`.
 
 Once, before the first release:
 
@@ -726,19 +730,96 @@ Once, before the first release:
    named `release`. Allow only tags that match `v*` to deploy to it. Add the
    token there as the secret `HOMEBREW_TAP_GITHUB_TOKEN`. The release job uses
    this environment, so no other workflow can read the token.
+4. Give release-please its own token through a GitHub App. The `GITHUB_TOKEN`
+   of the workflow is not enough: GitHub starts no workflow for a pull request
+   or a tag that `GITHUB_TOKEN` creates. Then the required checks would never
+   run on the release pull request, and the tag would not start
+   `release.yml`.
+   1. Under your account, **Settings → Developer settings → GitHub Apps → New
+      GitHub App**, make an App, for example `email-mcp-release-please`. Turn
+      off **Webhook**. Under **Repository permissions** set **Contents** and
+      **Pull requests** to "Read and write" and leave everything else at "No
+      access". Under "Where can this GitHub App be installed?" choose "Only on
+      this account".
+   2. On the page of the App, note the **Client ID**. Under **Private keys**,
+      generate a key. GitHub downloads it as a `.pem` file.
+   3. **Install App** → install it on your account, with "Only select
+      repositories" and only `EmadMokhtar/email-mcp-go`.
+5. Make a second environment named `release-please`. Allow only the branch
+   `main` to deploy to it. Add two secrets there:
+   `RELEASE_PLEASE_APP_CLIENT_ID` (the Client ID) and
+   `RELEASE_PLEASE_APP_PRIVATE_KEY` (the whole content of the `.pem` file).
+   Then delete the `.pem` file. The workflow makes a new token for each run.
+   It is valid for one hour and is revoked when the job ends.
+
+   A simpler alternative is a fine-grained personal access token, with access
+   to this repository only and **Contents** and **Pull requests** set to "Read
+   and write". Add it to the environment as the secret
+   `RELEASE_PLEASE_TOKEN`. In `release-please.yml`, remove the step "get a
+   token of the GitHub App" and set the `token` of release-please to
+   `${{ secrets.RELEASE_PLEASE_TOKEN }}`. The cost: the token lives until it
+   expires, so you must renew it, and the release pull requests show your
+   name as the author.
 
 For each release:
 
-1. Set `version` in `server.json` to the new version without the `v`, for
-   example `0.1.0`, and commit it. The workflow stops when it does not match
-   the tag.
-2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+1. Merge pull requests into `main` as usual. Their titles must be Conventional
+   Commits, because a squash merge makes the title the commit message.
+2. release-please opens or updates the pull request
+   `chore(main): release X.Y.Z`. It adds the changes to `CHANGELOG.md` and sets
+   the version in `.release-please-manifest.json` and `server.json`.
+3. When you want to release, merge that pull request. release-please then
+   pushes the tag `vX.Y.Z` and creates a draft GitHub release with the
+   changelog. Only maintainers can see a draft release, but the tag is public
+   from now on: `go install ...@vX.Y.Z` works, and the ruleset "release tags"
+   does not let anyone move or delete it. So merge the release pull request
+   only when `main` is ready to ship.
+4. The tag starts `release.yml`. Approve the deployment to the `release`
+   environment when GitHub asks for it. The release files, the image and the
+   cask are published only after this approval.
 
-The workflow then runs `go vet`, the tests and `govulncheck` (a check for known
-vulnerabilities). Then GoReleaser builds, signs and publishes the release, the
-Homebrew cask and the image, and the workflow adds the attestations. A tag
-with a pre-release part, such as `v0.2.0-rc.1`, makes a GitHub pre-release, and
-does not update the tap or the `latest` image tag.
+The release notes come from one place: release-please writes them into the
+draft from `CHANGELOG.md`, and GoReleaser keeps them (`release.mode:
+keep-existing` in `.goreleaser.yaml`) while it adds its files.
+
+How the version goes up while it is below 1.0.0: `fix:` and `perf:` raise the
+patch number (0.1.0 → 0.1.1). `feat:` and breaking changes (`feat!:` or a
+`BREAKING CHANGE:` footer) raise the minor number (0.1.0 → 0.2.0). Dependabot
+updates of Go modules come as `fix(deps):`, so a security fix in a dependency
+also gets a patch release (see `.github/dependabot.yml`). Other types, such as
+`docs:`, `ci:` and the `build(deps):` pull requests of Dependabot for actions
+and Docker images, make no release alone and do not show in the changelog. To
+choose the version
+yourself, for example a pre-release, put the footer `Release-As: 0.2.0-rc.1` in
+the message of a commit on `main`.
+
+`release.yml` runs `go vet`, the tests and `govulncheck` (a check for known
+vulnerabilities), and checks that `server.json` has the version of the tag.
+Then GoReleaser builds and signs the files, uploads them into the draft
+release and publishes it, together with the Homebrew cask and the image. The
+workflow adds the attestations. A tag with a pre-release part, such as
+`v0.2.0-rc.1`, makes a GitHub pre-release, and does not update the tap or the
+`latest` image tag.
+
+When the release fails:
+
+- **Before GoReleaser publishes the release** (the checks, the build, the
+  image, or the upload into the draft): fix the cause, for example an expired
+  token, and re-run the failed jobs. GoReleaser finds the same draft again and
+  replaces the files that the failed run had uploaded.
+- **When the code must change** (a test or `govulncheck` fails): the tag
+  cannot be moved, so this version cannot be released. Merge the fix into
+  `main` as a `fix:` pull request. release-please then proposes the next
+  patch version. Delete the old draft release by hand.
+- **After GoReleaser published the release** (only the Homebrew cask comes
+  later): a re-run finds no draft and stops. First turn the release back into
+  a draft with `gh release edit vX.Y.Z --draft=true`, then re-run the failed
+  jobs.
+
+A tag pushed by hand still makes a release: GoReleaser then creates the
+release itself. Set `version` in `server.json` and in
+`.release-please-manifest.json` to the version first. Otherwise release-please
+counts from the old version and proposes a release that already exists.
 
 To try the build on your computer without publishing anything:
 
