@@ -15,7 +15,11 @@
 #     cosign-release (sigstore/cosign-installer) and syft-version
 #     (anchore/sbom-action/download-syft). Dependabot updates the actions, not
 #     these inputs;
-#   - the golangci-lint version that ci.yml gives to golangci-lint-action.
+#   - the golangci-lint version that ci.yml gives to golangci-lint-action;
+#   - the release-please version in the "$schema" URL of
+#     release-please-config.json. Keep it the same as the release-please
+#     version inside googleapis/release-please-action (release-please.yml).
+#     Dependabot updates the action, not this URL.
 version: 2
 updates:
   - package-ecosystem: gomod

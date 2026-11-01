@@ -14,8 +14,8 @@ on:
     branches:
       - main
 
-# release-please calls the GitHub API with its own token (see below), so the
-# GITHUB_TOKEN of this workflow needs no write permission.
+# release-please calls the GitHub API with a token of a GitHub App (see
+# below), so the GITHUB_TOKEN of this workflow needs no write permission.
 permissions:
   contents: read
 
@@ -27,15 +27,18 @@ concurrency:
 
 # Every action is pinned by full commit SHA. The comment after the SHA is the
 # release tag. To update an action, look up the SHA of the new tag first.
+#
+# No step puts a ${{ }} value into a "run:" script. Values go through "env:"
+# and are used as quoted shell variables.
 
 jobs:
   release-please:
     name: release-please
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # A deployment environment. Keep RELEASE_PLEASE_TOKEN as a secret of this
+    # A deployment environment. Keep the secrets of the GitHub App in this
     # environment, and allow only the branch main to deploy to it: then no
-    # other workflow or branch can read the token (see the README).
+    # other workflow or branch can read them (see the README).
     environment: release-please
     permissions:
       contents: read
@@ -44,16 +47,30 @@ jobs:
       # for a pull request or a tag that GITHUB_TOKEN creates. Then the
       # required checks of main (ci.yml) would never run on the release pull
       # request, and the tag would not start release.yml.
-      - name: RELEASE_PLEASE_TOKEN is set
+      - name: the secrets of the GitHub App are set
         env:
-          TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          CLIENT_ID: ${{ secrets.RELEASE_PLEASE_APP_CLIENT_ID }}
+          PRIVATE_KEY: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
         run: |
-          if [ -z "$TOKEN" ]; then
-            echo "The secret RELEASE_PLEASE_TOKEN of the environment release-please is not set. See the README, \"Making a release\"." >&2
+          if [ -z "$CLIENT_ID" ] || [ -z "$PRIVATE_KEY" ]; then
+            echo "The secrets RELEASE_PLEASE_APP_CLIENT_ID and RELEASE_PLEASE_APP_PRIVATE_KEY of the environment release-please must be set. See the README, \"Making a release\"." >&2
             exit 1
           fi
+      # A token for this repository only, with only the two permissions that
+      # release-please needs. It expires after one hour and is revoked when
+      # the job ends.
+      - name: get a token of the GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+          # Commits on the release branch, the tag and the release.
+          permission-contents: write
+          # The release pull request and its labels.
+          permission-pull-requests: write
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json

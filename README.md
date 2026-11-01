@@ -730,16 +730,36 @@ Once, before the first release:
    named `release`. Allow only tags that match `v*` to deploy to it. Add the
    token there as the secret `HOMEBREW_TAP_GITHUB_TOKEN`. The release job uses
    this environment, so no other workflow can read the token.
-4. Make a second fine-grained personal access token for release-please. Give
-   it access to this repository only, with the permissions **Contents**,
-   **Pull requests** and **Issues** (for the labels of the release pull
-   request), all "Read and write". The `GITHUB_TOKEN` of the workflow is not
-   enough: GitHub starts no workflow for a pull request or a tag that
-   `GITHUB_TOKEN` creates. Then the required checks would never run on the
-   release pull request, and the tag would not start `release.yml`.
+4. Give release-please its own token through a GitHub App. The `GITHUB_TOKEN`
+   of the workflow is not enough: GitHub starts no workflow for a pull request
+   or a tag that `GITHUB_TOKEN` creates. Then the required checks would never
+   run on the release pull request, and the tag would not start
+   `release.yml`.
+   1. Under your account, **Settings → Developer settings → GitHub Apps → New
+      GitHub App**, make an App, for example `email-mcp-release-please`. Turn
+      off **Webhook**. Under **Repository permissions** set **Contents** and
+      **Pull requests** to "Read and write" and leave everything else at "No
+      access". Under "Where can this GitHub App be installed?" choose "Only on
+      this account".
+   2. On the page of the App, note the **Client ID**. Under **Private keys**,
+      generate a key. GitHub downloads it as a `.pem` file.
+   3. **Install App** → install it on your account, with "Only select
+      repositories" and only `EmadMokhtar/email-mcp-go`.
 5. Make a second environment named `release-please`. Allow only the branch
-   `main` to deploy to it. Add the token there as the secret
-   `RELEASE_PLEASE_TOKEN`. Renew the token before it expires.
+   `main` to deploy to it. Add two secrets there:
+   `RELEASE_PLEASE_APP_CLIENT_ID` (the Client ID) and
+   `RELEASE_PLEASE_APP_PRIVATE_KEY` (the whole content of the `.pem` file).
+   Then delete the `.pem` file. The workflow makes a new token for each run.
+   It is valid for one hour and is revoked when the job ends.
+
+   A simpler alternative is a fine-grained personal access token, with access
+   to this repository only and **Contents** and **Pull requests** set to "Read
+   and write". Add it to the environment as the secret
+   `RELEASE_PLEASE_TOKEN`. In `release-please.yml`, remove the two steps
+   before release-please and set its `token` to
+   `${{ secrets.RELEASE_PLEASE_TOKEN }}`. The cost: the token lives until it
+   expires, so you must renew it, and the release pull requests show your
+   name as the author.
 
 For each release:
 
@@ -750,9 +770,14 @@ For each release:
    the version in `.release-please-manifest.json` and `server.json`.
 3. When you want to release, merge that pull request. release-please then
    pushes the tag `vX.Y.Z` and creates a draft GitHub release with the
-   changelog.
+   changelog. Only maintainers can see a draft release.
 4. The tag starts `release.yml`. Approve the deployment to the `release`
-   environment when GitHub asks for it.
+   environment when GitHub asks for it. Nothing is published before this
+   approval.
+
+The release notes come from one place: release-please writes them into the
+draft from `CHANGELOG.md`, and GoReleaser keeps them (`release.mode:
+keep-existing` in `.goreleaser.yaml`) while it adds its files.
 
 How the version goes up while it is below 1.0.0: `fix:` and `perf:` raise the
 patch number (0.1.0 → 0.1.1). `feat:` and breaking changes (`feat!:` or a
