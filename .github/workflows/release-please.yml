@@ -47,18 +47,11 @@ jobs:
       # for a pull request or a tag that GITHUB_TOKEN creates. Then the
       # required checks of main (ci.yml) would never run on the release pull
       # request, and the tag would not start release.yml.
-      - name: the secrets of the GitHub App are set
-        env:
-          CLIENT_ID: ${{ secrets.RELEASE_PLEASE_APP_CLIENT_ID }}
-          PRIVATE_KEY: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
-        run: |
-          if [ -z "$CLIENT_ID" ] || [ -z "$PRIVATE_KEY" ]; then
-            echo "The secrets RELEASE_PLEASE_APP_CLIENT_ID and RELEASE_PLEASE_APP_PRIVATE_KEY of the environment release-please must be set. See the README, \"Making a release\"." >&2
-            exit 1
-          fi
-      # A token for this repository only, with only the two permissions that
-      # release-please needs. It expires after one hour and is revoked when
-      # the job ends.
+      #
+      # This is a token for this repository only, with only the two
+      # permissions that release-please needs. It expires after one hour and
+      # is revoked when the job ends. The action stops with a clear error when
+      # a secret is empty (see the README, "Making a release").
       - name: get a token of the GitHub App
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0

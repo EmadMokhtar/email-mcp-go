@@ -13,7 +13,8 @@
 #   go run github.com/goreleaser/goreleaser/v2@v2.19.0 check
 #   go run github.com/goreleaser/goreleaser/v2@v2.19.0 release --snapshot --clean --skip=sign,sbom,publish
 #
-# Keep the GoReleaser version the same as in release.yml. The keys below are
+# Keep the GoReleaser version the same as in release.yml and ci.yml (which
+# runs "goreleaser check" on every pull request). The keys below are
 # the ones that the GoReleaser v2.19 documentation does not mark as
 # deprecated: homebrew_casks (not brews) and dockers_v2 (not dockers and
 # docker_manifests).
@@ -177,10 +178,18 @@ release:
   # release. For a tag pushed by hand there is no draft, and GoReleaser
   # creates the release as before.
   use_existing_draft: true
+  # GoReleaser finds the draft by its name, so the name must be the tag. This
+  # is the default; it is written here because use_existing_draft depends on
+  # it. release-please-config.json sets include-v-in-release-name for the
+  # same reason.
+  name_template: "{{ .Tag }}"
   # Keep the release notes that release-please wrote from CHANGELOG.md. This
   # is the default; it is written here because use_existing_draft depends on
   # it. A release that GoReleaser creates itself gets the changelog below.
   mode: keep-existing
+  # A run that failed after some uploads leaves those files in the draft. On
+  # a re-run, replace them instead of failing because they already exist.
+  replace_existing_artifacts: true
 
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot"

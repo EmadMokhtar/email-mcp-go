@@ -4,6 +4,7 @@
     ".": {
       "release-type": "go",
       "include-component-in-tag": false,
+      "include-v-in-release-name": true,
       "bump-minor-pre-major": true,
       "draft": true,
       "force-tag-creation": true,

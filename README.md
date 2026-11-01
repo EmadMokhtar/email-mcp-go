@@ -755,8 +755,8 @@ Once, before the first release:
    A simpler alternative is a fine-grained personal access token, with access
    to this repository only and **Contents** and **Pull requests** set to "Read
    and write". Add it to the environment as the secret
-   `RELEASE_PLEASE_TOKEN`. In `release-please.yml`, remove the two steps
-   before release-please and set its `token` to
+   `RELEASE_PLEASE_TOKEN`. In `release-please.yml`, remove the step "get a
+   token of the GitHub App" and set the `token` of release-please to
    `${{ secrets.RELEASE_PLEASE_TOKEN }}`. The cost: the token lives until it
    expires, so you must renew it, and the release pull requests show your
    name as the author.
@@ -770,10 +770,13 @@ For each release:
    the version in `.release-please-manifest.json` and `server.json`.
 3. When you want to release, merge that pull request. release-please then
    pushes the tag `vX.Y.Z` and creates a draft GitHub release with the
-   changelog. Only maintainers can see a draft release.
+   changelog. Only maintainers can see a draft release, but the tag is public
+   from now on: `go install ...@vX.Y.Z` works, and the ruleset "release tags"
+   does not let anyone move or delete it. So merge the release pull request
+   only when `main` is ready to ship.
 4. The tag starts `release.yml`. Approve the deployment to the `release`
-   environment when GitHub asks for it. Nothing is published before this
-   approval.
+   environment when GitHub asks for it. The release files, the image and the
+   cask are published only after this approval.
 
 The release notes come from one place: release-please writes them into the
 draft from `CHANGELOG.md`, and GoReleaser keeps them (`release.mode:
@@ -781,9 +784,12 @@ keep-existing` in `.goreleaser.yaml`) while it adds its files.
 
 How the version goes up while it is below 1.0.0: `fix:` and `perf:` raise the
 patch number (0.1.0 → 0.1.1). `feat:` and breaking changes (`feat!:` or a
-`BREAKING CHANGE:` footer) raise the minor number (0.1.0 → 0.2.0). Other types,
-such as `docs:`, `ci:` and the `build(deps):` pull requests of Dependabot, make
-no release alone and do not show in the changelog. To choose the version
+`BREAKING CHANGE:` footer) raise the minor number (0.1.0 → 0.2.0). Dependabot
+updates of Go modules come as `fix(deps):`, so a security fix in a dependency
+also gets a patch release (see `.github/dependabot.yml`). Other types, such as
+`docs:`, `ci:` and the `build(deps):` pull requests of Dependabot for actions
+and Docker images, make no release alone and do not show in the changelog. To
+choose the version
 yourself, for example a pre-release, put the footer `Release-As: 0.2.0-rc.1` in
 the message of a commit on `main`.
 
@@ -794,6 +800,21 @@ release and publishes it, together with the Homebrew cask and the image. The
 workflow adds the attestations. A tag with a pre-release part, such as
 `v0.2.0-rc.1`, makes a GitHub pre-release, and does not update the tap or the
 `latest` image tag.
+
+When the release fails:
+
+- **Before GoReleaser publishes the release** (the checks, the build, the
+  image, or the upload into the draft): fix the cause, for example an expired
+  token, and re-run the failed jobs. GoReleaser finds the same draft again and
+  replaces the files that the failed run had uploaded.
+- **When the code must change** (a test or `govulncheck` fails): the tag
+  cannot be moved, so this version cannot be released. Merge the fix into
+  `main` as a `fix:` pull request. release-please then proposes the next
+  patch version. Delete the old draft release by hand.
+- **After GoReleaser published the release** (only the Homebrew cask comes
+  later): a re-run finds no draft and stops. First turn the release back into
+  a draft with `gh release edit vX.Y.Z --draft=true`, then re-run the failed
+  jobs.
 
 A tag pushed by hand still makes a release: GoReleaser then creates the
 release itself. Set `version` in `server.json` and in

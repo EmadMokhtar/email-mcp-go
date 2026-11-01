@@ -56,6 +56,16 @@ jobs:
           # Build golangci-lint with the Go of this job, the same way as a
           # local "go run", so its type checker always knows that Go.
           install-mode: goinstall
+      # Check .goreleaser.yaml on every pull request. Otherwise a bad key
+      # shows up only in release.yml, after the release tag exists, and a tag
+      # cannot be moved. It is a step of this job, so the required check
+      # "lint" covers it. Keep the version the same as in release.yml.
+      - name: goreleaser check
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.19.0
+          args: check
 
   vuln:
     name: govulncheck

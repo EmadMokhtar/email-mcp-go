@@ -73,7 +73,7 @@ jobs:
           want="${TAG#v}"
           got="$(jq -r .version server.json)"
           if [ "$got" != "$want" ]; then
-            echo "server.json has version $got, but the tag needs $want. Update server.json and tag again." >&2
+            echo "server.json has version $got, but the tag needs $want. A tag cannot be moved or deleted (ruleset \"release tags\"), so fix server.json on main and release the next version." >&2
             exit 1
           fi
 

@@ -28,6 +28,13 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # The Go modules are inside the released binary and image. The prefix
+    # "fix" makes release-please count an update, also a security update, as
+    # a fix: it then proposes a patch release that ships it. Without it,
+    # Dependabot writes "build(deps):", which release-please leaves out.
+    commit-message:
+      prefix: fix
+      include: scope
     groups:
       go-modules:
         patterns:
