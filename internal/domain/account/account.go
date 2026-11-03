@@ -295,6 +295,13 @@ type Account struct {
 	Limits    Limits
 	Status    Status
 	CreatedAt time.Time
+
+	// CredentialsVersion counts the changes of the password and the pins of
+	// the account (each reconnect adds one). The store keeps it: only a
+	// reconnect changes it. A refused login marks the account as needing a
+	// reconnect only while the stored value is still the one that the failing
+	// call read, so a call from before a reconnect cannot undo it.
+	CredentialsVersion int
 }
 
 // NewIMAPAccount returns a new IMAP account with the defaults of a new

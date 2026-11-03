@@ -2184,6 +2184,58 @@ func TestSendDueSendsAnotherAccountWhileOneIsStalled(t *testing.T) {
 	require.Equal(t, StatusSent, f.status(a.ID))
 }
 
+// The batch of due items is fair across accounts. Account A has more due items
+// than one batch holds (dueBatch), all due before the item of account B, and
+// the send of A is held. The item of B is still in the first batch, so it is
+// sent while A waits. Before the batch was fair, the items of A filled it, and
+// B waited for the end of that batch.
+func TestSendDueSendsAnotherAccountWhenOneFillsTheBatch(t *testing.T) {
+	f := newFixture(t)
+	acctB := f.addAccount("home@example.com")
+	gs := newGatedSender()
+	releaseA := gs.hold(f.acct)
+	t.Cleanup(releaseA)
+	ob := New(f.store, f.vault, gs.send, f.clock.Now)
+
+	const itemsOfA = dueBatch + 5
+	var itemsA []*Item
+	for i := range itemsOfA {
+		itemsA = append(itemsA, f.enqueueFor(f.acct, fmt.Sprintf("for A %d", i), 5*time.Second))
+		f.clock.Advance(time.Millisecond)
+	}
+	b := f.enqueueFor(acctB, "for B", 10*time.Second) // due after every item of A
+	f.clock.Advance(10 * time.Second)
+	done := drainAsync(context.Background(), ob)
+
+	require.Eventually(t, func() bool { return gs.inFlightFor(f.acct) == 1 }, 5*time.Second, 5*time.Millisecond,
+		"the first send of A starts and is held")
+	require.Eventually(t, func() bool { return f.status(b.ID) == StatusSent }, 5*time.Second, 5*time.Millisecond,
+		"the message of B is sent while the send of A is held")
+	require.Equal(t, StatusSending, f.status(itemsA[0].ID))
+	for _, item := range itemsA[1:] {
+		require.Equal(t, StatusQueued, f.status(item.ID), "A sends one at a time")
+	}
+
+	releaseA()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Drain did not return")
+	}
+	for _, item := range itemsA {
+		require.Equal(t, StatusSent, f.status(item.ID))
+	}
+	var want []string
+	for i := range itemsOfA {
+		want = append(want, fmt.Sprintf("for A %d", i))
+	}
+	gs.mu.Lock()
+	gotA := slices.Clone(gs.bodies[f.acct])
+	gs.mu.Unlock()
+	require.Equal(t, want, gotA, "the mail of A keeps its order")
+}
+
 // At most maxParallelSends sends run at once, and only the items that are
 // being sent are claimed: the others stay "queued" until their own send
 // starts. A context that ends stops new claims, and the sends that started

@@ -139,7 +139,8 @@ func TestMenuMarksTheCurrentPart(t *testing.T) {
 	for path, want := range map[string]string{
 		"/":        "/",
 		"/connect": "/",
-		"/accounts/" + string(a.ID) + "/settings": "/",
+		"/accounts/" + string(a.ID) + "/settings":  "/",
+		"/accounts/" + string(a.ID) + "/reconnect": "/",
 		"/approvals":         "/approvals",
 		"/approvals/" + send: "/approvals",
 		"/activity":          "/activity",

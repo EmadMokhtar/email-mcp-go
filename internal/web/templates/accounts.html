@@ -1,6 +1,8 @@
 {{/*
   The accounts page: the accounts of the tenant of the session, one card each.
-  It shows no secret, no server setting and no user name.
+  It shows no secret, no server setting and no user name. Every account has a
+  link to its reconnect page: a changed certificate does not mark the account,
+  and the user may know that the password changed before anything fails.
 */}}
 {{define "title"}}Accounts · email-mcp{{end}}
 {{define "content"}}
@@ -21,7 +23,10 @@
 <span class="tag is-medium {{if .Connected}}is-success{{else}}is-warning{{end}} is-light">{{.Status}}</span>
 </div>
 </div>
+<div class="buttons">
 <a class="button" href="/accounts/{{.ID}}/settings">Permissions and settings</a>
+<a class="button{{if not .Connected}} is-warning{{end}}" href="/accounts/{{.ID}}/reconnect">Reconnect</a>
+</div>
 </div>
 </li>
 {{end}}

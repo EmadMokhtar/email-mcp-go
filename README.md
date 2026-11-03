@@ -565,8 +565,10 @@ After the import:
 - After a long sleep of your computer (more than 15 minutes), a message that
   was sent with no undo window may show "delivery unknown" even though it was
   sent. It is never sent twice.
-- A changed password or a changed server certificate needs the account to be
-  removed and added again (see [Troubleshooting](#troubleshooting)).
+- A change of the server settings of an account (the hosts, the ports or the
+  security) needs the account to be removed and added again. A new password or
+  a new server certificate does not: reconnect the account (see
+  [Troubleshooting](#troubleshooting)).
 - In HTML mail, text coloured like its background (for example white text on
   a white background) is not detected as hidden, so the agent can read it.
 
@@ -585,7 +587,8 @@ exits with 1 when a check fails. It checks:
 2. that the database file and its write-ahead log files exist and have mode
    0600;
 3. that the master key of `EMAIL_MCP_KEK` exists and opens the stored keys.
-   `doctor` never makes a new key;
+   `doctor` never makes a new key. When a newer email-mcp wrote the database,
+   this line is `database schema: FAIL ...` instead;
 4. that every account can log in to its IMAP and SMTP servers.
 
 Common fixes:
@@ -595,24 +598,42 @@ Common fixes:
 - **A wrong mode.** The line prints the exact `chmod` command that fixes it.
 - **The master key does not exist.** `EMAIL_MCP_KEK` is not the same as when
   you connected the account. Use the same value as the AI app config.
+- **`database schema` fails.** A newer email-mcp used this data folder. Install
+  that version or a newer one.
 - **An account fails.** Run `email-mcp account test <id>` for the details.
   `email-mcp account list` shows the ids.
 - **The agent says that the mail server refused the stored login, or that the
   account needs to be reconnected.** When the mail server refuses the stored
   password (for example an app password was revoked), email-mcp marks the
-  account as "needs to be reconnected" and stops calling the server for it. Run
-  `email-mcp account test <id>`. If the test works (the server only refused
-  for a short time), the account is marked as connected again. If it fails,
-  see the next point.
-- **The password or the certificate changed.** There is no way yet to give an
-  account a new password or to trust a new certificate in place. Remove the
+  account as "needs to be reconnected" and stops calling the server for it. If
+  the password did not change, run `email-mcp account test <id>`: when the
+  test works (the server only refused for a short time), the account is marked
+  as connected again. Otherwise, see the next point.
+- **The password or the certificate changed.** Reconnect the account. In the
+  browser, every account has a **Reconnect** link on the accounts page and on
+  its settings page. Use it also when you know that the password changed
+  before anything fails. Without a browser,
+  run `email-mcp account reconnect <id>`, which reads the password from
+  standard input like `account add`. Type the new password, or leave it empty
+  to keep the stored one. The test must pass before anything is saved. The
+  account keeps its id, its settings, its permissions, its queued messages and
+  its activity history.
+
+  When a server shows a new certificate, the reconnect shows the host, the
+  port, the old and the new fingerprint. A pinned certificate (see
+  [Quick start](#1-connect-an-account-in-the-browser)) that changes can be an
+  attack, so check the new fingerprint with the provider or the bridge first.
+  To accept it, tick the box on the page, or type `yes` on a terminal. Without
+  a terminal, give both `--trust-fingerprint <the new fingerprint>` and
+  `--replace-pinned-certificate`. A certificate for another host name, or one
+  that has expired or is not valid yet, is never accepted. When an authority
+  that your computer trusts now signs the certificate of the server, the
+  reconnect can stop pinning it, after the same confirmation.
+- **The server settings changed** (a new host, port or security). Remove the
   account (`email-mcp account remove <id>`, or on its settings page) and add
   it again. This deletes the messages that the account still has queued and
   its activity history, and the account gets a new id, so update any setting
-  that names the old id. A pinned certificate (see
-  [Quick start](#1-connect-an-account-in-the-browser)) that changes is refused:
-  check with the provider or the bridge first, because a changed certificate
-  can also be an attack.
+  that names the old id.
 
 More help:
 
@@ -631,7 +652,7 @@ More help:
 | `email-mcp serve` | Serves MCP over stdio. This is what AI apps run. |
 | `email-mcp serve --http 127.0.0.1:8765` | Serves MCP over local HTTP at `/mcp`. |
 | `email-mcp setup` | Signs your browser in to the local web pages, and serves them until Ctrl-C. |
-| `email-mcp account add\|list\|remove\|test` | Manages accounts without a browser. `remove <id>` asks first; add `--yes` without a terminal. |
+| `email-mcp account add\|list\|reconnect\|remove\|test` | Manages accounts without a browser. `reconnect <id>` gives an account a new password or trusts its new certificate, and keeps the account. `remove <id>` asks first; add `--yes` without a terminal. |
 | `email-mcp token create\|list\|revoke` | Manages the tokens of local HTTP mode. |
 | `email-mcp import-env [path]` | Imports the account of an old `.env` file. |
 | `email-mcp key rotate --to file:<path>\|keychain` | Changes the master key. |

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io/fs"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -757,8 +758,10 @@ func TestPendingModeOfAnOldRowIsInBand(t *testing.T) {
 	before := fstest.MapFS{}
 	entries, err := fs.ReadDir(all, ".")
 	require.NoError(t, err)
+	// Every migration but 0009 runs first: the store can then write an account
+	// with the columns of now, and the pending row has no mode yet.
 	for _, e := range entries {
-		if e.Name() >= "0009" {
+		if strings.HasPrefix(e.Name(), "0009") {
 			continue
 		}
 		data, err := fs.ReadFile(all, e.Name())

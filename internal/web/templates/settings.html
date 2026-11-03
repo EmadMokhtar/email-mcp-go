@@ -90,6 +90,12 @@
 </form>
 
 <div class="box p-5 mt-6">
+<h2 class="title is-5">Reconnect the account</h2>
+<p class="mb-3">After you change the password of this account, or when its mail server gets a new certificate, reconnect it. It keeps its settings, its queued messages and its activity.</p>
+<a class="button" href="/accounts/{{.ID}}/reconnect">Reconnect the account</a>
+</div>
+
+<div class="box p-5">
 <h2 class="title is-5 has-text-danger">Remove the account</h2>
 <form method="post" action="/accounts/{{.ID}}/remove">
 {{template "csrf_field" $csrf}}

@@ -246,6 +246,12 @@ func TestHelpListsTheCommands(t *testing.T) {
 		require.Contains(t, r.stdout, "  "+name+" ")
 	}
 
+	r = runCLI(t, nil, "", "account", "help")
+	require.Equal(t, exitOK, r.code)
+	for _, name := range []string{"add", "list", "reconnect", "remove", "test"} {
+		require.Contains(t, r.stdout, "  "+name+" ")
+	}
+
 	for _, group := range []string{"account", "token", "key"} {
 		r = runCLI(t, nil, "", group)
 		require.Equal(t, exitUsage, r.code, group)
@@ -769,6 +775,251 @@ func TestAccountRemoveNeedsConfirmation(t *testing.T) {
 	require.Contains(t, r.stderr, "No account")
 }
 
+// ---------------------------------------------------------------- account reconnect
+
+// oldPin is a pin that no test server shows: the certificate that the user
+// trusted before the server changed it.
+var oldPin = strings.Repeat("0a", 32)
+
+// reconnectArgs are the arguments of "account reconnect" for the account.
+func reconnectArgs(dir string, a *account.Account, more ...string) []string {
+	return append([]string{"account", "reconnect", string(a.ID), "--data-dir", dir}, more...)
+}
+
+// A new password from standard input is tested and saved. The account keeps
+// its id and is connected again. The password is never printed.
+func TestAccountReconnectSavesANewPassword(t *testing.T) {
+	dir, keyPath := newCLIEnv(t)
+	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)
+	a := addAccount(t, dir, keyPath, alice, srv.server(), "pw-old-revoked-4b")
+	setStatus(t, dir, a, account.StatusNeedsReauth)
+
+	r := runCLI(t, nil, srv.imap.Pass+"\n", reconnectArgs(dir, a)...)
+
+	require.Equal(t, exitOK, r.code, r.stderr)
+	require.Contains(t, r.stdout, "Reconnected")
+	require.Contains(t, r.stdout, string(a.ID))
+	requireNoLeak(t, r, srv.imap.Pass, "pw-old-revoked-4b")
+	accounts, passwords := storedAccounts(t, dir, keyPath)
+	require.Len(t, accounts, 1)
+	require.Equal(t, a.ID, accounts[0].ID)
+	require.Equal(t, account.StatusOK, accounts[0].Status)
+	require.Equal(t, []string{srv.imap.Pass}, passwords)
+}
+
+// An empty password keeps the stored one: the reconnect only tests the
+// servers and marks the account as connected again.
+func TestAccountReconnectKeepsTheStoredPassword(t *testing.T) {
+	dir, keyPath := newCLIEnv(t)
+	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)
+	a := addAccount(t, dir, keyPath, alice, srv.server(), srv.imap.Pass)
+	setStatus(t, dir, a, account.StatusNeedsReauth)
+
+	r := runCLI(t, nil, "", reconnectArgs(dir, a)...)
+
+	require.Equal(t, exitOK, r.code, r.stderr)
+	require.Contains(t, r.stdout, "stored password")
+	accounts, passwords := storedAccounts(t, dir, keyPath)
+	require.Equal(t, account.StatusOK, accounts[0].Status)
+	require.Equal(t, []string{srv.imap.Pass}, passwords)
+}
+
+// A password that the server refuses changes nothing. The text is the fixed
+// text of a refused login, never the text of the server, and the password is
+// not printed.
+func TestAccountReconnectWithAWrongPassword(t *testing.T) {
+	dir, keyPath := newCLIEnv(t)
+	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)
+	a := addAccount(t, dir, keyPath, alice, srv.server(), srv.imap.Pass)
+	setStatus(t, dir, a, account.StatusNeedsReauth)
+
+	r := runCLI(t, nil, "pw-wrong-77aa\n", reconnectArgs(dir, a)...)
+
+	require.Equal(t, exitError, r.code)
+	require.Contains(t, r.stderr, connect.TextAuthFailed)
+	require.Contains(t, r.stderr, "Nothing was saved.")
+	require.NotContains(t, strings.ToUpper(r.stdout+r.stderr), "AUTHENTICATIONFAILED")
+	requireNoLeak(t, r, "pw-wrong-77aa", srv.imap.Pass)
+	accounts, passwords := storedAccounts(t, dir, keyPath)
+	require.Equal(t, account.StatusNeedsReauth, accounts[0].Status)
+	require.Equal(t, []string{srv.imap.Pass}, passwords)
+}
+
+// Without a terminal, a changed pinned certificate is replaced only with
+// --trust-fingerprint of the fingerprint that the server shows in this run AND
+// --replace-pinned-certificate. The old and the new fingerprint and the
+// warning are shown. Only the server that showed it gets the new pin.
+func TestAccountReconnectReplacesAPinWithoutATerminal(t *testing.T) {
+	dir, keyPath := newCLIEnv(t)
+	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)
+	server := srv.server()
+	server.PinnedIMAPCert = oldPin
+	a := addAccount(t, dir, keyPath, alice, server, srv.imap.Pass)
+	newPin := srv.imap.CertSHA256
+
+	for name, flags := range map[string][]string{
+		"no flag":                     nil,
+		"only the fingerprint":        {"--trust-fingerprint", newPin},
+		"only the replace flag":       {"--replace-pinned-certificate"},
+		"the wrong fingerprint":       {"--replace-pinned-certificate", "--trust-fingerprint", strings.Repeat("ef", 32)},
+		"the fingerprint of the SMTP": {"--replace-pinned-certificate", "--trust-fingerprint", srv.smtp.CertSHA256},
+	} {
+		r := runCLI(t, nil, srv.imap.Pass+"\n", reconnectArgs(dir, a, flags...)...)
+		require.Equal(t, exitError, r.code, name)
+		require.Contains(t, r.stdout, connect.GroupFingerprint(oldPin), name)
+		require.Contains(t, r.stdout, connect.GroupFingerprint(newPin), name)
+		require.Contains(t, r.stdout, connect.TextCertChangedWarning, name)
+		require.Contains(t, r.stdout, fmt.Sprintf("127.0.0.1:%d", srv.imap.Port), name)
+		require.Contains(t, r.stderr, "Nothing was saved.", name)
+		requireNoLeak(t, r, srv.imap.Pass)
+		accounts, _ := storedAccounts(t, dir, keyPath)
+		require.Equal(t, oldPin, accounts[0].Mail.PinnedIMAPCert, name)
+	}
+	r := runCLI(t, nil, "", reconnectArgs(dir, a)...)
+	require.Contains(t, r.stderr, "--trust-fingerprint "+newPin+" --replace-pinned-certificate", "the hint names both flags")
+
+	r = runCLI(t, nil, srv.imap.Pass+"\n", reconnectArgs(dir, a,
+		"--trust-fingerprint", connect.GroupFingerprint(newPin), "--replace-pinned-certificate")...)
+
+	require.Equal(t, exitOK, r.code, r.stderr)
+	requireNoLeak(t, r, srv.imap.Pass)
+	accounts, passwords := storedAccounts(t, dir, keyPath)
+	require.Equal(t, a.ID, accounts[0].ID)
+	require.Equal(t, newPin, accounts[0].Mail.PinnedIMAPCert)
+	require.Equal(t, srv.smtp.CertSHA256, accounts[0].Mail.PinnedSMTPCert, "the SMTP pin did not change")
+	require.Equal(t, []string{srv.imap.Pass}, passwords)
+}
+
+// A server that had no pin worked with a certificate that an authority signed.
+// When it shows one that no authority signed, the reconnect says that the
+// certificate changed and shows the warning, before the first-pin rules of
+// "account add" apply.
+func TestAccountReconnectFirstPinShowsTheChangeWarning(t *testing.T) {
+	dir, keyPath := newCLIEnv(t)
+	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)
+	server := srv.server()
+	server.PinnedIMAPCert = ""
+	a := addAccount(t, dir, keyPath, alice, server, srv.imap.Pass)
+
+	r := runCLI(t, nil, srv.imap.Pass+"\n", reconnectArgs(dir, a)...)
+	require.Equal(t, exitError, r.code)
+	require.Contains(t, r.stdout, connect.TextCertNoLongerSigned)
+	require.Contains(t, r.stdout, connect.TextCertChangedWarning)
+	require.NotContains(t, r.stdout, connect.TextCertUnknown, "not the text of a new local bridge")
+	accounts, _ := storedAccounts(t, dir, keyPath)
+	require.Empty(t, accounts[0].Mail.PinnedIMAPCert)
+
+	r = runCLI(t, nil, srv.imap.Pass+"\n", reconnectArgs(dir, a, "--trust-fingerprint", srv.imap.CertSHA256)...)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	accounts, _ = storedAccounts(t, dir, keyPath)
+	require.Equal(t, srv.imap.CertSHA256, accounts[0].Mail.PinnedIMAPCert)
+}
+
+// On a terminal, replacing a pin needs the word "yes" typed, also for a server
+// on this computer: "y" is not enough.
+func TestAccountReconnectOnATerminalNeedsATypedYes(t *testing.T) {
+	dir, keyPath := newCLIEnv(t)
+	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)
+	server := srv.server()
+	server.PinnedIMAPCert = oldPin
+	a := addAccount(t, dir, keyPath, alice, server, srv.imap.Pass)
+
+	r := runCLI(t, &fakeSystem{terminal: true, passwords: []string{""}}, "y\n", reconnectArgs(dir, a)...)
+	require.Equal(t, exitError, r.code)
+	require.Contains(t, r.stdout, connect.TextCertChangedWarning)
+	require.Contains(t, r.stdout, "Type yes to continue")
+	accounts, _ := storedAccounts(t, dir, keyPath)
+	require.Equal(t, oldPin, accounts[0].Mail.PinnedIMAPCert)
+
+	// A flag does not answer for the user on a terminal.
+	r = runCLI(t, &fakeSystem{terminal: true, passwords: []string{""}}, "\n",
+		reconnectArgs(dir, a, "--trust-fingerprint", srv.imap.CertSHA256, "--replace-pinned-certificate")...)
+	require.Equal(t, exitError, r.code)
+
+	r = runCLI(t, &fakeSystem{terminal: true, passwords: []string{""}}, "yes\n", reconnectArgs(dir, a)...)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	accounts, _ = storedAccounts(t, dir, keyPath)
+	require.Equal(t, srv.imap.CertSHA256, accounts[0].Mail.PinnedIMAPCert)
+}
+
+// A certificate for another host name is never accepted, also with both flags.
+func TestAccountReconnectRefusesACertificateForAnotherHost(t *testing.T) {
+	dir, keyPath := newCLIEnv(t)
+	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)
+	server := srv.server()
+	server.IMAPHost = "localhost" // the certificate is for 127.0.0.1 only
+	server.PinnedIMAPCert = oldPin
+	a := addAccount(t, dir, keyPath, alice, server, srv.imap.Pass)
+
+	r := runCLI(t, nil, "", reconnectArgs(dir, a, "--trust-fingerprint", srv.imap.CertSHA256, "--replace-pinned-certificate")...)
+
+	require.Equal(t, exitError, r.code)
+	require.Contains(t, r.stdout, connect.TextCertChangedWrongHost)
+	require.Contains(t, r.stderr, "cannot be trusted")
+	accounts, _ := storedAccounts(t, dir, keyPath)
+	require.Equal(t, oldPin, accounts[0].Mail.PinnedIMAPCert)
+}
+
+// An id that does not exist asks for no password.
+func TestAccountReconnectUnknownID(t *testing.T) {
+	dir, keyPath := newCLIEnv(t)
+	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)
+	addAccount(t, dir, keyPath, alice, srv.server(), srv.imap.Pass)
+	f := &fakeSystem{terminal: true}
+
+	r := runCLI(t, f, "", "account", "reconnect", "missing", "--data-dir", dir)
+
+	require.Equal(t, exitError, r.code)
+	require.Contains(t, r.stderr, "No account has this id")
+	require.NotContains(t, r.stdout, "password")
+	r = runCLI(t, nil, "", "account", "reconnect", "--data-dir", dir)
+	require.Equal(t, exitUsage, r.code)
+}
+
+// The question to remove a pin says what the removal does: from then on, any
+// certificate that an authority signs for the host is accepted. It differs
+// from the question to replace a pin, and the decision says which one the user
+// agreed to.
+func TestAccountReconnectAsksAboutRemovingAPin(t *testing.T) {
+	fingerprint := strings.Repeat("cd", 32)
+	certErr := &service.ReconnectCertificateError{IMAP: &service.ReconnectCertificate{
+		Host: "imap.example.org", Port: 993, OldPin: oldPin, Change: service.PinChangeRemove,
+		Cert: &imapsmtp.CertificateUnknownError{Protocol: "imap", Host: "imap.example.org", FingerprintSHA256: fingerprint, Pinned: true},
+	}}
+	f := &fakeSystem{terminal: true}
+	var out, errOut syncBuffer
+	c := &cli{stdin: strings.NewReader("yes\n"), stdout: &out, stderr: &errOut, sys: f.system()}
+	var r service.Reconnect
+
+	require.True(t, c.decideReconnect("account reconnect", &r, certErr, reconnectOptions{}))
+
+	require.Contains(t, out.String(), connect.TextRemovePin)
+	require.Contains(t, out.String(), connect.TextCertChangedWarning)
+	require.Contains(t, out.String(), "Stop pinning")
+	require.NotContains(t, out.String(), "instead of the old one")
+	require.Equal(t, service.Reconnect{PinnedIMAPCert: fingerprint, RemoveIMAPPin: true}, r)
+
+	// A replace asks the other question, and the decision is not a removal.
+	certErr.IMAP.Change = service.PinChangeReplace
+	certErr.IMAP.Cert.Reason = x509.UnknownAuthorityError{}
+	out = syncBuffer{}
+	c = &cli{stdin: strings.NewReader("yes\n"), stdout: &out, stderr: &errOut, sys: f.system()}
+	r = service.Reconnect{}
+	require.True(t, c.decideReconnect("account reconnect", &r, certErr, reconnectOptions{}))
+	require.Contains(t, out.String(), "instead of the old one")
+	require.NotContains(t, out.String(), connect.TextRemovePin)
+	require.Equal(t, service.Reconnect{PinnedIMAPCert: fingerprint}, r)
+}
+
+// setStatus sets the status of a stored account, as a refused login does.
+func setStatus(t *testing.T, dir string, a *account.Account, status account.Status) {
+	t.Helper()
+	st, err := store.Open(context.Background(), dir)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, st.Close()) }()
+	require.NoError(t, st.SetAccountStatus(context.Background(), a.TenantID, a.ID, status))
+}
+
 // ---------------------------------------------------------------- token
 
 // The token is printed once, on standard output, and nowhere else: not on
@@ -1159,6 +1410,27 @@ func TestDoctorNeverMakesAKey(t *testing.T) {
 	require.Contains(t, doctorLine(t, r.stdout, "master key"), "FAIL "+msgNoMasterKey)
 	_, err = os.Stat(missing)
 	require.ErrorIs(t, err, os.ErrNotExist, "no key file was made")
+}
+
+// A database that a newer email-mcp wrote has a migration version that this
+// binary does not know. doctor reports it under "database schema" with the
+// fixed text of store.ErrNewerSchema, not under "master key": the key is not
+// the problem (follow-up N-2).
+func TestDoctorReportsANewerSchema(t *testing.T) {
+	dir, keyPath := newCLIEnv(t)
+	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)
+	addAccount(t, dir, keyPath, alice, srv.server(), srv.imap.Pass)
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dir, "email-mcp.db"))+"?_pragma=busy_timeout(5000)")
+	require.NoError(t, err)
+	_, err = db.ExecContext(context.Background(), "INSERT INTO schema_migrations (version) VALUES (9999)")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	r := runCLI(t, nil, "", "doctor", "--data-dir", dir)
+
+	require.Equal(t, exitError, r.code)
+	require.Equal(t, "database schema: FAIL "+store.ErrNewerSchema.Error(), doctorLine(t, r.stdout, "database schema"))
+	require.NotContains(t, r.stdout, "master key")
 }
 
 // ---------------------------------------------------------------- key rotate
