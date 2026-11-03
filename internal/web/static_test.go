@@ -152,3 +152,44 @@ func TestMenuMarksTheCurrentPart(t *testing.T) {
 		require.Equal(t, want, m[0][1], path)
 	}
 }
+
+// Every page with the menu belongs to a section, so the menu marks one of its
+// links. Only the message page and the page without a session have none.
+func TestEveryMenuPageHasASection(t *testing.T) {
+	static, err := loadStatic()
+	require.NoError(t, err)
+	_, pages, err := parsePages(static)
+	require.NoError(t, err)
+	for name := range pages {
+		if name == pageMessage || name == pageNoSession {
+			continue
+		}
+		require.Contains(t, sectionOf, name, "page %s", name)
+	}
+	for name := range sectionOf {
+		require.Contains(t, pages, name, "sectionOf names a page that does not exist")
+	}
+}
+
+// The MIT license of Bulma is served as text, and every page with the menu
+// links to it. The page for a browser without a session does not.
+func TestBulmaLicenseIsServed(t *testing.T) {
+	p := newPageFixture(t)
+	want, err := staticFS.ReadFile("static/LICENSE-bulma.txt")
+	require.NoError(t, err)
+	require.Contains(t, string(want), "The MIT License")
+	path, err := p.s.static.path("LICENSE-bulma.txt")
+	require.NoError(t, err)
+
+	resp, body := do(t, newBrowser(t), newRequest(t, http.MethodGet, p.base+path, nil))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "text/plain; charset=utf-8", resp.Header.Get("Content-Type"))
+	require.Equal(t, staticCacheControl, resp.Header.Get("Cache-Control"))
+	require.Equal(t, string(want), body)
+
+	link := `<a href="` + path + `">MIT license</a>`
+	_, signedIn := p.get("/")
+	require.Contains(t, signedIn, link)
+	_, noSession := do(t, newBrowser(t), newRequest(t, http.MethodGet, p.base+"/", nil))
+	require.NotContains(t, noSession, link)
+}

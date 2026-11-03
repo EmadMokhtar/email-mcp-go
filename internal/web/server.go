@@ -15,7 +15,8 @@
 // process works in every later process.
 //
 // Every request goes through these checks, in this order (see guard.go):
-//  1. The security headers are set on every answer.
+//  1. The security headers are set on every answer. Each answer is "no-store",
+//     except a static file, which a browser may keep (see static.go).
 //  2. Host: the Host header must be "127.0.0.1:<port>" or "localhost:<port>",
 //     where <port> is the port of the connection. This stops DNS rebinding.
 //     Refused with 403.
@@ -309,23 +310,8 @@ type view struct {
 	Section string
 }
 
-// menuLink is one link of the menu in layout.html. Current marks the link of
-// the section of the page.
-type menuLink struct {
-	Section string
-	Href    string
-	Label   string
-}
-
-// Current reports whether the link leads to the section of the page.
-func (m menuLink) Current() bool { return m.Section == m.Href }
-
-// newMenuLink is the template function "menuLink".
-func newMenuLink(section, href, label string) menuLink {
-	return menuLink{Section: section, Href: href, Label: label}
-}
-
-// sectionOf is the Section of each page.
+// sectionOf is the Section of each page. Every page with the menu is here:
+// TestEveryMenuPageHasASection checks it.
 var sectionOf = map[string]string{
 	pageAccounts:    "/",
 	pageConnect:     "/",
@@ -386,10 +372,10 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, code string, err e
 
 // parsePages parses layout.html, and then each other template file as a clone
 // of the layout with that file added. The key of a page is its file name
-// without ".html". The templates get two functions: "static" returns the
-// address of a static file, and "menuLink" makes a link of the menu.
+// without ".html". The templates get the function "static", which returns the
+// address of a static file.
 func parsePages(static staticFiles) (*template.Template, map[string]*template.Template, error) {
-	funcs := template.FuncMap{"static": static.path, "menuLink": newMenuLink}
+	funcs := template.FuncMap{"static": static.path}
 	layout, err := template.New("layout.html").Funcs(funcs).ParseFS(templateFS, "templates/layout.html")
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse layout: %w", err)

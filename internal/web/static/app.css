@@ -59,7 +59,9 @@
   overflow-wrap: anywhere;
 }
 
-/* The text of a message keeps its own lines, and a long line wraps. */
+/* The text of a message keeps its own lines, and a long line wraps, even
+   inside a long word, so the text never makes the page wider. */
 .is-pre-wrap {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

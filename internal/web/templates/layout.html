@@ -30,10 +30,10 @@
 <a class="navbar-item has-text-weight-bold" href="/">email-mcp</a>
 </div>
 <div class="navbar-tabs">
-{{template "menu_link" (menuLink .Section "/" "Accounts")}}
-{{template "menu_link" (menuLink .Section "/approvals" "Approvals")}}
-{{template "menu_link" (menuLink .Section "/activity" "Activity")}}
-{{template "menu_link" (menuLink .Section "/connections" "Connections")}}
+<a class="navbar-item is-tab{{if eq .Section "/"}} is-active{{end}}" href="/"{{if eq .Section "/"}} aria-current="page"{{end}}>Accounts</a>
+<a class="navbar-item is-tab{{if eq .Section "/approvals"}} is-active{{end}}" href="/approvals"{{if eq .Section "/approvals"}} aria-current="page"{{end}}>Approvals</a>
+<a class="navbar-item is-tab{{if eq .Section "/activity"}} is-active{{end}}" href="/activity"{{if eq .Section "/activity"}} aria-current="page"{{end}}>Activity</a>
+<a class="navbar-item is-tab{{if eq .Section "/connections"}} is-active{{end}}" href="/connections"{{if eq .Section "/connections"}} aria-current="page"{{end}}>Connections</a>
 </div>
 </div>
 </nav>
@@ -42,10 +42,13 @@
 {{block "content" .}}{{end}}
 </div>
 </main>
-</body>
+{{if .CSRFToken}}<footer class="footer py-5">
+<div class="container is-max-widescreen has-text-centered is-size-7">
+<p>Styled with Bulma, under the <a href="{{static "LICENSE-bulma.txt"}}">MIT license</a>.</p>
+</div>
+</footer>
+{{end}}</body>
 </html>
 {{end}}
-
-{{define "menu_link"}}<a class="navbar-item is-tab{{if .Current}} is-active{{end}}" href="{{.Href}}"{{if .Current}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}
 
 {{define "csrf_field"}}<input type="hidden" name="csrf_token" value="{{.}}">{{end}}

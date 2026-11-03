@@ -1,14 +1,15 @@
 package web
 
-// This file serves the stylesheets of the pages. They are embedded in the
-// binary, so a page loads nothing from another site: the
-// Content-Security-Policy allows only this origin, and no inline style.
+// This file serves the static files of the pages: the stylesheets and the
+// license of Bulma. They are embedded in the binary, so a page loads nothing
+// from another site: the Content-Security-Policy allows only this origin, and
+// no inline style.
 //
 // static/bulma.min.css is Bulma 1.0.4 (https://bulma.io), copied unchanged
-// from css/bulma.min.css of the npm package bulma@1.0.4. Its MIT license is in
-// static/LICENSE-bulma.txt, which is embedded but not served: the license must
-// go with every copy of the file, and the binary is one.
-// TestBulmaIsTheReleasedFile checks its SHA-256.
+// from css/bulma.min.css of the npm package bulma@1.0.4.
+// TestBulmaIsTheReleasedFile checks its SHA-256. Its MIT license is
+// static/LICENSE-bulma.txt: the license must go with every copy of the file,
+// so it is served too, and every page with the menu links to it.
 // static/app.css has the few rules of this project that Bulma has no class
 // for.
 
@@ -23,7 +24,7 @@ import (
 	"strconv"
 )
 
-//go:embed static/*.css static/LICENSE-bulma.txt
+//go:embed static/*.css static/*.txt
 var staticFS embed.FS
 
 // staticPrefix starts the address of every static file.
@@ -38,30 +39,48 @@ const staticCacheControl = "public, max-age=31536000, immutable"
 // codeNoStatic is the log code of an address under /static/ that is not a file.
 const codeNoStatic = "no_static"
 
-// staticFiles are the stylesheets, each at the address
-// "/static/<first 16 hex digits of its SHA-256>/<name>".
-type staticFiles struct {
-	paths  map[string]string // name → address
-	bodies map[string][]byte // address → content
+// staticTypes is the Content-Type of each kind of static file. The list is
+// fixed here, not taken from the system, so every computer serves the same
+// type: the browser refuses a stylesheet of another type (nosniff).
+var staticTypes = map[string]string{
+	".css": "text/css; charset=utf-8",
+	".txt": "text/plain; charset=utf-8",
 }
 
-// loadStatic reads the embedded stylesheets and gives each its address.
+// staticFile is one static file: its content and its Content-Type.
+type staticFile struct {
+	body        []byte
+	contentType string
+}
+
+// staticFiles are the static files, each at the address
+// "/static/<first 16 hex digits of its SHA-256>/<name>".
+type staticFiles struct {
+	paths map[string]string     // name → address
+	files map[string]staticFile // address → file
+}
+
+// loadStatic reads the embedded files and gives each its address.
 func loadStatic() (staticFiles, error) {
-	files, err := fs.Glob(staticFS, "static/*.css")
+	names, err := fs.Glob(staticFS, "static/*")
 	if err != nil {
 		return staticFiles{}, fmt.Errorf("list static files: %w", err)
 	}
-	sf := staticFiles{paths: make(map[string]string), bodies: make(map[string][]byte)}
-	for _, file := range files {
+	sf := staticFiles{paths: make(map[string]string), files: make(map[string]staticFile)}
+	for _, file := range names {
+		name := path.Base(file)
+		contentType, ok := staticTypes[path.Ext(name)]
+		if !ok {
+			return staticFiles{}, fmt.Errorf("static file %s: no Content-Type for its extension", file)
+		}
 		body, err := staticFS.ReadFile(file)
 		if err != nil {
 			return staticFiles{}, fmt.Errorf("read %s: %w", file, err)
 		}
 		sum := sha256.Sum256(body)
-		name := path.Base(file)
 		addr := staticPrefix + hex.EncodeToString(sum[:8]) + "/" + name
 		sf.paths[name] = addr
-		sf.bodies[addr] = body
+		sf.files[addr] = staticFile{body: body, contentType: contentType}
 	}
 	return sf, nil
 }
@@ -85,14 +104,14 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		s.refuse(w, http.StatusMethodNotAllowed, codeBadMethod)
 		return
 	}
-	body, ok := s.static.bodies[r.URL.Path]
+	file, ok := s.static.files[r.URL.Path]
 	if !ok {
 		s.refuse(w, http.StatusNotFound, codeNoStatic)
 		return
 	}
 	h := w.Header()
-	h.Set("Content-Type", "text/css; charset=utf-8")
-	h.Set("Content-Length", strconv.Itoa(len(body)))
+	h.Set("Content-Type", file.contentType)
+	h.Set("Content-Length", strconv.Itoa(len(file.body)))
 	h.Set("Cache-Control", staticCacheControl)
-	_, _ = w.Write(body)
+	_, _ = w.Write(file.body)
 }

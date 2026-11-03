@@ -26,18 +26,18 @@
 <dl class="mb-5">
 <div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">From</dt><dd class="column is-break-anywhere">{{.From}}</dd></div>
 <div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">To (every recipient, Bcc included)</dt><dd class="column is-break-anywhere"><ul>{{range .Recipients}}<li>{{.}}</li>{{end}}</ul></dd></div>
-<div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">Subject</dt><dd class="column">{{.Subject}}</dd></div>
-<div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">Attachments</dt><dd class="column">{{if .Attachments}}<ul>{{range .Attachments}}<li>{{.}}</li>{{end}}</ul>{{else}}None{{end}}</dd></div>
+<div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">Subject</dt><dd class="column is-break-anywhere">{{.Subject}}</dd></div>
+<div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">Attachments</dt><dd class="column is-break-anywhere">{{if .Attachments}}<ul>{{range .Attachments}}<li>{{.}}</li>{{end}}</ul>{{else}}None{{end}}</dd></div>
 </dl>
 <h3 class="title is-5">Text</h3>
-{{if .BodyNote}}<p class="mb-3">{{.BodyNote}}</p>{{end}}
+{{if .BodyNote}}<p class="mb-3 is-break-anywhere">{{.BodyNote}}</p>{{end}}
 <pre class="is-pre-wrap mb-5">{{.Body}}</pre>
 {{end}}
 {{else}}
 <h2 class="title is-4 is-break-anywhere">Move {{.Count}} {{if eq .Count 1}}message{{else}}messages{{end}} of {{.Account}} to Trash</h2>
 {{if .Messages}}
 <h3 class="title is-5">Messages (date, sender, subject)</h3>
-<div class="content">
+<div class="content is-break-anywhere">
 <ul>{{range .Messages}}<li>{{.}}</li>{{end}}</ul>
 {{if .MoreMessages}}<p>{{.MoreMessages}}</p>{{end}}
 </div>
