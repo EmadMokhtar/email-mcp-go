@@ -890,6 +890,31 @@ func TestAccountReconnectReplacesAPinWithoutATerminal(t *testing.T) {
 	require.Equal(t, []string{srv.imap.Pass}, passwords)
 }
 
+// A server that had no pin worked with a certificate that an authority signed.
+// When it shows one that no authority signed, the reconnect says that the
+// certificate changed and shows the warning, before the first-pin rules of
+// "account add" apply.
+func TestAccountReconnectFirstPinShowsTheChangeWarning(t *testing.T) {
+	dir, keyPath := newCLIEnv(t)
+	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)
+	server := srv.server()
+	server.PinnedIMAPCert = ""
+	a := addAccount(t, dir, keyPath, alice, server, srv.imap.Pass)
+
+	r := runCLI(t, nil, srv.imap.Pass+"\n", reconnectArgs(dir, a)...)
+	require.Equal(t, exitError, r.code)
+	require.Contains(t, r.stdout, connect.TextCertNoLongerSigned)
+	require.Contains(t, r.stdout, connect.TextCertChangedWarning)
+	require.NotContains(t, r.stdout, connect.TextCertUnknown, "not the text of a new local bridge")
+	accounts, _ := storedAccounts(t, dir, keyPath)
+	require.Empty(t, accounts[0].Mail.PinnedIMAPCert)
+
+	r = runCLI(t, nil, srv.imap.Pass+"\n", reconnectArgs(dir, a, "--trust-fingerprint", srv.imap.CertSHA256)...)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	accounts, _ = storedAccounts(t, dir, keyPath)
+	require.Equal(t, srv.imap.CertSHA256, accounts[0].Mail.PinnedIMAPCert)
+}
+
 // On a terminal, replacing a pin needs the word "yes" typed, also for a server
 // on this computer: "y" is not enough.
 func TestAccountReconnectOnATerminalNeedsATypedYes(t *testing.T) {

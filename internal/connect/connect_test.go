@@ -165,7 +165,7 @@ func TestCheckReconnect(t *testing.T) {
 		},
 		"first pin": {
 			cert:    imapsmtp.CertificateUnknownError{FingerprintSHA256: fp, Reason: x509.UnknownAuthorityError{}},
-			problem: TextCertUnknown, change: service.PinChangeAdd,
+			problem: TextCertNoLongerSigned, change: service.PinChangeAdd,
 		},
 		"first pin, wrong host": {
 			cert:    imapsmtp.CertificateUnknownError{FingerprintSHA256: fp, Reason: x509.HostnameError{}},

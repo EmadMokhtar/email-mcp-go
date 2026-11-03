@@ -268,6 +268,31 @@ func TestUpdateAccountKeepsThePinsStoredNow(t *testing.T) {
 	}
 }
 
+// UpdateAccount never writes the mail server settings away: an account without
+// them (a.Mail is nil) keeps the stored hosts and pins, and the other fields
+// are saved.
+func TestUpdateAccountWithoutMailKeepsTheStoredMail(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	a := testAccount(tenant, "acct1", testNow)
+	a.Mail.PinnedIMAPCert = strings.Repeat("aa", 32)
+	require.NoError(t, s.CreateAccountWithSecret(ctx, a, "password", 1, []byte("sealed")))
+	stored, err := s.GetAccount(ctx, tenant, "acct1")
+	require.NoError(t, err)
+
+	changed := *stored
+	changed.Mail = nil
+	changed.Limits.SendsPerHour = 7
+	require.NoError(t, s.UpdateAccount(ctx, &changed))
+
+	got, err := s.GetAccount(ctx, tenant, "acct1")
+	require.NoError(t, err)
+	require.Equal(t, 7, got.Limits.SendsPerHour, "the other fields are saved")
+	require.Equal(t, stored.Mail, got.Mail, "the hosts and the pins stay")
+}
+
 // MarkNeedsReauth sets needs_reauth only while the credentials version is the
 // one that the caller read: a refused login of a call that started before a
 // reconnect does not undo the reconnect. The check and the write are one

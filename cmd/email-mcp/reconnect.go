@@ -11,6 +11,8 @@ package main
 //     connect.go): a "y" on a terminal, plus a typed "yes" for a server that is
 //     not on this computer; without a terminal, --trust-fingerprint, plus
 //     --accept-remote-certificate for a server that is not on this computer.
+//     It worked before with a certificate that an authority signed, so the
+//     user first sees connect.TextCertChangedWarning.
 //   - A server whose pinned certificate changed may get a new pin, or lose its
 //     pin, only when connect.CheckReconnect allows it. The user sees the host
 //     and port, the old and the new fingerprint, and the warning
@@ -179,6 +181,9 @@ func (c *cli) decideReconnect(cmd string, r *service.Reconnect, certErr *service
 		if s.check.ReplacesPin() {
 			accepted = c.decideReplacePin(cmd, s, opts)
 		} else {
+			// A first pin also follows a changed certificate: the server used
+			// one that an authority signed. The warning comes first.
+			c.printf("%s\n", connect.TextCertChangedWarning)
 			accepted = c.decideTrust(cmd, s.side, s.check.Fingerprint, opts.connectOptions)
 		}
 		if !accepted {

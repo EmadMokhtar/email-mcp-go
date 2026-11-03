@@ -102,6 +102,8 @@ func TestReconnectPageShowsTheCommandLineHint(t *testing.T) {
 	require.Contains(t, text, "Needs to be reconnected")
 	require.Len(t, inputNamed(t, body, "password"), 1)
 	requireSafePasswordFields(t, body)
+	require.Equal(t, "new-password", inputNamed(t, body, "password")[0].attrs["autocomplete"],
+		"a password manager must not fill in the old password")
 	require.Len(t, inputNamed(t, body, csrfField), 1)
 	require.Contains(t, body, `action="`+reconnectPath(a)+`"`)
 	require.NotContains(t, body, marker)
@@ -336,7 +338,10 @@ func labelOfBox(t *testing.T, page, name string) string {
 
 // A server that had no pin and is not on this computer follows the first-pin
 // rule of the connect flow: trusting its certificate also needs the "I
-// understand the risk" box, which is checked before any test.
+// understand the risk" box, which is checked before any test. In a reconnect
+// the certificate changed: the account worked before with one that an
+// authority signed. So the page says that, and shows the warning of a changed
+// certificate too.
 func TestReconnectFirstPinOfARemoteServerNeedsTheRiskBox(t *testing.T) {
 	c := newConnectFixture(t)
 	fingerprint := strings.Repeat("cd", 32)
@@ -352,7 +357,9 @@ func TestReconnectFirstPinOfARemoteServerNeedsTheRiskBox(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, msgTrustLabel, labelOfBox(t, body, "trust_imap"))
 	require.Len(t, inputNamed(t, body, "understand"), 1)
-	require.NotContains(t, visibleText(t, body), textChangedWarning, "a first pin is not a changed pin")
+	require.Contains(t, visibleText(t, body), textChangedWarning, "the certificate changed from a signed one")
+	require.Contains(t, visibleText(t, body), connect.TextCertNoLongerSigned)
+	require.NotContains(t, visibleText(t, body), connect.TextCertUnknown, "not the text of a new local bridge")
 	offer := offerOf(t, body, "imap")
 	probes := c.probe.count()
 
@@ -420,4 +427,36 @@ func TestReconnectReplaceStepShowsTheReplaceLabel(t *testing.T) {
 
 	require.Equal(t, msgReplaceLabel, labelOfBox(t, body, "trust_imap"))
 	require.NotContains(t, body, connect.TextRemovePin)
+}
+
+// When a server shows another certificate than the one that the user decided
+// about (here: none to decide about any more), the save gives the "start
+// again" error. The page then drops the old choice and its offer, so the next
+// try runs a fresh test and does not send the same stale decision again.
+func TestReconnectStaleDecisionDropsTheOldChoice(t *testing.T) {
+	c := newConnectFixture(t)
+	fingerprint := strings.Repeat("cd", 32)
+	c.probe.set(unknownIMAPCert(fingerprint))
+	server := account.MailServer{
+		IMAPHost: "imap.example.org", IMAPPort: 993, IMAPSecurity: account.SecurityTLS,
+		SMTPHost: "smtp.example.org", SMTPPort: 465, SMTPSecurity: account.SecurityTLS,
+		Username: "alice@example.org",
+	}
+	a := c.storedAccount("alice@example.org", server, marker, account.StatusNeedsReauth)
+	_, body := c.post(reconnectPath(a), url.Values{})
+	offer := offerOf(t, body, "imap")
+
+	c.probe.set(probeOK)
+	resp, body := c.post(reconnectPath(a), url.Values{"trust_imap": {"1"}, "imap_offer": {offer}, "understand": {"1"}})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), connect.TextDecisionStale)
+	require.Empty(t, inputNamed(t, body, "trust_imap"), "the old choice is gone")
+	require.Empty(t, inputNamed(t, body, "imap_offer"), "the old offer is gone")
+	require.Empty(t, inputNamed(t, body, "understand"))
+	require.Empty(t, c.reload(a).Mail.PinnedIMAPCert, "nothing was saved")
+
+	resp, body = c.post(reconnectPath(a), url.Values{})
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode, body)
+	require.Equal(t, account.StatusOK, c.reload(a).Status)
+	require.Empty(t, c.reload(a).Mail.PinnedIMAPCert)
 }

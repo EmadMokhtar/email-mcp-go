@@ -166,7 +166,8 @@ func (s *Store) ListAccounts(ctx context.Context, tenant account.TenantID) ([]*a
 
 // UpdateAccount saves all fields of an account except its ids, its creation
 // time, its status, the pins of its mail server and its credentials version. It
-// ignores a.Status, the pins in a.Mail and a.CredentialsVersion: only
+// ignores a.Status, the pins in a.Mail and a.CredentialsVersion, and a nil
+// a.Mail keeps the stored mail settings as they are: only
 // CreateAccount (the first values), SetAccountStatus, MarkNeedsReauth and
 // ReconnectAccount write them. So a save of the settings that read the account
 // before a failed login cannot write back the old status, and a save that read
@@ -196,15 +197,22 @@ func (s *Store) UpdateAccount(ctx context.Context, a *account.Account) error {
 	if err != nil {
 		return fmt.Errorf("store: update account: %w", err)
 	}
+	var stored *account.MailServer
+	if storedMail.Valid {
+		stored = &account.MailServer{}
+		if err := json.Unmarshal([]byte(storedMail.String), stored); err != nil {
+			return fmt.Errorf("store: decode mail settings: %w", err)
+		}
+	}
 	save := *a
-	if a.Mail != nil {
+	if a.Mail == nil {
+		// No mail settings given: the stored ones stay as they are, so a
+		// caller cannot erase the hosts and the pins by mistake.
+		save.Mail = stored
+	} else {
 		mail := *a.Mail
 		mail.PinnedIMAPCert, mail.PinnedSMTPCert = "", ""
-		if storedMail.Valid {
-			var stored account.MailServer
-			if err := json.Unmarshal([]byte(storedMail.String), &stored); err != nil {
-				return fmt.Errorf("store: decode mail settings: %w", err)
-			}
+		if stored != nil {
 			mail.PinnedIMAPCert, mail.PinnedSMTPCert = stored.PinnedIMAPCert, stored.PinnedSMTPCert
 		}
 		save.Mail = &mail

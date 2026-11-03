@@ -71,6 +71,11 @@ const (
 	TextCertChangedWrongHost = "The certificate is not the one you chose to trust, and it is not for this host name. This certificate cannot be trusted here."
 	TextCertChangedExpired   = "The certificate is not the one you chose to trust, and it has expired or is not valid yet. This certificate cannot be trusted here."
 	TextCertChangedInvalid   = "The certificate is not the one you chose to trust, and it is not valid. This certificate cannot be trusted here."
+	// TextCertNoLongerSigned is the problem of a server that had no pin, and
+	// now shows a certificate that no known authority signed. The account
+	// worked before, so the certificate changed. It may be trusted like a
+	// first pin, after the warning TextCertChangedWarning.
+	TextCertNoLongerSigned = "This server used a certificate that an authority this computer trusts signed. Now it shows one that no such authority signed."
 	// TextRemovePin says what a removal of a pin does. The user sees it before
 	// they remove a pin.
 	TextRemovePin = "From now on, any certificate that an authority this computer trusts signs for this host is accepted."
@@ -159,8 +164,9 @@ func (c ReconnectCheck) ReplacesPin() bool {
 
 // CheckReconnect describes a certificate of a *service.ReconnectCertificateError.
 // The change is the one that the service decided (service.ReconnectPinChange);
-// this function never allows more. A first pin uses the texts of
-// CheckCertificate.
+// this function never allows more. A first pin that the service allows says
+// that the certificate changed (TextCertNoLongerSigned); a refused one uses
+// the texts of CheckCertificate.
 //
 // The caller shows the host and the port of rc (the stored settings), the old
 // and the new fingerprint, and never another value of the server.
@@ -186,6 +192,8 @@ func CheckReconnect(rc *service.ReconnectCertificate) ReconnectCheck {
 		out.Problem = TextCertReplace
 	case rc.Change == service.PinChangeRemove:
 		out.Problem = TextCertRemove
+	case rc.Change == service.PinChangeAdd:
+		out.Problem = TextCertNoLongerSigned
 	case !c.Pinned:
 		check := CheckCertificate(c)
 		out.Problem = check.Problem

@@ -190,9 +190,12 @@ func (s *Server) handleSaveReconnect(w http.ResponseWriter, r *http.Request) {
 			Fingerprint: connect.GroupFingerprint(offer.Fingerprint), Problem: msgAccepted,
 			CanChange: true, Label: msgTrustLabel, Offer: token, Checked: true,
 		}
+		// Every change of a reconnect is about a changed certificate (see
+		// reconnectPromptFor), so the warning stays with the choice.
+		prompt.Warning = connect.TextCertChangedWarning
 		if offer.Old != "" {
 			prompt.OldFingerprint = connect.GroupFingerprint(offer.Old)
-			prompt.Label, prompt.Warning = changeLabel(offer.Remove), connect.TextCertChangedWarning
+			prompt.Label = changeLabel(offer.Remove)
 		} else if !account.IsLoopbackHost(offer.Host) {
 			needUnderstand = true
 		}
@@ -240,6 +243,12 @@ func (s *Server) handleSaveReconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("reconnect refused", "code", codeReconnectRefused, "error_types", errtype.Chain(err))
+	if errors.Is(err, service.ErrCertificateDecisionStale) || errors.Is(err, service.ErrAccountChanged) {
+		// The choices of the form are about a certificate or settings that are
+		// not there any more. Sent again, they give the same error, so they
+		// go: the next try runs a fresh test and shows what is there now.
+		page.Certs, page.Understand, page.UnderstandChecked = nil, false, false
+	}
 	page.Error = text + " " + msgNothingSaved
 	s.render(w, r, http.StatusUnprocessableEntity, pageReconnect, page)
 }
@@ -270,7 +279,9 @@ func (s *Server) reconnectPrompts(sess session, a *account.Account, chosen []rec
 		if !found {
 			continue
 		}
-		if prompt.CanChange && prompt.Warning == "" && !account.IsLoopbackHost(prompt.Host) {
+		// A first pin (no old fingerprint) of a remote server also needs the
+		// "I understand the risk" box.
+		if prompt.CanChange && prompt.OldFingerprint == "" && !account.IsLoopbackHost(prompt.Host) {
 			understand = true
 		}
 		prompts = append(prompts, prompt)
@@ -302,9 +313,13 @@ func (s *Server) reconnectPromptFor(sess session, a *account.Account, p protocol
 	if err != nil {
 		return reconnectPrompt{}, fmt.Errorf("web: seal a certificate offer: %w", err)
 	}
-	prompt.CanChange, prompt.Offer, prompt.Label = true, token, msgTrustLabel
+	// Every change of a reconnect follows a changed certificate: a pin that
+	// is replaced or removed, or a first pin of a server that worked before
+	// with a certificate that an authority signed. So each one shows the
+	// warning.
+	prompt.CanChange, prompt.Offer, prompt.Label, prompt.Warning = true, token, msgTrustLabel, connect.TextCertChangedWarning
 	if check.ReplacesPin() {
-		prompt.Label, prompt.Warning = changeLabel(remove), connect.TextCertChangedWarning
+		prompt.Label = changeLabel(remove)
 	}
 	return prompt, nil
 }
