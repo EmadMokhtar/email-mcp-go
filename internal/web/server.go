@@ -21,10 +21,12 @@
 //     Refused with 403.
 //  3. Origin: http.CrossOriginProtection refuses a cross-origin request that is
 //     not GET, HEAD or OPTIONS. Refused with 403.
-//  4. Session: every path except /setup needs a valid session cookie. Without
-//     one, the answer is the no-session page with 401. /setup takes only GET
-//     and HEAD, and the guard answers it itself, never through the routes:
-//     any other method on /setup is refused with 405.
+//  4. Session: every path except /setup and the stylesheets under /static/
+//     needs a valid session cookie. Without one, the answer is the no-session
+//     page with 401. /setup and /static/ take only GET and HEAD, and the guard
+//     answers them itself, never through the routes: any other method on them
+//     is refused with 405. A stylesheet is the same for every user and holds
+//     nothing private (see static.go).
 //  5. Form token: every request that is not GET or HEAD needs the CSRF token of
 //     its session in the url-encoded form body. Refused with 403. HEAD is a
 //     safe method like GET, and the routes answer it with their GET page, so
@@ -114,6 +116,7 @@ type Server struct {
 	// page's own file added.
 	layout *template.Template
 	pages  map[string]*template.Template
+	static staticFiles
 	svc    atomic.Pointer[service.Service]
 	// listen opens the listener of EnsureStarted. Tests replace it.
 	listen func(ctx context.Context, network, address string) (net.Listener, error)
@@ -149,7 +152,10 @@ func New(d Deps) *Server {
 		s.log = slog.New(slog.DiscardHandler)
 	}
 	var err error
-	if s.layout, s.pages, err = parsePages(); err != nil {
+	if s.static, err = loadStatic(); err != nil {
+		panic(fmt.Sprintf("web: %v", err))
+	}
+	if s.layout, s.pages, err = parsePages(s.static); err != nil {
 		panic(fmt.Sprintf("web: %v", err))
 	}
 	s.addRoutes()
@@ -164,7 +170,7 @@ type route struct {
 }
 
 // routes are the pages of the server. The checks of guard.go run before any of
-// them. /setup is not here: the guard answers it (see serve).
+// them. /setup and /static/ are not here: the guard answers them (see serve).
 //
 // Every pattern has its method. A GET route only reads, and every change is a
 // POST of a url-encoded form with the CSRF token. "GET /{$}" is the page "/"
@@ -297,6 +303,37 @@ type view struct {
 	CSRFToken string
 	// Data is the data of the page itself.
 	Data any
+	// Section is the link of the menu that the page belongs to, such as
+	// "/approvals". The menu marks it as the current one. It is empty for a
+	// page of no section, such as a message.
+	Section string
+}
+
+// menuLink is one link of the menu in layout.html. Current marks the link of
+// the section of the page.
+type menuLink struct {
+	Section string
+	Href    string
+	Label   string
+}
+
+// Current reports whether the link leads to the section of the page.
+func (m menuLink) Current() bool { return m.Section == m.Href }
+
+// newMenuLink is the template function "menuLink".
+func newMenuLink(section, href, label string) menuLink {
+	return menuLink{Section: section, Href: href, Label: label}
+}
+
+// sectionOf is the Section of each page.
+var sectionOf = map[string]string{
+	pageAccounts:    "/",
+	pageConnect:     "/",
+	pageSettings:    "/",
+	pageApprovals:   "/approvals",
+	pageApproval:    "/approvals",
+	pageActivity:    "/activity",
+	pageConnections: "/connections",
 }
 
 // render writes a page with the status. It runs the template into a buffer
@@ -308,7 +345,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page
 		s.fail(w, r, codeRenderFailed, fmt.Errorf("web: no page %q", page))
 		return
 	}
-	v := view{Data: data}
+	v := view{Data: data, Section: sectionOf[page]}
 	if sess, ok := sessionFrom(r.Context()); ok {
 		token, err := s.csrfToken(sess)
 		if err != nil {
@@ -349,9 +386,11 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, code string, err e
 
 // parsePages parses layout.html, and then each other template file as a clone
 // of the layout with that file added. The key of a page is its file name
-// without ".html".
-func parsePages() (*template.Template, map[string]*template.Template, error) {
-	layout, err := template.ParseFS(templateFS, "templates/layout.html")
+// without ".html". The templates get two functions: "static" returns the
+// address of a static file, and "menuLink" makes a link of the menu.
+func parsePages(static staticFiles) (*template.Template, map[string]*template.Template, error) {
+	funcs := template.FuncMap{"static": static.path, "menuLink": newMenuLink}
+	layout, err := template.New("layout.html").Funcs(funcs).ParseFS(templateFS, "templates/layout.html")
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse layout: %w", err)
 	}

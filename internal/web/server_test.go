@@ -1023,6 +1023,8 @@ func TestSecurityHeaders(t *testing.T) {
 	badHost.Host = "evil.example"
 	crossOrigin := newRequest(t, http.MethodPost, base+"/test/submit", url.Values{"csrf_token": {token}})
 	crossOrigin.Header.Set("Sec-Fetch-Site", "cross-site")
+	stylesheet, err := s.static.path("bulma.min.css")
+	require.NoError(t, err)
 
 	requests := map[string]struct {
 		client *http.Client
@@ -1040,6 +1042,7 @@ func TestSecurityHeaders(t *testing.T) {
 		"bad host":       {newBrowser(t), badHost, http.StatusForbidden},
 		"cross origin":   {browser, crossOrigin, http.StatusForbidden},
 		"no csrf token":  {browser, sameOrigin(newRequest(t, http.MethodPost, base+"/test/submit", url.Values{}), base), http.StatusForbidden},
+		"stylesheet":     {newBrowser(t), newRequest(t, http.MethodGet, base+stylesheet, nil), http.StatusOK},
 	}
 	for name, r := range requests {
 		resp, _ := do(t, r.client, r.req)
@@ -1047,7 +1050,13 @@ func TestSecurityHeaders(t *testing.T) {
 		require.Equal(t, []string{wantCSP}, resp.Header.Values("Content-Security-Policy"), name)
 		require.Equal(t, []string{"nosniff"}, resp.Header.Values("X-Content-Type-Options"), name)
 		require.Equal(t, []string{"no-referrer"}, resp.Header.Values("Referrer-Policy"), name)
-		require.Equal(t, []string{"no-store"}, resp.Header.Values("Cache-Control"), name)
+		// Only a stylesheet may be kept: it is the same for every user, and its
+		// address changes with its content.
+		cache := "no-store"
+		if name == "stylesheet" {
+			cache = staticCacheControl
+		}
+		require.Equal(t, []string{cache}, resp.Header.Values("Cache-Control"), name)
 	}
 }
 

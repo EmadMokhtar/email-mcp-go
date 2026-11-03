@@ -4,8 +4,10 @@
   session, and .Data is the data of the page. The links to the pages are shown
   only with a session: the page for a browser without one shows nothing else.
 
-  The pages have no script: the Content-Security-Policy runs none. Every form
-  posts to the same origin and has the form token as its first field:
+  The pages use Bulma for their look (see static.go). They have no script and
+  no inline style: the Content-Security-Policy runs neither. A rule that Bulma
+  has no class for goes in static/app.css. Every form posts to the same origin
+  and has the form token as its first field:
 
     <form method="post" action="...">
       {{template "csrf_field" $.CSRFToken}}
@@ -18,14 +20,32 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{block "title" .}}email-mcp{{end}}</title>
+<link rel="stylesheet" href="{{static "bulma.min.css"}}">
+<link rel="stylesheet" href="{{static "app.css"}}">
 </head>
 <body>
-{{if .CSRFToken}}<nav><a href="/">Accounts</a> · <a href="/approvals">Approvals</a> · <a href="/activity">Activity</a> · <a href="/connections">Connections</a></nav>
-{{end}}<main>
+{{if .CSRFToken}}<nav class="navbar is-link" aria-label="Main menu">
+<div class="container is-max-widescreen">
+<div class="navbar-brand">
+<a class="navbar-item has-text-weight-bold" href="/">email-mcp</a>
+</div>
+<div class="navbar-tabs">
+{{template "menu_link" (menuLink .Section "/" "Accounts")}}
+{{template "menu_link" (menuLink .Section "/approvals" "Approvals")}}
+{{template "menu_link" (menuLink .Section "/activity" "Activity")}}
+{{template "menu_link" (menuLink .Section "/connections" "Connections")}}
+</div>
+</div>
+</nav>
+{{end}}<main class="section">
+<div class="container is-max-widescreen">
 {{block "content" .}}{{end}}
+</div>
 </main>
 </body>
 </html>
 {{end}}
+
+{{define "menu_link"}}<a class="navbar-item is-tab{{if .Current}} is-active{{end}}" href="{{.Href}}"{{if .Current}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}
 
 {{define "csrf_field"}}<input type="hidden" name="csrf_token" value="{{.}}">{{end}}

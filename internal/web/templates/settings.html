@@ -10,69 +10,95 @@
 {{define "content"}}
 {{$csrf := .CSRFToken}}
 {{with .Data}}
-<h1>Settings of {{.Address}}</h1>
-<p><a href="/">Back to the accounts</a></p>
-{{if .Error}}<p role="alert"><strong>{{.Error}}</strong></p>{{end}}
-{{with .Requested}}<p role="status"><strong>A request asks to set mail to level {{.Value}} ({{.Name}}). Nothing has changed yet. Check the level below, and save only if you agree.</strong></p>{{end}}
+<div class="columns">
+<div class="column is-10-desktop is-8-widescreen">
+<p class="mb-3"><a href="/">← Back to the accounts</a></p>
+<h1 class="title is-break-anywhere">Settings of {{.Address}}</h1>
+{{if .Error}}<div class="notification is-danger is-light" role="alert"><strong>{{.Error}}</strong></div>{{end}}
+{{with .Requested}}<div class="notification is-warning is-light" role="status"><strong>A request asks to set mail to level {{.Value}} ({{.Name}}). Nothing has changed yet. Check the level below, and save only if you agree.</strong></div>{{end}}
 
 <form method="post" action="/accounts/{{.ID}}/settings">
 {{template "csrf_field" $csrf}}
+<div class="box p-5">
 <fieldset>
-<legend>Permissions</legend>
-<p>Mail is now at level {{.Current}}.</p>
-<p><label for="mail_level">Mail level</label><br>
-<select id="mail_level" name="mail_level">
+<legend class="title is-5">Permissions</legend>
+<p class="mb-4">Mail is now at level {{.Current}}.</p>
+<div class="field">
+<label class="label" for="mail_level">Mail level</label>
+<div class="control"><div class="select"><select id="mail_level" name="mail_level">
 {{range .Levels}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Value}} {{.Name}}</option>
-{{end}}</select></p>
-<p><input type="checkbox" id="confirm_sends" name="confirm_sends" value="1"{{if .ConfirmSends}} checked{{end}}>
-<label for="confirm_sends">Confirm sends: ask me before the agent sends a message</label></p>
-<p><input type="checkbox" id="confirm_deletes" name="confirm_deletes" value="1"{{if .ConfirmDeletes}} checked{{end}}>
-<label for="confirm_deletes">Confirm deletes: ask me before the agent moves mail to Trash</label></p>
+{{end}}</select></div></div>
+</div>
+<div class="field"><label class="checkbox" for="confirm_sends"><input type="checkbox" id="confirm_sends" name="confirm_sends" value="1"{{if .ConfirmSends}} checked{{end}}> Confirm sends: ask me before the agent sends a message</label></div>
+<div class="field"><label class="checkbox" for="confirm_deletes"><input type="checkbox" id="confirm_deletes" name="confirm_deletes" value="1"{{if .ConfirmDeletes}} checked{{end}}> Confirm deletes: ask me before the agent moves mail to Trash</label></div>
 </fieldset>
+</div>
 
+<div class="message is-warning">
+<div class="message-body">
 <fieldset>
-<legend>Full autonomy</legend>
-<p>With both confirmations off, the agent acts without asking you. A save that turns off both needs this box, every time.</p>
-{{if .AcceptedAt}}<p>You last accepted this risk on {{.AcceptedAt}}.</p>{{end}}
-<p><input type="checkbox" id="accept_autonomy_risk" name="accept_autonomy_risk" value="1">
-<label for="accept_autonomy_risk">{{.AutonomyWarning}}</label></p>
+<legend class="has-text-weight-bold is-size-5 mb-2">Full autonomy</legend>
+<p class="mb-3">With both confirmations off, the agent acts without asking you. A save that turns off both needs this box, every time.</p>
+{{if .AcceptedAt}}<p class="mb-3">You last accepted this risk on {{.AcceptedAt}}.</p>{{end}}
+<label class="checkbox" for="accept_autonomy_risk"><input type="checkbox" id="accept_autonomy_risk" name="accept_autonomy_risk" value="1"> {{.AutonomyWarning}}</label>
 </fieldset>
+</div>
+</div>
 
 {{with .Limits}}
+<div class="box p-5">
 <fieldset>
-<legend>Limits</legend>
-<p><label for="sends_per_hour">Sends per hour</label><br>
-<input id="sends_per_hour" name="sends_per_hour" value="{{.SendsPerHour}}" inputmode="numeric" required></p>
-<p><label for="sends_per_day">Sends per day</label><br>
-<input id="sends_per_day" name="sends_per_day" value="{{.SendsPerDay}}" inputmode="numeric" required></p>
-<p><label for="recipients_per_message">Recipients per message</label><br>
-<input id="recipients_per_message" name="recipients_per_message" value="{{.RecipientsPerMessage}}" inputmode="numeric" required></p>
-<p><label for="trash_per_day">Messages moved to Trash per day</label><br>
-<input id="trash_per_day" name="trash_per_day" value="{{.TrashPerDay}}" inputmode="numeric" required></p>
-<p><label for="undo_window_auto">Undo window without a confirmation, in seconds (0 to 300)</label><br>
-<input id="undo_window_auto" name="undo_window_auto" value="{{.UndoWindowAuto}}" inputmode="numeric" required></p>
-<p><label for="undo_window_confirmed">Undo window after a confirmation, in seconds (0 to 300)</label><br>
-<input id="undo_window_confirmed" name="undo_window_confirmed" value="{{.UndoWindowConfirmed}}" inputmode="numeric" required></p>
-<p><input type="checkbox" id="new_recipient_check" name="new_recipient_check" value="1"{{if .NewRecipientCheck}} checked{{end}}>
-<label for="new_recipient_check">Ask me before a message goes to an address that this account never wrote to</label></p>
+<legend class="title is-5">Limits</legend>
+<div class="columns is-multiline mb-0">
+<div class="column is-half field mb-0">
+<label class="label" for="sends_per_hour">Sends per hour</label>
+<div class="control"><input class="input" id="sends_per_hour" name="sends_per_hour" value="{{.SendsPerHour}}" inputmode="numeric" required></div>
+</div>
+<div class="column is-half field mb-0">
+<label class="label" for="sends_per_day">Sends per day</label>
+<div class="control"><input class="input" id="sends_per_day" name="sends_per_day" value="{{.SendsPerDay}}" inputmode="numeric" required></div>
+</div>
+<div class="column is-half field mb-0">
+<label class="label" for="recipients_per_message">Recipients per message</label>
+<div class="control"><input class="input" id="recipients_per_message" name="recipients_per_message" value="{{.RecipientsPerMessage}}" inputmode="numeric" required></div>
+</div>
+<div class="column is-half field mb-0">
+<label class="label" for="trash_per_day">Messages moved to Trash per day</label>
+<div class="control"><input class="input" id="trash_per_day" name="trash_per_day" value="{{.TrashPerDay}}" inputmode="numeric" required></div>
+</div>
+<div class="column is-half field mb-0">
+<label class="label" for="undo_window_auto">Undo window without a confirmation, in seconds (0 to 300)</label>
+<div class="control"><input class="input" id="undo_window_auto" name="undo_window_auto" value="{{.UndoWindowAuto}}" inputmode="numeric" required></div>
+</div>
+<div class="column is-half field mb-0">
+<label class="label" for="undo_window_confirmed">Undo window after a confirmation, in seconds (0 to 300)</label>
+<div class="control"><input class="input" id="undo_window_confirmed" name="undo_window_confirmed" value="{{.UndoWindowConfirmed}}" inputmode="numeric" required></div>
+</div>
+</div>
+<div class="field"><label class="checkbox" for="new_recipient_check"><input type="checkbox" id="new_recipient_check" name="new_recipient_check" value="1"{{if .NewRecipientCheck}} checked{{end}}> Ask me before a message goes to an address that this account never wrote to</label></div>
 </fieldset>
+</div>
 {{end}}
 
+<div class="box p-5">
 <fieldset>
-<legend>Sent mail</legend>
-<p><input type="checkbox" id="save_sent_copy" name="save_sent_copy" value="1"{{if .SaveSent}} checked{{end}}>
-<label for="save_sent_copy">Save a copy of sent mail to Sent</label></p>
+<legend class="title is-5">Sent mail</legend>
+<div class="field"><label class="checkbox" for="save_sent_copy"><input type="checkbox" id="save_sent_copy" name="save_sent_copy" value="1"{{if .SaveSent}} checked{{end}}> Save a copy of sent mail to Sent</label></div>
 </fieldset>
-<p><button type="submit">Save</button></p>
+</div>
+<button class="button is-link" type="submit">Save</button>
 </form>
 
-<h2>Remove the account</h2>
+<div class="box p-5 mt-6">
+<h2 class="title is-5 has-text-danger">Remove the account</h2>
 <form method="post" action="/accounts/{{.ID}}/remove">
 {{template "csrf_field" $csrf}}
-<p>{{.RemoveWarning}}</p>
-<p><input type="checkbox" id="confirm_remove" name="confirm_remove" value="1">
-<label for="confirm_remove">Yes, remove this account and its queued messages</label></p>
-<p><button type="submit">Remove account</button></p>
+<p class="mb-3">{{.RemoveWarning}}</p>
+<div class="field"><label class="checkbox" for="confirm_remove"><input type="checkbox" id="confirm_remove" name="confirm_remove" value="1"> Yes, remove this account and its queued messages</label></div>
+<button class="button is-danger" type="submit">Remove account</button>
 </form>
+</div>
+</div>
+</div>
 {{end}}
 {{end}}

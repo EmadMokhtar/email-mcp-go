@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/httpserve"
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
@@ -57,6 +58,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleSetup(w, r)
+		return
+	}
+	// The stylesheets need no session, so the no-session page has its style
+	// too. Like /setup, they are answered here and never through the mux.
+	if strings.HasPrefix(r.URL.Path, staticPrefix) {
+		s.handleStatic(w, r)
 		return
 	}
 

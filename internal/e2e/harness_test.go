@@ -547,7 +547,10 @@ func postMCP(t *testing.T, ts *httptest.Server, body string, change func(r *http
 var (
 	csrfPattern  = regexp.MustCompile(`<input type="hidden" name="csrf_token" value="([A-Za-z0-9_.-]+)">`)
 	offerPattern = regexp.MustCompile(`<input type="hidden" name="(imap|smtp)_offer" value="([A-Za-z0-9_.-]+)">`)
-	tokenPattern = regexp.MustCompile(`<p><code>([^<]+)</code></p>`)
+	// tokenPattern finds a new token by its format ("emcp_" and 52 base32
+	// characters, see internal/tokens), not by the markup around it, so a
+	// change of the look of the page does not break it.
+	tokenPattern = regexp.MustCompile(`>(emcp_[a-z2-7]{52})<`)
 )
 
 // browser is a browser of the user: a session cookie (empty for a browser
