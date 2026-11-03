@@ -2027,7 +2027,12 @@ func TestGetMessageHTMLThatMakesTheParserExplodeIsRefused(t *testing.T) {
 		require.Contains(t, err.Error(), `body_format "none"`, format)
 		require.Nil(t, msg)
 	}
-	require.Less(t, time.Since(started), 2*time.Second, "refused without building the tree")
+	// The time is checked only without the race detector, which makes the code
+	// many times slower. The tests of internal/mime check the same limit by
+	// memory, which holds with the detector too.
+	if !raceEnabled {
+		require.Less(t, time.Since(started), 2*time.Second, "refused without building the tree")
+	}
 
 	// The headers and the attachment list are still there.
 	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyNone})

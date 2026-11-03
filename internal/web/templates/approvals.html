@@ -5,21 +5,25 @@
 */}}
 {{define "title"}}Approvals · email-mcp{{end}}
 {{define "content"}}
-<h1>Approvals</h1>
-<p>These actions wait for you. The agent asked for them, and nothing happens until you approve one.</p>
+<h1 class="title">Approvals</h1>
+<p class="mb-5">These actions wait for you. The agent asked for them, and nothing happens until you approve one.</p>
 {{with .Data}}
 {{if .Items}}
-<table>
+<div class="table-container">
+<table class="table is-fullwidth is-hoverable">
 <thead>
-<tr><th scope="col">Account</th><th scope="col">Action</th><th scope="col">To</th><th scope="col">Asked</th><th scope="col">Expires</th><th scope="col">Details</th></tr>
+<tr><th scope="col">Account</th><th scope="col">Action</th><th scope="col">To</th><th class="is-narrow" scope="col">Asked</th><th class="is-narrow" scope="col">Expires</th><th class="is-narrow" scope="col">Details</th></tr>
 </thead>
 <tbody>
-{{range .Items}}<tr><td>{{.Account}}</td><td>{{.What}}</td><td>{{.To}}</td><td>{{.Created}}</td><td>{{.Expires}}</td><td><a href="/approvals/{{.ID}}">Review</a></td></tr>
+{{range .Items}}<tr><td>{{.Account}}</td><td class="has-text-weight-semibold">{{.What}}</td><td>{{.To}}</td><td class="is-narrow">{{.Created}}</td><td class="is-narrow">{{.Expires}}</td><td class="is-narrow"><a class="button is-link" href="/approvals/{{.ID}}">Review</a></td></tr>
 {{end}}
 </tbody>
 </table>
+</div>
 {{else}}
+<div class="box p-5 has-text-centered">
 <p>Nothing waits for your approval.</p>
+</div>
 {{end}}
 {{end}}
 {{end}}

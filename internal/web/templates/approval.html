@@ -11,44 +11,54 @@
 {{define "title"}}Approval · email-mcp{{end}}
 {{define "content"}}
 {{$csrf := .CSRFToken}}
-<h1>Approval</h1>
-<p><a href="/approvals">Back to the approvals</a></p>
+<div class="columns">
+<div class="column is-10-desktop is-8-widescreen">
+<p class="mb-3"><a href="/approvals">← Back to the approvals</a></p>
+<h1 class="title">Approval</h1>
 {{with .Data}}
-{{if .Error}}<p role="alert"><strong>{{.Error}}</strong></p>{{end}}
-{{if .State}}<p role="status">{{.State}}</p>{{end}}
+{{if .Error}}<div class="notification is-danger is-light" role="alert"><strong>{{.Error}}</strong></div>{{end}}
+{{if .State}}<div class="notification is-info is-light" role="status">{{.State}}</div>{{end}}
 {{if .Account}}
+<div class="box p-5">
 {{if .Send}}
-<h2>Send a message from {{.Account}}</h2>
+<h2 class="title is-4 is-break-anywhere">Send a message from {{.Account}}</h2>
 {{if .Waiting}}
-<dl>
-<dt>From</dt><dd>{{.From}}</dd>
-<dt>To (every recipient, Bcc included)</dt><dd><ul>{{range .Recipients}}<li>{{.}}</li>{{end}}</ul></dd>
-<dt>Subject</dt><dd>{{.Subject}}</dd>
-<dt>Attachments</dt><dd>{{if .Attachments}}<ul>{{range .Attachments}}<li>{{.}}</li>{{end}}</ul>{{else}}None{{end}}</dd>
+<dl class="mb-5">
+<div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">From</dt><dd class="column is-break-anywhere">{{.From}}</dd></div>
+<div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">To (every recipient, Bcc included)</dt><dd class="column is-break-anywhere"><ul>{{range .Recipients}}<li>{{.}}</li>{{end}}</ul></dd></div>
+<div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">Subject</dt><dd class="column is-break-anywhere">{{.Subject}}</dd></div>
+<div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">Attachments</dt><dd class="column is-break-anywhere">{{if .Attachments}}<ul>{{range .Attachments}}<li>{{.}}</li>{{end}}</ul>{{else}}None{{end}}</dd></div>
 </dl>
-<h3>Text</h3>
-{{if .BodyNote}}<p>{{.BodyNote}}</p>{{end}}
-<pre>{{.Body}}</pre>
+<h3 class="title is-5">Text</h3>
+{{if .BodyNote}}<p class="mb-3 is-break-anywhere">{{.BodyNote}}</p>{{end}}
+<pre class="is-pre-wrap mb-5">{{.Body}}</pre>
 {{end}}
 {{else}}
-<h2>Move {{.Count}} {{if eq .Count 1}}message{{else}}messages{{end}} of {{.Account}} to Trash</h2>
+<h2 class="title is-4 is-break-anywhere">Move {{.Count}} {{if eq .Count 1}}message{{else}}messages{{end}} of {{.Account}} to Trash</h2>
 {{if .Messages}}
-<h3>Messages (date, sender, subject)</h3>
+<h3 class="title is-5">Messages (date, sender, subject)</h3>
+<div class="content is-break-anywhere">
 <ul>{{range .Messages}}<li>{{.}}</li>{{end}}</ul>
 {{if .MoreMessages}}<p>{{.MoreMessages}}</p>{{end}}
+</div>
 {{end}}
 {{end}}
 {{if .Waiting}}
-<p>This request expires on {{.Expires}}.</p>
+<p class="mb-4">This request expires on {{.Expires}}.</p>
+<div class="is-flex is-flex-wrap-wrap is-gap-2">
 {{if .CanApprove}}<form method="post" action="/approvals/{{.ID}}/approve">
 {{template "csrf_field" $csrf}}
-<p><button type="submit">Approve</button></p>
+<button class="button is-success" type="submit">Approve</button>
 </form>
 {{end}}<form method="post" action="/approvals/{{.ID}}/reject">
 {{template "csrf_field" $csrf}}
-<p><button type="submit">Reject</button></p>
+<button class="button is-danger is-outlined" type="submit">Reject</button>
 </form>
+</div>
+{{end}}
+</div>
 {{end}}
 {{end}}
-{{end}}
+</div>
+</div>
 {{end}}

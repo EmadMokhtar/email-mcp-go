@@ -140,6 +140,9 @@ type accountRow struct {
 	Provider  string
 	MailLevel string
 	Status    string
+	// Connected is true when the account works. The page marks any other
+	// status as a warning.
+	Connected bool
 }
 
 // connectPage is the data of the connect page. It has no field for the
@@ -268,6 +271,7 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 			Provider:  providerLabel(a.Provider),
 			MailLevel: a.Level(account.AreaMail).MailName(),
 			Status:    statusLabel(a.Status),
+			Connected: a.Status == account.StatusOK,
 		})
 	}
 	s.render(w, r, http.StatusOK, pageAccounts, page)

@@ -1,0 +1,67 @@
+/*
+  The rules of email-mcp that Bulma has no class for. The pages may not have
+  inline style (the Content-Security-Policy blocks it), so every rule of this
+  project is here. It loads after Bulma, so a variable set here wins.
+*/
+
+/* The accent colour: dark blue (#1e3a8a) for the menu bar, the buttons and
+   the links. Bulma makes its light and dark shades from these three values.
+   The text is 18 px instead of 16 px; every size of Bulma follows it. */
+:root {
+  --bulma-link-h: 224deg;
+  --bulma-link-s: 64%;
+  --bulma-link-l: 33%;
+  --bulma-link-on-scheme-l: 33%;
+  --bulma-body-size: 1.125em;
+}
+
+/* In dark mode a link is a lighter blue, so it is easy to read on the dark
+   background. This repeats the dark value of Bulma, because the rule above
+   would win over it. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bulma-link-on-scheme-l: 73%;
+  }
+}
+
+/* The menu bar is dark blue, so the link of the current page is white, bold
+   and underlined in white. Bulma would draw it in dark blue, which does not
+   show on the bar. */
+.navbar.is-link {
+  --bulma-navbar-tab-active-color: var(--bulma-link-invert);
+  --bulma-navbar-tab-active-border-bottom-color: var(--bulma-link-invert);
+  --bulma-navbar-tab-hover-border-bottom-color: var(--bulma-link-invert);
+}
+
+.navbar.is-link .navbar-item.is-active {
+  font-weight: 600;
+}
+
+/* A check box and its text: a long text wraps beside the box, not under it.
+   The box is a little larger than the browser's default, to match the 18 px
+   text, and it is in the accent colour when ticked. */
+.checkbox {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.6em;
+}
+
+.checkbox input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 1.1em;
+  height: 1.1em;
+  accent-color: var(--bulma-link-text);
+}
+
+/* Long words without spaces, such as a token, a certificate fingerprint or an
+   email address, break at any point instead of making the page wider. */
+.is-break-anywhere {
+  overflow-wrap: anywhere;
+}
+
+/* The text of a message keeps its own lines, and a long line wraps, even
+   inside a long word, so the text never makes the page wider. */
+.is-pre-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

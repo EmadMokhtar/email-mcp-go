@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/httpserve"
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
@@ -59,6 +60,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.handleSetup(w, r)
 		return
 	}
+	// The stylesheets need no session, so the no-session page has its style
+	// too. Like /setup, they are answered here and never through the mux.
+	if strings.HasPrefix(r.URL.Path, staticPrefix) {
+		s.handleStatic(w, r)
+		return
+	}
 
 	sess, err := s.sessionOf(r)
 	if errors.Is(err, errNoSession) {
@@ -85,8 +92,13 @@ func safeMethod(method string) bool {
 }
 
 // setSecurityHeaders sets the headers of every answer. The pages hold private
-// data, so no answer is kept in a cache, and no address is sent to another site
-// as a Referer.
+// data, so no answer is kept in a cache ("no-store"), and no address is sent to
+// another site as a Referer.
+//
+// There is one exception to "no-store": handleStatic replaces Cache-Control
+// for the exact address of a static file (see staticCacheControl). Those files
+// are part of the binary, the same for every user, and hold nothing private.
+// No other answer may replace it, also not another answer under /static/.
 func setSecurityHeaders(h http.Header) {
 	h.Set("Content-Security-Policy", contentSecurityPolicy)
 	h.Set("X-Content-Type-Options", "nosniff")

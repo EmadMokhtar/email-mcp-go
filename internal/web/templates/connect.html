@@ -9,29 +9,35 @@
 {{define "title"}}Connect an account · email-mcp{{end}}
 {{define "content"}}
 {{$csrf := .CSRFToken}}
-<h1>Connect an account</h1>
-<p><a href="/">Back to the accounts</a></p>
+<div class="columns">
+<div class="column is-10-desktop is-8-widescreen">
+<p class="mb-3"><a href="/">← Back to the accounts</a></p>
+<h1 class="title">Connect an account</h1>
 {{with .Data}}
 {{$email := .Email}}
-{{if .Error}}<p role="alert"><strong>{{.Error}}</strong></p>{{end}}
+{{if .Error}}<div class="notification is-danger is-light" role="alert"><strong>{{.Error}}</strong></div>{{end}}
 
 {{if eq .Step "email"}}
-<form method="post" action="/connect/discover">
+<form class="box p-5" method="post" action="/connect/discover">
 {{template "csrf_field" $csrf}}
-<p><label for="email">Email address</label><br>
-<input id="email" name="email" type="email" value="{{.Email}}" autocomplete="email" required></p>
-<p><button type="submit">Find the server settings</button>
-<button type="submit" formaction="/connect/settings" formnovalidate>Enter the settings yourself</button></p>
+<div class="field">
+<label class="label" for="email">Email address</label>
+<div class="control"><input class="input" id="email" name="email" type="email" value="{{.Email}}" autocomplete="email" required></div>
+</div>
+<div class="field is-grouped is-grouped-multiline mt-5">
+<div class="control"><button class="button is-link" type="submit">Find the server settings</button></div>
+<div class="control"><button class="button" type="submit" formaction="/connect/settings" formnovalidate>Enter the settings yourself</button></div>
+</div>
 </form>
 
 {{else if eq .Step "choose"}}
-<h2>Server settings for {{.Email}}</h2>
+<h2 class="title is-4 is-break-anywhere">Server settings for {{.Email}}</h2>
 {{if .NotFound}}
-<p>No server settings were found for this address. Enter them yourself.</p>
+<div class="notification is-warning is-light">No server settings were found for this address. Enter them yourself.</div>
 {{else}}
-<p>These settings were found for your address. They are only suggestions. Check that each host name belongs to your mail provider: your password will be sent to the servers that you choose.</p>
+<div class="notification is-warning is-light">These settings were found for your address. They are only suggestions. Check that each host name belongs to your mail provider: your password will be sent to the servers that you choose.</div>
 {{range .Suggestions}}
-<form method="post" action="/connect/settings">
+<form class="box p-5" method="post" action="/connect/settings">
 {{template "csrf_field" $csrf}}
 <input type="hidden" name="email" value="{{$email}}">
 <input type="hidden" name="imap_host" value="{{.IMAPHost}}">
@@ -41,88 +47,130 @@
 <input type="hidden" name="smtp_port" value="{{.SMTPPort}}">
 <input type="hidden" name="smtp_security" value="{{.SMTPSecurity}}">
 <input type="hidden" name="username" value="{{.Username}}">
-<dl>
-<dt>Incoming mail (IMAP)</dt><dd>{{.IMAPHost}}, port {{.IMAPPort}}, {{.SecurityLabel .IMAPSecurity}}</dd>
-<dt>Outgoing mail (SMTP)</dt><dd>{{.SMTPHost}}, port {{.SMTPPort}}, {{.SecurityLabel .SMTPSecurity}}</dd>
-<dt>User name</dt><dd>{{.Username}}</dd>
+<dl class="mb-4">
+<div class="columns mb-0"><dt class="column is-4 has-text-weight-semibold">Incoming mail (IMAP)</dt><dd class="column is-break-anywhere">{{.IMAPHost}}, port {{.IMAPPort}}, {{.SecurityLabel .IMAPSecurity}}</dd></div>
+<div class="columns mb-0"><dt class="column is-4 has-text-weight-semibold">Outgoing mail (SMTP)</dt><dd class="column is-break-anywhere">{{.SMTPHost}}, port {{.SMTPPort}}, {{.SecurityLabel .SMTPSecurity}}</dd></div>
+<div class="columns mb-0"><dt class="column is-4 has-text-weight-semibold">User name</dt><dd class="column is-break-anywhere">{{.Username}}</dd></div>
 </dl>
-<p><button type="submit">Use these settings</button></p>
+<button class="button is-link" type="submit">Use these settings</button>
 </form>
 {{end}}
 {{end}}
 <form method="post" action="/connect/settings">
 {{template "csrf_field" $csrf}}
 <input type="hidden" name="email" value="{{.Email}}">
-<p><button type="submit">Enter the settings yourself</button></p>
+<button class="button" type="submit">Enter the settings yourself</button>
 </form>
 
 {{else}}
 <form method="post" action="/connect/save">
 {{template "csrf_field" $csrf}}
-<p><label for="email">Email address</label><br>
-<input id="email" name="email" type="email" value="{{.Email}}" autocomplete="email" required></p>
+<div class="box p-5">
+<div class="field">
+<label class="label" for="email">Email address</label>
+<div class="control"><input class="input" id="email" name="email" type="email" value="{{.Email}}" autocomplete="email" required></div>
+</div>
+</div>
 {{with .Server}}
+<div class="box p-5">
 <fieldset>
-<legend>Incoming mail (IMAP)</legend>
-<p><label for="imap_host">Server</label><br>
-<input id="imap_host" name="imap_host" value="{{.IMAPHost}}" autocomplete="off" spellcheck="false" required></p>
-<p><label for="imap_port">Port</label><br>
-<input id="imap_port" name="imap_port" value="{{.IMAPPort}}" inputmode="numeric" required></p>
-<p><label for="imap_security">Security</label><br>
-<select id="imap_security" name="imap_security">
+<legend class="title is-5">Incoming mail (IMAP)</legend>
+<div class="columns mb-0">
+<div class="column is-8 field mb-0">
+<label class="label" for="imap_host">Server</label>
+<div class="control"><input class="input" id="imap_host" name="imap_host" value="{{.IMAPHost}}" autocomplete="off" spellcheck="false" required></div>
+</div>
+<div class="column field">
+<label class="label" for="imap_port">Port</label>
+<div class="control"><input class="input" id="imap_port" name="imap_port" value="{{.IMAPPort}}" inputmode="numeric" required></div>
+</div>
+</div>
+<div class="field">
+<label class="label" for="imap_security">Security</label>
+<div class="control"><div class="select is-fullwidth"><select id="imap_security" name="imap_security">
 <option value="tls"{{if eq .IMAPSecurity "tls"}} selected{{end}}>TLS</option>
 <option value="starttls"{{if eq .IMAPSecurity "starttls"}} selected{{end}}>STARTTLS</option>
 <option value="plain"{{if eq .IMAPSecurity "plain"}} selected{{end}}>None: not encrypted, only for a server on this computer</option>
-</select></p>
+</select></div></div>
+</div>
 </fieldset>
+</div>
+<div class="box p-5">
 <fieldset>
-<legend>Outgoing mail (SMTP)</legend>
-<p><label for="smtp_host">Server</label><br>
-<input id="smtp_host" name="smtp_host" value="{{.SMTPHost}}" autocomplete="off" spellcheck="false" required></p>
-<p><label for="smtp_port">Port</label><br>
-<input id="smtp_port" name="smtp_port" value="{{.SMTPPort}}" inputmode="numeric" required></p>
-<p><label for="smtp_security">Security</label><br>
-<select id="smtp_security" name="smtp_security">
+<legend class="title is-5">Outgoing mail (SMTP)</legend>
+<div class="columns mb-0">
+<div class="column is-8 field mb-0">
+<label class="label" for="smtp_host">Server</label>
+<div class="control"><input class="input" id="smtp_host" name="smtp_host" value="{{.SMTPHost}}" autocomplete="off" spellcheck="false" required></div>
+</div>
+<div class="column field">
+<label class="label" for="smtp_port">Port</label>
+<div class="control"><input class="input" id="smtp_port" name="smtp_port" value="{{.SMTPPort}}" inputmode="numeric" required></div>
+</div>
+</div>
+<div class="field">
+<label class="label" for="smtp_security">Security</label>
+<div class="control"><div class="select is-fullwidth"><select id="smtp_security" name="smtp_security">
 <option value="tls"{{if eq .SMTPSecurity "tls"}} selected{{end}}>TLS</option>
 <option value="starttls"{{if eq .SMTPSecurity "starttls"}} selected{{end}}>STARTTLS</option>
 <option value="plain"{{if eq .SMTPSecurity "plain"}} selected{{end}}>None: not encrypted, only for a server on this computer</option>
-</select></p>
+</select></div></div>
+</div>
 </fieldset>
-<p><label for="username">User name</label><br>
-<input id="username" name="username" value="{{.Username}}" autocomplete="off" spellcheck="false" required></p>
+</div>
 {{end}}
 {{if .Plain}}
+<div class="message is-danger">
+<div class="message-body">
 <fieldset>
-<legend>No encryption</legend>
-<p>Without encryption, your password and your messages travel as plain text. Anyone who can read the connection can read them. Use it only for a server on this computer, such as a local bridge.</p>
-<p><label><input type="checkbox" name="plain_understand" value="1"{{if .PlainChecked}} checked{{end}}> I understand that this connection is not encrypted: my password and my messages travel over it as plain text.</label></p>
+<legend class="has-text-weight-bold is-size-5 mb-2">No encryption</legend>
+<p class="mb-3">Without encryption, your password and your messages travel as plain text. Anyone who can read the connection can read them. Use it only for a server on this computer, such as a local bridge.</p>
+<label class="checkbox"><input type="checkbox" name="plain_understand" value="1"{{if .PlainChecked}} checked{{end}}> I understand that this connection is not encrypted: my password and my messages travel over it as plain text.</label>
 </fieldset>
+</div>
+</div>
 {{end}}
-<p><label for="password">Password or app password</label><br>
-<input id="password" name="password" type="password" autocomplete="off" required></p>
+<div class="box p-5">
+{{with .Server}}
+<div class="field">
+<label class="label" for="username">User name</label>
+<div class="control"><input class="input" id="username" name="username" value="{{.Username}}" autocomplete="off" spellcheck="false" required></div>
+</div>
+{{end}}
+<div class="field">
+<label class="label" for="password">Password or app password</label>
+<div class="control"><input class="input" id="password" name="password" type="password" autocomplete="off" required></div>
+</div>
 <p>The password is saved, encrypted, only after the test passes. This page never keeps it, so type it again each time you test.</p>
+</div>
 {{if .Certs}}
+<div class="message is-warning">
+<div class="message-body">
 <fieldset>
-<legend>Certificates</legend>
+<legend class="has-text-weight-bold is-size-5 mb-2">Certificates</legend>
 {{range .Certs}}
-<section>
-<h2>{{.Name}} server {{.Host}}</h2>
-<p>{{.Problem}}</p>
-{{if .Fingerprint}}<p>SHA-256 fingerprint: <code>{{.Fingerprint}}</code></p>{{end}}
+<section class="mb-4">
+<h2 class="has-text-weight-bold mb-1 is-break-anywhere">{{.Name}} server {{.Host}}</h2>
+<p class="mb-2">{{.Problem}}</p>
+{{if .Fingerprint}}<p class="mb-2">SHA-256 fingerprint: <code class="is-break-anywhere">{{.Fingerprint}}</code></p>{{end}}
 {{if .CanTrust}}
 <input type="hidden" name="{{.Field}}_offer" value="{{.Offer}}">
-<p><label><input type="checkbox" name="trust_{{.Field}}" value="1"{{if .Checked}} checked{{end}}> Trust this certificate</label></p>
+<label class="checkbox"><input type="checkbox" name="trust_{{.Field}}" value="1"{{if .Checked}} checked{{end}}> Trust this certificate</label>
 {{end}}
 </section>
 {{end}}
 {{if .Understand}}
-<p>A server that is not on this computer should have a certificate that an authority signed. A certificate that no authority signed can mean that someone on the network reads your mail and your password. Trust it only if your provider gave you this fingerprint.</p>
-<p><label><input type="checkbox" name="understand" value="1"{{if .UnderstandChecked}} checked{{end}}> I understand the risk</label></p>
+<p class="mb-3">A server that is not on this computer should have a certificate that an authority signed. A certificate that no authority signed can mean that someone on the network reads your mail and your password. Trust it only if your provider gave you this fingerprint.</p>
+<label class="checkbox"><input type="checkbox" name="understand" value="1"{{if .UnderstandChecked}} checked{{end}}> I understand the risk</label>
 {{end}}
 </fieldset>
+</div>
+</div>
 {{end}}
-<p><button type="submit">Test the connection and save</button></p>
+<button class="button is-link" type="submit">Test the connection and save</button>
 </form>
 {{end}}
 {{end}}
+</div>
+</div>
 {{end}}

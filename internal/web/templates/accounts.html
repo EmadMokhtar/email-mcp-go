@@ -1,24 +1,35 @@
 {{/*
-  The accounts page: the accounts of the tenant of the session. It shows no
-  secret, no server setting and no user name.
+  The accounts page: the accounts of the tenant of the session, one card each.
+  It shows no secret, no server setting and no user name.
 */}}
 {{define "title"}}Accounts · email-mcp{{end}}
 {{define "content"}}
-<h1>Accounts</h1>
+<div class="level is-mobile mb-5">
+<div class="level-left"><h1 class="title level-item">Accounts</h1></div>
+<div class="level-right"><a class="button is-link level-item" href="/connect">Connect account</a></div>
+</div>
 {{with .Data}}
 {{if .Accounts}}
-<table>
-<thead>
-<tr><th scope="col">Address</th><th scope="col">Provider</th><th scope="col">Mail level</th><th scope="col">Status</th><th scope="col">Settings</th></tr>
-</thead>
-<tbody>
-{{range .Accounts}}<tr><td>{{.Address}}</td><td>{{.Provider}}</td><td>{{.MailLevel}}</td><td>{{.Status}}</td><td><a href="/accounts/{{.ID}}/settings">Permissions and settings</a></td></tr>
+<ul>
+{{range .Accounts}}<li class="box p-5">
+<div class="is-flex is-flex-wrap-wrap is-align-items-center is-justify-content-space-between is-gap-3">
+<div>
+<h2 class="title is-5 mb-3 is-break-anywhere">{{.Address}}</h2>
+<div class="tags">
+<span class="tag is-medium">{{.Provider}}</span>
+<span class="tag is-medium is-link is-light">Mail level: {{.MailLevel}}</span>
+<span class="tag is-medium {{if .Connected}}is-success{{else}}is-warning{{end}} is-light">{{.Status}}</span>
+</div>
+</div>
+<a class="button" href="/accounts/{{.ID}}/settings">Permissions and settings</a>
+</div>
+</li>
 {{end}}
-</tbody>
-</table>
+</ul>
 {{else}}
+<div class="box p-5 has-text-centered">
 <p>No account is connected yet.</p>
+</div>
 {{end}}
 {{end}}
-<p><a href="/connect">Connect account</a></p>
 {{end}}
