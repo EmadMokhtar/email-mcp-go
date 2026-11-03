@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/EmadMokhtar/email-mcp-go/compare/v0.2.0...v0.3.0) (2026-11-03)
+
+
+### Features
+
+* reconnect an account and restore the M0a follow-ups ([#15](https://github.com/EmadMokhtar/email-mcp-go/issues/15)) ([4763194](https://github.com/EmadMokhtar/email-mcp-go/commit/47631946d61167ce71dc0028787b755768d81d1d))
+
 ## [0.2.0](https://github.com/EmadMokhtar/email-mcp-go/compare/v0.1.0...v0.2.0) (2026-11-03)
 
 
