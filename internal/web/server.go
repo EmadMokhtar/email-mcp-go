@@ -318,6 +318,7 @@ var sectionOf = map[string]string{
 	pageAccounts:    "/",
 	pageConnect:     "/",
 	pageSettings:    "/",
+	pageReconnect:   "/",
 	pageApprovals:   "/approvals",
 	pageApproval:    "/approvals",
 	pageActivity:    "/activity",
