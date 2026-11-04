@@ -262,7 +262,7 @@ func loginError(err error) error {
 			return fmt.Errorf("%s: %w", text, ErrServerBusy)
 		}
 		return &authError{text: text}
-	case isNetworkError(err):
+	case IsNetworkError(err):
 		return fmt.Errorf("imap: login failed: %w", err)
 	default:
 		return errors.New("imap: login failed")

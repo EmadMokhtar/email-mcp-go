@@ -101,11 +101,13 @@ func New(svc *service.Service, opts Options) *mcp.Server {
 //     turns that into a tool result with isError set and no structured content.
 //
 // The log gets the name of the tool and a fixed code for a refused caller, a
-// panic, an unknown error, a timeout and a cancellation. For a panic it also
-// gets the Go type of the panic value, and for an unknown error and a timeout
-// the Go types of the error. It never gets the value or the text. A
-// cancellation by the client is logged at Debug level, a refused caller and a
-// timeout at Warn level, and a panic and an unknown error at Error level.
+// panic, an unknown error, a timeout, a mail server that cannot be reached and a
+// cancellation. For a panic it also gets the Go type of the panic value, and for
+// an unknown error, a timeout and a mail server that cannot be reached the Go
+// types of the error. It never gets the value or the text. A cancellation by the
+// client is logged at Debug level, a refused caller, a timeout and a mail server
+// that cannot be reached at Warn level, and a panic and an unknown error at Error
+// level.
 func safe[In, Out any](d *deps, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFor[In, Out] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (res *mcp.CallToolResult, out Out, err error) {
 		var zero Out
@@ -143,7 +145,7 @@ func (d *deps) logFailure(tool string, fail *toolFailure, err error) {
 	switch fail.code {
 	case codeInternal:
 		d.log.Error("tool call failed", "tool", tool, "code", fail.code, "error_types", errtype.Chain(err))
-	case codeTimeout:
+	case codeTimeout, codeServerUnreachable:
 		d.log.Warn("tool call failed", "tool", tool, "code", fail.code, "error_types", errtype.Chain(err))
 	case codeCanceled:
 		d.log.Debug("tool call ended", "tool", tool, "code", fail.code)

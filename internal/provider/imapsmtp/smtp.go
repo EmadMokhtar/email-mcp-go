@@ -340,7 +340,7 @@ func appendErrorCode(err error) string {
 			return string(serverErr.Code)
 		}
 		return "server_" + strings.ToLower(string(serverErr.Type))
-	case isNetworkError(err):
+	case IsNetworkError(err):
 		return "network"
 	default:
 		return "failed"
@@ -574,7 +574,7 @@ func smtpLoginError(err error) error {
 			return &authError{text: text}
 		}
 		return errors.New(text)
-	case isNetworkError(err):
+	case IsNetworkError(err):
 		return fmt.Errorf("smtp: login failed: %w", err)
 	default:
 		return errors.New("smtp: login failed")

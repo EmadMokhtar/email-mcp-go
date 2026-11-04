@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"runtime"
 	"strings"
 	"sync"
@@ -642,4 +643,36 @@ func TestPoolRepeatsGoexitOfCall(t *testing.T) {
 	require.NoError(t, p.with(t.Context(), noop))
 	require.Equal(t, 2, srv.TotalConns())
 	require.Eventually(t, func() bool { return srv.OpenConns() == 1 }, 5*time.Second, 10*time.Millisecond)
+}
+
+// A port where nothing listens must count as a network error, because the MCP
+// tools use IsNetworkError to tell the agent that the server cannot be reached.
+func TestDialToClosedPortIsANetworkError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := listener.Addr().(*net.TCPAddr).Port
+	require.NoError(t, listener.Close())
+
+	cfg := baseConfig()
+	cfg.Server.IMAPHost = "127.0.0.1"
+	cfg.Server.IMAPPort = port
+	cfg.Server.IMAPSecurity = account.SecurityTLS
+	p := newTestPool(t, cfg)
+
+	err = p.with(t.Context(), func(*imapclient.Client) error { return nil })
+
+	require.Error(t, err)
+	require.True(t, IsNetworkError(err))
+}
+
+func TestIsNetworkErrorLeavesOutOtherErrors(t *testing.T) {
+	for _, err := range []error{
+		nil,
+		errors.New("some other error"),
+		context.Canceled,
+		context.DeadlineExceeded,
+		&imap.Error{Type: imap.StatusResponseTypeNo, Text: "no"},
+	} {
+		require.False(t, IsNetworkError(err), "%v", err)
+	}
 }

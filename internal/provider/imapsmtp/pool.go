@@ -282,11 +282,13 @@ func connectionFailed(pc *pooledConn, err error) bool {
 	if isServerError(err) {
 		return false
 	}
-	return isNetworkError(err) || isDead(pc.client)
+	return IsNetworkError(err) || isDead(pc.client)
 }
 
-// isNetworkError reports whether the type of err is a network failure.
-func isNetworkError(err error) bool {
+// IsNetworkError reports whether the type of err is a network failure: the
+// connection to the mail server could not be made, or it was lost. An answer of
+// the server is not one, and neither is the end of a context.
+func IsNetworkError(err error) bool {
 	if err == nil {
 		return false
 	}

@@ -88,6 +88,7 @@ const (
 	codeAuthFailed         = "auth_failed"
 	codeCertificateChanged = "certificate_changed"
 	codeServerBusy         = "server_busy"
+	codeServerUnreachable  = "server_unreachable"
 )
 
 // accountReconnect is how an error text names the two ways in which the user
@@ -260,6 +261,13 @@ func toolError(tool string, err error) *toolFailure {
 		return failure(codeTimeout, "The mail server did not answer in time. Try again later.")
 	case errors.Is(err, context.Canceled):
 		return failure(codeCanceled, "The request was cancelled.")
+	// This comes after the timeout: a timeout is a network error too, and it has
+	// its own text.
+	case imapsmtp.IsNetworkError(err):
+		return failure(codeServerUnreachable, "Could not connect to the mail server of this account: the connection "+
+			"was refused or dropped, or the host was not found. Ask the user to check this. If the account uses a "+
+			"local mail program such as Proton Mail Bridge, it must be running. Otherwise check the network, and "+
+			"the host names and ports of the account. "+accountTest+" tests the connection. "+accountID+" "+noRetryUntilUser)
 	default:
 		return errInternal
 	}
