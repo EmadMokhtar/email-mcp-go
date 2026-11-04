@@ -425,7 +425,7 @@ func withSMTP(ctx context.Context, cfg Config, dataLen int, fn func(c *smtp.Clie
 	dialer := net.Dialer{Timeout: cfg.DialTimeout}
 	raw, err := dialer.DialContext(dialCtx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("smtp: connect: %w", err)
+		return connectError(fmt.Errorf("smtp: connect: %w", err))
 	}
 	defer func() { _ = raw.Close() }()
 
