@@ -21,7 +21,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -30,6 +29,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
 	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
+	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 )
 
@@ -268,9 +268,8 @@ func approvalOf(svc *service.Service, ctx context.Context, id string) (approvalP
 // that is not about the action, such as a failure of the database.
 func answerErrorText(err error) (status int, text string, known bool) {
 	var (
-		perm   *service.PermissionError
-		rate   *policy.RateLimitError
-		netErr net.Error
+		perm *service.PermissionError
+		rate *policy.RateLimitError
 	)
 	switch {
 	case errors.Is(err, confirm.ErrNotFound):
@@ -299,7 +298,8 @@ func answerErrorText(err error) (status int, text string, known bool) {
 		return http.StatusBadGateway, msgPartial, true
 	case errors.Is(err, mail.ErrNotFound), errors.Is(err, mail.ErrRefStale), errors.Is(err, mail.ErrConflict),
 		errors.Is(err, mail.ErrTooLarge), errors.Is(err, mail.ErrUnsupported), errors.Is(err, outbox.ErrTooLate),
-		errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr):
+		errors.Is(err, context.DeadlineExceeded), errors.Is(err, imapsmtp.ErrServerUnreachable),
+		errors.Is(err, imapsmtp.ErrConnectionLost):
 		return http.StatusBadGateway, msgMailServer, true
 	}
 	return 0, "", false

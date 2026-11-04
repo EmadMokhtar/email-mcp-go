@@ -610,9 +610,9 @@ Common fixes:
   test works (the server only refused for a short time), the account is marked
   as connected again. Otherwise, see the next point.
 - **The agent says that it could not connect to the mail server.** The server
-  refused or dropped the connection, or its host was not found. With a local
-  bridge, such as ProtonMail Bridge, start the bridge. Otherwise check the
-  network and the server settings. `email-mcp account test <id>` tests the
+  refused the connection or closed it at once, or its host was not found. With
+  a local bridge, such as ProtonMail Bridge, start the bridge. Otherwise check
+  the network and the server settings. `email-mcp account test <id>` tests the
   connection. The status `ok` of `list_accounts` does not say that the server
   can be reached: it only says that the server did not refuse the login.
 - **The password or the certificate changed.** Reconnect the account. In the

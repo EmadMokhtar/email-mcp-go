@@ -130,7 +130,7 @@ func dialWithConn(ctx context.Context, cfg Config) (*imapclient.Client, net.Conn
 	dialer := net.Dialer{Timeout: cfg.DialTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, nil, fmt.Errorf("imap: connect: %w", err)
+		return nil, nil, connectError(fmt.Errorf("imap: connect: %w", err))
 	}
 	// From here, the end of ctx closes the connection. That also stops any
 	// step that waits for the server. stop runs before cancel (defers run in
@@ -169,7 +169,7 @@ func secureAndLogin(ctx context.Context, cfg Config, conn net.Conn) (*imapclient
 		tlsConfig.NextProtos = []string{"imap"}
 		tlsConn := tls.Client(conn, tlsConfig)
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
-			return nil, fmt.Errorf("imap: tls handshake: %w", err)
+			return nil, setupError(fmt.Errorf("imap: tls handshake: %w", err))
 		}
 		client = imapclient.New(tlsConn, nil)
 
@@ -180,7 +180,7 @@ func secureAndLogin(ctx context.Context, cfg Config, conn net.Conn) (*imapclient
 		var err error
 		client, err = imapclient.NewStartTLS(conn, &imapclient.Options{TLSConfig: newTLSConfig(cfg, host)})
 		if err != nil {
-			return nil, fmt.Errorf("imap: starttls: %w", err)
+			return nil, setupError(fmt.Errorf("imap: starttls: %w", err))
 		}
 
 	case account.SecurityPlain:
@@ -198,12 +198,12 @@ func secureAndLogin(ctx context.Context, cfg Config, conn net.Conn) (*imapclient
 	}
 
 	if err := client.WaitGreeting(); err != nil {
-		return nil, fmt.Errorf("imap: greeting: %w", err)
+		return nil, endedError(client, err, fmt.Errorf("imap: greeting: %w", err))
 	}
 	if err := client.Login(cfg.Server.Username, cfg.Password.Reveal()).Wait(); err != nil {
 		// The caller closes the connection at once. A LOGOUT is not needed
 		// after a failed login, and no error from closing can hide this one.
-		return nil, loginError(err)
+		return nil, endedError(client, err, loginError(err))
 	}
 	return client, nil
 }
@@ -222,6 +222,74 @@ var ErrAuthFailed = errors.New("imapsmtp: the server refused the login")
 // too many connections. The password was not refused, so it does not match
 // ErrAuthFailed. A later try may work. Callers check it with errors.Is.
 var ErrServerBusy = errors.New("imapsmtp: the server is busy or has too many connections")
+
+// ErrServerUnreachable means that no working connection to the mail server could
+// be made: the connection was refused, the server closed it before the login
+// ended, or the host was not found. Callers check it with errors.Is.
+var ErrServerUnreachable = errors.New("imapsmtp: the mail server cannot be reached")
+
+// ErrConnectionLost means that a logged-in connection ended during a call. The
+// server may have done the command before that. Callers check it with errors.Is.
+var ErrConnectionLost = errors.New("imapsmtp: the connection to the mail server was lost")
+
+// connectionError marks err as a failure of the connection to the mail server.
+// It matches kind with errors.Is, and it keeps the text and the chain of err.
+//
+// The mark is set in the places that know that err comes from that connection.
+// The Go type of an error does not show this: a file error also holds a
+// syscall.Errno, and a syscall.Errno is a net.Error.
+type connectionError struct {
+	kind error
+	err  error
+}
+
+func (e *connectionError) Error() string { return e.err.Error() }
+
+// Unwrap returns the marked error.
+func (e *connectionError) Unwrap() error { return e.err }
+
+// Is makes errors.Is(err, kind) true.
+func (e *connectionError) Is(target error) bool { return target == e.kind }
+
+// connectError marks the error of a connect to the mail server. A timeout
+// matches context.DeadlineExceeded, also when the operating system gave it
+// (ETIMEDOUT). A cancel is not a failure of the server, so it stays as it is.
+// Any other error matches ErrServerUnreachable.
+func connectError(err error) error {
+	var netErr net.Error
+	switch {
+	case errors.Is(err, context.Canceled):
+		return err
+	case errors.As(err, &netErr) && netErr.Timeout():
+		return &connectionError{kind: context.DeadlineExceeded, err: err}
+	default:
+		return &connectionError{kind: ErrServerUnreachable, err: err}
+	}
+}
+
+// setupError marks the error of a TLS step after the connect. Only a network
+// failure gets the mark of connectError.
+//
+// A TLS alert is not one: the server answered, and the TLS settings do not fit.
+// crypto/tls gives an alert as a *net.OpError with the Op "remote error".
+func setupError(err error) error {
+	var opErr *net.OpError
+	if !isNetworkError(err) || (errors.As(err, &opErr) && opErr.Op == "remote error") {
+		return err
+	}
+	return connectError(err)
+}
+
+// endedError marks err when client has ended during a step of the login. stepErr
+// is the error of that step as imapclient gave it. imapclient hides the network
+// error of some failures, so the state of the client decides, as in
+// connectionFailed. An answer of the server is not a failure of the connection.
+func endedError(client *imapclient.Client, stepErr, err error) error {
+	if isServerError(stepErr) || !isDead(client) {
+		return err
+	}
+	return connectError(err)
+}
 
 // authError is a login that the server refused. It matches ErrAuthFailed and
 // keeps its own text, which holds no text of the server.
@@ -262,7 +330,7 @@ func loginError(err error) error {
 			return fmt.Errorf("%s: %w", text, ErrServerBusy)
 		}
 		return &authError{text: text}
-	case IsNetworkError(err):
+	case isNetworkError(err):
 		return fmt.Errorf("imap: login failed: %w", err)
 	default:
 		return errors.New("imap: login failed")

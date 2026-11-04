@@ -89,6 +89,7 @@ const (
 	codeCertificateChanged = "certificate_changed"
 	codeServerBusy         = "server_busy"
 	codeServerUnreachable  = "server_unreachable"
+	codeConnectionLost     = "connection_lost"
 )
 
 // accountReconnect is how an error text names the two ways in which the user
@@ -261,13 +262,17 @@ func toolError(tool string, err error) *toolFailure {
 		return failure(codeTimeout, "The mail server did not answer in time. Try again later.")
 	case errors.Is(err, context.Canceled):
 		return failure(codeCanceled, "The request was cancelled.")
-	// This comes after the timeout: a timeout is a network error too, and it has
-	// its own text.
-	case imapsmtp.IsNetworkError(err):
-		return failure(codeServerUnreachable, "Could not connect to the mail server of this account: the connection "+
-			"was refused or dropped, or the host was not found. Ask the user to check this. If the account uses a "+
-			"local mail program such as Proton Mail Bridge, it must be running. Otherwise check the network, and "+
-			"the host names and ports of the account. "+accountTest+" tests the connection. "+accountID+" "+noRetryUntilUser)
+	// These come after the timeout: a lost connection can also have timed out,
+	// and a timeout has its own text.
+	case errors.Is(err, imapsmtp.ErrServerUnreachable):
+		return failure(codeServerUnreachable, "Could not connect to the mail server of this account: the server "+
+			"refused the connection or closed it at once, or the host was not found. Ask the user to check this. If "+
+			"the account uses a local mail program such as Proton Mail Bridge, it must be running. Otherwise check "+
+			"the network, and the host names and ports of the account. "+accountTest+" tests the connection. "+
+			accountID+" "+noRetryUntilUser)
+	case errors.Is(err, imapsmtp.ErrConnectionLost):
+		return failure(codeConnectionLost, "The connection to the mail server was lost during this call. A change may "+
+			"or may not have been made, so check the current state before you repeat a change. Try again later.")
 	default:
 		return errInternal
 	}

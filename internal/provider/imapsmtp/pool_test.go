@@ -3,12 +3,16 @@ package imapsmtp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"net"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -645,34 +649,119 @@ func TestPoolRepeatsGoexitOfCall(t *testing.T) {
 	require.Eventually(t, func() bool { return srv.OpenConns() == 1 }, 5*time.Second, 10*time.Millisecond)
 }
 
-// A port where nothing listens must count as a network error, because the MCP
-// tools use IsNetworkError to tell the agent that the server cannot be reached.
-func TestDialToClosedPortIsANetworkError(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	port := listener.Addr().(*net.TCPAddr).Port
-	require.NoError(t, listener.Close())
-
-	cfg := baseConfig()
-	cfg.Server.IMAPHost = "127.0.0.1"
-	cfg.Server.IMAPPort = port
-	cfg.Server.IMAPSecurity = account.SecurityTLS
+func TestClosedPortMeansUnreachable(t *testing.T) {
+	srv := imaptest.New(t)
+	cfg := pinnedConfig(srv, account.SecurityTLS)
+	srv.Close()
 	p := newTestPool(t, cfg)
 
-	err = p.with(t.Context(), func(*imapclient.Client) error { return nil })
+	err := p.with(t.Context(), noop)
 
-	require.Error(t, err)
-	require.True(t, IsNetworkError(err))
+	require.ErrorIs(t, err, ErrServerUnreachable)
+	require.NotErrorIs(t, err, ErrConnectionLost)
 }
 
-func TestIsNetworkErrorLeavesOutOtherErrors(t *testing.T) {
-	for _, err := range []error{
-		nil,
-		errors.New("some other error"),
-		context.Canceled,
-		context.DeadlineExceeded,
-		&imap.Error{Type: imap.StatusResponseTypeNo, Text: "no"},
+func TestServerThatEndsANewConnectionMeansUnreachable(t *testing.T) {
+	t.Run("before the greeting", func(t *testing.T) {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = listener.Close() })
+		go func() {
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				_ = conn.Close()
+			}
+		}()
+		fake := &fakeIMAP{host: "127.0.0.1", port: listener.Addr().(*net.TCPAddr).Port}
+
+		_, err = dialIMAP(t.Context(), fake.plainConfig())
+
+		require.ErrorIs(t, err, ErrServerUnreachable)
+	})
+
+	for name, then := range map[string]fakeThen{"close at the login": fakeClose, "reset at the login": fakeReset} {
+		t.Run(name, func(t *testing.T) {
+			fake := newFakeIMAP(t, "* OK ready\r\n", func(_, _ string) (string, fakeThen) { return "", then })
+
+			_, err := dialIMAP(t.Context(), fake.plainConfig())
+
+			require.ErrorIs(t, err, ErrServerUnreachable)
+		})
+	}
+}
+
+func TestConnectError(t *testing.T) {
+	dial := func(errno syscall.Errno) error {
+		return fmt.Errorf("imap: connect: %w", &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", errno)})
+	}
+
+	t.Run("refused", func(t *testing.T) {
+		refused := dial(syscall.ECONNREFUSED)
+
+		err := connectError(refused)
+
+		require.ErrorIs(t, err, ErrServerUnreachable)
+		require.EqualError(t, err, refused.Error())
+		require.ErrorIs(t, err, syscall.ECONNREFUSED, "the chain stays for the log and the connection test")
+	})
+
+	t.Run("a timeout of the operating system", func(t *testing.T) {
+		err := connectError(dial(syscall.ETIMEDOUT))
+
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.NotErrorIs(t, err, ErrServerUnreachable)
+	})
+
+	t.Run("a cancel", func(t *testing.T) {
+		canceled := fmt.Errorf("imap: connect: %w", context.Canceled)
+
+		require.Equal(t, canceled, connectError(canceled))
+	})
+}
+
+func TestSetupErrorMarksOnlyNetworkFailures(t *testing.T) {
+	require.ErrorIs(t, setupError(fmt.Errorf("imap: greeting: %w", io.EOF)), ErrServerUnreachable)
+
+	for name, err := range map[string]error{
+		"a TLS alert of the server": fmt.Errorf("imap: tls handshake: %w",
+			&net.OpError{Op: "remote error", Err: errors.New("tls: handshake failure")}),
+		"a login that the server refused": &authError{text: "imap: login failed"},
+		"another error":                   errors.New("imap: unknown security mode"),
 	} {
-		require.False(t, IsNetworkError(err), "%v", err)
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, err, setupError(err))
+		})
+	}
+}
+
+func TestPoolMarksALostConnection(t *testing.T) {
+	fake := resetOnFirstNoop(t)
+	p := newTestPool(t, fake.plainConfig())
+
+	err := p.withNoRetry(t.Context(), noop)
+
+	require.ErrorIs(t, err, ErrConnectionLost)
+	require.NotErrorIs(t, err, ErrServerUnreachable)
+}
+
+// A call can fail with an error that has the type of a network error, while its
+// connection is fine. That is not a lost connection.
+func TestPoolDoesNotMarkALocalErrorAsLost(t *testing.T) {
+	for name, failure := range map[string]error{
+		"EOF of a parser": io.EOF,
+		"a file error":    &fs.PathError{Op: "open", Path: "/some/file", Err: syscall.ENOENT},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := imaptest.New(t)
+			p := newTestPool(t, pinnedConfig(srv, account.SecurityTLS))
+
+			err := p.with(t.Context(), func(*imapclient.Client) error { return failure })
+
+			require.ErrorIs(t, err, failure)
+			require.NotErrorIs(t, err, ErrConnectionLost)
+		})
 	}
 }

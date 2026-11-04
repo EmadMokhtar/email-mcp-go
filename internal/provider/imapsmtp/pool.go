@@ -94,6 +94,9 @@ func newPool(cfg Config) *pool {
 // decides. An error from the server (NO or BAD) is returned as it is and is
 // never retried. A failed dial is not retried either.
 //
+// The error of a connection that was lost matches ErrConnectionLost, and the
+// error of a failed dial matches ErrServerUnreachable.
+//
 // fn must Wait or Close every command it starts before it returns (for
 // example, defer cmd.Close() for a FETCH). imapclient stops reading the
 // connection while a FETCH body is unread. If fn returns with such a command
@@ -249,8 +252,12 @@ func (p *pool) classify(pc *pooledConn, out callOutcome) runResult {
 	// call.
 	pc.repeatAbnormalEnd(out)
 	failed := connectionFailed(pc, out.err)
+	err := out.err
+	if failed && connectionEnded(pc, err) {
+		err = &connectionError{kind: ErrConnectionLost, err: err}
+	}
 	return runResult{
-		err:              out.err,
+		err:              err,
 		reusable:         !failed && !isDead(pc.client),
 		connectionFailed: failed,
 	}
@@ -282,13 +289,21 @@ func connectionFailed(pc *pooledConn, err error) bool {
 	if isServerError(err) {
 		return false
 	}
-	return IsNetworkError(err) || isDead(pc.client)
+	return isNetworkError(err) || isDead(pc.client)
 }
 
-// IsNetworkError reports whether the type of err is a network failure: the
-// connection to the mail server could not be made, or it was lost. An answer of
-// the server is not one, and neither is the end of a context.
-func IsNetworkError(err error) bool {
+// connectionEnded reports whether err of a failed call comes from the connection
+// itself. connectionFailed also counts an error with only the type of a network
+// error, such as an EOF of a parser, because one more try costs little. A mark
+// for the agent needs more: the connection has ended, or a read or a write on it
+// failed.
+func connectionEnded(pc *pooledConn, err error) bool {
+	var opErr *net.OpError
+	return isDead(pc.client) || errors.As(err, &opErr)
+}
+
+// isNetworkError reports whether the type of err is a network failure.
+func isNetworkError(err error) bool {
 	if err == nil {
 		return false
 	}

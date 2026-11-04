@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"syscall"
@@ -549,40 +551,59 @@ func TestToolErrorMapping(t *testing.T) {
 		},
 		{
 			name: "a mail server that refuses the connection",
-			err: fmt.Errorf("imap: connect: %w", &net.OpError{
-				Op: "dial", Net: "tcp", Addr: &net.TCPAddr{IP: net.IPv4(10, 9, 8, 7), Port: 1143},
-				Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
-			}),
+			err: fmt.Errorf("imap: connect 10.9.8.7:1143: connection refused: %w",
+				imapsmtp.ErrServerUnreachable),
 			contains: []string{"Could not connect to the mail server", "Proton Mail Bridge",
 				"host names and ports", "email-mcp account test <id>"},
 			hasNo: []string{"internal error", "10.9.8.7", "1143", "connection refused", "reconnect"},
 			ends:  endUntilUser, wantsCode: "server_unreachable",
 		},
 		{
-			name:     "a mail server host that is not found",
-			err:      fmt.Errorf("imap: connect: %w", &net.DNSError{Err: "no such host", Name: "secret-host.example", IsNotFound: true}),
-			contains: []string{"Could not connect to the mail server"},
-			hasNo:    []string{"internal error", "secret-host"},
-			ends:     endUntilUser, wantsCode: "server_unreachable",
-		},
-		{
-			name:     "a connection that the server dropped",
-			err:      fmt.Errorf("imap: %w", io.ErrUnexpectedEOF),
-			contains: []string{"Could not connect to the mail server"},
-			hasNo:    []string{"internal error", "imap"},
-			ends:     endUntilUser, wantsCode: "server_unreachable",
+			name:      "a connection that was lost during a call",
+			err:       fmt.Errorf("imap: read 10.9.8.7:993: %w", imapsmtp.ErrConnectionLost),
+			contains:  []string{"lost during this call", "may or may not have been made", "Try again later"},
+			hasNo:     []string{"internal error", "10.9.8.7", "Could not connect", "Do not retry"},
+			wantsCode: "connection_lost",
 		},
 		{
 			name:      "a network timeout stays a timeout",
-			err:       fmt.Errorf("imap: connect: %w", &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}),
+			err:       fmt.Errorf("imap: read: %w: %w", imapsmtp.ErrConnectionLost, os.ErrDeadlineExceeded),
 			contains:  []string{"did not answer in time"},
 			wantsCode: "timeout",
 		},
 		{
-			name:     "a partial change stays a partial change after a network error",
-			err:      fmt.Errorf("%w: %w", mail.ErrPartial, &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}),
+			name:     "a partial change stays a partial change after a lost connection",
+			err:      fmt.Errorf("%w: %w", mail.ErrPartial, imapsmtp.ErrConnectionLost),
 			contains: []string{"in part"},
 			ends:     endNoRepeat, wantsCode: "partial",
+		},
+		{
+			name:      "a file error is not a mail server problem",
+			err:       fmt.Errorf("read the key: %w", &fs.PathError{Op: "open", Path: "/secret/key", Err: syscall.ENOENT}),
+			contains:  []string{"internal error"},
+			hasNo:     []string{"mail server", "secret"},
+			wantsCode: "internal_error",
+		},
+		{
+			name:      "an EOF of a parser is not a mail server problem",
+			err:       fmt.Errorf("parse the message: %w", io.ErrUnexpectedEOF),
+			contains:  []string{"internal error"},
+			hasNo:     []string{"mail server"},
+			wantsCode: "internal_error",
+		},
+		{
+			name:      "a call to another service is not a mail server problem",
+			err:       &url.Error{Op: "Get", URL: "https://secret.example", Err: syscall.ECONNREFUSED},
+			contains:  []string{"internal error"},
+			hasNo:     []string{"mail server", "secret"},
+			wantsCode: "internal_error",
+		},
+		{
+			name:      "a network error without the mark is not a mail server problem",
+			err:       &net.OpError{Op: "dial", Net: "unix", Err: syscall.ENOENT},
+			contains:  []string{"internal error"},
+			hasNo:     []string{"mail server"},
+			wantsCode: "internal_error",
 		},
 		{
 			name:      "no principal",
@@ -1283,12 +1304,10 @@ func TestTimeoutAndCancellationAreNotInternalErrors(t *testing.T) {
 }
 
 // A mail server that cannot be reached is a problem that the user can fix, so
-// the agent gets the next step and not "internal error". The error here comes
-// from a real dial, to be sure of the types that the net package gives.
+// the agent gets the next step and not "internal error".
 func TestUnreachableMailServerIsNotAnInternalError(t *testing.T) {
-	refused := dialClosedPort(t)
 	backend := &stubBackend{search: func(mail.Query) (mail.Page[mail.Summary], error) {
-		return mail.Page[mail.Summary]{}, fmt.Errorf("imap: connect: %w", refused)
+		return mail.Page[mail.Summary]{}, fmt.Errorf("imap: connect 10.9.8.7:1143: %w", imapsmtp.ErrServerUnreachable)
 	}}
 	e := newEnv(t, envOptions{backends: &countingFactory{backend: backend}})
 	a := e.offlineAccount()
@@ -1298,31 +1317,25 @@ func TestUnreachableMailServerIsNotAnInternalError(t *testing.T) {
 	require.True(t, res.IsError)
 	text := textOf(t, res)
 	require.Contains(t, text, "Could not connect to the mail server")
-	require.NotContains(t, text, "127.0.0.1", "the text of the error does not reach the agent")
+	require.NotContains(t, text, "10.9.8.7", "the text of the error does not reach the agent")
 	require.Nil(t, res.StructuredContent)
 	logs := e.logs.String()
 	require.Contains(t, logs, "level=WARN")
 	require.Contains(t, logs, "code=server_unreachable")
-	require.Contains(t, logs, "error_types=*fmt.wrapError>*net.OpError", "the log names the types of the error")
-	require.NotContains(t, logs, "127.0.0.1", "the log holds a code, not the error text")
+	require.Contains(t, logs, "error_types=*fmt.wrapError>*errors.errorString", "the log names the types of the error")
+	require.NotContains(t, logs, "10.9.8.7", "the log holds a code, not the error text")
 	require.NotContains(t, logs, "level=ERROR")
 }
 
-// dialClosedPort returns the error of a dial to a local port where nothing
-// listens.
-func dialClosedPort(t *testing.T) error {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	addr := listener.Addr().String()
-	require.NoError(t, listener.Close())
+// A write tool can lose its connection after the server did the command, so its
+// text must not say that nothing happened or that the user must act.
+func TestLostConnectionOfAWriteTool(t *testing.T) {
+	got := toolError(toolCreateDraft, fmt.Errorf("imap: append: %w", imapsmtp.ErrConnectionLost))
 
-	conn, err := net.Dial("tcp", addr)
-	if err == nil {
-		_ = conn.Close()
-	}
-	require.Error(t, err)
-	return err
+	require.Equal(t, "connection_lost", got.code)
+	require.Contains(t, got.Error(), "may or may not have been made")
+	require.NotContains(t, got.Error(), "Could not connect")
+	require.NotContains(t, got.Error(), endUntilUser)
 }
 
 // The link of an account that must be reconnected travels from the service to

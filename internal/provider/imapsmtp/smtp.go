@@ -340,7 +340,7 @@ func appendErrorCode(err error) string {
 			return string(serverErr.Code)
 		}
 		return "server_" + strings.ToLower(string(serverErr.Type))
-	case IsNetworkError(err):
+	case isNetworkError(err):
 		return "network"
 	default:
 		return "failed"
@@ -425,7 +425,7 @@ func withSMTP(ctx context.Context, cfg Config, dataLen int, fn func(c *smtp.Clie
 	dialer := net.Dialer{Timeout: cfg.DialTimeout}
 	raw, err := dialer.DialContext(dialCtx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("smtp: connect: %w", err)
+		return connectError(fmt.Errorf("smtp: connect: %w", err))
 	}
 	defer func() { _ = raw.Close() }()
 
@@ -574,7 +574,7 @@ func smtpLoginError(err error) error {
 			return &authError{text: text}
 		}
 		return errors.New(text)
-	case IsNetworkError(err):
+	case isNetworkError(err):
 		return fmt.Errorf("smtp: login failed: %w", err)
 	default:
 		return errors.New("smtp: login failed")
