@@ -1119,6 +1119,11 @@ var cssNearMisses = []string{
 	"text-indent:99999px;overflow:hidden",
 	"white-space:nowrap;overflow:hidden",
 	"width:3px;overflow:hidden",
+	"width:3px;overflow:auto",
+	"height:100px;overflow:auto",
+	"height:100px;overflow:scroll",
+	"overflow:auto",
+	"overflow:scroll",
 	"width:calc(100% - 20px)",
 	"z-index:1",
 }

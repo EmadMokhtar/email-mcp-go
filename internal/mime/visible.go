@@ -200,7 +200,7 @@ func (v *visibility) foldDetails(n *xhtml.Node) {
 	for c := n.FirstChild; c != nil; {
 		next := c.NextSibling
 		if !isFirstSummary(c) {
-			v.noteDropped(c)
+			v.noteDropped(c, false)
 			n.RemoveChild(c)
 		}
 		c = next

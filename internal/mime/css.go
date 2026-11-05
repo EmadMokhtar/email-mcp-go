@@ -2,6 +2,7 @@ package mime
 
 import (
 	"errors"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -186,8 +187,8 @@ type hideParts uint8
 const (
 	tinyHeight hideParts = 1 << iota // height or max-height of at most 2 pixels (see isTinyLength)
 	tinyWidth                        // width or max-width of at most 2 pixels (see isTinyLength)
-	clipY                            // overflow hidden or clip in the vertical direction
-	clipX                            // overflow hidden or clip in the horizontal direction
+	clipY                            // overflow in the vertical direction that does not show the rest (see clips)
+	clipX                            // overflow in the horizontal direction that does not show the rest (see clips)
 	positioned                       // position absolute, fixed or relative
 	farOffset                        // left, top, right or bottom far off the page (see farNegative, farPositive)
 	farIndent                        // text-indent far to the right (see farPositive)
@@ -262,11 +263,11 @@ func isGlobalKeyword(v string) bool {
 //   - transform with a translate or a matrix that moves the element far away,
 //     and the translate property (see translatesFar)
 //   - a margin far below zero on the left or the top (see farNegativeMargin)
-//   - a height of at most 2 pixels, together with overflow of hidden or clip in
-//     the vertical direction; a width of at most 2 pixels, together with
-//     overflow of hidden or clip in the horizontal direction (and the logical
-//     names block-size, inline-size, overflow-block and overflow-inline, see
-//     isTinyLength)
+//   - a height of at most 2 pixels, together with overflow that does not show
+//     the rest in the vertical direction; a width of at most 2 pixels, together
+//     with such overflow in the horizontal direction (and the logical names
+//     block-size, inline-size, overflow-block and overflow-inline, see
+//     isTinyLength and clips)
 //   - position absolute, fixed or relative, together with left, top, right,
 //     bottom or one of the inset properties far off the page (see farNegative
 //     and farPositive)
@@ -637,9 +638,15 @@ func fontSizeEffect(v string) (styleEffect, bool) {
 	return styleEffect{sizes: sizeCandidates{}.add(f)}, true
 }
 
-// clips reports whether an overflow value cuts off what does not fit.
+// clips reports whether an overflow value does not show what does not fit. A box
+// that scrolls (auto, scroll and the old name overlay) counts too: in a box too
+// small to hold a line, a reader sees at most a scroll bar.
 func clips(v string) bool {
-	return v == "hidden" || v == "clip"
+	switch v {
+	case "hidden", "clip", "auto", "scroll", "overlay":
+		return true
+	}
+	return false
 }
 
 // isZeroOrLess reports whether v is a number of zero or less, with or without
@@ -1220,10 +1227,13 @@ func fontShorthandSize(value string) (fontSize, bool) {
 // A selector that cannot be worked out here (descendant, child, sibling,
 // attribute or pseudo selectors, and rules in rules) never hides anything. But
 // if its rule hides, the element that it would hide gets styleEffect.unsure, so
-// the report warns. That element is found by the last part of the selector: for
-// div .x it is each element with the class x. Without a class, an id or an element
-// name in the last part, it is any element. So a rule for something that the
-// document does not have gives no warning.
+// the report warns when that element has text. That element is found by the last
+// part of the selector: for div .x it is each element with the class x. Without a
+// class, an id or an element name in the last part, it is any element. So a rule
+// for something that the document does not have gives no warning.
+//
+// Declarations directly in an at-rule inside a rule, as in .x{@media all{color:red}},
+// belong to the selector of that rule.
 //
 // A rule is kept if it hides, and also if it sets a font size or a
 // visibility, because a child can use its own size to show its text in a
@@ -1277,7 +1287,20 @@ const (
 	scopeApply  ruleScope = iota // the rules apply
 	scopeUnsure                  // the rules are used, but a hiding rule gives a warning too
 	scopeOpaque                  // it is not known whether they apply: they give a warning only
+	scopeCount                   // how many scopes there are
 )
+
+// ruleBlock says where a list of rules stands.
+type ruleBlock struct {
+	scope ruleScope
+	depth int // how many blocks are around the list
+
+	// owned is nil at the top of a sheet. Inside a rule, it collects the
+	// declarations directly in the at-rules of that rule, by scope. They are
+	// added once, at the end of the rule, so that a long selector list is not
+	// read again for each at-rule.
+	owned *[scopeCount]styleEffect
+}
 
 // collectStyleRules reads every style element of the document that a browser
 // uses. A style element inside template is not used: that content is not part
@@ -1325,7 +1348,7 @@ func (h *styleRules) addStyleElement(n *xhtml.Node) {
 			sheet.WriteString(c.Data)
 		}
 	}
-	h.addRules(stripCSSComments(sheet.String()), scope, 0)
+	h.addRules(stripCSSComments(sheet.String()), ruleBlock{scope: scope})
 }
 
 // nextNode returns the node after n in document order, or nil at the end. It
@@ -1423,11 +1446,17 @@ func isASCIISpace(c rune) bool {
 }
 
 // addRules reads a list of rules: a style sheet without comments, or the inside
-// of an at-rule or of another rule. depth is how many blocks are around it.
-func (h *styleRules) addRules(s string, scope ruleScope, depth int) {
-	if depth > maxRuleDepth {
+// of an at-rule or of another rule. It calls itself for each block in a block, so
+// the depth is limited (see maxRuleDepth).
+func (h *styleRules) addRules(s string, b ruleBlock) {
+	if b.depth > maxRuleDepth {
 		h.suspected = true
 		return
+	}
+	// A rule in a rule depends on the selector around it, so it is not worked out.
+	scope := b.scope
+	if b.owned != nil {
+		scope = scopeOpaque
 	}
 	for i := 0; i < len(s); {
 		j := scanCSS(s, i, "{;")
@@ -1445,19 +1474,27 @@ func (h *styleRules) addRules(s string, scope ruleScope, depth int) {
 
 		prelude = trimPrelude(prelude)
 		if strings.HasPrefix(prelude, "@") {
-			h.addAtRule(prelude, body, scope, depth)
+			h.addAtRule(prelude, body, b)
 			continue
 		}
-		if effect := parseStyle(body); effect != (styleEffect{}) {
-			for _, sel := range splitCSS(prelude, ',') {
-				h.addSelector(strings.TrimSpace(sel), effect, scope)
+		h.addSelectors(prelude, parseStyle(body), scope)
+		if strings.IndexByte(body, '{') >= 0 {
+			var owned [scopeCount]styleEffect
+			h.addRules(body, ruleBlock{scope: scope, depth: b.depth + 1, owned: &owned})
+			for inner, effect := range owned {
+				h.addSelectors(prelude, effect, ruleScope(inner))
 			}
 		}
-		// Rules inside the rule (CSS nesting). Their selectors depend on the
-		// selector around them, so they are not worked out.
-		if strings.IndexByte(body, '{') >= 0 {
-			h.addRules(body, scopeOpaque, depth+1)
-		}
+	}
+}
+
+// addSelectors adds the effect of a rule to each selector of its list.
+func (h *styleRules) addSelectors(list string, effect styleEffect, scope ruleScope) {
+	if effect == (styleEffect{}) {
+		return
+	}
+	for _, sel := range splitCSS(list, ',') {
+		h.addSelector(strings.TrimSpace(sel), effect, scope)
 	}
 }
 
@@ -1478,29 +1515,33 @@ func trimPrelude(s string) string {
 // addAtRule reads a rule such as @media. An at-rule that is not known here can
 // hold anything, so its rules are read for a warning only. So is one that
 // depends on something that is not known here, such as @container.
-func (h *styleRules) addAtRule(prelude, body string, scope ruleScope, depth int) {
+func (h *styleRules) addAtRule(prelude, body string, b ruleBlock) {
 	name, condition := splitAtRule(prelude)
 	switch name {
 	case "media":
 		switch matchMedia(condition) {
-		case mediaYes:
-			h.addRules(body, scope, depth+1)
+		case mediaNo:
+			return
 		case mediaUnknown:
-			h.addRules(body, scopeOpaque, depth+1)
+			b.scope = scopeOpaque
 		}
 	case "layer":
 		// A layer changes the order of the rules, which is not used here.
-		h.addRules(body, scope, depth+1)
 	case "supports":
 		// Most conditions hold in a mail client, but this code cannot tell.
-		h.addRules(body, max(scope, scopeUnsure), depth+1)
+		b.scope = max(b.scope, scopeUnsure)
 	case "font-face", "keyframes", "-webkit-keyframes", "-moz-keyframes", "-o-keyframes",
 		"page", "counter-style", "property", "viewport", "-ms-viewport",
 		"font-feature-values", "font-palette-values", "color-profile", "position-try", "view-transition":
-		// These hold no rules for elements.
+		return // these hold no rules for elements
 	default:
-		h.addRules(body, scopeOpaque, depth+1)
+		b.scope = scopeOpaque
 	}
+	b.depth++
+	if b.owned != nil && b.depth <= maxRuleDepth {
+		b.owned[b.scope] = b.owned[b.scope].merge(parseStyle(body))
+	}
+	h.addRules(body, b)
 }
 
 // splitAtRule returns the name of an at-rule in lower case, and what follows it.
@@ -1559,33 +1600,51 @@ const (
 	// must warn. A rule for phones and tablets (768 pixels and less) does not
 	// hold here: nearly every marketing mail has one, so it gives no warning.
 	mediaCommonWindow = 800.0
-	// maxMediaDepth is how deep brackets in a media query are read.
-	maxMediaDepth = 8
+	// maxMediaDepth is how deep brackets in a media query are read. Each level
+	// reads its text again, and the query can be as long as the sheet.
+	maxMediaDepth = 4
 )
 
 // matchMedia works out a media query list for a mail client on a computer: a
 // screen, light mode, and a window of mediaWideWindow.
 //
-// A rule that holds only in a narrower window does not hide text here. It is not
-// reported either, unless the window is one of normal size (mediaCommonWindow).
+// When the list does not hold for that client, it does not hide text here. But
+// other readers can have a narrow reading pane, a wider window or dark mode. If
+// the list holds for one of them, the answer is unknown, so a hiding rule gives a
+// warning. Only a list that holds for a window of less than mediaCommonWindow, or
+// for no screen at all, gives no warning.
 func matchMedia(list string) mediaMatch {
-	m := evalMediaList(list, mediaWideWindow)
-	if m == mediaNo && evalMediaList(list, mediaCommonWindow) != mediaNo {
-		return mediaUnknown
+	m := evalMediaList(list, mediaViewer{width: mediaWideWindow})
+	if m != mediaNo {
+		return m
 	}
-	return m
+	// The last width stands for any window wider than the others.
+	for _, width := range []float64{mediaCommonWindow, mediaWideWindow, math.Inf(1)} {
+		for _, dark := range []bool{false, true} {
+			if evalMediaList(list, mediaViewer{width, dark}) != mediaNo {
+				return mediaUnknown
+			}
+		}
+	}
+	return mediaNo
 }
 
-// evalMediaList works out a media query list for a window of the given width.
-// One query that holds is enough. An empty list holds.
-func evalMediaList(list string, width float64) mediaMatch {
+// mediaViewer is the client that a media query is worked out for.
+type mediaViewer struct {
+	width float64 // the width of the window in pixels
+	dark  bool    // dark mode
+}
+
+// evalMediaList works out a media query list for a viewer. One query that holds
+// is enough. An empty list holds.
+func evalMediaList(list string, viewer mediaViewer) mediaMatch {
 	list = lowerASCII(unescapeCSS(list))
 	if strings.TrimSpace(list) == "" {
 		return mediaYes
 	}
 	m := mediaNo
 	for _, query := range splitCSS(list, ',') {
-		m = m.or(evalMediaQuery(query, width, 0))
+		m = m.or(evalMediaQuery(query, viewer, 0))
 	}
 	return m
 }
@@ -1593,14 +1652,14 @@ func evalMediaList(list string, width float64) mediaMatch {
 // evalMediaQuery works out one query: an optional "only" or "not", then media
 // types and conditions in brackets, joined by "and" or by "or". Anything else
 // is unknown.
-func evalMediaQuery(query string, width float64, depth int) mediaMatch {
+func evalMediaQuery(query string, viewer mediaViewer, depth int) mediaMatch {
 	tokens := mediaTokens(query)
 	negate := false
 	if len(tokens) > 0 && (tokens[0] == "only" || tokens[0] == "not") {
 		negate = tokens[0] == "not"
 		tokens = tokens[1:]
 	}
-	m := evalMediaTerms(tokens, width, depth)
+	m := evalMediaTerms(tokens, viewer, depth)
 	if negate {
 		return m.not()
 	}
@@ -1631,16 +1690,16 @@ func mediaTokens(q string) []string {
 
 // evalMediaTerms works out "term and term and term", or the same with "or". The
 // two words cannot be mixed. Other forms are unknown.
-func evalMediaTerms(tokens []string, width float64, depth int) mediaMatch {
+func evalMediaTerms(tokens []string, viewer mediaViewer, depth int) mediaMatch {
 	if len(tokens)%2 == 0 {
 		return mediaUnknown
 	}
-	m := evalMediaTerm(tokens[0], width, depth)
+	m := evalMediaTerm(tokens[0], viewer, depth)
 	for i := 1; i < len(tokens); i += 2 {
 		if tokens[i] != tokens[1] {
 			return mediaUnknown
 		}
-		next := evalMediaTerm(tokens[i+1], width, depth)
+		next := evalMediaTerm(tokens[i+1], viewer, depth)
 		switch tokens[i] {
 		case "and":
 			m = m.and(next)
@@ -1654,7 +1713,7 @@ func evalMediaTerms(tokens []string, width float64, depth int) mediaMatch {
 }
 
 // evalMediaTerm works out a media type or a condition in brackets.
-func evalMediaTerm(term string, width float64, depth int) mediaMatch {
+func evalMediaTerm(term string, viewer mediaViewer, depth int) mediaMatch {
 	if !strings.HasPrefix(term, "(") {
 		return mediaType(term)
 	}
@@ -1663,13 +1722,13 @@ func evalMediaTerm(term string, width float64, depth int) mediaMatch {
 	}
 	inner := strings.TrimSpace(strings.TrimSuffix(term[1:], ")"))
 	if strings.HasPrefix(inner, "(") || strings.HasPrefix(inner, "not ") || strings.HasPrefix(inner, "not(") {
-		return evalMediaQuery(inner, width, depth+1)
+		return evalMediaQuery(inner, viewer, depth+1)
 	}
 	name, value, ok := strings.Cut(inner, ":")
 	if !ok {
 		return mediaUnknown
 	}
-	return mediaFeature(strings.TrimSpace(name), strings.TrimSpace(value), width)
+	return mediaFeature(strings.TrimSpace(name), strings.TrimSpace(value), viewer)
 }
 
 // mediaType answers for a media type. A mail is read on a screen.
@@ -1684,24 +1743,24 @@ func mediaType(t string) mediaMatch {
 }
 
 // mediaFeature answers for one feature. Only the width and the colour scheme are
-// read here. Light mode is the default of a mail client.
-func mediaFeature(name, value string, width float64) mediaMatch {
+// read here.
+func mediaFeature(name, value string, viewer mediaViewer) mediaMatch {
 	var holds func(limit float64) bool
 	switch name {
 	case "prefers-color-scheme":
-		switch value {
-		case "light":
+		switch {
+		case value != "light" && value != "dark":
+			return mediaUnknown
+		case (value == "dark") == viewer.dark:
 			return mediaYes
-		case "dark":
-			return mediaNo
 		}
-		return mediaUnknown
+		return mediaNo
 	case "min-width", "min-device-width":
-		holds = func(limit float64) bool { return width >= limit }
+		holds = func(limit float64) bool { return viewer.width >= limit }
 	case "max-width", "max-device-width":
-		holds = func(limit float64) bool { return width <= limit }
+		holds = func(limit float64) bool { return viewer.width <= limit }
 	case "width", "device-width":
-		holds = func(limit float64) bool { return width == limit }
+		holds = func(limit float64) bool { return viewer.width == limit }
 	default:
 		return mediaUnknown
 	}
@@ -1779,19 +1838,24 @@ func splitSelector(sel string) (target compound, exact bool) {
 // parseCompound reads a selector for one element: an optional name or "*", then
 // classes and ids. It stops at anything else, such as an attribute or a pseudo
 // selector, and returns false. The names that it read until then are returned.
+//
+// "&" at the start is the selector of the rule around this one. It says more than
+// the rest of the part, so the result is not an exact match.
 func parseCompound(s string) (c compound, ok bool) {
+	rest := strings.TrimLeft(s, "&")
+	c, ok = parseSimpleParts(rest)
+	return c, ok && len(rest) == len(s)
+}
+
+// parseSimpleParts is parseCompound for a selector with no "&" at its start.
+func parseSimpleParts(s string) (c compound, ok bool) {
+	if s == "" {
+		return c, false
+	}
 	i := 0
-	switch {
-	case s == "":
-		return c, false
-	case s[0] == '*':
+	if s[0] == '*' {
 		i = 1
-	case s[0] == '&':
-		// The selector of the rule around this one. It says more than the rest
-		// of the part, so this is not an exact match.
-		c, _ = parseCompound(s[1:])
-		return c, false
-	default:
+	} else {
 		i = endOfName(s, 0)
 		c.tag = lowerASCII(unescapeCSS(s[:i]))
 	}

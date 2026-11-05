@@ -47,6 +47,18 @@ var hiddenPayloads = []struct {
 	{"container", `<style>@container (min-width:1px){.h{display:none}}</style><p class=h>HID</p>`, false},
 	{"nesting", `<style>div{.h{display:none}}</style><div><p class=h>HID</p></div>`, false},
 	{"nesting with an ampersand", `<style>div{& p.h{display:none}}</style><div><p class=h>HID</p></div>`, false},
+	{"ampersands", `<style>&&&.h{display:none}</style><p class=h>HID</p>`, false},
+	{"declarations in a nested media", `<style>.h{@media (min-width:1px){display:none}}</style><p class=h>HID</p>`, true},
+	{"declarations in a nested layer", `<style>.h{@layer a{display:none}}</style><p class=h>HID</p>`, true},
+	{"declarations in a nested supports", `<style>.h{@supports (color:red){display:none}}</style><p class=h>HID</p>`, true},
+	{"declarations in a nested at-rule, font size", `<style>.h{@media all{font-size:0}}</style><p class=h>HID</p>`, true},
+	{"declarations two at-rules deep", `<style>.h{@media all{@layer a{display:none}}}</style><p class=h>HID</p>`, true},
+	{"declarations in a compound rule", `<style>p.h{@media all{display:none}}</style><p class=h>HID</p>`, true},
+	{"declarations in a selector list", `<style>.a,.h{@media all{display:none}}</style><p class=h>HID</p>`, true},
+	{"declarations in a nested container", `<style>.h{@container (min-width:1px){display:none}}</style><p class=h>HID</p>`, false},
+	{"declarations with a condition not read", `<style>.h{@media (orientation:landscape){display:none}}</style><p class=h>HID</p>`, false},
+	{"declarations in a rule in a rule", `<style>div{.h{@media all{display:none}}}</style><div><p class=h>HID</p></div>`, false},
+	{"declarations under a descendant selector", `<style>div .h{@media all{display:none}}</style><div><p class=h>HID</p></div>`, false},
 
 	// Properties that were not read.
 	{"font-size calc", `<div style="font-size:calc(0px)">HID</div>`, true},
@@ -64,6 +76,11 @@ var hiddenPayloads = []struct {
 	{"matrix", `<div style="transform:matrix(1,0,0,1,-9999,0)">HID</div>`, true},
 	{"text-indent right", `<div style="text-indent:99999px;white-space:nowrap;overflow:hidden">HID</div>`, true},
 	{"one pixel box", `<div style="width:1px;height:1px;overflow:hidden">HID</div>`, true},
+	{"zero height that scrolls", `<div style="height:0;overflow:auto">HID</div>`, true},
+	{"zero max-height with a scroll bar", `<div style="max-height:0;overflow:scroll">HID</div>`, true},
+	{"one pixel width that scrolls", `<div style="width:1px;overflow:auto">HID</div>`, true},
+	{"zero height, overflow-y", `<div style="height:0;overflow-y:auto">HID</div>`, true},
+	{"tiny max-width, overflow-x", `<div style="max-width:1px;overflow-x:scroll">HID</div>`, true},
 	{"font-size 2px", `<div style="font-size:2px">HID</div>`, true},
 	{"opacity 0.001", `<div style="opacity:0.001">HID</div>`, true},
 	{"opacity in percent", `<div style="opacity:5%">HID</div>`, true},
@@ -121,6 +138,10 @@ func TestHiddenRulesOnlyMatchWhatTheyName(t *testing.T) {
 		{"open details", `<details open>shown</details>`},
 		{"first summary", `<details><summary>shown</summary>secret</details>`},
 		{"text after the details", `<details>secret</details>shown`},
+		{"nested at-rule that does not hold", `<style>.x{@media print{display:none}}</style><p class=x>shown</p>`},
+		{"nested at-rule for another class", `<style>.y{@media all{display:none}}</style><p class=x>shown</p>`},
+		{"nested at-rule that does not hide", `<style>.x{@media all{color:red}}</style><p class=x>shown</p>`},
+		{"nested font-face", `<style>.x{@font-face{display:none}}</style><p class=x>shown</p>`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -149,6 +170,38 @@ func TestHiddenReportIgnoresRulesThatDoNotHide(t *testing.T) {
 }
 
 // A rule that cannot match any element of the document is no reason to warn.
+// A warning is about text. A rule for an element with no text hides nothing that
+// a reader or an agent can read.
+func TestHiddenReportNeedsText(t *testing.T) {
+	for _, element := range []string{
+		`<div class=x></div>`,
+		`<div class=x> </div>`,
+		`<div class=x><img src="a.png" alt="logo"></div>`,
+		`<table class=x><tr><td><img src="a.png"></td></tr></table>`,
+		`<img class=x src="a.png">`,
+	} {
+		for _, sheet := range []string{
+			`div .x{display:none}`,
+			`.x:hover{display:none}`,
+			`@media (prefers-color-scheme:dark){.x{display:none}}`,
+			`@media (min-width:1200px){.x{display:none}}`,
+		} {
+			text, report := readable(t, `<style>`+sheet+`</style><div>`+element+`</div><p>shown</p>`)
+			require.Equal(t, "shown", text, sheet+element)
+			require.False(t, report.Suspected, sheet+element)
+		}
+	}
+	// A hiding value that cannot be worked out, on an element with no text.
+	_, report := readable(t, `<div style="clip-path:polygon(0 0)"><img src="a.png"></div><p>shown</p>`)
+	require.False(t, report.Suspected)
+	// The same with text.
+	_, report = readable(t, `<div style="clip-path:polygon(0 0)">secret</div><p>shown</p>`)
+	require.True(t, report.Suspected)
+	// Text in a child counts.
+	_, report = readable(t, `<style>div .x{display:none}</style><div><div class=x><p><b>shown</b></p></div></div>`)
+	require.True(t, report.Suspected)
+}
+
 func TestHiddenReportNeedsAnElementThatCouldMatch(t *testing.T) {
 	sheets := []string{
 		`div .gone{display:none}`,
@@ -172,9 +225,10 @@ func TestHiddenMediaForNarrowWindowsIsNotAHidingRule(t *testing.T) {
 		`only screen and (max-width:480px)`,
 		`screen and (max-device-width:600px)`,
 		`(max-width:40em)`,
+		`(max-width:768px)`,
 		`print`,
-		`(prefers-color-scheme:dark)`,
 		`only screen and (min-width:1px) and (max-width:600px)`,
+		`(prefers-color-scheme:dark) and (max-width:768px)`,
 	} {
 		text, report := readable(t, `<style>@media `+query+`{.x{display:none}}</style><div class=x>shown</div>`)
 		require.Equal(t, "shown", text, query)
@@ -188,6 +242,31 @@ func TestHiddenMediaThatHoldsForCommonWindowsIsReported(t *testing.T) {
 	text, report := readable(t, `<style>@media (max-width:999px){.x{display:none}}</style><div class=x>shown</div>`)
 	require.Equal(t, "shown", text)
 	require.True(t, report.Suspected)
+}
+
+// A rule that holds only in a wider window or in dark mode hides nothing here. A
+// large share of readers do not see that text, so the report warns.
+func TestHiddenMediaForOtherReadersIsReported(t *testing.T) {
+	for _, query := range []string{
+		`(min-width:1200px)`,
+		`(min-width:5000px)`,
+		`(min-width:1e13px)`,
+		`(min-device-width:1400px)`,
+		`only screen and (min-width:1001px)`,
+		`(prefers-color-scheme:dark)`,
+		`screen and (prefers-color-scheme:dark)`,
+		`(prefers-color-scheme:dark) and (max-width:900px)`,
+		`(prefers-color-scheme:dark) and (min-width:1200px)`,
+		`not (prefers-color-scheme:light)`,
+	} {
+		text, report := readable(t, `<style>@media `+query+`{.x{display:none}}</style><div class=x>shown</div>`)
+		require.Equal(t, "shown", text, query)
+		require.True(t, report.Suspected, query)
+
+		text, report = readable(t, `<style media="`+query+`">.x{display:none}</style><div class=x>shown</div>`)
+		require.Equal(t, "shown", text, query)
+		require.True(t, report.Suspected, query)
+	}
 }
 
 func TestHiddenMediaConditions(t *testing.T) {
@@ -227,8 +306,11 @@ func TestHiddenMediaConditions(t *testing.T) {
 		{strings.Repeat("(", 100) + "min-width:1px" + strings.Repeat(")", 100), mediaUnknown},
 	}
 	for _, tc := range tests {
-		require.Equal(t, tc.want, evalMediaList(tc.query, mediaWideWindow), "query %q", tc.query)
+		require.Equal(t, tc.want, evalMediaList(tc.query, mediaViewer{width: mediaWideWindow}), "query %q", tc.query)
 	}
+	dark := mediaViewer{width: mediaWideWindow, dark: true}
+	require.Equal(t, mediaYes, evalMediaList(`(prefers-color-scheme:dark)`, dark))
+	require.Equal(t, mediaNo, evalMediaList(`(prefers-color-scheme:light)`, dark))
 }
 
 // The same rule on one element in other words: what a browser does in one
@@ -378,12 +460,48 @@ func TestReadableTextShortensLinks(t *testing.T) {
 		{"long mailto address", `mailto:` + long + `@example.com`, `mailto:` + strings.Repeat("a", 64) + `...[cut]`},
 		{"a cut does not split an escape", `https://example.com/?` + strings.Repeat("x", 30) + `%20%20`,
 			`https://example.com/?` + strings.Repeat("x", 30) + `...[cut]`},
+		{"short userinfo", `https://a:b@example.com/p`, `https://a:b@example.com/p`},
+		{"long userinfo", `https://` + long + `@example.com/p`,
+			`https://` + strings.Repeat("a", 32) + `...[cut]@example.com/p`},
+		{"long password", `https://a:` + long + `@example.com/p`,
+			`https://a:` + strings.Repeat("a", 30) + `...[cut]@example.com/p`},
+		{"long host keeps its end", `https://` + strings.Repeat("ab.", 40) + `evil.example/p`,
+			`https://...[cut]` + strings.Repeat("ab.", 17) + `evil.example/p`},
+		{"long host with one label keeps its end", `https://` + long + `.evil.example:8443/`,
+			`https://...[cut]evil.example:8443/`},
+		{"long host keeps the query", `https://` + strings.Repeat("ab.", 40) + `evil.example/?a=1`,
+			`https://...[cut]` + strings.Repeat("ab.", 17) + `evil.example/?a=1`},
+		{"text with a scheme mark in a mailto", `mailto:` + long + `://x`, `mailto:` + strings.Repeat("a", 64) + `...[cut]`},
+		{"text with a scheme mark in a path", `https://example.com/` + long + `://x`,
+			`https://example.com/` + strings.Repeat("a", 63) + `...[cut]`},
+		{"text with a scheme mark in a query", `https://example.com/?` + long + `://x`,
+			`https://example.com/?` + strings.Repeat("a", 31) + `...[cut]`},
+		{"scheme mark in a short mailto", `mailto:a://b`, `mailto:a://b`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			text, _ := readable(t, `<a href="`+tc.href+`">Click here</a>`)
 			require.Equal(t, "Click here ("+tc.want+")", text)
 		})
+	}
+}
+
+// Whatever a sender writes in a link, only a short text can stay.
+func TestReadableTextBoundsEveryPartOfALink(t *testing.T) {
+	long := strings.Repeat("a", 300)
+	for _, href := range []string{
+		`https://` + long + `@` + long + `.example/` + long + `?` + long + `#` + long,
+		`https://` + long + `:` + long + `@example.com/`,
+		`https://` + long + `/`,
+		`http://` + long,
+		`mailto:` + long + `@` + long + `?subject=` + long + `&body=` + long,
+		`mailto:` + long + `://` + long,
+		`mailto://` + long + `@` + long + `/` + long,
+	} {
+		text, _ := readable(t, `<a href="`+href+`"></a>`)
+		require.NotEmpty(t, text, href)
+		require.LessOrEqual(t, len(text), 230, href)
+		require.Contains(t, text, "[cut]", href)
 	}
 }
 
@@ -495,6 +613,58 @@ func TestHiddenCompoundRulesHaveAWorkLimit(t *testing.T) {
 	mail := `<style>` + sheet.String() + `</style>` + strings.Repeat(`<p class="a c">x</p>`, 200_000)
 	_, report := readable(t, mail)
 	require.True(t, report.Suspected, "a check that stops early says so")
+}
+
+// A style sheet comes from the sender, and it can be as large as the HTML part. Go
+// cannot recover from a stack overflow: it ends the whole server. So no shape of
+// sheet may make the code call itself once per character or per block.
+func TestHiddenHostileStyleSheets(t *testing.T) {
+	const size = 4 << 20
+	fill := func(s string) string { return strings.Repeat(s, size/len(s)) }
+	tests := map[string]string{
+		"ampersands":                  `<style>` + fill("&") + `{display:none}</style>`,
+		"ampersands after a tag":      `<style>p` + fill("&") + `{display:none}</style>`,
+		"ampersands in the last part": `<style>p ` + fill("&") + `.x{display:none}</style>`,
+		"ampersand lists":             `<style>` + fill("&,") + `.x{display:none}</style>`,
+		"stars":                       `<style>` + fill("*") + `{display:none}</style>`,
+		"classes":                     `<style>p` + fill(".a") + `{display:none}</style>`,
+		"combinators":                 `<style>` + fill("p>") + `p{display:none}</style>`,
+		"open brackets in a selector": `<style>` + fill(":not(") + `{display:none}</style>`,
+		"selector list":               `<style>` + fill(".a,") + `.b{display:none}</style>`,
+		"at-rules":                    `<style>` + fill("@media all{") + `.x{display:none}</style>`,
+		"unknown at-rules":            `<style>` + fill("@foo{") + `.x{display:none}</style>`,
+		"rules in rules":              `<style>` + fill(".x{") + `display:none</style>`,
+		"at-rules in rules":           `<style>` + fill(".x{@media all{") + `display:none</style>`,
+		"rules in at-rules":           `<style>` + fill("@layer a{.x{") + `display:none</style>`,
+		"closed at-rules":             `<style>` + fill("@media all{") + `.x{display:none}` + fill("}") + `</style>`,
+		"at-rules under a long list":  `<style>` + fill(".a,") + `.b{` + fill("@media all{display:none}") + `}</style>`,
+		"open brackets in a query":    `<style>@media ` + fill("(") + `{.x{display:none}}</style>`,
+		"brackets in a query":         `<style>@media ` + fill("(") + fill(")") + `{.x{display:none}}</style>`,
+		"not in brackets":             `<style>@media ` + fill("(not ") + `{.x{display:none}}</style>`,
+		"words in a query":            `<style>@media ` + fill("not ") + `{.x{display:none}}</style>`,
+		"and in a query":              `<style>@media ` + fill("all and ") + `all{.x{display:none}}</style>`,
+		"commas in a query":           `<style>@media ` + fill("print,") + `all{.x{display:none}}</style>`,
+		"brackets in an attribute":    `<style media="` + fill("(") + `">.x{display:none}</style>`,
+		"functions in a declaration":  `<p style="transform:` + fill("translate(") + `">x</p>`,
+		"declarations":                `<p style="` + fill("display:none;display:block;") + `">x</p>`,
+	}
+	for name, markup := range tests {
+		t.Run(name, func(t *testing.T) {
+			mail := markup + `<p class=x>shown</p>`
+			if _, _, err := ReadableText(mail); err != nil {
+				require.ErrorIs(t, err, ErrHTMLTooComplex)
+			}
+			if _, _, err := ReadableHTML(mail); err != nil {
+				require.ErrorIs(t, err, ErrHTMLTooComplex)
+			}
+		})
+	}
+}
+
+func TestHiddenRunOfAmpersandsDoesNotHide(t *testing.T) {
+	text, report := readable(t, `<style>`+strings.Repeat("&", 4<<20)+`{display:none}</style><p>shown</p>`)
+	require.Equal(t, "shown", text)
+	require.True(t, report.Suspected, "the rule can match any element, and it cannot be worked out")
 }
 
 // Deep nesting of rules must not cost more than a few passes over the sheet.

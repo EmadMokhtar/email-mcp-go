@@ -118,9 +118,10 @@ func ReadableText(markup string) (string, HiddenReport, error) {
 
 // HiddenReport says what the check for hidden content found in one document.
 type HiddenReport struct {
-	// Suspected is true when the document has a style that can hide content and
-	// that this package cannot work out. Then the result can hold text that a
-	// reader does not see.
+	// Suspected is true when the document has a style that can hide text and
+	// that this package cannot work out, on an element that has text. Then the
+	// result can hold text that a reader does not see, or leave out text that a
+	// reader sees.
 	Suspected bool
 	// Dropped counts the parts with text that were left out because a reader
 	// cannot see them: one for each hidden element, one for each piece of text
@@ -285,6 +286,7 @@ func (r *textRenderer) room(n int) bool {
 type inherited struct {
 	invisible bool    // visibility is hidden or collapse
 	fontSize  float64 // font size in pixels
+	unsure    bool    // a style on this element or on a parent is not worked out
 }
 
 // textHidden reports whether text with these properties cannot be seen.
@@ -306,34 +308,41 @@ func (v *visibility) classify(n *xhtml.Node) (effect styleEffect, shown bool) {
 		return styleEffect{}, false
 	}
 	if fallbackTags[n.Data] || hasHiddenAttribute(n) || v.hiddenByDetails(n) {
-		v.noteDropped(n)
+		v.noteDropped(n, false)
 		return styleEffect{}, false
 	}
 	effect = v.rules.effectFor(n)
 	if style, ok := attributeValue(n, "style"); ok {
 		effect = effect.merge(parseStyle(style))
 	}
-	v.report.Suspected = v.report.Suspected || effect.unsure
 	if effect.dropped() {
-		v.noteDropped(n)
+		v.noteDropped(n, effect.unsure)
 		return effect, false
 	}
 	return effect, true
 }
 
 // textShown reports whether a text node can be seen.
+//
+// The state of the element says whether a style around the text is not worked
+// out. This check is made here, and not for each such element, because the text
+// can be far below the element, and such elements can be inside each other.
 func (v *visibility) textShown(n *xhtml.Node) bool {
-	if !v.state().textHidden() && !v.hiddenByDetails(n) {
-		return true
+	s := v.state()
+	if s.textHidden() || v.hiddenByDetails(n) {
+		v.noteDropped(n, s.unsure)
+		return false
 	}
-	v.noteDropped(n)
-	return false
+	v.report.Suspected = v.report.Suspected || (s.unsure && hasText(n))
+	return true
 }
 
 // noteDropped counts a node that is left out, if it has text (see HiddenReport).
-func (v *visibility) noteDropped(n *xhtml.Node) {
+// unsure says that a style hides the node and that it is not worked out.
+func (v *visibility) noteDropped(n *xhtml.Node, unsure bool) {
 	if hasText(n) {
 		v.report.Dropped++
+		v.report.Suspected = v.report.Suspected || unsure
 	}
 }
 
@@ -341,6 +350,9 @@ func (v *visibility) noteDropped(n *xhtml.Node) {
 // space. A walk leaves out each such node once, and it does not go inside, so
 // together these calls read every node at most once.
 func hasText(n *xhtml.Node) bool {
+	if n.Type == xhtml.TextNode {
+		return strings.TrimSpace(n.Data) != ""
+	}
 	end := nextAfter(n)
 	for c := n; c != nil && c != end; c = nextNode(c) {
 		if c.Type == xhtml.TextNode && strings.TrimSpace(c.Data) != "" {
@@ -355,6 +367,7 @@ func (v *visibility) push(n *xhtml.Node, e styleEffect) {
 	s := v.state()
 	s.invisible = e.invisible(s.invisible)
 	s.fontSize = e.size(s.fontSize, v.root)
+	s.unsure = s.unsure || e.unsure
 	// rem is relative to the html element. Its own size uses the default.
 	if n.Data == "html" && n.Parent != nil && n.Parent.Type == xhtml.DocumentNode {
 		v.root = s.fontSize
@@ -612,7 +625,7 @@ const maxShownURL = 2048
 // an href that ends the url early and goes on with a sentence that looks like
 // text of the mail. A url that is longer than maxShownURL is not shown, and a
 // long one that fits is cut (see shortenURL). The result is exactly what the text
-// shows.
+// shows, so it has urlCutMark when the text does not show the whole url.
 func linkURL(n *xhtml.Node) string {
 	href, ok := attributeValue(n, "href")
 	if !ok {
@@ -642,58 +655,90 @@ func linkURL(n *xhtml.Node) string {
 	if len(shown) > maxShownURL {
 		return ""
 	}
-	return shortenURL(shown)
+	return shortenURL(u, shown)
 }
 
 const (
-	// maxShortPath is how many characters of a path shortenURL keeps.
-	maxShortPath = 64
-	// maxShortQuery is how many characters of the query and the fragment
-	// shortenURL keeps.
-	maxShortQuery = 32
-	// urlCutMark ends a url that was shortened.
+	// The most characters that shortenURL keeps of each part of a url.
+	maxShortUser  = 32 // the user name and the password
+	maxShortHost  = 64 // the host and the port
+	maxShortPath  = 64 // the path, or the address of a mailto link
+	maxShortQuery = 32 // the query and the fragment together
+
+	// urlCutMark stands for the part of a url that was cut.
 	urlCutMark = "...[cut]"
 )
 
-// shortenURL cuts a url for linkURL. It keeps the scheme and the host. It keeps at
-// most maxShortPath characters of the path (for mailto, of the address) and at
-// most maxShortQuery characters of what follows it.
+// shortenURL cuts the url u, which is written as shown. A url with no long part
+// comes back as it is. Otherwise the scheme stays, and each part keeps at most its
+// number of characters (see maxShortPath and the others). The host keeps its end,
+// because the end says who owns it. After a path that was cut, the query goes too.
 //
 // A person reads the text of a link and rarely the url. An agent reads both, so
-// a long query is a place for text that only the agent sees. A mailto link has
-// the same place in its body parameter.
-func shortenURL(link string) string {
-	end := strings.IndexAny(link, "?#")
-	if end < 0 {
-		end = len(link)
+// each part of a url is a place for text that only the agent sees. A mailto link
+// has the same place in its body parameter.
+func shortenURL(u *url.URL, shown string) string {
+	var user string
+	if u.User != nil {
+		user = escapeURL(u.User.String())
 	}
-	head, tail := link[:end], link[end:]
+	host := escapeURL(u.Host)
+	path := escapeURL(u.EscapedPath())
+	if u.Opaque != "" {
+		path = escapeURL(u.Opaque) // the address of a mailto link
+	}
+	// The parts before the query write "?" and "#" as %XX, so the first one here
+	// starts the query or the fragment.
+	var tail string
+	if i := strings.IndexAny(shown, "?#"); i >= 0 {
+		tail = shown[i:]
+	}
+	if len(user) <= maxShortUser && len(host) <= maxShortHost && len(path) <= maxShortPath && len(tail) <= maxShortQuery {
+		return shown
+	}
 
-	pathStart := strings.IndexByte(head, ':') + 1
-	if _, rest, ok := strings.Cut(head, "://"); ok {
-		pathStart = len(head) - len(rest)
-		if slash := strings.IndexByte(rest, '/'); slash >= 0 {
-			pathStart += slash
-		} else {
-			pathStart = len(head)
-		}
+	var b strings.Builder
+	b.WriteString(u.Scheme)
+	b.WriteByte(':')
+	if u.Opaque == "" {
+		b.WriteString("//")
 	}
-	switch {
-	case len(head)-pathStart > maxShortPath:
-		return cutURL(head[:pathStart+maxShortPath])
-	case len(tail) > maxShortQuery:
-		return head + cutURL(tail[:maxShortQuery])
+	if u.User != nil {
+		b.WriteString(cutEnd(user, maxShortUser))
+		b.WriteByte('@')
 	}
-	return link
+	b.WriteString(cutStart(host, maxShortHost))
+	b.WriteString(cutEnd(path, maxShortPath))
+	if len(path) <= maxShortPath {
+		b.WriteString(cutEnd(tail, maxShortQuery))
+	}
+	return b.String()
 }
 
-// cutURL marks the end of a url that was cut. A cut can fall inside a %XX. The
-// rest of it goes too.
-func cutURL(s string) string {
+// cutEnd keeps the first limit bytes of a part of a url. A cut can fall inside a
+// %XX. The rest of it goes too.
+func cutEnd(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	s = s[:limit]
 	if i := strings.LastIndexByte(s, '%'); i >= 0 && i >= len(s)-2 {
 		s = s[:i]
 	}
 	return s + urlCutMark
+}
+
+// cutStart keeps the last limit bytes of a host, from the start of a label if
+// there is one.
+func cutStart(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	s = s[len(s)-limit:]
+	if _, rest, ok := strings.Cut(s, "."); ok && rest != "" {
+		s = rest
+	}
+	return urlCutMark + s
 }
 
 // escapeURL writes every byte of a url that is not safe in one word as %XX.
