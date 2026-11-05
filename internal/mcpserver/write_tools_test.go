@@ -1248,6 +1248,13 @@ func TestPreviewTextOneLineFields(t *testing.T) {
 			strings.Split(got, "\n")[3])
 	})
 
+	t.Run("the type of each attachment is next to its name", func(t *testing.T) {
+		got := sendPreview(confirm.Preview{From: "me@example.com", To: []string{"a@example.com"},
+			Attachments:     []string{strings.Repeat("n", 150), "b.txt", "c.bin"},
+			AttachmentTypes: []string{"application/pdf", "text/plain\n" + rlo, ""}})
+		require.Equal(t, "Attachments: 3 ("+strings.Repeat("n", 100)+"... (application/pdf), b.txt (text/plain), c.bin)", strings.Split(got, "\n")[3])
+	})
+
 	t.Run("a long or empty attachment name", func(t *testing.T) {
 		got := sendPreview(confirm.Preview{From: "me@example.com", To: []string{"a@example.com"},
 			Attachments: []string{strings.Repeat("n", 150), "  "}})
@@ -1312,7 +1319,7 @@ func TestWriteToolErrorMapping(t *testing.T) {
 		{"no recipients", "send_message", mime.ErrNoRecipients, "bad_message", []string{"no recipients"}, nil, endNoRepeat},
 		{"a line break in a header", "create_draft", mime.ErrHeaderInjection, "bad_message", []string{"line break"}, nil, endNoRepeat},
 		{"a reply and a forward", "send_message", mime.ErrReplyAndForward, "bad_message", []string{"reply_to or forward_of"}, nil, endNoRepeat},
-		{"a bad content type", "send_message", mime.ErrInvalidContentType, "bad_message", []string{"content type"}, nil, endNoRepeat},
+		{"a bad content type", "send_message", mime.ErrInvalidContentType, "bad_message", []string{"content type", "64 bytes"}, nil, endNoRepeat},
 		{"a hidden character in a file name", "send_message", fmt.Errorf("%w: attachment file name", mime.ErrInvalidFilename),
 			"bad_message", []string{"file name", "U+202E"}, nil, endNoRepeat},
 		{"a hidden character in the text", "send_message", fmt.Errorf("%w: subject", mime.ErrHiddenText),
@@ -1375,7 +1382,7 @@ func TestSendFormShowsTheAttachments(t *testing.T) {
 	require.False(t, res.IsError, textOf(t, res))
 	asked := ask.requests()
 	require.Len(t, asked, 1)
-	require.Contains(t, asked[0].Message, "\nAttachments: 1 (report.pdf)\n")
+	require.Contains(t, asked[0].Message, "\nAttachments: 1 (report.pdf (application/pdf))\n")
 }
 
 func TestSendRefusesBodyAndHTMLBody(t *testing.T) {

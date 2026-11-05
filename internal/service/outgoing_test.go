@@ -564,6 +564,118 @@ func TestPreviewShowsTheDisplayNames(t *testing.T) {
 	})
 }
 
+func TestPreviewShowsTheAttachmentTypes(t *testing.T) {
+	png := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 40)...)
+
+	t.Run("a new message, with a type that is found from the data", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := mail.Compose{To: []string{"bob@example.com"}, Subject: "S", Body: "hi", Attachments: []mail.OutgoingAttachment{
+			{Filename: "report.pdf", ContentType: "application/pdf; x-note=y", Data: []byte("%PDF-1.4")},
+			{Filename: "pic.png", Data: png},
+		}}
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+		require.NoError(t, err)
+		p := needs.Pending.Preview
+		require.Equal(t, []string{"report.pdf", "pic.png"}, p.Attachments)
+		require.Equal(t, []string{"application/pdf", "image/png"}, p.AttachmentTypes)
+		require.Equal(t, []string{"report.pdf (application/pdf)", "pic.png (image/png)"}, p.AttachmentLines())
+
+		_, _, err = env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, accept(needs))
+		require.NoError(t, err)
+		var sent []string
+		for _, att := range sentParts(t, env.sender.sent()[0].Msg.Data).Attachments {
+			sent = append(sent, att.ContentType)
+		}
+		require.Equal(t, sent, p.AttachmentTypes, "the preview shows the type that is sent")
+	})
+
+	t.Run("a forward shows the type of the original", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := forwardWithAttachments(env.backend, "plan.pdf")
+		env.backend.attachments["2"].ContentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Equal(t, []string{"application/octet-stream", "text/plain"}, needs.Pending.Preview.AttachmentTypes)
+	})
+
+	t.Run("a draft shows the type of its header", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		env.backend.addMessage("d1", draftWithAttachment(""), true)
+		draft := mail.Ref("d1")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		p := needs.Pending.Preview
+		require.Equal(t, []string{"notes.pdf"}, p.Attachments)
+		require.Equal(t, []string{"application/pdf"}, p.AttachmentTypes)
+	})
+
+	t.Run("no attachments means no list", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := compose("bob@example.com")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Nil(t, needs.Pending.Preview.AttachmentTypes)
+		require.Empty(t, needs.Pending.Preview.AttachmentLines())
+	})
+
+	t.Run("a long type of a draft is cut", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		long := "application/" + strings.Repeat("x", 120)
+		raw := bytes.Replace(draftWithAttachment(""), []byte("application/pdf"), []byte(long), 1)
+		env.backend.addMessage("d1", raw, true)
+		draft := mail.Ref("d1")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Equal(t, []string{long[:previewAttachmentTypeChars] + "..."}, needs.Pending.Preview.AttachmentTypes)
+	})
+
+	t.Run("the detail page shows the type next to the name", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := mail.Compose{To: []string{"bob@example.com"}, Subject: "S", Body: "hi", Attachments: []mail.OutgoingAttachment{
+			{Filename: "pic.png", Data: png},
+		}}
+		res, _, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmFallback, nil)
+		require.NoError(t, err)
+
+		_, detail, err := env.svc.PendingDetail(env.webCtx(), res.SendID)
+
+		require.NoError(t, err)
+		require.Equal(t, []string{"pic.png (image/png)"}, detail.Attachments)
+	})
+
+	t.Run("a changed type is a changed message", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := forwardWithAttachments(env.backend, "plan.pdf")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+		require.NoError(t, err)
+		env.backend.attachments["2"].ContentType = "application/x-msdownload"
+		_, _, err = env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, accept(needs))
+
+		require.ErrorIs(t, err, confirm.ErrPayloadChanged)
+		require.Empty(t, env.sender.sent())
+	})
+
+	require.False(t, samePreview(confirm.Preview{AttachmentTypes: []string{"a/b"}}, confirm.Preview{AttachmentTypes: []string{"a/c"}}))
+	require.False(t, samePreview(confirm.Preview{AttachmentTypes: []string{"a/b"}}, confirm.Preview{}))
+}
+
 func TestSamePreviewComparesTheDisplayNames(t *testing.T) {
 	named := func(to []string, names ...string) confirm.Preview { return confirm.Preview{To: to, Names: names} }
 	both := []string{"a@example.com", "b@example.com"}

@@ -461,7 +461,7 @@ func approvalOf(svc *service.Service, ctx context.Context, id string) (approvalP
 	// The service refuses Approve in this case too (it builds the message in
 	// the same way), so the page offers only Reject.
 	page.From, page.Recipients, page.MoreNames, page.Subject = p.Preview.From, p.Preview.Recipients(), p.Preview.MoreNamesText(), p.Preview.Subject
-	page.Attachments, page.Body, page.BodyNote = p.Preview.Attachments, p.Preview.BodyStart, msgDetailUnavailable
+	page.Attachments, page.Body, page.BodyNote = p.Preview.AttachmentLines(), p.Preview.BodyStart, msgDetailUnavailable
 	if more := p.Preview.MoreCharsText(); more != "" {
 		page.Body += "\n" + more
 	}

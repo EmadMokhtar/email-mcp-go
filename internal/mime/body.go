@@ -170,19 +170,27 @@ type attachment struct {
 	data      []byte
 }
 
+// maxMediaTypeBytes is the longest media type of an attachment that Build writes,
+// such as "application/pdf".
+const maxMediaTypeBytes = 64
+
 // OutgoingAttachments returns the attachments that Build writes for a message,
-// with the file names that go out: the original ones for a forward that asks for
-// them, then the new ones. The file name of an original attachment comes from a
-// third party, so it is cleaned (see cleanOriginalName). A file name that is
-// empty, also after the cleaning, is "attachment".
+// with the file names and the content types that go out: the original ones for a
+// forward that asks for them, then the new ones. The file name and the content
+// type of an original attachment come from a third party, so they are cleaned
+// (see cleanOriginalName and originalContentType). A file name that is empty,
+// also after the cleaning, is "attachment". An empty content type is found from
+// the data.
 //
-// Build uses this list, and a preview must use it too, so it shows the names
-// that are sent. It does not check them: see newAttachment.
+// Build uses this list, and a preview must use it too, so it shows what is sent.
+// It does not check the values: see newAttachment.
 func OutgoingAttachments(c mail.Compose, bc BuildContext) []mail.OutgoingAttachment {
 	var out []mail.OutgoingAttachment
 	if c.ForwardOf != nil && c.IncludeOriginalAttachments {
 		for _, a := range bc.OriginalAttachments {
-			out = append(out, mail.OutgoingAttachment{Filename: cleanOriginalName(a.Filename), ContentType: a.ContentType, Data: a.Data})
+			out = append(out, mail.OutgoingAttachment{
+				Filename: cleanOriginalName(a.Filename), ContentType: originalContentType(a.ContentType), Data: a.Data,
+			})
 		}
 	}
 	out = append(out, c.Attachments...)
@@ -190,8 +198,33 @@ func OutgoingAttachments(c mail.Compose, bc BuildContext) []mail.OutgoingAttachm
 		if out[i].Filename == "" {
 			out[i].Filename = "attachment"
 		}
+		if out[i].ContentType == "" {
+			out[i].ContentType = http.DetectContentType(out[i].Data)
+		}
 	}
 	return out
+}
+
+// AttachmentType returns the media type that Build writes for an attachment of
+// OutgoingAttachments, or "" for one that Build refuses.
+func AttachmentType(a mail.OutgoingAttachment) string {
+	mediaType, _, err := parseContentType(a.ContentType)
+	if err != nil {
+		return ""
+	}
+	return mediaType
+}
+
+// originalContentType cleans the content type of an attachment of the original
+// message, which a third party wrote. It must not stop a forward, so a media type
+// that is over the limit is not refused. The attachment goes out as
+// application/octet-stream, and its data stays the same.
+func originalContentType(contentType string) string {
+	mediaType, _, err := stdmime.ParseMediaType(contentType)
+	if err == nil && len(mediaType) > maxMediaTypeBytes {
+		return "application/octet-stream"
+	}
+	return contentType
 }
 
 // collectAttachments returns the checked attachments of the message (see
@@ -237,17 +270,10 @@ func cleanOriginalName(s string) string {
 	}, s))
 }
 
-// newAttachment checks the file name and the content type. An empty content
-// type is found from the data. A file name with a line or paragraph separator,
-// or with a character that CleanUntrusted removes, is refused with
-// ErrInvalidFilename: a character that hides or reorders text could make a name
-// look like another one.
-//
-// The content type must be one type with a slash and parameters that are
-// valid, it must not be multipart (the writer would treat the data as parts),
-// and its charset, if any, must be UTF-8 or US-ASCII, because the writer
-// refuses any other. Of the parameters only the charset goes out: no preview
-// shows a content type, so a value in it would leave unseen.
+// newAttachment checks the file name and the content type of an attachment of
+// OutgoingAttachments. A file name with a line or paragraph separator, or with a
+// character that CleanUntrusted removes, is refused with ErrInvalidFilename: a
+// character that hides or reorders text could make a name look like another one.
 func newAttachment(a mail.OutgoingAttachment) (attachment, error) {
 	if err := checkValue("attachment file name", a.Filename); err != nil {
 		return attachment{}, err
@@ -256,28 +282,42 @@ func newAttachment(a mail.OutgoingAttachment) (attachment, error) {
 		return attachment{}, ErrInvalidFilename
 	}
 
-	contentType := a.ContentType
-	if contentType == "" {
-		contentType = http.DetectContentType(a.Data)
-	}
-	if err := checkValue("attachment content type", contentType); err != nil {
+	if err := checkValue("attachment content type", a.ContentType); err != nil {
 		return attachment{}, err
 	}
-	mediaType, params, err := stdmime.ParseMediaType(contentType)
-	if err != nil || !strings.Contains(mediaType, "/") || strings.HasPrefix(mediaType, "multipart/") {
-		return attachment{}, ErrInvalidContentType
-	}
-	charset := strings.ToLower(params["charset"])
-	switch charset {
-	case "", "us-ascii", "utf-8":
-	default:
-		return attachment{}, ErrInvalidContentType
+	mediaType, charset, err := parseContentType(a.ContentType)
+	if err != nil {
+		return attachment{}, err
 	}
 	kept := map[string]string{}
 	if charset != "" {
 		kept["charset"] = charset
 	}
 	return attachment{filename: a.Filename, mediaType: mediaType, params: kept, data: a.Data}, nil
+}
+
+// parseContentType returns the media type of a content type, and its charset in
+// lower case when it has one. These are all of the content type that goes out: a
+// preview shows the media type, and no preview shows other parameters, so a
+// value in them would leave unseen.
+//
+// The content type must be one type with a slash and parameters that are valid,
+// and the media type must be at most maxMediaTypeBytes long. It must not be
+// multipart (the writer would treat the data as parts), and its charset, if any,
+// must be UTF-8 or US-ASCII, because the writer refuses any other. Any other
+// content type gives ErrInvalidContentType.
+func parseContentType(contentType string) (mediaType, charset string, err error) {
+	mediaType, params, err := stdmime.ParseMediaType(contentType)
+	if err != nil || !strings.Contains(mediaType, "/") || strings.HasPrefix(mediaType, "multipart/") ||
+		len(mediaType) > maxMediaTypeBytes {
+		return "", "", ErrInvalidContentType
+	}
+	charset = strings.ToLower(params["charset"])
+	switch charset {
+	case "", "us-ascii", "utf-8":
+		return mediaType, charset, nil
+	}
+	return "", "", ErrInvalidContentType
 }
 
 // write writes the attachment as a part of a multipart/mixed message. The

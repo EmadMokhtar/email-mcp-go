@@ -431,6 +431,76 @@ func TestBuildKeepsOnlyTheCharsetOfAnAttachmentContentType(t *testing.T) {
 	})
 }
 
+func TestBuildRefusesAMediaTypeOver64Bytes(t *testing.T) {
+	fits := "application/" + strings.Repeat("x", 64-len("application/"))
+	attach := func(contentType string) mail.Compose {
+		return mail.Compose{To: []string{"bob@x"}, Body: "hi", Attachments: []mail.OutgoingAttachment{
+			{Filename: "a.bin", ContentType: contentType, Data: []byte("x")},
+		}}
+	}
+
+	raw := mustBuild(t, attach(fits), newContext())
+	require.Equal(t, fits, parsedOf(t, raw.Data).Attachments[0].ContentType)
+
+	for name, contentType := range map[string]string{
+		"one byte too long":   fits + "x",
+		"a long subtype":      "application/" + strings.Repeat(secret, 20),
+		"with a charset too":  fits + "x; charset=utf-8",
+		"a long type in caps": strings.ToUpper(fits) + "X",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := Build(attach(contentType), newContext())
+			require.ErrorIs(t, err, ErrInvalidContentType)
+			require.Nil(t, got)
+			require.NotContains(t, err.Error(), secret, "the error holds no text of the message")
+		})
+	}
+}
+
+// The type of an original comes from a third party. It must not stop a forward.
+func TestForwardOfAnOriginalWithALongMediaTypeGoesOut(t *testing.T) {
+	bc := newContext()
+	bc.Original = originalMessage()
+	bc.OriginalAttachments = []mail.Attachment{
+		{AttachmentInfo: mail.AttachmentInfo{
+			Filename:    "report.docx",
+			ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		}, Data: []byte("x")},
+		{AttachmentInfo: mail.AttachmentInfo{Filename: "plan.pdf", ContentType: "application/pdf"}, Data: []byte("x")},
+	}
+	c := mail.Compose{ForwardOf: forwardOf(), To: []string{"dave@x"}, Body: "fyi", IncludeOriginalAttachments: true}
+
+	raw := mustBuild(t, c, bc)
+
+	p := parsedOf(t, raw.Data)
+	require.Equal(t, "application/octet-stream", p.Attachments[0].ContentType)
+	require.Equal(t, "application/pdf", p.Attachments[1].ContentType, "a type that fits stays")
+	require.Equal(t, "report.docx", p.Attachments[0].Filename)
+}
+
+// AttachmentType says what Build writes, so a preview can show the same type. A
+// type that is found from the data is the type that goes out too.
+func TestAttachmentTypeIsWhatBuildWrites(t *testing.T) {
+	png := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 40)...)
+	c := mail.Compose{To: []string{"bob@x"}, Body: "hi", Attachments: []mail.OutgoingAttachment{
+		{Filename: "a.pdf", ContentType: "application/pdf", Data: []byte("x")},
+		{Filename: "b.txt", ContentType: "Text/Plain; charset=UTF-8; format=flowed", Data: []byte("x")},
+		{Filename: "c.png", Data: png},
+		{Filename: "d.txt", Data: []byte("plain words")},
+	}}
+
+	raw := mustBuild(t, c, newContext())
+
+	var types []string
+	for _, a := range OutgoingAttachments(c, newContext()) {
+		types = append(types, AttachmentType(a))
+	}
+	require.Equal(t, []string{"application/pdf", "text/plain", "image/png", "text/plain"}, types)
+	for i, att := range parsedOf(t, raw.Data).Attachments {
+		require.Equal(t, types[i], att.ContentType, "attachment %d", i)
+	}
+}
+
 // OutgoingAttachments says what Build writes, so a preview can show the same
 // names.
 func TestOutgoingAttachmentsAreWhatBuildWrites(t *testing.T) {

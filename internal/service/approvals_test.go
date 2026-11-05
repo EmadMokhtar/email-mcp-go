@@ -94,7 +94,7 @@ func TestPendingDetailShowsTheWholeMessage(t *testing.T) {
 	require.Equal(t, "me@example.com", detail.From)
 	require.ElementsMatch(t, []string{"bob@example.com", "carol@example.com", "hidden@example.com"}, detail.Recipients)
 	require.Equal(t, "Plans for the week", detail.Subject)
-	require.Equal(t, []string{"figures.xlsx", "attachment"}, detail.Attachments)
+	require.Equal(t, []string{"figures.xlsx (application/octet-stream)", "attachment (text/plain)"}, detail.Attachments)
 	require.Contains(t, detail.Body, "Hello Bob.")
 	require.Contains(t, detail.Body, "THE-END", "the whole text, not the first 500 characters")
 	require.Greater(t, len([]rune(detail.Body)), 500)

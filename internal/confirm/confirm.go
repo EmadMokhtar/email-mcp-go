@@ -201,6 +201,10 @@ type Preview struct {
 	// Attachments are the file names of the attachments of a send, in the order
 	// of the message. They are part of what the user approves.
 	Attachments []string `json:"attachments,omitempty"`
+	// AttachmentTypes are the media types of Attachments, by position, cleaned,
+	// on one line and cut. Each channel that shows the attachments shows the type
+	// next to the name (see AttachmentLines).
+	AttachmentTypes []string `json:"attachment_types,omitempty"`
 }
 
 // Recipients returns one line for each address of To. A recipient with a display
@@ -212,6 +216,22 @@ func (p Preview) Recipients() []string {
 		lines[i] = addr
 		if i < len(p.Names) && p.Names[i] != "" {
 			lines[i] += ` ("` + strings.ReplaceAll(p.Names[i], `"`, `'`) + `")`
+		}
+	}
+	return lines
+}
+
+// AttachmentLines returns one line for each attachment: its file name, and its
+// media type in round brackets when it has one.
+func (p Preview) AttachmentLines() []string {
+	if len(p.Attachments) == 0 {
+		return nil
+	}
+	lines := make([]string, len(p.Attachments))
+	for i, name := range p.Attachments {
+		lines[i] = name
+		if i < len(p.AttachmentTypes) && p.AttachmentTypes[i] != "" {
+			lines[i] += " (" + p.AttachmentTypes[i] + ")"
 		}
 	}
 	return lines
@@ -395,6 +415,7 @@ func (m *Manager) createWithLifetime(ctx context.Context, tenant account.TenantI
 	p.To = slices.Clone(p.To)
 	p.Names = slices.Clone(p.Names)
 	p.Attachments = slices.Clone(p.Attachments)
+	p.AttachmentTypes = slices.Clone(p.AttachmentTypes)
 	p.Messages = slices.Clone(p.Messages[:min(len(p.Messages), maxMessages)])
 	if short := firstChars(p.BodyStart, maxBodyStart); len(short) < len(p.BodyStart) {
 		// What is cut is not shown, so it counts toward BodyMore.

@@ -62,6 +62,10 @@ const (
 	// previewRecipientNameChars is the most characters of the display name of one
 	// recipient in a preview.
 	previewRecipientNameChars = 100
+	// previewAttachmentTypeChars is the most characters of the media type of one
+	// attachment in a preview. mime.Build refuses a longer type than this, so
+	// only a draft that a person wrote can have one.
+	previewAttachmentTypeChars = 100
 	// sendPayloadVersion is the version of the send payload format.
 	sendPayloadVersion = 1
 	// maxSendPayloadBytes is the largest send payload: 15 MB, the largest HTTP
@@ -493,8 +497,8 @@ type sendContent struct {
 	// confirm.Preview.BodyHash).
 	hash string
 	// attachments are the file names of the attachments, in the order of the
-	// message.
-	attachments []string
+	// message, and types are their media types, by position.
+	attachments, types []string
 }
 
 // buildSend builds the message to send: from the Compose of the request, or from
@@ -549,14 +553,15 @@ func (s *Service) buildSend(ctx context.Context, b mail.Backend, a *account.Acco
 // new date and a new boundary each time, so the same request would give another
 // hash of the whole message.
 func composedContent(data []byte, atts []mail.OutgoingAttachment) sendContent {
-	var names, sums []string
+	var names, types, sums []string
 	for _, att := range atts {
 		names = append(names, att.Filename)
+		types = append(types, mime.AttachmentType(att))
 		sums = append(sums, fmt.Sprintf("%s %x", att.ContentType, sha256.Sum256(att.Data)))
 	}
 	parsed, _ := mime.ParseMessage(bytes.NewReader(data), 0)
 	if parsed == nil {
-		return sendContent{hash: contentHash(string(data)), attachments: names}
+		return sendContent{hash: contentHash(string(data)), attachments: names, types: types}
 	}
 	clean, hidden := mime.CleanAndCount(parsed.Text)
 	return sendContent{
@@ -565,6 +570,7 @@ func composedContent(data []byte, atts []mail.OutgoingAttachment) sendContent {
 		padding:     paddingRunes(clean),
 		hash:        contentHash(append([]string{parsed.Text, parsed.HTML}, sums...)...),
 		attachments: names,
+		types:       types,
 	}
 }
 
@@ -624,6 +630,7 @@ func draftContent(data []byte) (sendContent, error) {
 	}
 	for _, att := range parsed.Attachments {
 		content.attachments = append(content.attachments, att.Filename)
+		content.types = append(content.types, att.ContentType)
 	}
 	return content, nil
 }
@@ -905,9 +912,12 @@ func previewOf(a *account.Account, msg *mail.RawMessage, content sendContent) co
 	for i, r := range msg.Recipients {
 		to[i] = validText(r)
 	}
-	var names []string
+	var names, types []string
 	for _, name := range content.attachments {
 		names = append(names, validText(name))
+	}
+	for _, mediaType := range content.types {
+		types = append(types, previewAttachmentType(mediaType))
 	}
 	start, more := previewBody(content.body)
 	recipientNames, namesMore := previewNames(msg.Names)
@@ -923,7 +933,19 @@ func previewOf(a *account.Account, msg *mail.RawMessage, content sendContent) co
 		BodyHash:    contentHash(append(slices.Clone(msg.Names), content.hash)...),
 		Count:       1,
 		Attachments: names,
+
+		AttachmentTypes: types,
 	}
+}
+
+// previewAttachmentType returns a media type as a preview shows it: cleaned, on
+// one line, and cut to previewAttachmentTypeChars.
+func previewAttachmentType(mediaType string) string {
+	line := oneLineText(mediaType)
+	if short := firstRunes(line, previewAttachmentTypeChars); len(short) < len(line) {
+		return short + "..."
+	}
+	return line
 }
 
 // previewNames returns the display names of the recipients as a preview shows
@@ -1014,9 +1036,10 @@ func previewSubject(data []byte) string {
 // samePreview reports whether a message built again is the message of the
 // stored preview: the same sender, the same recipients with the same display
 // names (compared without case of the address, and without order), the same
-// subject, the same attachments (in order), the same start of the text, the same
-// counts of what is not shown, and the same hash of what goes out. A preview
-// stored without a hash does not match: the user is asked again.
+// subject, the same attachments with the same types (in order), the same start
+// of the text, the same counts of what is not shown, and the same hash of what
+// goes out. A preview stored without a hash does not match: the user is asked
+// again.
 func samePreview(stored, rebuilt confirm.Preview) bool {
 	return stored.From == rebuilt.From &&
 		stored.Subject == rebuilt.Subject &&
@@ -1025,7 +1048,8 @@ func samePreview(stored, rebuilt confirm.Preview) bool {
 		stored.NamesMore == rebuilt.NamesMore &&
 		stored.BodyHash == rebuilt.BodyHash &&
 		slices.Equal(recipientSet(stored), recipientSet(rebuilt)) &&
-		slices.Equal(stored.Attachments, rebuilt.Attachments)
+		slices.Equal(stored.Attachments, rebuilt.Attachments) &&
+		slices.Equal(stored.AttachmentTypes, rebuilt.AttachmentTypes)
 }
 
 // recipientSet returns each recipient of a preview as its address in lower case

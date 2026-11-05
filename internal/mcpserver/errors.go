@@ -340,7 +340,8 @@ var messageErrors = []struct {
 		"has a line break or a NUL character. Remove it."},
 	{mime.ErrReplyAndForward, "A message cannot be a reply and a forward. Give reply_to or forward_of, not both."},
 	{mime.ErrInvalidContentType, "The content type of an attachment is not valid. Use one type such as " +
-		"application/pdf: not multipart, and with no charset other than UTF-8."},
+		"application/pdf: not multipart, at most 64 bytes long, and with no charset other than UTF-8. For a longer " +
+		"type, leave content_type out or use application/octet-stream."},
 	{mime.ErrHTMLTooComplex, "The HTML body is too complex to make its text form. Use simpler HTML, " +
 		"or send a plain text body instead."},
 	{mime.ErrInvalidFilename, "An attachment file name has a character that hides or reorders text (for example " +

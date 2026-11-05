@@ -345,6 +345,33 @@ func TestApprovalPageShowsTheDisplayNames(t *testing.T) {
 	})
 }
 
+func TestApprovalPageShowsTheTypeOfEachAttachment(t *testing.T) {
+	c := plainCompose()
+	c.Attachments = []mail.OutgoingAttachment{{Filename: "report.pdf", ContentType: "application/pdf", Data: []byte("%PDF")}}
+
+	t.Run("the page of the whole message", func(t *testing.T) {
+		p := newPageFixture(t)
+		id := p.fallbackSend(p.tenant, p.account(), c)
+
+		_, body := p.get(approvalPath(id))
+
+		require.Contains(t, visibleText(t, body), "report.pdf (application/pdf)")
+	})
+
+	t.Run("the page when the message cannot be built", func(t *testing.T) {
+		p := newPageFixture(t)
+		reply := mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Body: "Yes.", Attachments: c.Attachments}
+		id := p.fallbackSend(p.tenant, p.account(), reply)
+		p.backends.backend.setGetErr(fmt.Errorf("imap: read: %w", imapsmtp.ErrConnectionLost))
+
+		_, body := p.get(approvalPath(id))
+
+		text := visibleText(t, body)
+		require.Contains(t, text, textCannotShow)
+		require.Contains(t, text, "report.pdf (application/pdf)")
+	})
+}
+
 // The whole text is on the page, but a hidden character is not. The page says
 // that it left some out.
 func TestApprovalPageCountsWhatItCannotShow(t *testing.T) {

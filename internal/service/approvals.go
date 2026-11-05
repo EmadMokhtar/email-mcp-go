@@ -31,7 +31,7 @@ type SendDetail struct {
 	MoreNames string
 	Subject   string
 	// Attachments are the file names of the attachments, in the order of the
-	// message.
+	// message, each with its media type (see confirm.Preview.AttachmentLines).
 	Attachments []string
 	// Body is the whole text that the recipient sees: the text of the HTML
 	// when the message has HTML.
@@ -153,7 +153,7 @@ func detailOf(built *builtSend) *SendDetail {
 		Recipients:  cleanAll(built.preview.Recipients()),
 		MoreNames:   built.preview.MoreNamesText(),
 		Subject:     previewSubject(msg.Data),
-		Attachments: cleanAll(built.content.attachments),
+		Attachments: cleanAll(built.preview.AttachmentLines()),
 		Body:        mime.CleanUntrusted(built.content.body),
 		MoreChars:   confirm.Preview{BodyMore: built.content.hidden}.MoreCharsText(),
 	}
@@ -169,6 +169,7 @@ func cleanPreview(p confirm.Preview) confirm.Preview {
 	p.Subject = mime.CleanUntrusted(p.Subject)
 	p.BodyStart = mime.CleanUntrusted(p.BodyStart)
 	p.Attachments = cleanAll(p.Attachments)
+	p.AttachmentTypes = cleanAll(p.AttachmentTypes)
 	p.Messages = cleanAll(p.Messages)
 	return p
 }
