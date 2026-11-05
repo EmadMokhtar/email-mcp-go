@@ -161,7 +161,9 @@ type approvalPage struct {
 	Recipients []string
 	// MoreNames says how much of the display names Recipients leaves out, or is
 	// empty.
-	MoreNames   string
+	MoreNames string
+	// Warnings are lines about recipients that can look like another address.
+	Warnings    []string
 	Subject     string
 	Attachments []string
 	Body        string
@@ -451,6 +453,7 @@ func approvalOf(svc *service.Service, ctx context.Context, id string) (approvalP
 	}
 	if detail != nil {
 		page.From, page.Recipients, page.MoreNames, page.Subject = detail.From, detail.Recipients, detail.MoreNames, detail.Subject
+		page.Warnings = detail.Warnings
 		page.Attachments, page.Body = detail.Attachments, detail.Body
 		if detail.MoreChars != "" {
 			page.Body += "\n" + detail.MoreChars
@@ -461,6 +464,7 @@ func approvalOf(svc *service.Service, ctx context.Context, id string) (approvalP
 	// The service refuses Approve in this case too (it builds the message in
 	// the same way), so the page offers only Reject.
 	page.From, page.Recipients, page.MoreNames, page.Subject = p.Preview.From, p.Preview.Recipients(), p.Preview.MoreNamesText(), p.Preview.Subject
+	page.Warnings = p.Preview.Warnings
 	page.Attachments, page.Body, page.BodyNote = p.Preview.AttachmentLines(), p.Preview.BodyStart, msgDetailUnavailable
 	if more := p.Preview.MoreCharsText(); more != "" {
 		page.Body += "\n" + more

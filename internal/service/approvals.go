@@ -23,13 +23,17 @@ type SendDetail struct {
 	// From is the envelope sender.
 	From string
 	// Recipients are the envelope recipients: To, Cc and Bcc, and the people
-	// that a reply to all adds, each with its display name (see
-	// confirm.Preview.Recipients).
+	// that a reply to all adds. Each has its display name after it (see
+	// confirm.Preview.Recipients), and a domain outside ASCII has its ASCII form
+	// before the name (see mime.ShownAddress).
 	Recipients []string
 	// MoreNames says how much of the display names Recipients leaves out, or is
 	// empty.
 	MoreNames string
-	Subject   string
+	// Warnings are the lines about recipients that can look like another
+	// address. The page shows them next to the recipients.
+	Warnings []string
+	Subject  string
 	// Attachments are the file names of the attachments, in the order of the
 	// message, each with its media type (see confirm.Preview.AttachmentLines).
 	Attachments []string
@@ -144,14 +148,19 @@ func (s *Service) sendDetail(ctx context.Context, id account.AccountID, stored c
 }
 
 // detailOf returns what the approval page shows of a built message: every text
-// cleaned with mime.CleanUntrusted. The body is the whole text, as the
-// recipient sees it.
+// cleaned with mime.CleanUntrusted, and each recipient with the ASCII form of a
+// domain outside ASCII. The body is the whole text, as the recipient sees it.
 func detailOf(built *builtSend) *SendDetail {
 	msg := built.msg
+	// Recipients puts the display name after the address, so the address must
+	// have its ASCII form first.
+	shown := built.preview
+	shown.To = shownAddresses(shown.To)
 	return &SendDetail{
 		From:        mime.CleanUntrusted(msg.From),
-		Recipients:  cleanAll(built.preview.Recipients()),
-		MoreNames:   built.preview.MoreNamesText(),
+		Recipients:  cleanAll(shown.Recipients()),
+		MoreNames:   shown.MoreNamesText(),
+		Warnings:    cleanAll(built.preview.Warnings),
 		Subject:     previewSubject(msg.Data),
 		Attachments: cleanAll(built.preview.AttachmentLines()),
 		Body:        mime.CleanUntrusted(built.content.body),
@@ -159,13 +168,27 @@ func detailOf(built *builtSend) *SendDetail {
 	}
 }
 
-// cleanPreview returns the preview with each text cleaned with
-// mime.CleanUntrusted.
+// shownAddresses returns each address cleaned, in the form that a person must
+// see (see mime.ShownAddress). The result is only for display: a confirmation
+// compares and sends the addresses as they are.
+func shownAddresses(list []string) []string {
+	out := make([]string, len(list))
+	for i, addr := range list {
+		out[i] = mime.ShownAddress(mime.CleanUntrusted(addr))
+	}
+	return out
+}
+
+// cleanPreview returns the preview for a page: each text cleaned with
+// mime.CleanUntrusted, and the recipients as shownAddresses gives them. So To
+// holds the form that a person must see, and Recipients puts the display name
+// after it.
 func cleanPreview(p confirm.Preview) confirm.Preview {
 	p.Account = mime.CleanUntrusted(p.Account)
 	p.From = mime.CleanUntrusted(p.From)
-	p.To = cleanAll(p.To)
+	p.To = shownAddresses(p.To)
 	p.Names = cleanAll(p.Names)
+	p.Warnings = cleanAll(p.Warnings)
 	p.Subject = mime.CleanUntrusted(p.Subject)
 	p.BodyStart = mime.CleanUntrusted(p.BodyStart)
 	p.Attachments = cleanAll(p.Attachments)

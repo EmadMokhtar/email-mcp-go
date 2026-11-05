@@ -34,6 +34,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/confirm"
+	"github.com/EmadMokhtar/email-mcp-go/internal/mime"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 )
 
@@ -208,8 +209,13 @@ func linkRequest(message, link string) *mcp.CallToolResult {
 // recipient has its display name next to the address (confirm.Preview.Recipients).
 // When the preview cut a name, a line says how much it left out.
 //
+// A domain outside ASCII has its ASCII form after the address, before the name,
+// and each address that can look like another one has a warning line right after
+// the recipients. The warning lines come before the line about the names.
+//
 //	Send this email from <from>?
-//	To (every recipient, Bcc included): <address ("name"), comma-separated>
+//	To (every recipient, Bcc included): <address (ASCII form) ("name"), comma-separated>
+//	Warning: <text> (only for an address that can look like another)
 //	… and <n> more characters of display names not shown
 //	Subject: <subject>
 //	Attachments: <n> (<name> (<type>), ... and <n> more) | Attachments: none
@@ -219,10 +225,20 @@ func linkRequest(message, link string) *mcp.CallToolResult {
 //	… and <n> more characters not shown
 func sendPreview(p confirm.Preview) string {
 	to := make([]string, 0, len(p.To))
-	for _, recipient := range p.Recipients() {
+	// Recipients puts the display name after the address, so the address must
+	// have its ASCII form first.
+	named := p
+	named.To = make([]string, len(p.To))
+	for i, addr := range p.To {
+		named.To[i] = mime.ShownAddress(oneLine(addr))
+	}
+	for _, recipient := range named.Recipients() {
 		to = append(to, oneLine(recipient))
 	}
 	recipients := strings.Join(to, ", ")
+	for _, warning := range p.Warnings {
+		recipients += "\nWarning: " + oneLine(warning)
+	}
 	if more := p.MoreNamesText(); more != "" {
 		recipients += "\n" + more
 	}

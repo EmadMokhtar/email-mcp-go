@@ -84,6 +84,7 @@ const (
 	codeBodyAndHTML         = "body_and_html"
 	codeDraftUnreadable     = "draft_unreadable"
 	codeHiddenAddress       = "hidden_address"
+	codeInexactDomain       = "inexact_domain"
 	// The codes of a mail server that refuses the account.
 	codeAuthFailed         = "auth_failed"
 	codeCertificateChanged = "certificate_changed"
@@ -208,13 +209,19 @@ func toolError(tool string, err error) *toolFailure {
 	// tool must give the advice for a read (body_format "none").
 	case isMsg:
 		return msgFail
-	// ErrNotADraft, ErrBodyAndHTML, ErrDraftUnreadable and ErrHiddenAddress
-	// match ErrInvalidRequest too, so they come first.
+	// ErrNotADraft, ErrBodyAndHTML, ErrDraftUnreadable, ErrHiddenAddress and
+	// ErrInexactDomain match ErrInvalidRequest too, so they come first.
 	case errors.Is(err, service.ErrHiddenAddress):
 		return failure(codeHiddenAddress, "An address in to, cc or bcc (or an address that a reply adds from the "+
 			"original message) has a character that is hidden or changes how text is shown, for example U+3164 or a "+
 			"zero width space. The user could not see the exact address, so nothing was sent and the user was not "+
 			"asked. Use the plain address. "+noRepeat)
+	case errors.Is(err, service.ErrInexactDomain):
+		return failure(codeInexactDomain, "An address in to, cc or bcc (or an address that a reply adds from the "+
+			"original message) has a domain outside ASCII with no exact ASCII form: for example full-width letters or "+
+			"capital letters, which change when the domain is encoded. The user could not check where the message "+
+			"goes, so nothing was sent and the user was not asked. Write the domain in lower case with its usual "+
+			"letters. When a reply to all brought in the address, send a plain reply and name the other people in cc. "+noRepeat)
 	case errors.Is(err, service.ErrBodyAndHTML):
 		return failure(codeBodyAndHTML, "Give body or html_body, not both: the text part of the message is made from "+
 			"the HTML. "+noRepeat)
@@ -333,6 +340,10 @@ var messageErrors = []struct {
 	err  error
 	text string
 }{
+	// ErrNonASCIILocalPart matches ErrInvalidAddress too, so it comes first.
+	{mime.ErrNonASCIILocalPart, "An address in to, cc or bcc has characters outside ASCII before the @. That part has " +
+		"no ASCII form, so the user could not tell it from a look-alike. Only a reply can reach such an address, " +
+		"and the user is always asked."},
 	{mime.ErrInvalidAddress, "An address is not valid, or it cannot be sent as it is (for example a quoted name before " +
 		"the @, or an IP address after it). Check to, cc and bcc."},
 	{mime.ErrNoRecipients, "The message has no recipients. Give at least one address in to, cc or bcc."},

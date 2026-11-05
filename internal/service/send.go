@@ -119,6 +119,17 @@ var (
 	// address. Such a message is not sent. It matches ErrInvalidRequest.
 	ErrHiddenAddress = fmt.Errorf("%w: an address has a character that is hidden or changes how text is shown, "+
 		"so the user could not see the exact address. Use the plain address", ErrInvalidRequest)
+
+	// ErrInexactDomain means that an envelope recipient has a domain outside
+	// ASCII with no exact ASCII form: it has none, or IDNA would change the
+	// domain first (mime.HasExactASCIIDomain). The ASCII form next to an address
+	// is how the user tells it from a look-alike, and it must be the form of the
+	// domain that the message goes to. Such a message is not sent. This also
+	// stops a reply to all with one such address: leaving the address out would
+	// change who the message goes to without a word. It matches
+	// ErrInvalidRequest.
+	ErrInexactDomain = fmt.Errorf("%w: an address has a domain with no exact ASCII form, "+
+		"so the user could not check where the message goes", ErrInvalidRequest)
 )
 
 // sendDeps checks that every part that a send needs is set up (see confirmDeps).
@@ -145,8 +156,10 @@ func (s *Service) sendDeps() error {
 //  3. The limits that can never allow it: more recipients than the account
 //     allows in one message (counted on the final envelope, after a reply to all
 //     adds people), or a send limit of 0.
-//  4. The confirmation: when the account has ConfirmSends, or when it has the
-//     new-recipient check and a recipient was never sent to. A first call stores
+//  4. The confirmation: when the account has ConfirmSends, when a recipient has
+//     a character outside printable ASCII (it can look like another address),
+//     or when the account has the new-recipient check and a recipient was
+//     never sent to. A first call stores
 //     the request and returns a NeedsConfirmation (in band) or
 //     "pending_approval" with a link (fallback). A second call with an answer
 //     acts only when the user accepted.
@@ -207,6 +220,10 @@ func (s *Service) Send(ctx context.Context, id account.AccountID, c *mail.Compos
 	switch {
 	case acc.Decision.NeedsConfirmation:
 		reason = "confirm_sends"
+	case mime.HasNonASCIIAddress(msg.Recipients):
+		// Such an address can look like one that the user knows, so it counts
+		// as new every time, with the new-recipient check on or off.
+		reason = "new_recipient"
 	case lim.NewRecipientCheck:
 		unknown, err := s.hasNewRecipient(ctx, acc, msg.Recipients)
 		if err != nil {
@@ -465,12 +482,17 @@ func (s *Service) buildForConfirmation(ctx context.Context, b mail.Backend, a *a
 }
 
 // checkShownAddresses returns ErrHiddenAddress when an envelope recipient of the
-// message is not exactly the text that a confirmation shows of it. The sender
-// is the address of the account, which the agent cannot choose.
+// message has a character that a reader cannot see, so a confirmation could not
+// show the exact address. It returns ErrInexactDomain when the recipient has no
+// ASCII form of its domain to show next to it. The errors never hold the address.
+// The sender is the address of the account, which the agent cannot choose.
 func checkShownAddresses(msg *mail.RawMessage) error {
 	for _, r := range msg.Recipients {
-		if mime.CleanUntrusted(r) != r {
+		if mime.MarkInvisible(r) != r {
 			return ErrHiddenAddress
+		}
+		if !mime.HasExactASCIIDomain(r) {
+			return ErrInexactDomain
 		}
 	}
 	return nil
@@ -937,8 +959,12 @@ func (p *composePayload) compose() mail.Compose {
 // two previews that were made in the same way.
 func previewOf(a *account.Account, msg *mail.RawMessage, content sendContent) confirm.Preview {
 	to := make([]string, len(msg.Recipients))
+	var warnings []string
 	for i, r := range msg.Recipients {
 		to[i] = validText(r)
+		if w := mime.AddressWarning(r); w != "" {
+			warnings = append(warnings, validText(w))
+		}
 	}
 	var names, types []string
 	for _, name := range content.attachments {
@@ -950,19 +976,19 @@ func previewOf(a *account.Account, msg *mail.RawMessage, content sendContent) co
 	start, more := previewBody(content.body)
 	recipientNames, namesMore := previewNames(msg.Names)
 	return confirm.Preview{
-		Account:     validText(a.Address),
-		From:        validText(msg.From),
-		To:          to,
-		Names:       recipientNames,
-		NamesMore:   namesMore,
-		Subject:     previewSubject(msg.Data),
-		BodyStart:   start,
-		BodyMore:    more + content.hidden + content.padding,
-		BodyHash:    contentHash(append(slices.Clone(msg.Names), content.hash)...),
-		Count:       1,
-		Attachments: names,
-
+		Account:         validText(a.Address),
+		From:            validText(msg.From),
+		To:              to,
+		Names:           recipientNames,
+		NamesMore:       namesMore,
+		Subject:         previewSubject(msg.Data),
+		BodyStart:       start,
+		BodyMore:        more + content.hidden + content.padding,
+		BodyHash:        contentHash(append(slices.Clone(msg.Names), content.hash)...),
+		Count:           1,
+		Attachments:     names,
 		AttachmentTypes: types,
+		Warnings:        warnings,
 	}
 }
 
@@ -1067,9 +1093,9 @@ func previewSubject(data []byte) string {
 // stored preview: the same sender, the same recipients with the same display
 // names (compared without case of the address, and without order), the same
 // subject, the same attachments with the same types (in order), the same start
-// of the text, the same counts of what is not shown, and the same hash of what
-// goes out. A preview stored without a hash does not match: the user is asked
-// again.
+// of the text, the same counts of what is not shown, the same warnings about the
+// recipients (without order), and the same hash of what goes out. A preview
+// stored without a hash does not match: the user is asked again.
 func samePreview(stored, rebuilt confirm.Preview) bool {
 	return stored.From == rebuilt.From &&
 		stored.Subject == rebuilt.Subject &&
@@ -1079,7 +1105,8 @@ func samePreview(stored, rebuilt confirm.Preview) bool {
 		stored.BodyHash == rebuilt.BodyHash &&
 		slices.Equal(recipientSet(stored), recipientSet(rebuilt)) &&
 		slices.Equal(stored.Attachments, rebuilt.Attachments) &&
-		slices.Equal(stored.AttachmentTypes, rebuilt.AttachmentTypes)
+		slices.Equal(stored.AttachmentTypes, rebuilt.AttachmentTypes) &&
+		slices.Equal(addressSet(stored.Warnings), addressSet(rebuilt.Warnings))
 }
 
 // recipientSet returns each recipient of a preview as its address in lower case
@@ -1091,6 +1118,18 @@ func recipientSet(p confirm.Preview) []string {
 		if i < len(p.Names) {
 			out[i] += "\x00" + p.Names[i]
 		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// addressSet returns the strings in lower case, sorted. A warning about a
+// recipient holds the address, so the warnings are compared in the same way as
+// the addresses.
+func addressSet(list []string) []string {
+	out := make([]string, len(list))
+	for i, a := range list {
+		out[i] = strings.ToLower(strings.TrimSpace(a))
 	}
 	slices.Sort(out)
 	return out

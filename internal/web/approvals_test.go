@@ -423,6 +423,42 @@ func TestApprovalPageWithoutTheWholeMessageOffersOnlyReject(t *testing.T) {
 	require.Contains(t, string(p.sender.sent()[0].Data), "THE-END")
 }
 
+// The page shows the ASCII form next to a look-alike domain, with a warning.
+func TestApprovalPageWarnsAboutALookAlikeDomain(t *testing.T) {
+	const lookAlike = "bob@ex\u0430mple.com"
+	p := newPageFixture(t)
+	a := p.account()
+	c := mail.Compose{To: []string{lookAlike}, Subject: "Plans", Body: "See you."}
+	id := p.fallbackSend(p.tenant, a, c)
+
+	resp, body := p.get(approvalPath(id))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	text := visibleText(t, body)
+	require.Contains(t, text, lookAlike+" (xn--exmple-4nf.com)")
+	require.Contains(t, text, "mixes Cyrillic and Latin letters")
+	requireButtons(t, body, id)
+}
+
+// The page shows what PR 37 and PR 34 both add to a recipient: the ASCII form of
+// a domain outside ASCII, then the display name in quotes, and the warning. A
+// name cannot end its quotes.
+func TestApprovalPageShowsTheASCIIFormTheNameAndTheWarning(t *testing.T) {
+	const lookAlike = "bob@ex\u0430mple.com"
+	p := newPageFixture(t)
+	a := p.account()
+	c := mail.Compose{To: []string{`"Bob \"x\", evil@corp.example" <` + lookAlike + `>`}, Subject: "Plans", Body: "See you."}
+	id := p.fallbackSend(p.tenant, a, c)
+
+	resp, body := p.get(approvalPath(id))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	text := visibleText(t, body)
+	require.Contains(t, text, lookAlike+` (xn--exmple-4nf.com) ("Bob 'x', evil@corp.example")`)
+	require.Contains(t, text, "mixes Cyrillic and Latin letters")
+	requireButtons(t, body, id)
+}
+
 // trashApproval asks to move messages to Trash for the web page, and returns
 // the id of the action.
 func (p *pageFixture) trashApproval(a *account.Account, refs ...mail.Ref) string {

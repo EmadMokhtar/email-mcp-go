@@ -131,12 +131,15 @@ func newForwarded(o *mail.Message) forwarded {
 	return f
 }
 
-// displayAddress writes an address for people to read: "Name <address>".
+// displayAddress writes an address for people to read: "Name <address>". The
+// address is the real one of the original, so a character that a reader cannot
+// see is marked (see MarkInvisible).
 func displayAddress(a mail.Address) string {
+	address := MarkInvisible(a.Email)
 	if a.Name == "" {
-		return a.Email
+		return address
 	}
-	return a.Name + " <" + a.Email + ">"
+	return a.Name + " <" + address + ">"
 }
 
 const forwardedMarker = "---------- Forwarded message ----------"

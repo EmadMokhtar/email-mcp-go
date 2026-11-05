@@ -66,6 +66,7 @@
 </dl>{{end}}
 </header>
 {{if .Waiting}}
+{{range .Warnings}}<div class="notice warn">{{.}}</div>{{end}}
 {{if .BodyNote}}<div class="notice warn">{{.BodyNote}}</div>{{end}}
 <pre class="message-body">{{.Body}}</pre>
 {{end}}

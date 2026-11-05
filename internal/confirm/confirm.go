@@ -205,6 +205,10 @@ type Preview struct {
 	// on one line and cut. Each channel that shows the attachments shows the type
 	// next to the name (see AttachmentLines).
 	AttachmentTypes []string `json:"attachment_types,omitempty"`
+	// Warnings are the lines about the recipients of a send that can look like
+	// another address. Each channel shows them next to the recipients. They are
+	// part of what the user approves.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Recipients returns one line for each address of To. A recipient with a display
@@ -416,6 +420,7 @@ func (m *Manager) createWithLifetime(ctx context.Context, tenant account.TenantI
 	p.Names = slices.Clone(p.Names)
 	p.Attachments = slices.Clone(p.Attachments)
 	p.AttachmentTypes = slices.Clone(p.AttachmentTypes)
+	p.Warnings = slices.Clone(p.Warnings)
 	p.Messages = slices.Clone(p.Messages[:min(len(p.Messages), maxMessages)])
 	if short := firstChars(p.BodyStart, maxBodyStart); len(short) < len(p.BodyStart) {
 		// What is cut is not shown, so it counts toward BodyMore.

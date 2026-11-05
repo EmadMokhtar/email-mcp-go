@@ -786,7 +786,7 @@ func TestOrdinaryAddressesAreStillAccepted(t *testing.T) {
 		"o'brien@example.com",
 		"a_b-c=d@sub.example.com",
 		"{x}@example.com",
-		"\U00004F60\U00006211@example.com",
+		"bob@\U00004F60\U00006211.example",
 		"Bob <bob@x>",
 		`"Bob B." <bob@x>`,
 		`"B>b" <bob@x>`,

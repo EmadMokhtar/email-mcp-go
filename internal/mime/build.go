@@ -349,10 +349,7 @@ func isHostName(s string) bool {
 	}
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-		case c == '.', c == '-', c == '_':
-		default:
+		if !isLetterOrDigit(c) && c != '.' && c != '-' && c != '_' {
 			return false
 		}
 	}

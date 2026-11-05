@@ -148,8 +148,11 @@ func originalAddresses(field string, list []mail.Address) ([]*netmail.Address, e
 
 // parseRecipients parses the address strings of one Compose field. Each
 // string must hold one address, and its display name must have no hidden text
-// (ErrHiddenText). FromDraft does not use this check: it sends a draft as it was
-// saved.
+// (ErrHiddenText). These are the addresses that the caller typed, so a local part
+// outside ASCII is refused here too (ErrNonASCIILocalPart). The addresses of an
+// original message do not pass here: a person with such an address must stay
+// reachable by a reply, and the service then always asks. FromDraft does not use
+// these checks: it sends a draft as it was saved.
 func parseRecipients(field string, given []string) ([]*netmail.Address, error) {
 	out := make([]*netmail.Address, 0, len(given))
 	for i, s := range given {
@@ -167,6 +170,11 @@ func parseRecipients(field string, given []string) ([]*netmail.Address, error) {
 		}
 		if err := checkVisible(name, a.Name); err != nil {
 			return nil, err
+		}
+		// A hidden character is left to the check of the service (send and
+		// create_draft both run it), which refuses it with its own error.
+		if local, _ := splitAddress(a.Address); !isPrintableASCII(local) && CleanUntrusted(local) == local {
+			return nil, fmt.Errorf("%w: %s", ErrNonASCIILocalPart, name)
 		}
 		out = append(out, a)
 	}
