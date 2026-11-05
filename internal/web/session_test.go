@@ -233,6 +233,42 @@ func TestEveryPageHasTheSignOutButton(t *testing.T) {
 	}
 }
 
+// A revoke leaves no way in: a setup link that nobody used stops working too.
+func TestRevokeEndsUnusedSetupLinks(t *testing.T) {
+	f := newFixture(t)
+	s, _ := f.start()
+	ctx := context.Background()
+	setupURL, err := s.NewSetupURL(ctx)
+	require.NoError(t, err)
+
+	_, err = s.RevokeSessions(ctx)
+	require.NoError(t, err)
+
+	resp, body := do(t, newBrowser(t), newRequest(t, http.MethodGet, setupURL, nil))
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	require.Equal(t, instruction, visibleText(t, body))
+	require.Empty(t, resp.Header.Values("Set-Cookie"))
+}
+
+// The count says how many browsers lost a sign-in that worked. A session past
+// the idle limit no longer counts, but its row is deleted too.
+func TestRevokeCountsOnlySessionsThatWork(t *testing.T) {
+	f := newFixture(t)
+	s, _ := f.start()
+	ctx := context.Background()
+	idle := hashOf(f.signIn(s, newBrowser(t)))
+	f.clock.Set(t0.Add(sessionIdleTTL))
+	active := hashOf(f.signIn(s, newBrowser(t)))
+
+	n, err := s.RevokeSessions(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n)
+	for _, hash := range [][]byte{idle, active} {
+		_, err = f.store.WebSessionByHash(ctx, hash)
+		require.ErrorIs(t, err, store.ErrNotFound)
+	}
+}
+
 func TestRevokeRevokesAllSessions(t *testing.T) {
 	f := newFixture(t)
 	s, base := f.start()

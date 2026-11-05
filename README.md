@@ -121,7 +121,7 @@ same. You cannot sign in on 127.0.0.1 itself (see
 The command opens your browser through a private temporary file, so the link
 with its one-time token is not in the list of running programs. If your computer
 opens `.html` files in another program, or a sandboxed browser cannot read the
-file, open the printed link yourself.
+file, open the printed link yourself. The command reminds you of this.
 
 In the browser:
 
@@ -357,7 +357,8 @@ email-mcp has stopped, and another program now listens on that port, your
 browser sends the cookie to that program. To limit this, a sign-in lasts at most
 24 hours and ends after 2 hours without use. Click **Sign out** when you finish.
 The **Connections** page lists the signed-in browsers, and you can sign out each
-one. `email-mcp setup --revoke-sessions` signs out every browser at once.
+one. `email-mcp setup --revoke-sessions` signs out every browser at once, and
+stops every sign-in link that was not used yet.
 
 ## Recommended Claude Code deny rules
 
@@ -711,7 +712,7 @@ More help:
 | `email-mcp serve` | Serves MCP over stdio. This is what AI apps run. |
 | `email-mcp serve --http 127.0.0.1:8765` | Serves MCP over local HTTP at `/mcp`. |
 | `email-mcp setup` | Signs your browser in to the local web pages, and serves them until Ctrl-C. |
-| `email-mcp setup --revoke-sessions` | Signs every browser out, and stops. |
+| `email-mcp setup --revoke-sessions` | Signs every browser out, cancels unused sign-in links, and stops. |
 | `email-mcp account add\|list\|reconnect\|remove\|test` | Manages accounts without a browser. `reconnect <id>` gives an account a new password or trusts its new certificate, and keeps the account. `remove <id>` asks first; add `--yes` without a terminal. |
 | `email-mcp token create\|list\|revoke` | Manages the tokens of local HTTP mode. |
 | `email-mcp import-env [path]` | Imports the account of an old `.env` file. |

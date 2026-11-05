@@ -539,7 +539,7 @@ All defaults are **[my call]** and can be changed per account.
   - `HttpOnly`, `SameSite=Lax` (every GET only reads, and every POST needs the form token, so a link from another site can open a page and nothing else);
   - set only on the name `email-mcp.localhost`, because a browser sends a cookie of `127.0.0.1` to every local port. No session works on `127.0.0.1` or `localhost`: those hosts show only a page that points to the name, with the line for the hosts file for a browser that cannot find it;
   - lasts at most 24 hours, and ends after 2 hours without a request;
-  - ends at once with the Sign out button, on the Connections page, or with `email-mcp setup --revoke-sessions`;
+  - ends at once with the Sign out button, on the Connections page, or with `email-mcp setup --revoke-sessions`, which also cancels every unused setup token;
   - sessions are stored in the database, so they survive restarts and work for every local process.
   - Browsers do not tie cookies to a port, so the session still works when a later process listens on a different random port.
 - **Links given to the agent or the harness never carry a token.** This covers URL elicitations, text fallbacks, and `pending_approval` links.

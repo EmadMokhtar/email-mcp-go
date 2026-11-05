@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
@@ -120,18 +119,24 @@ func (s *Server) SignInHelpURL(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.Replace(base, uiHost, fallbackHost, 1) + setupPath, nil
+	u, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("web: help link: %w", err)
+	}
+	return "http://" + fallbackHost + ":" + u.Port() + setupPath, nil
 }
 
-// RevokeSessions deletes every session of the local tenant, and returns how many
-// there were. Every server reads the sessions from the database on each request,
-// so it also signs out the browsers of a server in another process.
+// RevokeSessions deletes every session and every unused setup token of the local
+// tenant, so no browser stays signed in and no sign-in link works. It returns how
+// many sessions still worked. Every server reads the database on each request, so
+// it also signs out the browsers of a server in another process.
 func (s *Server) RevokeSessions(ctx context.Context) (int64, error) {
 	tenant, err := s.d.Store.EnsureLocalTenant(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("web: revoke sessions: %w", err)
 	}
-	n, err := s.d.Store.DeleteWebSessions(ctx, tenant)
+	now := s.now()
+	n, err := s.d.Store.RevokeWebSessions(ctx, tenant, now, now.Add(-sessionIdleTTL))
 	if err != nil {
 		return 0, fmt.Errorf("web: revoke sessions: %w", err)
 	}

@@ -249,29 +249,65 @@ func TestDeleteWebSessionByID(t *testing.T) {
 	require.ErrorIs(t, s.DeleteWebSessionByID(ctx, tenant, row.ID), ErrNotFound)
 }
 
-func TestDeleteWebSessions(t *testing.T) {
+// A revoke deletes every session and every unused setup token of the tenant.
+// It counts only the sessions that still worked, by the same rule as
+// ListWebSessions.
+func TestRevokeWebSessions(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	tenant, err := s.EnsureLocalTenant(ctx)
 	require.NoError(t, err)
 	other := otherTenant(t, s)
-	newWebSession(t, s, tenant, 1, testNow)
-	newWebSession(t, s, tenant, 2, testNow)
-	newWebSession(t, s, other, 3, testNow)
+	now := testNow.Add(3 * time.Hour)
+	idleSince := now.Add(-2 * time.Hour)
 
-	n, err := s.DeleteWebSessions(ctx, tenant)
+	newWebSession(t, s, tenant, 1, now.Add(-time.Minute))
+	newWebSession(t, s, tenant, 2, now.Add(-time.Hour))
+	newWebSession(t, s, other, 3, now.Add(-time.Minute))
+	newWebSession(t, s, tenant, 4, idleSince.Add(-time.Hour))
+	newWebSession(t, s, tenant, 5, idleSince)
+	newWebSession(t, s, tenant, 6, now.Add(-30*time.Hour))
+
+	require.NoError(t, s.CreateWebSetupToken(ctx, tenant, webHash(7), now, now.Add(10*time.Minute)))
+	require.NoError(t, s.CreateWebSetupToken(ctx, other, webHash(8), now, now.Add(10*time.Minute)))
+
+	n, err := s.RevokeWebSessions(ctx, tenant, now, idleSince)
 	require.NoError(t, err)
-	require.EqualValues(t, 2, n)
-	for _, fill := range []byte{1, 2} {
+	require.EqualValues(t, 2, n, "an idle or an expired session did not work any more")
+
+	for _, fill := range []byte{1, 2, 4, 5, 6} {
 		_, err = s.WebSessionByHash(ctx, webHash(fill))
-		require.ErrorIs(t, err, ErrNotFound)
+		require.ErrorIs(t, err, ErrNotFound, "every session of the tenant is deleted, also one that did not work")
 	}
+	_, err = s.UseWebSetupToken(ctx, webHash(7), webHash(9), now, now.Add(time.Hour))
+	require.ErrorIs(t, err, ErrNotFound, "an unused setup token no longer works")
+
 	_, err = s.WebSessionByHash(ctx, webHash(3))
 	require.NoError(t, err, "the session of the other tenant stays")
+	_, err = s.UseWebSetupToken(ctx, webHash(8), webHash(10), now, now.Add(time.Hour))
+	require.NoError(t, err, "the setup token of the other tenant stays")
 
-	n, err = s.DeleteWebSessions(ctx, tenant)
+	n, err = s.RevokeWebSessions(ctx, tenant, now, idleSince)
 	require.NoError(t, err)
 	require.Zero(t, n)
+}
+
+// A failed revoke changes nothing: no session goes while a setup token stays.
+func TestRevokeWebSessionsIsOneTransaction(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	newWebSession(t, s, tenant, 1, testNow)
+	require.NoError(t, s.CreateWebSetupToken(ctx, tenant, webHash(2), testNow, testNow.Add(10*time.Minute)))
+	_, err = s.db.ExecContext(ctx,
+		`CREATE TRIGGER keep_tokens BEFORE DELETE ON web_setup_tokens BEGIN SELECT RAISE(ABORT, 'kept'); END`)
+	require.NoError(t, err)
+
+	_, err = s.RevokeWebSessions(ctx, tenant, testNow, testNow.Add(-time.Hour))
+	require.Error(t, err)
+	_, err = s.WebSessionByHash(ctx, webHash(1))
+	require.NoError(t, err, "the session delete was rolled back")
 }
 
 // The migration signs every browser out: a session of the old program has a

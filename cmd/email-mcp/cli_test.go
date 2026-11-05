@@ -1804,6 +1804,8 @@ func TestSetupRemovesTheSignInPage(t *testing.T) {
 		t.Fatal("setup did not open the browser")
 	}
 	require.Eventually(t, func() bool { return strings.Contains(out.String(), "runs until") }, 10*time.Second, 10*time.Millisecond)
+	require.Contains(t, out.String(), "If the browser shows an error, open the link above yourself.",
+		"the opener cannot tell that a sandboxed browser failed to read the file")
 	_, err := os.Stat(path)
 	require.NoError(t, err, "the browser has time to read the page")
 
@@ -1913,6 +1915,7 @@ func TestSetupRevokesSessions(t *testing.T) {
 	r := runCLI(t, quiet, "", "setup", "--revoke-sessions", "--data-dir", dir)
 	require.Equal(t, exitOK, r.code, r.stderr)
 	require.Contains(t, r.stdout, "Signed out 1 browser")
+	require.Contains(t, r.stdout, "Unused sign-in links no longer work.")
 	require.NotContains(t, r.stdout, "/setup")
 	quiet.mu.Lock()
 	require.Empty(t, quiet.opened)

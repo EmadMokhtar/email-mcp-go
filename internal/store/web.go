@@ -233,18 +233,45 @@ func (s *Store) DeleteWebSessionByID(ctx context.Context, tenant account.TenantI
 	return nil
 }
 
-// DeleteWebSessions deletes every session of the tenant, and returns how many
-// there were. It signs every browser of the tenant out.
-func (s *Store) DeleteWebSessions(ctx context.Context, tenant account.TenantID) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM web_sessions WHERE tenant_id = ?`, string(tenant))
-	if err != nil {
-		return 0, fmt.Errorf("store: delete web sessions: %w", err)
+// RevokeWebSessions closes every way into the web interface of the tenant, in
+// one transaction: it deletes all its sessions and all its unused setup tokens.
+// So a revoke never leaves a working sign-in link, and a failed revoke changes
+// nothing.
+//
+// It returns how many sessions still worked: those that expire after now and
+// were last seen after idleSince, the same rule as ListWebSessions. The other
+// sessions are deleted first, so the second delete counts exactly the sessions
+// that worked.
+func (s *Store) RevokeWebSessions(ctx context.Context, tenant account.TenantID, now, idleSince time.Time) (int64, error) {
+	if err := validateID("tenant", string(tenant)); err != nil {
+		return 0, err
 	}
-	n, err := result.RowsAffected()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("store: delete web sessions: %w", err)
+		return 0, fmt.Errorf("store: revoke web sessions: %w", err)
 	}
-	return n, nil
+	// Rollback after a successful Commit does nothing.
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM web_sessions WHERE tenant_id = ? AND (expires_at <= ? OR last_seen_at <= ?)`,
+		string(tenant), now.UnixMilli(), idleSince.UnixMilli()); err != nil {
+		return 0, fmt.Errorf("store: revoke web sessions: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM web_sessions WHERE tenant_id = ?`, string(tenant))
+	if err != nil {
+		return 0, fmt.Errorf("store: revoke web sessions: %w", err)
+	}
+	worked, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: revoke web sessions: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM web_setup_tokens WHERE tenant_id = ?`, string(tenant)); err != nil {
+		return 0, fmt.Errorf("store: revoke web sessions: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("store: revoke web sessions: %w", err)
+	}
+	return worked, nil
 }
 
 // checkWebRow checks the hash and the times of a new setup token or session.

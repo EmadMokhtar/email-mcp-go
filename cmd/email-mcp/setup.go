@@ -19,7 +19,7 @@ package main
 // and to that file, never to the log.
 //
 // With --revoke-sessions the command does none of this: it signs every browser
-// out and stops.
+// out, makes every unused sign-in link stop working, and stops.
 
 import (
 	"context"
@@ -42,7 +42,7 @@ func runSetup(ctx context.Context, c *cli, args []string) int {
 	const cmd = "setup"
 	fs := c.newFlags(cmd)
 	dataDir := fs.String("data-dir", "", dataDirUsage)
-	revoke := fs.Bool("revoke-sessions", false, "sign every browser out and stop, without a new sign-in")
+	revoke := fs.Bool("revoke-sessions", false, "sign every browser out, cancel unused sign-in links, and stop, without a new sign-in")
 	rest, code, ok := c.parseFlags(cmd, fs, args)
 	if !ok {
 		return code
@@ -66,7 +66,7 @@ func runSetup(ctx context.Context, c *cli, args []string) int {
 		if n == 1 {
 			word = "browser"
 		}
-		c.printf("Signed out %d %s. Run email-mcp setup to sign in again.\n", n, word)
+		c.printf("Signed out %d %s. Unused sign-in links no longer work. Run email-mcp setup to sign in again.\n", n, word)
 		return exitOK
 	}
 
@@ -110,6 +110,10 @@ func runSetup(ctx context.Context, c *cli, args []string) int {
 //
 // A failure is only a note: the user can open the printed link. The error is not
 // printed, because it is about the file or the program that opens the browser.
+//
+// The program that opens the browser reports success before the browser reads
+// the file. It cannot tell that a sandboxed browser with its own temporary
+// directory found no file, so setup always says what to do then.
 func (c *cli) openSignInPage(cmd, link string) func() {
 	const note = "%s: could not open the browser. Open the link above yourself.\n"
 	target, remove, err := writeSignInPage(link)
@@ -122,6 +126,7 @@ func (c *cli) openSignInPage(cmd, link string) func() {
 		c.errorf(note, cmd)
 		return func() {}
 	}
+	c.printf("If the browser shows an error, open the link above yourself.\n")
 	timer := time.AfterFunc(signInPageLife, remove)
 	return func() {
 		timer.Stop()
