@@ -967,13 +967,12 @@ func TestLineEndingsAreCRLF(t *testing.T) {
 func TestHTMLBodyBuildsAlternative(t *testing.T) {
 	raw := mustBuild(t, mail.Compose{
 		To:       []string{"bob@x"},
-		Body:     "plain",
 		HTMLBody: "<p>rich \U00004F60</p>",
 	}, newContext())
 
 	require.Equal(t, "multipart/alternative", mediaTypeOf(t, headerOf(t, raw.Data)))
 	p := parsedOf(t, raw.Data)
-	require.Equal(t, "plain", p.Text)
+	require.Equal(t, "rich \U00004F60", p.Text)
 	require.Equal(t, "<p>rich \U00004F60</p>", p.HTML)
 	require.True(t, strings.Index(string(raw.Data), "text/plain") < strings.Index(string(raw.Data), "text/html"),
 		"the HTML part comes last, so mail programs prefer it")
@@ -984,7 +983,7 @@ func TestHTMLOnlyBodyGetsTextForm(t *testing.T) {
 
 	p := parsedOf(t, raw.Data)
 	require.Equal(t, "Hello", strings.TrimSpace(p.Text))
-	require.Equal(t, "<p>Hello</p><script>alert(1)</script>", p.HTML)
+	require.Equal(t, "<p>Hello</p>", p.HTML, "the HTML that goes out is the HTML that was cleaned")
 }
 
 func TestAttachmentsBuildMixedMessage(t *testing.T) {
@@ -1230,15 +1229,16 @@ func FuzzBuildHeaders(f *testing.F) {
 }
 
 func TestBuildRefusesHTMLBodyThatIsTooComplexToMakeTextOf(t *testing.T) {
-	// The HTML comes from the caller. With no text body, Build must make the text
-	// form of it, and it cannot do this for HTML that makes the parser explode.
+	// The HTML comes from the caller. Build must clean it and make the text form
+	// of it, and it cannot do this for HTML that makes the parser explode.
 	raw, err := Build(mail.Compose{To: []string{"bob@x"}, HTMLBody: amplifiedHTML(500, 4000)}, newContext())
 	require.ErrorIs(t, err, ErrHTMLTooComplex)
 	require.Nil(t, raw)
 
-	// With a text body there is nothing to convert. The HTML is sent as it is.
-	raw = mustBuild(t, mail.Compose{To: []string{"bob@x"}, Body: "plain", HTMLBody: amplifiedHTML(500, 4000)}, newContext())
-	require.Equal(t, "plain", parsedOf(t, raw.Data).Text)
+	// A text body changes nothing: HTML that cannot be cleaned does not go out.
+	raw, err = Build(mail.Compose{To: []string{"bob@x"}, Body: "plain", HTMLBody: amplifiedHTML(500, 4000)}, newContext())
+	require.ErrorIs(t, err, ErrHTMLTooComplex)
+	require.Nil(t, raw)
 }
 
 func TestForwardOfOriginalWithHTMLThatIsTooComplexHasNoTextOfIt(t *testing.T) {

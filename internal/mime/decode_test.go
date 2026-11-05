@@ -212,7 +212,97 @@ func TestParseAlternativeKeepsFirstOfEachKind(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "plain one", p.Text)
 	require.Equal(t, "<p>caf\U000000E9</p>", p.HTML)
+	require.Equal(t, []ShownPart{{ID: "4", Text: "<p>second html</p>", HTML: true}}, p.Shown)
 	require.Empty(t, p.Attachments)
+}
+
+// Shown is what a mail client shows. See TestLayoutOf for the rule. This test is
+// about what ParseMessage gives the rule, and what it does with the answer.
+func TestParseFindsThePartsThatAClientShows(t *testing.T) {
+	part := func(mediaType, body string) string {
+		return msg("Content-Type: "+mediaType, "", body)
+	}
+	multi := func(subtype, boundary string, parts ...string) string {
+		lines := []string{"Content-Type: multipart/" + subtype + "; boundary=" + boundary, ""}
+		for _, p := range parts {
+			lines = append(lines, "--"+boundary, p)
+		}
+		return msg(append(lines, "--"+boundary+"--")...)
+	}
+
+	tests := []struct {
+		name     string
+		raw      string
+		shown    []ShownPart
+		wantText string
+		wantHTML string
+	}{
+		{
+			name:     "html then plain",
+			raw:      multi("alternative", "a", part("text/html", "<p>html</p>"), part("text/plain", "plain")),
+			shown:    []ShownPart{{ID: "2", Text: "plain"}},
+			wantText: "plain",
+			wantHTML: "<p>html</p>",
+		},
+		{
+			name: "an alternative and a footer",
+			raw: multi("mixed", "m",
+				multi("alternative", "a", part("text/plain", "plain"), part("text/html", "<p>html</p>")),
+				part("text/plain", "footer")),
+			shown:    []ShownPart{{ID: "1.2", Text: "<p>html</p>", HTML: true}, {ID: "2", Text: "footer"}},
+			wantText: "plain",
+			wantHTML: "<p>html</p>",
+		},
+		{
+			name:     "an empty last alternative is the body",
+			raw:      multi("alternative", "a", part("text/plain", "plain"), part("text/html", "")),
+			wantText: "plain",
+		},
+		{
+			name: "a named html part after the body is not the body",
+			raw: multi("mixed", "m", part("text/plain", "cover note"),
+				msg("Content-Type: text/html; name=report.html", "Content-Disposition: inline; filename=report.html", "", "<p>report</p>")),
+			shown:    []ShownPart{{ID: "1", Text: "cover note"}},
+			wantText: "cover note",
+		},
+		{
+			name: "the root part that related names",
+			raw: msg("Content-Type: multipart/related; boundary=r; start=\"<b@x>\"", "",
+				"--r", "Content-ID: <a@x>", part("text/html", "<p>a</p>"),
+				"--r", "Content-ID: <b@x>", part("text/html", "<p>b</p>"),
+				"--r--"),
+			shown:    []ShownPart{{ID: "2", Text: "<p>b</p>", HTML: true}},
+			wantHTML: "<p>a</p>",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := ParseMessage(strings.NewReader(tc.raw), 0)
+			require.NoError(t, err)
+			require.Equal(t, tc.shown, p.Shown)
+			require.Equal(t, tc.wantText, p.Text)
+			require.Equal(t, tc.wantHTML, p.HTML)
+		})
+	}
+}
+
+func TestShownText(t *testing.T) {
+	t.Run("the parts are joined in order", func(t *testing.T) {
+		p := Parsed{Shown: []ShownPart{{Text: "first"}, {Text: "<p>second</p>", HTML: true}, {Text: "third"}}}
+		text, err := p.ShownText()
+		require.NoError(t, err)
+		require.Equal(t, "first\n\nsecond\n\nthird", text)
+	})
+	t.Run("no parts", func(t *testing.T) {
+		text, err := (&Parsed{}).ShownText()
+		require.NoError(t, err)
+		require.Empty(t, text)
+	})
+	t.Run("HTML that cannot be converted is an error", func(t *testing.T) {
+		p := Parsed{Shown: []ShownPart{{Text: "first"}, {Text: strings.Repeat("<div>", 200000), HTML: true}}}
+		_, err := p.ShownText()
+		require.ErrorIs(t, err, ErrHTMLTooComplex)
+	})
 }
 
 func TestBrokenMultipartStillReturnsText(t *testing.T) {
@@ -416,11 +506,25 @@ func TestParseAttachmentRules(t *testing.T) {
 			wantFiles: nil,
 		},
 		{
-			name: "second plain part without a filename is dropped",
+			name: "second plain part without a filename is not an attachment",
 			raw: body(msg("Content-Type: text/plain", "", "one"),
 				msg("Content-Type: text/plain", "", "two")),
 			wantText:  "one",
 			wantFiles: nil,
+		},
+		{
+			name: "text part with a filename before the body is an attachment",
+			raw: body(msg("Content-Type: text/plain; name=notes.txt", "", "notes"),
+				msg("Content-Type: text/plain", "", "real body")),
+			wantText:  "real body",
+			wantFiles: []string{"1:notes.txt:text/plain"},
+		},
+		{
+			name: "html part with a filename after the body is an attachment",
+			raw: body(msg("Content-Type: text/plain", "", "real body"),
+				msg("Content-Type: text/html; name=a.html", "Content-Disposition: inline; filename=a.html", "", "<p>x</p>")),
+			wantText:  "real body",
+			wantFiles: []string{"2:a.html:text/html"},
 		},
 		{
 			name:      "other text type with a filename is an attachment",

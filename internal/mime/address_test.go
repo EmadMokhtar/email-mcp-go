@@ -3,6 +3,8 @@ package mime
 import (
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
@@ -255,4 +257,45 @@ func TestForwardMarksAHiddenCharacterInAnAddress(t *testing.T) {
 	require.Contains(t, parsed.Text, "me\U0000fffd@corp.example")
 	require.NotContains(t, parsed.Text, "ceo@corp.example")
 	require.NotContains(t, parsed.Text, "\U0000200b")
+}
+
+// CleanUntrusted (PR 37 made it remove more) and MarkInvisible (PR 34) must agree:
+// a character that CleanUntrusted removes from prose is invisible in an address.
+// MarkInvisible also marks the characters that CleanUntrusted keeps in some
+// places, such as the joiners, because an address has no such place. This
+// checks every code point, alone and between letters.
+func TestMarkInvisibleMarksEveryRuneThatCleanUntrustedRemoves(t *testing.T) {
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if r >= 0xD800 && r <= 0xDFFF {
+			continue // a surrogate is not a character
+		}
+		for _, text := range []string{string(r), "a" + string(r) + "b"} {
+			if CleanUntrusted(text) == text {
+				continue
+			}
+			marked := MarkInvisible(text)
+			if marked == text || strings.ContainsRune(marked, r) && r != utf8.RuneError {
+				t.Fatalf("U+%04X is removed by CleanUntrusted, but MarkInvisible gives %q for %q", r, marked, text)
+			}
+		}
+	}
+}
+
+// The characters that CleanUntrusted keeps for prose are invisible in an address.
+func TestMarkInvisibleMarksTheJoinersThatProseKeeps(t *testing.T) {
+	for name, in := range map[string]string{
+		"a zero width joiner in an emoji sequence": "\U0001F468\u200D\U0001F469",
+		"a non-joiner in a Persian word":           "\u0645\u06CC\u200C\u0631",
+		"a variation selector 16 after an emoji":   "\u2764\uFE0F",
+		"a braille blank":                          "a\u2800b",
+		"a tag character":                          "a\U000E0041b",
+		"a private use character":                  "a\uE000b",
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.NotEqual(t, in, MarkInvisible(in))
+			require.Contains(t, MarkInvisible(in), "\uFFFD")
+		})
+	}
+	// A character that draws a sign is visible, so it is not marked.
+	require.Equal(t, "a\u0600b", MarkInvisible("a\u0600b"))
 }

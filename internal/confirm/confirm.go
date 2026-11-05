@@ -171,14 +171,26 @@ type Preview struct {
 	Account string   `json:"account"`
 	From    string   `json:"from"`
 	To      []string `json:"to"`
-	Subject string   `json:"subject"`
+	// Names are the display names of To, by position, cleaned, on one line and
+	// cut. A recipient with no name has "". It is nil when none has one. Each
+	// channel that shows the recipients uses Recipients and MoreNamesText.
+	Names []string `json:"names,omitempty"`
+	// NamesMore is how many characters of the display names are not in Names.
+	NamesMore int    `json:"names_more,omitempty"`
+	Subject   string `json:"subject"`
 	// BodyStart is the first part of the body. Create keeps at most 500
 	// characters.
 	BodyStart string `json:"body_start"`
-	// BodyMore is how many characters of the body come after BodyStart and are
-	// not in the preview. Each channel that shows the preview shows
+	// BodyMore is how many characters of the body as it is sent are not in the
+	// preview: those after BodyStart, and the hidden characters and the padding
+	// that the preview leaves out. Each channel that shows the preview shows
 	// MoreCharsText after BodyStart, so the user knows that the body goes on.
 	BodyMore int `json:"body_more,omitempty"`
+	// BodyHash is a hash of what a send puts in the message, in hex: the text, the
+	// HTML, the attachments and the whole display names. The user sees only a
+	// part of these, so this binds the approval to the rest: a message built
+	// again goes out only with the same hash.
+	BodyHash string `json:"body_hash,omitempty"`
 	// Count is the number of messages the action affects.
 	Count int `json:"count"`
 	// Messages are the lines of the preview of a Trash action, one for each
@@ -189,10 +201,58 @@ type Preview struct {
 	// Attachments are the file names of the attachments of a send, in the order
 	// of the message. They are part of what the user approves.
 	Attachments []string `json:"attachments,omitempty"`
+	// AttachmentTypes are the media types of Attachments, by position, cleaned,
+	// on one line and cut. Each channel that shows the attachments shows the type
+	// next to the name (see AttachmentLines).
+	AttachmentTypes []string `json:"attachment_types,omitempty"`
 	// Warnings are the lines about the recipients of a send that can look like
 	// another address. Each channel shows them next to the recipients. They are
 	// part of what the user approves.
 	Warnings []string `json:"warnings,omitempty"`
+}
+
+// Recipients returns one line for each address of To. A recipient with a display
+// name has the name after the address, in double quotes: the address comes
+// first, and a name cannot end the quotes, so it cannot pose as another address.
+func (p Preview) Recipients() []string {
+	lines := make([]string, len(p.To))
+	for i, addr := range p.To {
+		lines[i] = addr
+		if i < len(p.Names) && p.Names[i] != "" {
+			lines[i] += ` ("` + strings.ReplaceAll(p.Names[i], `"`, `'`) + `")`
+		}
+	}
+	return lines
+}
+
+// AttachmentLines returns one line for each attachment: its file name, and its
+// media type in round brackets when it has one.
+func (p Preview) AttachmentLines() []string {
+	if len(p.Attachments) == 0 {
+		return nil
+	}
+	lines := make([]string, len(p.Attachments))
+	for i, name := range p.Attachments {
+		lines[i] = name
+		if i < len(p.AttachmentTypes) && p.AttachmentTypes[i] != "" {
+			lines[i] += " (" + p.AttachmentTypes[i] + ")"
+		}
+	}
+	return lines
+}
+
+// MoreNamesText returns the line that a channel shows after the recipients when
+// the preview leaves out a part of the display names. It returns "" when
+// NamesMore is 0.
+func (p Preview) MoreNamesText() string {
+	switch {
+	case p.NamesMore <= 0:
+		return ""
+	case p.NamesMore == 1:
+		return "… and 1 more character of display names not shown"
+	default:
+		return fmt.Sprintf("… and %d more characters of display names not shown", p.NamesMore)
+	}
 }
 
 // MoreCharsText returns the line that a channel shows after BodyStart when the
@@ -357,7 +417,9 @@ func (m *Manager) createWithLifetime(ctx context.Context, tenant account.TenantI
 
 	// Own the preview, so a later change by the caller does not change it.
 	p.To = slices.Clone(p.To)
+	p.Names = slices.Clone(p.Names)
 	p.Attachments = slices.Clone(p.Attachments)
+	p.AttachmentTypes = slices.Clone(p.AttachmentTypes)
 	p.Warnings = slices.Clone(p.Warnings)
 	p.Messages = slices.Clone(p.Messages[:min(len(p.Messages), maxMessages)])
 	if short := firstChars(p.BodyStart, maxBodyStart); len(short) < len(p.BodyStart) {

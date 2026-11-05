@@ -29,7 +29,8 @@ permission. The portal is where a human decision is made and recorded.
 
 ## Operating Context
 
-- The portal runs on `127.0.0.1`, on a random port. It is local to the computer.
+- The portal runs at `email-mcp.localhost`, on a random port. It is local to the
+  computer. A sign-in lasts at most 24 hours, and 2 hours without use.
 - A visit usually starts from a link in the chat with the agent.
 - Approving a send can wait on the mail server: the default undo window is 0
   seconds, so the send happens inside the click.

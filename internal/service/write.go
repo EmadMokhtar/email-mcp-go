@@ -385,6 +385,7 @@ func isMessageError(err error) bool {
 	for _, target := range []error{
 		mime.ErrInvalidAddress, mime.ErrNoRecipients, mime.ErrHeaderInjection, mime.ErrNoOriginal,
 		mime.ErrReplyAndForward, mime.ErrInvalidContentType, mime.ErrHTMLTooComplex, mime.ErrInvalidFilename,
+		mime.ErrHiddenText, mime.ErrEmptyHTML,
 	} {
 		if errors.Is(err, target) {
 			return true
@@ -699,6 +700,8 @@ func aliasFolder(folders []mail.Folder, alias string) string {
 
 // CreateDraft saves a new draft and returns its ref. It needs Mail 3. A reply or
 // a forward reads the original message first. The draft keeps its Bcc header.
+// mime.Build makes it, so a draft follows the same rules as a send: its HTML is
+// cleaned, and text with hidden characters is refused.
 func (s *Service) CreateDraft(ctx context.Context, id account.AccountID, c mail.Compose) (mail.Ref, error) {
 	acc, b, err := s.begin(ctx, id, policy.ActDraft, toolCreateDraft)
 	if err != nil {

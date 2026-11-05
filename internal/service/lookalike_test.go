@@ -268,3 +268,73 @@ func TestSamePreviewComparesTheWarnings(t *testing.T) {
 	rebuilt.Warnings = []string{"two"}
 	require.False(t, samePreview(stored, rebuilt))
 }
+
+// The approval page shows what PR 37 and PR 34 both add to a recipient: the
+// display name after the address, in quotes, and the ASCII form of the domain
+// between the two. A name cannot end its quotes, so it cannot pose as another
+// address.
+func TestApprovalDetailShowsTheASCIIFormAndTheDisplayName(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	c := compose(`"Bob \"x\", evil@corp.example" <` + lookAlike + `>`)
+	res, _, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmFallback, nil)
+	require.NoError(t, err)
+
+	pending, detail, err := env.svc.PendingDetail(env.webCtx(), res.SendID)
+
+	require.NoError(t, err)
+	require.NotNil(t, detail)
+	want := lookAlike + ` (xn--exmple-4nf.com) ("Bob 'x', evil@corp.example")`
+	require.Equal(t, []string{want}, detail.Recipients)
+	require.Equal(t, 2, strings.Count(detail.Recipients[0], `"`), "the name stays inside its quotes")
+	require.Len(t, detail.Warnings, 1)
+	require.Equal(t, detail.Recipients, pending.Preview.Recipients(), "the page without the whole message shows the same")
+	require.Equal(t, detail.Warnings, pending.Preview.Warnings)
+}
+
+// samePreview compares what both fixes added: the display names, the types of
+// the attachments, the hash of what goes out, and the warnings about the
+// recipients. A change in any of them is a changed message.
+func TestSamePreviewComparesWhatBothFixesAdded(t *testing.T) {
+	base := confirm.Preview{
+		From:            "me@example.com",
+		To:              []string{lookAlike, "ann@example.com"},
+		Names:           []string{"Bob", "Ann"},
+		NamesMore:       2,
+		Subject:         "Plans",
+		BodyStart:       "Hello",
+		BodyMore:        3,
+		BodyHash:        "hash",
+		Attachments:     []string{"plan.pdf"},
+		AttachmentTypes: []string{"application/pdf"},
+		Warnings:        []string{"Look-alike warning for " + lookAlike},
+	}
+	require.True(t, samePreview(base, base))
+
+	changed := map[string]func(p *confirm.Preview){
+		"a display name":      func(p *confirm.Preview) { p.Names = []string{"Bob", "Eve"} },
+		"the names left out":  func(p *confirm.Preview) { p.NamesMore = 3 },
+		"an attachment type":  func(p *confirm.Preview) { p.AttachmentTypes = []string{"application/x-msdownload"} },
+		"the hash":            func(p *confirm.Preview) { p.BodyHash = "other" },
+		"a warning":           func(p *confirm.Preview) { p.Warnings = []string{"another warning"} },
+		"no warning":          func(p *confirm.Preview) { p.Warnings = nil },
+		"the recipients":      func(p *confirm.Preview) { p.To = []string{lookAlike, "eve@example.com"} },
+		"the count after it":  func(p *confirm.Preview) { p.BodyMore = 4 },
+		"an attachment name":  func(p *confirm.Preview) { p.Attachments = []string{"other.pdf"} },
+		"the start of a body": func(p *confirm.Preview) { p.BodyStart = "Hallo" },
+	}
+	for name, change := range changed {
+		t.Run(name, func(t *testing.T) {
+			rebuilt := base
+			change(&rebuilt)
+			require.False(t, samePreview(base, rebuilt))
+		})
+	}
+
+	// Order and the case of an address do not count, for the recipients with
+	// their names, and for the warnings.
+	reordered := base
+	reordered.To = []string{"ANN@example.com", lookAlike}
+	reordered.Names = []string{"Ann", "Bob"}
+	require.True(t, samePreview(base, reordered))
+}

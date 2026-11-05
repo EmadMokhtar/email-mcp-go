@@ -14,18 +14,25 @@ import (
 func isRemovedRune(r rune) bool {
 	switch {
 	case r >= 0xE0000 && r <= 0xE007F, // tag characters
-		r >= 0xE0100 && r <= 0xE01EF, // variation selectors supplement
-		r == 0x200B,                  // zero width space
-		r >= 0x200E && r <= 0x200F,   // direction marks
-		r >= 0x202A && r <= 0x202E,   // bidi embeddings and overrides
-		r >= 0x2060 && r <= 0x2064,   // word joiner and invisible operators
-		r >= 0x2066 && r <= 0x2069,   // bidi isolates
-		r >= 0x206A && r <= 0x206F,   // deprecated format characters
-		r >= 0xFFF9 && r <= 0xFFFB,   // interlinear annotation
-		r == 0x00AD,                  // soft hyphen
-		r == 0x034F,                  // combining grapheme joiner
-		r == 0x061C,                  // Arabic letter mark
-		r == 0x115F, r == 0x1160,     // Hangul fillers
+		r >= 0xE0080 && r <= 0xE00FF,   // default ignorable, not assigned
+		r >= 0xE0100 && r <= 0xE01EF,   // variation selectors supplement
+		r >= 0xE01F0 && r <= 0xE0FFF,   // default ignorable, not assigned
+		r >= 0xE000 && r <= 0xF8FF,     // private use
+		r >= 0xF0000 && r <= 0xFFFFD,   // private use, plane 15
+		r >= 0x100000 && r <= 0x10FFFD, // private use, plane 16
+		r >= 0xFE00 && r <= 0xFE0E,     // variation selectors except the emoji one
+		r == 0x2800,                    // braille blank
+		r == 0x200B,                    // zero width space
+		r >= 0x200E && r <= 0x200F,     // direction marks
+		r >= 0x202A && r <= 0x202E,     // bidi embeddings and overrides
+		r >= 0x2060 && r <= 0x2064,     // word joiner and invisible operators
+		r >= 0x2066 && r <= 0x2069,     // bidi isolates
+		r >= 0x206A && r <= 0x206F,     // deprecated format characters
+		r >= 0xFFF9 && r <= 0xFFFB,     // interlinear annotation
+		r == 0x00AD,                    // soft hyphen
+		r == 0x034F,                    // combining grapheme joiner
+		r == 0x061C,                    // Arabic letter mark
+		r == 0x115F, r == 0x1160,       // Hangul fillers
 		r == 0x180E,              // Mongolian vowel separator
 		r == 0x3164, r == 0xFFA0, // Hangul fillers
 		r == 0xFEFF,                // byte order mark
@@ -36,6 +43,9 @@ func isRemovedRune(r rune) bool {
 		r == 0x2065:                // unassigned, among the invisible operators
 		return true
 	case r == 0x200C, r == 0x200D: // ZWNJ and ZWJ are kept
+		return false
+	case r >= 0x0600 && r <= 0x0605, r == 0x06DD, r == 0x070F, r == 0x0890, r == 0x0891,
+		r == 0x08E2, r == 0x110BD, r == 0x110CD: // format characters that a reader sees
 		return false
 	case unicode.Is(unicode.Cf, r): // every other format character
 		return true
@@ -54,7 +64,12 @@ func TestCleanUntrustedRemovesWholeRanges(t *testing.T) {
 		from, to rune
 	}{
 		{"tag characters", 0xE0000, 0xE007F},
+		{"default ignorable after the tag characters", 0xE0080, 0xE00FF},
 		{"variation selectors supplement", 0xE0100, 0xE01EF},
+		{"default ignorable after the selectors", 0xE01F0, 0xE0FFF},
+		{"private use", 0xE000, 0xF8FF},
+		{"variation selectors except the emoji one", 0xFE00, 0xFE0E},
+		{"braille blank", 0x2800, 0x2800},
 		{"zero width space", 0x200B, 0x200B},
 		{"direction marks", 0x200E, 0x200F},
 		{"bidi embeddings and overrides", 0x202A, 0x202E},
@@ -97,34 +112,110 @@ func TestCleanUntrustedKeepsRunesOutsideTheRanges(t *testing.T) {
 		0x3163, 0x3165, // around the Hangul filler
 		0xFF9F, 0xFFA1, // around the halfwidth Hangul filler
 		0xFFEE, 0xFFFD, // around the unassigned code points, the interlinear annotation and U+FFFC
-		0xFF01,  // after the byte order mark
-		0xE0080, // after the tag characters
-		0xE01F0, // after the variation selectors supplement
+		0xFF01,         // after the byte order mark
+		0xE1000,        // after the default ignorable code points of plane 14
+		0x27FF, 0x2801, // around the braille blank
+		0xD7FF, 0xF900, // around the private use area
+		0xFDFF, 0xFE10, // around the variation selectors
 	} {
 		in := "a" + string(r) + "b"
 		require.Equal(t, in, CleanUntrusted(in), "U+%04X", r)
 	}
 }
 
-// Persian, Urdu and other Arabic-script text needs ZWNJ (U+200C). Emoji
-// sequences need ZWJ (U+200D) and the variation selectors U+FE00 to U+FE0F.
-func TestCleanUntrustedKeepsJoinersAndEmojiSelectors(t *testing.T) {
-	for _, in := range []string{
-		"a\U0000200Cb", // ZWNJ
-		"a\U0000200Db", // ZWJ
-		// Persian "mi-ravam" is written with a ZWNJ after "mi".
-		"\U00000645\U000006CC\U0000200C\U00000631\U00000648\U00000645",
-		// Family emoji: man, ZWJ, woman, ZWJ, girl.
-		"\U0001F468\U0000200D\U0001F469\U0000200D\U0001F467",
-		// Heart with emoji presentation selector.
-		"\U00002764\U0000FE0F",
+// Text in the scripts that join letters needs ZWNJ (U+200C) and ZWJ (U+200D),
+// and emoji sequences need ZWJ and VS16 (U+FE0F).
+func TestCleanUntrustedKeepsTheJoinersThatChangeWhatIsSeen(t *testing.T) {
+	for name, in := range map[string]string{
+		"Persian with ZWNJ":              "\U00000645\U000006CC\U0000200C\U00000631\U00000648\U00000645",
+		"Persian with ZWNJ, second":      "\u0646\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645",
+		"Arabic letter, ZWNJ, a space":   "\u0647\u200c \u0647",
+		"Arabic letter, ZWJ at the end":  "\u0647\u200d",
+		"ZWJ before an Arabic letter":    "\u200d\u0647",
+		"Arabic with a mark":             "\u0628\u064e\u200c\u0628",
+		"Devanagari conjunct":            "\u0915\u094d\u200d\u0937",
+		"Devanagari, no conjunct":        "\u0915\u094d\u200c\u0937",
+		"Bengali":                        "\u0995\u09cd\u200c\u09b7",
+		"Malayalam at the end of a word": "\u0d28\u0d4d\u200d \u0d28",
+		"Sinhala":                        "\u0d9a\u0dca\u200d\u0dba",
+		"family":                         "\U0001F468\U0000200D\U0001F469\U0000200D\U0001F467",
+		"woman technologist":             "\U0001F469\u200D\U0001F4BB",
+		"with a skin tone":               "\U0001F469\U0001F3FD\u200D\U0001F4BB",
+		"rainbow flag":                   "\U0001F3F3\uFE0F\u200D\U0001F308",
+		"heart on fire":                  "\u2764\uFE0F\u200D\U0001F525",
+		"man running":                    "\U0001F3C3\u200D\u2642\uFE0F",
+		"heart":                          "\U00002764\U0000FE0F",
+		"copyright":                      "\u00A9\uFE0F",
+		"keycap digit":                   "1\uFE0F\u20E3",
+		"keycap hash":                    "#\uFE0F\u20E3",
 	} {
-		require.Equal(t, in, CleanUntrusted(in), "%q", in)
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, in, CleanUntrusted(in))
+			require.Zero(t, HiddenRunes(in))
+		})
 	}
-	for r := rune(0xFE00); r <= 0xFE0F; r++ {
-		in := "a" + string(r) + "b"
+}
+
+// A joiner that changes nothing a reader can see is a hidden character. Between
+// Latin letters, for example, it could carry data that nobody sees.
+func TestCleanUntrustedRemovesTheJoinersThatChangeNothing(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"ZWNJ between Latin letters": {"a\u200Cb", "ab"},
+		"ZWJ between Latin letters":  {"a\u200Db", "ab"},
+		"VS16 after a Latin letter":  {"a\uFE0Fb", "ab"},
+		"Cyrillic":                   {"\u0430\u200C\u0431", "\u0430\u0431"},
+		"alone":                      {"\u200C\u200D\uFE0F", ""},
+		"a digit that is no keycap":  {"1\uFE0F", "1"},
+		"a keycap mark after a word": {"a\uFE0F\u20E3", "a\u20E3"},
+		"ZWJ after an emoji":         {"\U0001F600\u200D", "\U0001F600"},
+		"ZWJ before an emoji":        {"\u200D\U0001F600", "\U0001F600"},
+		"ZWJ between emoji and text": {"\U0001F600\u200Db", "\U0001F600b"},
+		"a run of VS16":              {"\u2764\uFE0F\uFE0F\uFE0F", "\u2764\uFE0F"},
+		"a run of ZWJ between emoji": {"\U0001F600\u200D\u200D\U0001F600", "\U0001F600\u200D\U0001F600"},
+		"a run of joiners":           {"\u0628\u200C\u200C\u200D\u200C\u0628", "\u0628\u200C\u0628"},
+		"after a hidden character":   {"\u0628\u200B\u200C\u0628", "\u0628\u200C\u0628"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := CleanUntrusted(tc.in)
+			require.Equal(t, tc.want, got)
+			require.Equal(t, got, CleanUntrusted(got), "cleaning twice must change nothing")
+		})
+	}
+}
+
+// A few format characters draw a sign, such as the Arabic number sign or the end
+// of an ayah. They stay, because a reader sees them. The direction marks are
+// format characters that nobody sees, so they go, also in Arabic text.
+func TestCleanUntrustedKeepsFormatCharactersThatAreSeen(t *testing.T) {
+	for _, r := range []rune{
+		0x0600, 0x0601, 0x0602, 0x0603, 0x0604, 0x0605, 0x06DD, 0x070F, 0x0890, 0x0891, 0x08E2, 0x110BD, 0x110CD,
+	} {
+		require.True(t, unicode.Is(unicode.Cf, r), "U+%04X", r)
+		in := string(r) + "\U00000661"
 		require.Equal(t, in, CleanUntrusted(in), "U+%04X", r)
+		require.Zero(t, HiddenRunes(in), "U+%04X", r)
 	}
+	for name, r := range map[string]rune{"LRM": 0x200E, "RLM": 0x200F, "ALM": 0x061C} {
+		require.Equal(t, "\U00000628\U00000628", CleanUntrusted("\U00000628"+string(r)+"\U00000628"), name)
+		require.Equal(t, 1, HiddenRunes(string(r)), name)
+	}
+}
+
+func TestCleanAndCountIsCleanUntrustedAndHiddenRunes(t *testing.T) {
+	for _, in := range []string{"", "plain\r\ntext", "a\U0000200Bb\U000E0041\xff", "\U00000628\U0000200C\U0000200C\U00000628"} {
+		clean, hidden := CleanAndCount(in)
+		require.Equal(t, CleanUntrusted(in), clean, "%q", in)
+		require.Equal(t, HiddenRunes(in), hidden, "%q", in)
+	}
+}
+
+func TestHiddenRunes(t *testing.T) {
+	require.Zero(t, HiddenRunes(""))
+	require.Zero(t, HiddenRunes("plain text\r\nwith\rlines\n\tand a tab"), "a line break is not hidden")
+	require.Equal(t, 1, HiddenRunes("a\u200Bb"))
+	require.Equal(t, 3, HiddenRunes("\x07a\U000E0041b\u2800"))
+	require.Equal(t, 2, HiddenRunes("a\u200Cb\uFE0F"))
+	require.Zero(t, HiddenRunes("\xff"), "invalid UTF-8 becomes U+FFFD, which a reader sees")
 }
 
 func TestCleanUntrustedControlCharacters(t *testing.T) {
@@ -191,9 +282,6 @@ func TestCleanUntrustedRemovesEveryFormatCharacter(t *testing.T) {
 		{"shorthand format letter overlap (Cf)", 0x1BCA0},
 		{"shorthand format up step (Cf)", 0x1BCA3},
 		{"Egyptian hieroglyph vertical joiner (Cf)", 0x13430},
-		{"Arabic number sign (Cf)", 0x0600},
-		{"Arabic end of ayah (Cf)", 0x06DD},
-		{"Syriac abbreviation mark (Cf)", 0x070F},
 		{"language tag (Cf)", 0xE0001},
 		{"Mongolian free variation selector one", 0x180B},
 		{"Mongolian free variation selector three", 0x180D},
@@ -212,7 +300,7 @@ func TestCleanUntrustedRemovesEveryFormatCharacter(t *testing.T) {
 	}
 	// Every Cf code point that Go knows.
 	for r := rune(0); r <= unicode.MaxRune; r++ {
-		if !unicode.Is(unicode.Cf, r) || r == 0x200C || r == 0x200D {
+		if !unicode.Is(unicode.Cf, r) || !isRemovedRune(r) {
 			continue
 		}
 		require.Equal(t, "ab", CleanUntrusted("a"+string(r)+"b"), "U+%04X", r)
@@ -236,19 +324,4 @@ func TestIsUnassigned(t *testing.T) {
 	require.False(t, isUnassigned(0x200B), "Cf is assigned")
 	require.False(t, isUnassigned(0xE000), "private use is assigned")
 	require.False(t, isUnassigned(0x0000), "Cc is assigned")
-}
-
-// ZWNJ, ZWJ and VS16 stay, also in the text that needs them.
-func TestCleanUntrustedKeepsTheJoinersAfterTheFormatRule(t *testing.T) {
-	for _, in := range []string{
-		"\u200c", "\u200d", "\ufe0f",
-		// Persian "nemi-khaham" (I do not want) with a ZWNJ.
-		"\u0646\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645",
-		// Rainbow flag: white flag, VS16, ZWJ, rainbow.
-		"\U0001F3F3\uFE0F\u200D\U0001F308",
-		// Woman technologist: woman, ZWJ, laptop.
-		"\U0001F469\u200D\U0001F4BB",
-	} {
-		require.Equal(t, in, CleanUntrusted(in), "%q", in)
-	}
 }

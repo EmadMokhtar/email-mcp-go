@@ -248,7 +248,7 @@ func TestSendFormWarnsAboutALookAlikeDomain(t *testing.T) {
 
 	asked := ask.requests()
 	require.Len(t, asked, 1)
-	require.Contains(t, asked[0].Message, "To: bob@ex\u0430mple.com (xn--exmple-4nf.com)\nWarning: ")
+	require.Contains(t, asked[0].Message, "To (every recipient, Bcc included): bob@ex\u0430mple.com (xn--exmple-4nf.com)\nWarning: ")
 	require.Contains(t, asked[0].Message, "mixes Cyrillic and Latin letters")
 	require.Equal(t, 1, strings.Count(asked[0].Message, "xn--exmple-4nf.com"), "the ASCII form is shown once")
 }
@@ -262,8 +262,35 @@ func TestSendPreviewShowsTheASCIIForm(t *testing.T) {
 	})
 
 	lines := strings.Split(got, "\n")
-	require.Equal(t, "To: a@example.com, bob@ex\u0430mple.com (xn--exmple-4nf.com)", lines[1])
+	require.Equal(t, "To (every recipient, Bcc included): a@example.com, bob@ex\u0430mple.com (xn--exmple-4nf.com)", lines[1])
 	require.Equal(t, "Warning: check this address", lines[2])
 	require.Equal(t, "Warning: line break", lines[3], "a warning cannot add a line")
 	require.True(t, strings.HasPrefix(lines[4], "Subject: "), "the warnings stay next to the recipients")
+}
+
+// The form shows what PR 37 and PR 34 both add to a recipient: the ASCII form of
+// a domain outside ASCII after the address, then the display name in quotes. A
+// name cannot end its quotes. The warning comes right after the recipients, then
+// the line about the names that were cut, and the attachment has its type.
+func TestSendPreviewShowsTheASCIIFormTheNameTheWarningAndTheType(t *testing.T) {
+	got := sendPreview(confirm.Preview{
+		From:            "me@example.com",
+		To:              []string{"bob@ex\u0430mple.com", "ann@example.com"},
+		Names:           []string{"Bob\" , evil@corp.example (\"", "Ann"},
+		NamesMore:       7,
+		Warnings:        []string{"check this address"},
+		Subject:         "Plans",
+		Attachments:     []string{"plan.pdf"},
+		AttachmentTypes: []string{"application/pdf"},
+		BodyStart:       "Hello",
+	})
+
+	lines := strings.Split(got, "\n")
+	require.Equal(t, "To (every recipient, Bcc included): bob@ex\u0430mple.com (xn--exmple-4nf.com) "+
+		`("Bob' , evil@corp.example ('"), ann@example.com ("Ann")`, lines[1])
+	require.Equal(t, 4, strings.Count(lines[1], `"`), "each name has one pair of quotes, and nothing can end it")
+	require.Equal(t, "Warning: check this address", lines[2])
+	require.Equal(t, "… and 7 more characters of display names not shown", lines[3])
+	require.Equal(t, "Subject: Plans", lines[4])
+	require.Equal(t, "Attachments: 1 (plan.pdf (application/pdf))", lines[5])
 }

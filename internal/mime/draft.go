@@ -60,7 +60,7 @@ func FromDraft(raw []byte) (*mail.RawMessage, error) {
 	if rcpt.empty() {
 		return nil, ErrNoRecipients
 	}
-	return &mail.RawMessage{From: from.Address, Recipients: rcpt.envelope(), Data: head.withoutBcc(raw)}, nil
+	return &mail.RawMessage{From: from.Address, Recipients: rcpt.envelope(), Names: rcpt.names(), Data: head.withoutBcc(raw)}, nil
 }
 
 // draftField is one header field of a draft, as it is in the bytes.

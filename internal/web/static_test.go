@@ -160,14 +160,14 @@ func TestMenuMarksTheCurrentPart(t *testing.T) {
 }
 
 // Every page with the menu belongs to a section, so the menu marks one of its
-// links. Only the message page and the page without a session have none.
+// links. Only the message page and the pages without a session have none.
 func TestEveryMenuPageHasASection(t *testing.T) {
 	static, err := loadStatic()
 	require.NoError(t, err)
 	_, pages, err := parsePages(static)
 	require.NoError(t, err)
 	for name := range pages {
-		if name == pageMessage || name == pageNoSession {
+		if name == pageMessage || name == pageNoSession || name == pageUseName {
 			continue
 		}
 		require.Contains(t, sectionOf, name, "page %s", name)

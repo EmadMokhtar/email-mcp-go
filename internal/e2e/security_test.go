@@ -185,7 +185,7 @@ func setupTokenOf(t *testing.T, setupURL string) string {
 }
 
 // webLinkPattern finds a link of the local web interface in a text.
-var webLinkPattern = regexp.MustCompile(`http://127\.0\.0\.1:[0-9]+/[^\s"]*[^\s".]`)
+var webLinkPattern = regexp.MustCompile(`http://email-mcp\.localhost:[0-9]+/[^\s"]*[^\s".]`)
 
 // pendingIDs returns the ids of the pending actions in a state.
 func pendingIDs(t *testing.T, h *harness, state confirm.State) []string {
@@ -1481,8 +1481,9 @@ func TestLocalUILinksRevealNothingWithoutSession(t *testing.T) {
 }
 
 // TestLocalUIRefusesWrongHost: a request whose Host header is not
-// "127.0.0.1:<port>" or "localhost:<port>" is refused with 403 before anything
-// else, even with the session cookie and the CSRF token: a page of an attacker
+// "email-mcp.localhost:<port>", "127.0.0.1:<port>" or "localhost:<port>" is
+// refused with 403 before anything else, even with the session cookie and the
+// CSRF token: a page of an attacker
 // that uses DNS rebinding gets nothing and changes nothing. The same holds for
 // the local HTTP MCP endpoint with a valid token (spec 8.2, 10.2, 15.4).
 func TestLocalUIRefusesWrongHost(t *testing.T) {
@@ -1491,7 +1492,7 @@ func TestLocalUIRefusesWrongHost(t *testing.T) {
 	b, _ := h.signIn()
 	setupURL, err := h.app.Web.NewSetupURL(context.Background())
 	require.NoError(t, err)
-	port := strings.TrimPrefix(b.base, "http://127.0.0.1:")
+	port := strings.TrimPrefix(b.base, "http://email-mcp.localhost:")
 	approval := pathOf(t, f.links["send approval"])
 	db := h.sqlDB()
 	before := dump(t, db)
@@ -1508,6 +1509,10 @@ func TestLocalUIRefusesWrongHost(t *testing.T) {
 		"127.0.0.1.:" + port,
 		"0.0.0.0:" + port,
 		"127.0.0.1:" + port + "0",
+		"email-mcp.localhost",
+		"email-mcp.localhost.:" + port,
+		"EMAIL-MCP.LOCALHOST:" + port,
+		"x.email-mcp.localhost:" + port,
 	}
 	for _, host := range bad {
 		t.Run(host, func(t *testing.T) {
@@ -1595,7 +1600,8 @@ func TestLocalUIRefusesCrossOriginPost(t *testing.T) {
 		"old browser, evil":           {"Origin": "http://evil.example"},
 		"old browser, another port":   {"Origin": "http://127.0.0.1:1"},
 		"old browser, null":           {"Origin": "null"},
-		"old browser, localhost name": {"Origin": strings.Replace(b.base, "127.0.0.1", "localhost", 1)},
+		"old browser, localhost name": {"Origin": strings.Replace(b.base, "email-mcp.localhost", "localhost", 1)},
+		"old browser, loopback":       {"Origin": strings.Replace(b.base, "email-mcp.localhost", "127.0.0.1", 1)},
 	}
 	for name, headers := range refused {
 		t.Run(name, func(t *testing.T) {

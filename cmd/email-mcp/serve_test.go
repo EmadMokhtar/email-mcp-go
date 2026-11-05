@@ -27,6 +27,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/webtest"
 )
 
 // ---------------------------------------------------------------- helpers
@@ -194,11 +195,12 @@ func TestServeStdioRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, res.IsError, textOf(t, res))
 	link, _ := structured(t, res)["link"].(string)
-	require.Regexp(t, regexp.MustCompile(`^http://127\.0\.0\.1:\d+/connect$`), link)
+	require.Regexp(t, regexp.MustCompile(`^http://email-mcp\.localhost:\d+/connect$`), link)
 	require.NotContains(t, link, "token=")
 
 	// The web server of the link runs while the server runs.
-	resp, err := http.Get(link) //nolint:gosec // G107: the URL is the local link of the test server
+	client := &http.Client{Transport: webtest.Transport()}
+	resp, err := client.Get(link) //nolint:gosec // G107: the URL is the local link of the test server
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "a browser without a session sees only the instruction")
@@ -403,7 +405,7 @@ func TestServeHTTPNeverAsksOlderClientsInBand(t *testing.T) {
 	require.False(t, res.IsError, textOf(t, res))
 	out := structured(t, res)
 	require.Equal(t, "pending_approval", out["status"])
-	require.Regexp(t, `^http://127\.0\.0\.1:\d+/approvals/`, out["approval_link"])
+	require.Regexp(t, `^http://email-mcp\.localhost:\d+/approvals/`, out["approval_link"])
 	require.Zero(t, asked.Load())
 }
 
