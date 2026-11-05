@@ -14,16 +14,18 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
+	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/tokens"
 )
 
 // state is what a request could change: the accounts, the actions, the
-// tokens, the log and the sent messages.
+// tokens, the log, the queue of sends and the sent messages.
 type state struct {
 	Accounts []*account.Account
 	Pending  []*confirm.Pending
 	Tokens   []tokens.Info
 	Entries  []audit.Entry
+	Queued   []service.QueuedSend
 	Sent     int
 	Forgot   []account.AccountID
 }
@@ -39,8 +41,10 @@ func (p *pageFixture) state(ids ...string) state {
 	}
 	list, err := p.tokens.List(ctx, p.tenant)
 	require.NoError(p.t, err)
+	queued, err := p.svc.QueuedSends(agent(p.tenant))
+	require.NoError(p.t, err)
 	return state{
-		Accounts: accounts, Pending: pending, Tokens: list, Entries: p.entries(),
+		Accounts: accounts, Pending: pending, Tokens: list, Entries: p.entries(), Queued: queued,
 		Sent: len(p.sender.sent()), Forgot: p.backends.forgot(),
 	}
 }
@@ -51,6 +55,7 @@ type routeFixture struct {
 	*pageFixture
 	account *account.Account
 	send    string
+	queued  string
 	tokenID string
 }
 
@@ -63,7 +68,7 @@ func newRouteFixture(t *testing.T) *routeFixture {
 	require.NoError(t, err)
 	list, err := p.tokens.List(context.Background(), p.tenant)
 	require.NoError(t, err)
-	return &routeFixture{pageFixture: p, account: a, send: send, tokenID: list[0].ID}
+	return &routeFixture{pageFixture: p, account: a, send: send, queued: p.queueSend(p.tenant, a), tokenID: list[0].ID}
 }
 
 // path returns the path of a route pattern, with the ids of the fixture.
@@ -76,6 +81,8 @@ func (r *routeFixture) path(pattern string) string {
 		path = strings.Replace(path, "{id}", string(r.account.ID), 1)
 	case strings.HasPrefix(path, "/approvals/"):
 		path = strings.Replace(path, "{id}", r.send, 1)
+	case strings.HasPrefix(path, "/activity/"):
+		path = strings.Replace(path, "{id}", r.queued, 1)
 	case strings.HasPrefix(path, "/connections/"):
 		path = strings.Replace(path, "{id}", r.tokenID, 1)
 	}

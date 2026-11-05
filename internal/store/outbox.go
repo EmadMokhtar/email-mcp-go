@@ -143,6 +143,33 @@ func (s *Store) GetOutboxMessage(ctx context.Context, tenant account.TenantID, i
 	return keyVersion, sealed, nil
 }
 
+// ListQueuedOutbox returns up to limit items of a tenant that are in the state
+// "queued", without their messages. The item that goes out first comes first.
+// An item goes out when both SendAfter and NextAttemptAt have passed.
+func (s *Store) ListQueuedOutbox(ctx context.Context, tenant account.TenantID, limit int) ([]*OutboxRow, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+outboxColumns+` FROM outbox WHERE tenant_id = ? AND status = ?
+		ORDER BY MAX(send_after, next_attempt_at), created_at, id LIMIT ?`,
+		string(tenant), outboxQueued, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: list queued outbox items: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var list []*OutboxRow
+	for rows.Next() {
+		row, err := scanOutbox(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: list queued outbox items: %w", err)
+		}
+		list = append(list, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list queued outbox items: %w", err)
+	}
+	return list, nil
+}
+
 // DueOutbox returns up to limit queued items that are due at now: both
 // SendAfter and NextAttemptAt are not later than now.
 //

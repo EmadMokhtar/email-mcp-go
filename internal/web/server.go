@@ -199,6 +199,7 @@ var routes = []route{
 	{"POST /approvals/{id}/approve", (*Server).handleApprove},
 	{"POST /approvals/{id}/reject", (*Server).handleReject},
 	{"GET /activity", (*Server).handleActivity},
+	{"POST /activity/sends/{id}/cancel", (*Server).handleCancelSend},
 	{"GET /connections", (*Server).handleConnections},
 	{"POST /connections", (*Server).handleCreateToken},
 	{"POST /connections/{id}/revoke", (*Server).handleRevokeToken},

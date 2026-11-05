@@ -274,7 +274,11 @@ account:
 - at most 500 messages moved to the Trash per day;
 - an undo window of 30 seconds for a send without a confirmation (0 seconds
   after you confirmed it; you can set 0 to 300 seconds). The agent or you can
-  cancel a send during this window;
+  cancel a send during this window. You cancel on the Activity page, or with
+  `email-mcp outbox cancel <id>`, at any permission level;
+- a send is checked again each time it is about to go out. If the level of the
+  account no longer allows sending, the send fails and does not go out, even if
+  you raise the level again later;
 - no tool ever deletes mail for good;
 - every tool call of an agent is written to the activity log.
 
@@ -677,6 +681,7 @@ More help:
 | `email-mcp setup` | Signs your browser in to the local web pages, and serves them until Ctrl-C. |
 | `email-mcp account add\|list\|reconnect\|remove\|test` | Manages accounts without a browser. `reconnect <id>` gives an account a new password or trusts its new certificate, and keeps the account. `remove <id>` asks first; add `--yes` without a terminal. |
 | `email-mcp token create\|list\|revoke` | Manages the tokens of local HTTP mode. |
+| `email-mcp outbox list\|cancel` | Lists the sends that wait to go out. `cancel <id>` stops one, at any permission level. |
 | `email-mcp import-env [path]` | Imports the account of an old `.env` file. |
 | `email-mcp key rotate --to file:<path>\|keychain` | Changes the master key. |
 | `email-mcp doctor` | Checks the install. |
@@ -925,7 +930,8 @@ MIT. See [LICENSE](LICENSE).
 - **Full autonomy:** both confirmation switches are off. The agent acts without
   asking.
 - **Undo window:** the time a send waits in the outbox before it goes out. It
-  can be cancelled during this time.
+  can be cancelled during this time, by the agent, on the Activity page, or with
+  `email-mcp outbox cancel`.
 - **Master key (KEK, key encryption key):** the key that encrypts the keys that
   encrypt your passwords.
 - **Keychain:** the password store of your operating system (macOS Keychain,
