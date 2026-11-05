@@ -288,9 +288,11 @@ asks you, and the second brings your answer.
 A request keeps the arguments of the call, encrypted, so you can see what the
 agent searched for or which messages it asked for. This includes search text,
 subjects, recipients and file names. Message bodies and attachment data are
-never stored: the row shows only their size. A request with a wrong access
-token has no row, because nothing says whose log it belongs to. The program log
-has it instead. Rows are kept for 90 days.
+never stored: the row shows only their size. A call whose arguments do not fit
+the tool, or a call of a tool that does not exist, keeps only the names and the
+sizes of its arguments, because the text of a message could be in any of them.
+A request with a wrong access token has no row, because nothing says whose log
+it belongs to. The program log has it instead. Rows are kept for 90 days.
 
 ## Security: what local mode protects against
 

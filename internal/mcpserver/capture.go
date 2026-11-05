@@ -13,8 +13,13 @@ package mcpserver
 // The rules:
 //   - A failure to write the entry does not change the answer of the call. See
 //     service.RecordToolCall.
-//   - The arguments are cleaned before they leave this file (see cleanArguments).
-//     The service seals them. They go nowhere else: never to the program log.
+//   - The log keeps the values of the arguments only for a call that passed the
+//     schema of its tool, without the content of a message (see cleanArguments).
+//     No tool accepts an argument that it does not have, so such a call holds only
+//     known arguments. A call that did not pass can hold the text of a message
+//     under any name, so the log keeps only its names and sizes (see
+//     argumentSizes). The service seals both.
+//   - The arguments go nowhere else: never to the program log.
 //   - The table needs a tenant, so a call without a caller has no entry. The
 //     refusal is in the program log, with a fixed code.
 
@@ -23,7 +28,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -48,10 +52,9 @@ const (
 // arguments. A ref, a cursor and a page token are all shorter.
 const maxArgumentText = 2 << 10
 
-// omittedArguments are the arguments that the log never keeps: the content of a
-// message. The names are in lower case, and they match in any case, because a
-// call that fails the schema can spell them another way. A test makes sure that
-// every argument of every tool is either here or on purpose not here.
+// omittedArguments are the arguments of the tools that the log never keeps: the
+// content of a message. A test makes sure that every argument of every tool is
+// either here or on purpose not here.
 var omittedArguments = map[string]bool{
 	"body":        true,
 	"html_body":   true,
@@ -171,11 +174,16 @@ func (d *deps) recordCall(ctx context.Context, req *mcp.CallToolRequest, trace *
 	args := decodeArguments(raw)
 	c := service.ToolCall{Tool: tool, Account: accountArgument(args)}
 	c.Outcome, c.Detail = callOutcome(known, trace, res, err)
-	if !known {
+	switch {
+	case trace.caller != nil:
+		// safe ran, and the SDK calls it only after the schema check.
+		c.Arguments = cleanArguments(args)
+	case known:
+		c.Arguments = encodeKept(argumentSizes(args))
+	default:
 		// The name is text from the agent, so it goes in the sealed arguments.
-		args = map[string]any{"requested_tool": name, "arguments": args}
+		c.Arguments = encodeKept(map[string]any{"requested_tool": cutText(name), "arguments": argumentSizes(args)})
 	}
-	c.Arguments = cleanArguments(args)
 	d.svc.RecordToolCall(ctx, caller, c)
 }
 
@@ -251,16 +259,49 @@ func accountArgument(args any) account.AccountID {
 	return account.AccountID(id)
 }
 
-// cleanArguments returns the JSON that the log keeps of decoded arguments, or nil
-// when there are none. Each argument in omittedArguments becomes a short mark
-// with its size, at any depth, and a long text is cut (see cutText). The result
-// is at most audit.MaxArgumentBytes. When it would be more, only a mark with the
-// size is left, because an entry must never be lost for its arguments.
+// cleanArguments returns the JSON that the log keeps of the decoded arguments of a
+// call that passed the schema, or nil when there are none. Each argument in
+// omittedArguments becomes a short mark with its size, at any depth, and a long
+// text is cut (see cutText).
 func cleanArguments(args any) json.RawMessage {
-	if m, ok := args.(map[string]any); args == nil || (ok && len(m) == 0) {
+	if noArguments(args) {
 		return nil
 	}
-	out, err := encodeArguments(cleanValue(args))
+	return encodeKept(cleanValue(args))
+}
+
+// argumentSizes returns what the log keeps of the decoded arguments of a call that
+// did not pass the schema: the name and the size of each argument, and no value.
+// It returns nil when there are none.
+func argumentSizes(args any) any {
+	if noArguments(args) {
+		return nil
+	}
+	m, ok := args.(map[string]any)
+	if !ok {
+		return omittedMark("not_an_object", sizeOf(args))
+	}
+	out := make(map[string]any, len(m))
+	for name, value := range m {
+		out[cutText(name)] = omittedNote(value)
+	}
+	return out
+}
+
+// noArguments reports whether decoded arguments hold nothing.
+func noArguments(args any) bool {
+	m, ok := args.(map[string]any)
+	return args == nil || (ok && len(m) == 0)
+}
+
+// encodeKept returns the JSON of v, or nil when v is nil. The result is at most
+// audit.MaxArgumentBytes. When it would be more, only a mark with the size is
+// left, because an entry must never be lost for its arguments.
+func encodeKept(v any) json.RawMessage {
+	if v == nil {
+		return nil
+	}
+	out, err := encodeArguments(v)
 	if err != nil {
 		// Decoded JSON always encodes, so this does not happen.
 		out, _ = encodeArguments(omittedMark("unreadable", 0))
@@ -294,8 +335,8 @@ func cleanValue(v any) any {
 	case map[string]any:
 		out := make(map[string]any, len(t))
 		for name, value := range t {
-			if omittedArguments[strings.ToLower(name)] {
-				out[name] = fmt.Sprintf("[omitted: %d bytes]", sizeOf(value))
+			if omittedArguments[name] {
+				out[name] = omittedNote(value)
 				continue
 			}
 			out[name] = cleanValue(value)
@@ -312,6 +353,11 @@ func cleanValue(v any) any {
 	default:
 		return v
 	}
+}
+
+// omittedNote is what stays of one value that the log does not keep.
+func omittedNote(v any) string {
+	return fmt.Sprintf("[omitted: %d bytes]", sizeOf(v))
 }
 
 // sizeOf returns the size of an omitted value: the bytes of a text, and the bytes

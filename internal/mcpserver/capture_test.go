@@ -161,8 +161,91 @@ func TestArgumentsThatFailTheSchemaHaveACallEntry(t *testing.T) {
 	require.Equal(t, "invalid_arguments", got.Detail)
 	require.Equal(t, a.ID, got.Account)
 	require.Equal(t, "test-client", got.Client)
-	require.JSONEq(t, fmt.Sprintf(`{"account":%q,"refs":"not a list"}`, a.ID), string(got.Arguments))
+	require.JSONEq(t, fmt.Sprintf(`{"account":"[omitted: %d bytes]","refs":"[omitted: 10 bytes]"}`, len(a.ID)), string(got.Arguments))
 	require.Equal(t, before+1, e.principals.Load())
+}
+
+// An agent that gets the arguments wrong can put the text of a message anywhere.
+// Without a check of the schema nothing says what a value is, so the log keeps no
+// value of such a call, whatever the name of the argument.
+func TestACallThatFailsTheSchemaKeepsNoValues(t *testing.T) {
+	const secret = "FullMessageTextMarker"
+	to := []any{"bob@example.org"}
+	cases := map[string]map[string]any{
+		"an argument that does not exist":  {"to": to, "content": secret},
+		"an argument of another tool":      {"to": to, "text": secret},
+		"another spelling of the body":     {"to": to, "Body": secret},
+		"a known argument of a wrong type": {"to": to, "subject": map[string]any{"value": secret}},
+		"an unknown argument inside a known one": {"to": to, "attachments": []any{map[string]any{
+			"filename": "a.txt", "data_base64": "QUJD", "note": secret,
+		}}},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			e := stubEnv(t, &stubBackend{})
+			a := e.offlineAccount()
+			args["account"] = string(a.ID)
+
+			res := e.call("send_message", args)
+
+			require.True(t, res.IsError)
+			got := e.lastCall()
+			require.Equal(t, "invalid_arguments", got.Detail)
+			require.NotEmpty(t, got.Arguments, "the names and the sizes stay")
+			require.NotContains(t, string(got.Arguments), secret)
+			require.NotContains(t, string(got.Arguments), "bob@example.org")
+		})
+	}
+}
+
+func TestACallThatFailsTheSchemaKeepsTheNamesAndTheSizes(t *testing.T) {
+	e := stubEnv(t, &stubBackend{})
+
+	e.call("send_message", map[string]any{"account": "a1", "to": []any{"bob@example.org"}, "content": "FullMessageTextMarker"})
+
+	require.JSONEq(t, `{
+		"account": "[omitted: 2 bytes]",
+		"to": "[omitted: 19 bytes]",
+		"content": "[omitted: 21 bytes]"
+	}`, string(e.lastCall().Arguments))
+}
+
+// Arguments that are not an object have no names to keep.
+func TestACallWithArgumentsThatAreNoObjectKeepsNoValues(t *testing.T) {
+	e := stubEnv(t, &stubBackend{})
+
+	res, err := e.cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "send_message", Arguments: []any{"FullMessageTextMarker"},
+	})
+
+	if err == nil {
+		require.True(t, res.IsError)
+	}
+	got := e.lastCall()
+	require.JSONEq(t, `{"omitted":"not_an_object","bytes":25}`, string(got.Arguments))
+}
+
+// A call that passes the schema is the only one whose values the log keeps, so
+// this must hold for every tool: an argument that a tool does not have is refused.
+func TestEveryToolRefusesAnArgumentThatItDoesNotHave(t *testing.T) {
+	e := stubEnv(t, &stubBackend{})
+	a := e.offlineAccount()
+	tools, err := e.cs.ListTools(context.Background(), nil)
+	require.NoError(t, err)
+
+	for _, tool := range tools.Tools {
+		t.Run(tool.Name, func(t *testing.T) {
+			args := requiredArguments(t, tool)
+			if _, ok := args["account"]; ok {
+				args["account"] = string(a.ID)
+			}
+			args["not_an_argument"] = "FullMessageTextMarker"
+
+			e.call(tool.Name, args)
+
+			require.Equal(t, "invalid_arguments", e.lastCall().Detail)
+		})
+	}
 }
 
 // The name of a tool that does not exist comes from the agent, so it can be
@@ -193,7 +276,7 @@ func TestAnUnknownToolHasACallEntry(t *testing.T) {
 			}
 			require.NoError(t, json.Unmarshal(got.Arguments, &args))
 			require.Equal(t, tc.want, args.RequestedTool)
-			require.Equal(t, map[string]any{"text": "find this"}, args.Arguments)
+			require.Equal(t, map[string]any{"text": "[omitted: 9 bytes]"}, args.Arguments, "no value of a tool that does not exist")
 		})
 	}
 }
@@ -318,7 +401,6 @@ func TestCleanArguments(t *testing.T) {
 			`{"attachments":[{"filename":"a.txt","data_base64":"QUJD"}]}`,
 			`{"attachments":[{"data_base64":"[omitted: 4 bytes]","filename":"a.txt"}]}`,
 		},
-		"another case of a body": {`{"Body":"hello"}`, `{"Body":"[omitted: 5 bytes]"}`},
 		"a body that is no text": {`{"body":{"text":"hello"}}`, `{"body":"[omitted: 16 bytes]"}`},
 		"a body in a call that is not an object": {
 			`[{"body":"hello"}]`, `[{"body":"[omitted: 5 bytes]"}]`,
