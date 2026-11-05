@@ -234,11 +234,13 @@ func DecodeHeaderValue(v string) string {
 
 // Parsed is the content of a whole message.
 type Parsed struct {
-	// Text is the first text/plain part that is not an attachment, and HTML
-	// is the first text/html part that is not an attachment. Each is cut to
-	// the maxText argument of ParseMessage. They are decoded, but not
-	// cleaned.
+	// Text is the text/plain part and HTML is the text/html part of the body
+	// (see ParseMessage for which parts these are). Each is cut to the maxText
+	// argument of ParseMessage. They are decoded, but not cleaned.
 	Text, HTML string
+	// ShownHTML is true when a mail client shows HTML as the body. When it is
+	// false, a client shows Text, also when HTML is not empty.
+	ShownHTML bool
 	// Attachments describes the parts that are attachments, without their
 	// data. The ID of each is its MIME part path, as IMAP numbers parts: "2"
 	// is the second part, and "1.3" is the third part of the first part. The
@@ -266,6 +268,12 @@ type Parsed struct {
 // a text part with a file name is the body when no body came before it. Names
 // of attachments are cleaned with CleanUntrusted. The size of an attachment
 // is its size after the transfer encoding is removed.
+//
+// In a multipart/alternative, a later alternative replaces an earlier one, as
+// in a mail client, which shows the last alternative that it can show. Only
+// text/plain and text/html count, and a part with no text does not. Outside an
+// alternative, a client shows every part, and the first text/html part is the
+// body when there is one. ShownHTML says which of the two a client shows.
 //
 // maxText limits Text and HTML to that many characters. Zero or less means no
 // limit.
@@ -299,13 +307,28 @@ func parseMessage(r io.Reader, maxText int) (parsed *Parsed, recovered any, err 
 	return w.out, recovered, src.err
 }
 
+// bodyKind says what a part can be as the body of a message. The order counts:
+// outside a multipart/alternative, a larger kind wins.
+type bodyKind int
+
+const (
+	noBody bodyKind = iota
+	plainBody
+	htmlBody
+)
+
+// bodyKinds says which kinds of body were found.
+type bodyKinds struct{ text, html bool }
+
 // walker goes through the parts of one message and fills out.
 type walker struct {
 	maxText int
 	out     *Parsed
 	// parts counts the parts found, not counting the message itself.
-	parts            int
-	hasText, hasHTML bool
+	parts int
+	// found says which of Text and HTML are taken. A part of a kind that is taken
+	// is not read as the body.
+	found bodyKinds
 }
 
 func (w *walker) run(src io.Reader) {
@@ -316,39 +339,46 @@ func (w *walker) run(src io.Reader) {
 	if end == headerTooBig {
 		w.out.Incomplete = true
 	}
-	w.part(h, br, "", 0)
+	kind, _ := w.part(h, br, "", 0)
+	w.out.ShownHTML = kind == htmlBody
 }
 
 // part handles one part. id is its part path, empty for the message itself.
-// It returns false when the whole walk must stop.
-func (w *walker) part(h textproto.Header, body io.Reader, id string, depth int) bool {
+// It returns the kind of body that a client shows of this part, and false when
+// the whole walk must stop.
+func (w *walker) part(h textproto.Header, body io.Reader, id string, depth int) (bodyKind, bool) {
 	mediaType, params := contentTypeOf(h)
 	if _, hasMethod := params["method"]; hasMethod || mediaType == "text/calendar" {
 		w.out.HasInvite = true
 	}
 
 	if strings.HasPrefix(mediaType, "multipart/") {
-		return w.multipart(params["boundary"], body, id, depth)
+		return w.multipart(mediaType, params["boundary"], body, id, depth)
 	}
-	w.leaf(h, mediaType, params, body, id)
-	return true
+	return w.leaf(h, mediaType, params, body, id), true
 }
 
-func (w *walker) multipart(boundary string, body io.Reader, id string, depth int) bool {
+func (w *walker) multipart(mediaType, boundary string, body io.Reader, id string, depth int) (bodyKind, bool) {
 	if depth >= maxDepth || boundary == "" || len(boundary) > maxBoundary {
 		w.out.Incomplete = true
-		return true
+		return noBody, true
 	}
+	alternative := mediaType == "multipart/alternative"
+	// Each alternative starts from what was found before the multipart, so that
+	// it replaces what an earlier alternative gave.
+	before, after := w.found, w.found
+	kind := noBody
 	mr := newMultipartReader(body, boundary)
 	for i := 1; ; i++ {
 		h, partBody, tooBig, ok := mr.next()
 		if !ok {
-			return true
+			w.found = after
+			return kind, true
 		}
 		w.parts++
 		if w.parts > maxParts {
 			w.out.Incomplete = true
-			return false
+			return kind, false
 		}
 		if tooBig {
 			// The part keeps its place in the numbering, but it is not read.
@@ -359,14 +389,24 @@ func (w *walker) multipart(boundary string, body io.Reader, id string, depth int
 		if id != "" {
 			childID = id + "." + childID
 		}
-		if !w.part(h, partBody, childID, depth+1) {
-			return false
+		if alternative {
+			w.found = before
+		}
+		child, more := w.part(h, partBody, childID, depth+1)
+		after.text = after.text || w.found.text
+		after.html = after.html || w.found.html
+		if child != noBody && (alternative || child > kind) {
+			kind = child
+		}
+		if !more {
+			return kind, false
 		}
 	}
 }
 
-// leaf handles a part that is not multipart.
-func (w *walker) leaf(h textproto.Header, mediaType string, params map[string]string, body io.Reader, id string) {
+// leaf handles a part that is not multipart. It returns the kind of body that
+// the part is, and noBody when it is an attachment or has no text.
+func (w *walker) leaf(h textproto.Header, mediaType string, params map[string]string, body io.Reader, id string) bodyKind {
 	if id == "" {
 		id = "1"
 	}
@@ -374,14 +414,29 @@ func (w *walker) leaf(h textproto.Header, mediaType string, params map[string]st
 	disposition, _ := parseMedia(h.Get("Content-Disposition"))
 	filename := filenameOf(h)
 
+	kind := noBody
 	if disposition != "attachment" {
-		switch {
-		case mediaType == "text/plain" && !w.hasText:
-			w.out.Text, w.hasText = w.bodyText(mediaType, params, encoding, body)
-			return
-		case mediaType == "text/html" && !w.hasHTML:
-			w.out.HTML, w.hasHTML = w.bodyText(mediaType, params, encoding, body)
-			return
+		switch mediaType {
+		case "text/plain":
+			kind = plainBody
+			if !w.found.text {
+				text, ok := w.bodyText(mediaType, params, encoding, body)
+				if !ok {
+					return noBody
+				}
+				w.out.Text, w.found.text = text, true
+				return kind
+			}
+		case "text/html":
+			kind = htmlBody
+			if !w.found.html {
+				text, ok := w.bodyText(mediaType, params, encoding, body)
+				if !ok {
+					return noBody
+				}
+				w.out.HTML, w.found.html = text, true
+				return kind
+			}
 		}
 	}
 
@@ -394,9 +449,11 @@ func (w *walker) leaf(h textproto.Header, mediaType string, params map[string]st
 			ContentType: mediaType,
 			Size:        size,
 		})
+		return noBody
 	}
-	// Any other part is a second text or HTML alternative, or a text part
-	// without a name. It is not used.
+	// Any other part is a second text or HTML part that the body does not use, or
+	// a text part without a name.
+	return kind
 }
 
 // bodyText decodes a part that may be the text or the HTML of the message.

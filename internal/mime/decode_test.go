@@ -183,7 +183,7 @@ func TestParseWithoutContentTypeIsPlainText(t *testing.T) {
 	require.Equal(t, "hello", p.Text)
 }
 
-func TestParseAlternativeKeepsFirstOfEachKind(t *testing.T) {
+func TestParseAlternativeKeepsLastOfEachKind(t *testing.T) {
 	raw := msg(
 		"Content-Type: multipart/alternative; boundary=\"alt\"",
 		"",
@@ -198,21 +198,128 @@ func TestParseAlternativeKeepsFirstOfEachKind(t *testing.T) {
 		"plain two",
 		"--alt",
 		"Content-Type: text/html; charset=utf-8",
+		"",
+		"<p>first html</p>",
+		"--alt",
+		"Content-Type: text/html",
 		"Content-Transfer-Encoding: quoted-printable",
 		"",
 		"<p>caf=C3=A9</p>",
-		"--alt",
-		"Content-Type: text/html",
-		"",
-		"<p>second html</p>",
 		"--alt--",
 		"epilogue",
 	)
 	p, err := ParseMessage(strings.NewReader(raw), 0)
 	require.NoError(t, err)
-	require.Equal(t, "plain one", p.Text)
+	require.Equal(t, "plain two", p.Text)
 	require.Equal(t, "<p>caf\U000000E9</p>", p.HTML)
+	require.True(t, p.ShownHTML)
 	require.Empty(t, p.Attachments)
+}
+
+// A mail client shows the last alternative that it can show. In the other kinds
+// of multipart it shows each part, and the HTML is the body.
+func TestParseFindsThePartThatAClientShows(t *testing.T) {
+	part := func(mediaType, body string) string {
+		return msg("Content-Type: "+mediaType, "", body)
+	}
+	multi := func(subtype, boundary string, parts ...string) string {
+		lines := []string{"Content-Type: multipart/" + subtype + "; boundary=" + boundary, ""}
+		for _, p := range parts {
+			lines = append(lines, "--"+boundary, p)
+		}
+		return msg(append(lines, "--"+boundary+"--")...)
+	}
+	file := msg("Content-Type: application/pdf", "Content-Disposition: attachment; filename=a.pdf", "", "data")
+
+	tests := []struct {
+		name      string
+		raw       string
+		wantText  string
+		wantHTML  string
+		shownHTML bool
+	}{
+		{
+			name:      "plain then html",
+			raw:       multi("alternative", "a", part("text/plain", "plain"), part("text/html", "<p>html</p>")),
+			wantText:  "plain",
+			wantHTML:  "<p>html</p>",
+			shownHTML: true,
+		},
+		{
+			name:     "html then plain",
+			raw:      multi("alternative", "a", part("text/html", "<p>html</p>"), part("text/plain", "plain")),
+			wantText: "plain",
+			wantHTML: "<p>html</p>",
+		},
+		{
+			name:      "a calendar after the html does not count",
+			raw:       multi("alternative", "a", part("text/plain", "plain"), part("text/html", "<p>html</p>"), part("text/calendar", "BEGIN:VCALENDAR")),
+			wantText:  "plain",
+			wantHTML:  "<p>html</p>",
+			shownHTML: true,
+		},
+		{
+			name: "alternative in mixed, with a text footer",
+			raw: multi("mixed", "m",
+				multi("alternative", "a", part("text/plain", "plain"), part("text/html", "<p>html</p>")),
+				part("text/plain", "footer"), file),
+			wantText:  "plain",
+			wantHTML:  "<p>html</p>",
+			shownHTML: true,
+		},
+		{
+			name: "two alternatives in mixed: the first of each kind stays",
+			raw: multi("mixed", "m",
+				multi("alternative", "a", part("text/plain", "plain one"), part("text/html", "<p>html one</p>")),
+				multi("alternative", "b", part("text/plain", "plain two"), part("text/html", "<p>html two</p>"))),
+			wantText:  "plain one",
+			wantHTML:  "<p>html one</p>",
+			shownHTML: true,
+		},
+		{
+			name: "related in the last alternative",
+			raw: multi("alternative", "a", part("text/plain", "plain"),
+				multi("related", "r", part("text/html", "<p>html</p>"), part("image/png", "data"))),
+			wantText:  "plain",
+			wantHTML:  "<p>html</p>",
+			shownHTML: true,
+		},
+		{
+			name: "an earlier alternative with more parts is replaced",
+			raw: multi("alternative", "a",
+				multi("mixed", "m", part("text/plain", "plain one"), part("text/html", "<p>html one</p>")),
+				part("text/html", "<p>html two</p>")),
+			wantText:  "plain one",
+			wantHTML:  "<p>html two</p>",
+			shownHTML: true,
+		},
+		{
+			name:      "plain and html in mixed: the html is the body",
+			raw:       multi("mixed", "m", part("text/plain", "plain"), part("text/html", "<p>html</p>")),
+			wantText:  "plain",
+			wantHTML:  "<p>html</p>",
+			shownHTML: true,
+		},
+		{
+			name:     "an empty last alternative does not take the place",
+			raw:      multi("alternative", "a", part("text/plain", "plain"), part("text/plain", "")),
+			wantText: "plain",
+		},
+		{
+			name:     "plain only",
+			raw:      part("text/plain", "plain"),
+			wantText: "plain",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := ParseMessage(strings.NewReader(tc.raw), 0)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantText, p.Text)
+			require.Equal(t, tc.wantHTML, p.HTML)
+			require.Equal(t, tc.shownHTML, p.ShownHTML)
+		})
+	}
 }
 
 func TestBrokenMultipartStillReturnsText(t *testing.T) {

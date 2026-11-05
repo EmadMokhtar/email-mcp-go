@@ -167,6 +167,10 @@ type Message struct {
 	// NextOffset is the offset to use in BodyOptions to read the next part of
 	// a truncated body.
 	NextOffset int
+	// AlternativesDiffer is true when the message has another version of the
+	// body that says something else than Text or HTML. Mail clients do not show
+	// that version, and it is not in this message.
+	AlternativesDiffer bool
 }
 
 // Page is one page of results. Next is empty when there are no more pages.

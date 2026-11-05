@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"io"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -17,12 +16,23 @@ import (
 )
 
 const (
-	// snippetFetchBytes is how much of a text part the backend fetches to make
-	// the snippet. It is the encoded size, before the transfer encoding is
-	// removed.
+	// snippetFetchBytes is how much of a text/plain part the backend fetches to
+	// make the snippet. It is the encoded size, before the transfer encoding is
+	// removed. An HTML part is fetched whole (see maxSnippetHTMLBytes).
 	snippetFetchBytes = 2048
 	// snippetRunes is the longest snippet, in characters.
 	snippetRunes = 200
+	// maxSnippetHTMLBytes is the largest HTML part that a snippet is made from, in
+	// the size that BODYSTRUCTURE gives. A message with a larger HTML part has no
+	// snippet. The whole part is needed, because a style rule at the end can hide
+	// text at the start (see textFetchBytes). A list makes a snippet for every
+	// message, so this is smaller than maxHTMLBytes.
+	maxSnippetHTMLBytes = 1 << 20
+	// snippetHTMLBudget is the most bytes of HTML parts that one list fetches for
+	// its snippets. When the parts of the next message do not fit, that message
+	// has no snippet. This is the limit on the memory and the traffic of a list,
+	// because a sender chooses the size of a part.
+	snippetHTMLBudget = 8 << 20
 )
 
 // textPart is the part of a message that the snippet comes from.
@@ -90,10 +100,9 @@ type structure struct {
 // analyzeStructure reads the BODYSTRUCTURE of a message.
 //
 // A part is an attachment by isAttachment. A part is an invite when it is
-// text/calendar. The snippet comes from the first text/plain part that is not
-// an attachment, or, when there is none, from the first text/html part that
-// is not an attachment (see textSections). A part without content is not used.
-// Messages inside the message (message/rfc822) are not searched.
+// text/calendar. The snippet comes from the part that a mail client shows (see
+// shownBody). A part without content gives no snippet. Messages inside the
+// message (message/rfc822) are not searched.
 func analyzeStructure(bs imap.BodyStructure) structure {
 	var s structure
 	for _, l := range leaves(bs) {
@@ -104,12 +113,8 @@ func analyzeStructure(bs imap.BodyStructure) structure {
 			s.hasAttachments = true
 		}
 	}
-	plain, html := textSections(bs)
-	if plain == nil {
-		plain = html
-	}
-	if plain != nil {
-		s.text = bodyPartAt(bs, plain)
+	if shown, _ := shownBody(bs); shown != nil && shown.size > 0 {
+		s.text = shown
 	}
 	return s
 }
@@ -119,9 +124,10 @@ func analyzeStructure(bs imap.BodyStructure) structure {
 // left out.
 //
 // It asks for the envelope, flags, size, date and BODYSTRUCTURE of all
-// messages in one FETCH. Then it fetches the start of the text part of each
-// message for the snippet, with one FETCH for all messages that have the same
-// part number. Everything is read with PEEK, so no message is marked as read.
+// messages in one FETCH. Then it fetches the text of each message for the
+// snippet (see planSnippets), with one FETCH for all messages that need the same
+// fetch, so the number of commands does not grow with the number of messages.
+// Everything is read with PEEK, so no message is marked as read.
 //
 // A snippet that cannot be fetched or decoded is empty. It does not make the
 // call fail, unless the connection failed.
@@ -144,31 +150,17 @@ func fetchSummaries(c *imapclient.Client, mailbox string, uidValidity uint32, ui
 
 	byUID := make(map[imap.UID]*imapclient.FetchMessageBuffer, len(msgs))
 	structures := make(map[imap.UID]structure, len(msgs))
-	// The UIDs of the messages for each part number.
-	sections := map[string][]imap.UID{}
-	paths := map[string][]int{}
 	for _, m := range msgs {
 		if m.UID == 0 {
 			continue
 		}
 		byUID[m.UID] = m
-		st := analyzeStructure(m.BodyStructure)
-		structures[m.UID] = st
-		if st.text != nil {
-			key := st.text.section()
-			sections[key] = append(sections[key], m.UID)
-			paths[key] = st.text.path
-		}
+		structures[m.UID] = analyzeStructure(m.BodyStructure)
 	}
 
-	keys := make([]string, 0, len(sections))
-	for key := range sections {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
 	snippets := map[imap.UID]string{}
-	for _, key := range keys {
-		bodies, err := fetchTextStart(c, sections[key], paths[key])
+	for _, f := range planSnippets(uids, structures) {
+		bodies, err := fetchTextStart(c, f.uids, f.path, f.size)
 		if err != nil {
 			return nil, err
 		}
@@ -194,20 +186,68 @@ func fetchSummaries(c *imapclient.Client, mailbox string, uidValidity uint32, ui
 	return out, nil
 }
 
-// fetchTextStart fetches the first bytes of one part from each message, with
+// snippetFetch is one FETCH for the snippets of a list: the first size bytes of
+// the part at path, of each message in uids.
+type snippetFetch struct {
+	path []int
+	size int64
+	uids []imap.UID
+}
+
+// planSnippets decides what to fetch for the snippets of the messages in uids.
+// One fetch can only ask for one part number and one size, so the messages are
+// grouped by these.
+//
+// Of a text/plain part, the start is enough. An HTML part is used whole or not at
+// all, because HTML is never converted from its start alone. A part larger than
+// maxSnippetHTMLBytes is left out, and so is a part that does not fit in
+// snippetHTMLBudget. The budget goes to the messages in the order of uids, so the
+// first messages of the list get their snippet. A message that is left out does
+// not fall back to its text/plain part, which a mail client does not show.
+func planSnippets(uids []imap.UID, structures map[imap.UID]structure) []*snippetFetch {
+	budget := int64(snippetHTMLBudget)
+	var plan []*snippetFetch
+	fetches := map[string]*snippetFetch{}
+	for _, uid := range uids {
+		p := structures[uid].text
+		if p == nil {
+			continue
+		}
+		size := int64(snippetFetchBytes)
+		if p.html {
+			if p.size > maxSnippetHTMLBytes || int64(p.size) > budget {
+				continue
+			}
+			budget -= int64(p.size)
+			// One byte more shows a part that is larger than the structure said.
+			size = maxSnippetHTMLBytes + 1
+		}
+		key := p.section() + "/" + strconv.FormatInt(size, 10)
+		f := fetches[key]
+		if f == nil {
+			f = &snippetFetch{path: p.path, size: size}
+			fetches[key] = f
+			plan = append(plan, f)
+		}
+		f.uids = append(f.uids, uid)
+	}
+	return plan
+}
+
+// fetchTextStart fetches the first size bytes of one part from each message, with
 // BODY.PEEK so that the messages stay unread. The map has an entry for each
 // message the server answered for.
 //
 // A refusal of the server (NO or BAD, for example for a part that does not
 // exist) is not an error: the messages without an entry get an empty snippet.
 // A failed connection is an error.
-func fetchTextStart(c *imapclient.Client, uids []imap.UID, path []int) (map[imap.UID][]byte, error) {
+func fetchTextStart(c *imapclient.Client, uids []imap.UID, path []int, size int64) (map[imap.UID][]byte, error) {
 	cmd := c.Fetch(imap.UIDSetNum(uids...), &imap.FetchOptions{
 		UID: true,
 		BodySection: []*imap.FetchItemBodySection{{
 			Part:    path,
 			Peek:    true,
-			Partial: &imap.SectionPartial{Offset: 0, Size: snippetFetchBytes},
+			Partial: &imap.SectionPartial{Offset: 0, Size: size},
 		}},
 	})
 	// The command must be closed before this function returns, also on an
@@ -239,7 +279,7 @@ func fetchTextStart(c *imapclient.Client, uids []imap.UID, path []int) (map[imap
 				}
 				// The server should send at most the bytes asked for. A server
 				// that sends more is not allowed to fill the memory.
-				data, err := io.ReadAll(io.LimitReader(item.Literal, snippetFetchBytes))
+				data, err := io.ReadAll(io.LimitReader(item.Literal, size))
 				if err != nil {
 					return nil, err
 				}
@@ -256,14 +296,19 @@ func fetchTextStart(c *imapclient.Client, uids []imap.UID, path []int) (map[imap
 	return out, nil
 }
 
-// makeSnippet turns the first bytes of a text part into a snippet: decoded
-// text, cleaned, with white space collapsed, at most 200 characters. It
-// returns "" when the text cannot be decoded.
+// makeSnippet turns what fetchTextStart read of a text part into a snippet:
+// decoded text, cleaned, with white space collapsed, at most 200 characters. raw
+// is the first bytes of a text/plain part, or a whole HTML part. It returns ""
+// when the text cannot be decoded.
+//
+// HTML is never converted from its start alone. When raw is longer than the size
+// in the structure, the structure is wrong, and raw may not be the whole part. So
+// there is no snippet.
 func makeSnippet(p *textPart, raw []byte) string {
-	if p == nil {
+	if p == nil || (p.html && int64(len(raw)) > int64(p.size)) {
 		return ""
 	}
-	truncated := len(raw) >= snippetFetchBytes
+	truncated := !p.html && len(raw) >= snippetFetchBytes
 	encoding := strings.ToLower(strings.TrimSpace(p.encoding))
 	if truncated && encoding == "base64" {
 		raw = cutBase64(raw)

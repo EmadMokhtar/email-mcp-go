@@ -533,23 +533,29 @@ func composedBody(data []byte) string {
 	return composedText(data)
 }
 
-// draftContent reads a whole draft for the preview: the text of its whole HTML
-// part (or its text part when it has no HTML), and the file names of its
-// attachments.
+// draftContent reads a whole draft for the preview: the text of the HTML that a
+// mail client shows (or of its text part when it has no HTML), and the file names
+// of its attachments.
 //
 // It gives ErrDraftUnreadable when the parser cannot read the draft in full (a
 // part that it skipped could be an attachment that the user would not see; the
 // parser reads 1 MB of each header, 10000 parts and a fixed depth, and a draft
 // that create_draft saved stays far below these), and when the HTML cannot be
 // turned into text (mime.ErrHTMLTooComplex). In that case the text part is not
-// shown instead, because it can say something else than the HTML.
+// shown instead, because it can say something else than the HTML. The same holds
+// for a text part that comes after the HTML part in a multipart/alternative: mail
+// clients do not agree on which of the two they show, so no preview is right for
+// every recipient. create_draft never makes such a draft.
 func draftContent(data []byte) (sendContent, error) {
 	parsed, err := mime.ParseMessage(bytes.NewReader(data), 0)
 	if err != nil || parsed == nil || parsed.Incomplete {
 		return sendContent{}, ErrDraftUnreadable
 	}
+	if parsed.HTML != "" && !parsed.ShownHTML {
+		return sendContent{}, ErrDraftUnreadable
+	}
 	body := parsed.Text
-	if parsed.HTML != "" {
+	if parsed.ShownHTML {
 		if body, err = mime.HTMLToText(parsed.HTML); err != nil {
 			return sendContent{}, ErrDraftUnreadable
 		}

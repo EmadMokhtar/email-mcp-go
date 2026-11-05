@@ -183,8 +183,8 @@ level when the agent calls a tool.
 | `connect_account` | any | Returns a link to the page that connects an account. It changes nothing. |
 | `request_permission_change` | any | Returns a link to the settings page of an account. It changes nothing: only you can change a level. |
 | `list_folders`, `list_tags` | 1 | Lists the folders and the tags (IMAP keywords). |
-| `search_messages`, `list_new_messages` | 1 | Finds messages. At most 100 per page, with a snippet of at most 200 characters. |
-| `get_message`, `get_attachment` | 1 | Reads one message or one attachment (at most 10 MB). |
+| `search_messages`, `list_new_messages` | 1 | Finds messages. At most 100 per page, with a snippet of at most 200 characters. The snippet comes from the part of the message that a mail client shows. A message with an HTML body above 1 MiB has no snippet, and so has a message whose HTML does not fit in the 8 MiB that one list may fetch. |
+| `get_message`, `get_attachment` | 1 | Reads one message or one attachment (at most 10 MB). The body is the version that a mail client shows: the text of the HTML part when the message has both HTML and plain text. `alternatives_differ` is true when the other version says something else. An HTML body above 4 MiB, or too complex to convert, gives an error, and the plain text version is not returned instead. `get_attachment` reads only the attachments that `get_message` lists, not the body. |
 | `get_send_status` | 1 | Shows whether a send is queued, sent, or waiting for approval. |
 | `set_flags`, `tag_messages`, `move_messages` | 2 | Marks as read or unread, flags, tags and moves messages. `move_messages` never moves mail to the Trash or to a folder inside it, at any level: use `trash_messages` (level 5). A folder with a common Trash name (such as `Trash`, `Deleted Items` or `Bin`) counts as the Trash, also when the server does not mark it. |
 | `create_folder`, `create_tag` | 2 | Makes a folder or a tag. There is no tool that deletes a folder. `create_folder` never makes a folder inside the Trash. |

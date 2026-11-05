@@ -940,8 +940,9 @@ func TestGetMessagePassesTheBodyOptionsAndCleansEverything(t *testing.T) {
 			Attachments: []mail.AttachmentInfo{
 				{ID: "2", Filename: "invoice" + rlo + "fdp.exe", ContentType: "Text/Plain; name=\"x\"", Size: 12},
 			},
-			Truncated:  true,
-			NextOffset: 40,
+			Truncated:          true,
+			NextOffset:         40,
+			AlternativesDiffer: true,
 		}, nil
 	}}
 	e := newEnv(t, envOptions{backends: &countingFactory{backend: backend}})
@@ -958,6 +959,7 @@ func TestGetMessagePassesTheBodyOptionsAndCleansEverything(t *testing.T) {
 	require.Equal(t, "r1", out["ref"])
 	require.Equal(t, true, out["truncated"])
 	require.Equal(t, float64(40), out["next_offset"])
+	require.Equal(t, true, out["alternatives_differ"])
 	require.Equal(t, true, out["draft"])
 	require.Equal(t, []any{"cc@x.example"}, out["cc_emails"])
 	require.Equal(t, []any{"rt@x.example"}, out["reply_to_emails"])
