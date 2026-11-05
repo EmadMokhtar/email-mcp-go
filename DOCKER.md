@@ -28,7 +28,8 @@ building on, not for daily use.
    `serve --http 0.0.0.0:8765` stops at once. This is on purpose: local HTTP
    mode has no TLS, so it must never be open to a network.
 4. **The web interface is not reachable either.** `email-mcp setup` and the
-   approval links open a page on 127.0.0.1 inside the container. Your browser
+   approval links use the name `email-mcp.localhost`, which the server answers
+   only on 127.0.0.1 inside the container. Your browser, outside the container,
    cannot open it.
 
 ## What the image is

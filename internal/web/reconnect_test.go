@@ -104,7 +104,7 @@ func TestReconnectPageShowsTheCommandLineHint(t *testing.T) {
 	requireSafePasswordFields(t, body)
 	require.Equal(t, "new-password", inputNamed(t, body, "password")[0].attrs["autocomplete"],
 		"a password manager must not fill in the old password")
-	require.Len(t, inputNamed(t, body, csrfField), 1)
+	require.Len(t, inputNamed(t, mainOf(t, body), csrfField), 1)
 	require.Contains(t, body, `action="`+reconnectPath(a)+`"`)
 	require.NotContains(t, body, marker)
 

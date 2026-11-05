@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/EmadMokhtar/email-mcp-go/compare/v0.4.0...v0.5.0) (2026-11-05)
+
+
+### Features
+
+* **audit:** record every tool call of an agent ([#21](https://github.com/EmadMokhtar/email-mcp-go/issues/21)) ([d964001](https://github.com/EmadMokhtar/email-mcp-go/commit/d964001706e757248a74f1f5c32e4941a75896bb))
+
 ## [0.4.0](https://github.com/EmadMokhtar/email-mcp-go/compare/v0.3.0...v0.4.0) (2026-11-05)
 
 

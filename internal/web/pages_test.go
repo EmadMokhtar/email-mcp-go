@@ -36,10 +36,10 @@ const autonomyText = "An email or a calendar invite can contain hidden instructi
 	"With Confirm sends off, the agent may follow them, and nobody checks before anything leaves."
 
 // pageBackend is the mail backend of the page tests. It gives one original
-// message for a reply ("o1", from alice@example.com), fails GetMessage while
-// getErr is set, and records the moves to Trash. Any other method panics (the
-// embedded interface is nil), so a test sees at once a call that it did not
-// expect.
+// message for a reply ("o1", from alice@example.com), holds the drafts that a
+// test adds, fails GetMessage while getErr is set, and records the moves to
+// Trash. Any other method panics (the embedded interface is nil), so a test sees
+// at once a call that it did not expect.
 type pageBackend struct {
 	mail.Backend
 
@@ -47,6 +47,7 @@ type pageBackend struct {
 	getErr   error
 	deadline bool // the last GetMessage had a time limit
 	trashed  [][]mail.Ref
+	drafts   map[mail.Ref][]byte
 }
 
 func (b *pageBackend) GetMessage(ctx context.Context, ref mail.Ref, _ mail.BodyOptions) (*mail.Message, error) {
@@ -56,10 +57,27 @@ func (b *pageBackend) GetMessage(ctx context.Context, ref mail.Ref, _ mail.BodyO
 	if b.getErr != nil {
 		return nil, b.getErr
 	}
+	_, draft := b.drafts[ref]
 	return &mail.Message{
-		Summary:   mail.Summary{Ref: ref, From: mail.Address{Name: "Alice", Email: "alice@example.com"}, Subject: "Question"},
+		Summary:   mail.Summary{Ref: ref, From: mail.Address{Name: "Alice", Email: "alice@example.com"}, Subject: "Question", Draft: draft},
 		MessageID: "<o1@example.com>",
 	}, nil
+}
+
+func (b *pageBackend) GetRaw(_ context.Context, ref mail.Ref, _ int64) ([]byte, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.drafts[ref], nil
+}
+
+// addDraft stores a draft with the given message text.
+func (b *pageBackend) addDraft(ref mail.Ref, raw string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.drafts == nil {
+		b.drafts = map[mail.Ref][]byte{}
+	}
+	b.drafts[ref] = []byte(raw)
 }
 
 func (b *pageBackend) Trash(_ context.Context, refs []mail.Ref) error {
@@ -220,6 +238,18 @@ func newPageFixture(t *testing.T) *pageFixture {
 	require.NotNil(t, m, "the connections page has a CSRF field")
 	p.csrf = m[1]
 	return p
+}
+
+// signInAgain signs the browser in at the time of the clock, for a test that
+// moves the clock past the end of the first session.
+func (p *pageFixture) signInAgain() {
+	p.t.Helper()
+	p.signIn(p.s, p.browser)
+	resp, body := p.get("/connections")
+	require.Equal(p.t, http.StatusOK, resp.StatusCode)
+	m := csrfPattern.FindStringSubmatch(body)
+	require.NotNil(p.t, m, "the connections page has a CSRF field")
+	p.csrf = m[1]
 }
 
 // get loads a page in the signed-in browser.

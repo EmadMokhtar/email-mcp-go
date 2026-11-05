@@ -22,6 +22,7 @@ import (
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
+	"github.com/EmadMokhtar/email-mcp-go/internal/mime"
 )
 
 const (
@@ -31,9 +32,6 @@ const (
 	// smtpHelloName is the name that the client gives in EHLO. It is the
 	// default of go-smtp.
 	smtpHelloName = "localhost"
-	// maxEnvelopeAddress is the longest address that Send accepts. RFC 5321
-	// limits a path to 256 bytes, with the two angle brackets.
-	maxEnvelopeAddress = 254
 )
 
 // ErrDeliveryUnknown means that Send cannot tell whether the message was
@@ -200,7 +198,7 @@ func checkOutgoing(raw *mail.RawMessage) error {
 // "MAIL FROM:<addr>". It is not empty, not too long, valid UTF-8, and it has no
 // space, no control character (CR, LF and NUL included) and no angle bracket.
 func validEnvelopeAddress(addr string) bool {
-	if addr == "" || len(addr) > maxEnvelopeAddress || !utf8.ValidString(addr) {
+	if addr == "" || len(addr) > mime.MaxAddressBytes || !utf8.ValidString(addr) {
 		return false
 	}
 	return !strings.ContainsFunc(addr, func(r rune) bool {

@@ -13,61 +13,72 @@ import (
 	"github.com/microcosm-cc/bluemonday"
 )
 
-// HTMLToText turns HTML mail into plain text for an agent to read.
+// HTMLToText turns HTML mail into plain text.
 //
 // The text keeps what a person sees in a mail client and leaves out what a
 // person does not see. A sender can use the hidden parts to give instructions
 // to an agent without the reader noticing. HTMLToText removes:
 //   - elements that browsers do not show or that only hold other documents
 //     (script, style, head, title, template, iframe, object, embed, svg and
-//     more), and images, including their alt text;
-//   - elements with the hidden attribute or aria-hidden="true";
+//     more), images, including their alt text, and elements that only hold
+//     fallback text or a list of choices (video, audio, canvas, progress, meter,
+//     applet, select, option, and the annotation of a math element);
+//   - elements with the hidden attribute, the popover attribute or
+//     aria-hidden="true", and everything in a closed details element but its
+//     first summary;
 //   - elements, with everything inside, that a style hides as a whole:
-//     display:none, an opacity of zero or less, content-visibility:hidden, a
-//     colour that cannot be seen (transparent, or an alpha of zero), a
-//     position that moves the element far off the page, a text-indent far
-//     below zero, a clip or clip-path that leaves nothing, a scale of zero,
-//     and a height or width of zero with clipped overflow (see parseStyle);
+//     display:none, an opacity below 0.1, content-visibility:hidden,
+//     mso-hide:all, a colour that cannot be seen (transparent, or an alpha of
+//     zero), a position, a margin or a transform that moves the element far off
+//     the page, a text-indent far below zero, a clip or clip-path that leaves
+//     nothing, a mask, an opacity filter, a scale of zero, and a height or width
+//     of at most 2 pixels with clipped overflow (see parseStyle);
 //   - text that has no readable size, or is not visible, because of the
 //     inherited properties font-size and visibility. Children inherit them,
 //     but a child can set its own value: text in a child with font-size:13px
 //     is shown even if its parent has font-size:0, and a relative size such
-//     as 2em is a multiple of the size of the parent. A size of 1pt (about
-//     1.33px) or less is not readable;
+//     as 2em is a multiple of the size of the parent. A size below 4 pixels
+//     is not readable;
 //   - comments.
 //
-// Styles come from the style attribute and from the rules in style elements.
-// A rule is used only when the selector is one class, one id or one element
-// name, alone or in a comma list. Longer selectors (descendant, child,
-// attribute or pseudo selectors, and so on) are ignored, and so are @media
-// and the other at-rules.
+// Styles come from the style attribute and from the rules in style elements. A
+// style element in a template, one for another medium (a media attribute that
+// does not hold, see matchMedia) and one of another type are not used. A rule is
+// used when its selector is one class, one id, one element name, or "*", or a
+// compound of these such as p.x or .x.y, alone or in a comma list. Rules in
+// @media (when the query holds, see matchMedia), @layer and @supports are used.
+// A rule with a longer selector (descendant, child, attribute or pseudo
+// selectors, and so on), or in an at-rule that cannot be worked out, is not used,
+// but when it hides something the report says so (see HiddenReport).
 //
-// Hiding wins on each element. For font-size and visibility, every
-// declaration that applies to an element counts: those in its style attribute
-// and those in the rules for its name, its classes and its id. It does not
-// matter which one comes first, which source is stronger, or whether it has
-// !important (anything after a "!" is cut off). Each declaration is worked out
-// against the state of the parent: inherit, unset and revert take the value of
-// the parent, and a relative size is a multiple of the size of the parent. If
-// any declaration hides, the element is hidden. If none does, the element is
-// shown, and the size that its children get is the smallest of its sizes.
-// This is stricter than a browser, which picks one declaration. The known cost
-// is that text which a sender hides and then shows again on the same element
-// (for example font-size:0 in a rule and font-size:14px in the style
+// Hiding wins on each element, between different sources: the style attribute
+// and the rules for its name, its classes and its id. It does not matter which
+// one comes first, which source is stronger, or whether it has !important. Each
+// declaration is worked out against the state of the parent: inherit, unset and
+// revert take the value of the parent, and a relative size is a multiple of the
+// size of the parent. If any source hides, the element is hidden. If none does,
+// the element is shown, and the size that its children get is the smallest of
+// its sizes. This is stricter than a browser, which picks one source. The known
+// cost is that text which a sender hides and then shows again from another
+// source (for example font-size:0 in a rule and font-size:14px in the style
 // attribute) is dropped. A child is a different element, so it can still show
 // its text inside a hidden parent. A display:none, and the other declarations
 // that hide a whole element, are applied even if something else would show the
 // element again.
 //
+// Inside one source, the declarations of display, visibility, opacity and
+// font-size work as they do in a browser, so "font-size:0;font-size:16px" shows
+// the text (see lastDeclarations).
+//
 // It does not find text that is hidden in other ways. Text coloured like its
 // background, such as white text on a white background, is not detected, and
-// neither is a colour with a small alpha that is not zero. The same is true
-// for small but not tiny fonts, text moved off the page by a small offset or
-// by a margin, a box that is small but not zero, a clip or clip-path that
-// leaves a small part or uses a shape that is not read here (polygon, path,
-// url), a transform other than a scale (matrix, for example), filters, and
-// text placed behind other content. The default styles of the browser are not
-// applied, and values that need a calculation (calc, var) are not worked out.
+// neither is a colour with a small alpha that is not zero. The same is true for
+// text moved off the page by a small offset, a box that is small but more than 2
+// pixels, a clip or clip-path that leaves a small part, filters other than
+// opacity, and text placed behind other content (a negative z-index only gives a
+// warning). The default styles of the browser are not applied, and values that
+// need a calculation (calc, var) are not worked out: see parseStyle for what they
+// do.
 //
 // It also drops some text that a browser shows. A table cell with width:0 or
 // max-width:0 and clipped overflow is hidden here, but some mails use that
@@ -77,9 +88,9 @@ import (
 // Links are written as "text (url)". The url is parsed and shown with spaces,
 // round brackets and other unsafe characters written as %XX, so that it is one
 // word. It is shown only for http, https and mailto, only if it is no longer
-// than 2048 characters, and only if the link can be seen. Block elements
-// become line breaks. The result is passed through CleanUntrusted, so it is
-// always valid UTF-8 with no invisible characters.
+// than 2048 characters, and only if the link can be seen. A long url is cut (see
+// linkURL). Block elements become line breaks. The result is passed through
+// CleanUntrusted, so it is always valid UTF-8 with no invisible characters.
 //
 // A document that would make the parser do too much work, that is nested more
 // than 512 elements deep, or whose text would be longer than
@@ -87,25 +98,45 @@ import (
 // ErrHTMLTooComplex. Nothing is returned for it, instead of text that was not
 // checked. The size of the markup is not limited here: the caller does that.
 func HTMLToText(markup string) (string, error) {
+	text, _, err := ReadableText(markup)
+	return text, err
+}
+
+// ReadableText is HTMLToText, and it also returns the report on what was hidden.
+func ReadableText(markup string) (string, HiddenReport, error) {
 	doc, err := parseHTML(markup)
 	if err != nil {
-		return "", err
+		return "", HiddenReport{}, err
 	}
 	r := textRenderer{visibility: newVisibility(doc)}
 	r.walk(doc)
 	if r.full {
-		return "", fmt.Errorf("%w: %w", ErrHTMLTooComplex, errConvertedTooLarge)
+		return "", HiddenReport{}, fmt.Errorf("%w: %w", ErrHTMLTooComplex, errConvertedTooLarge)
 	}
-	return CleanUntrusted(tidyLines(string(r.buf))), nil
+	return CleanUntrusted(tidyLines(string(r.buf))), r.result(), nil
+}
+
+// HiddenReport says what the check for hidden content found in one document.
+type HiddenReport struct {
+	// Suspected is true when the document has a style that can hide text and
+	// that this package cannot work out, on an element that has text. Then the
+	// result can hold text that a reader does not see, or leave out text that a
+	// reader sees.
+	Suspected bool
+	// Dropped counts the parts with text that were left out because a reader
+	// cannot see them: one for each hidden element, one for each piece of text
+	// with no readable size. Parts of a page that are never shown, such as the
+	// head or a script, do not count.
+	Dropped int
 }
 
 // maxConvertedTextBytes is the longest text that HTMLToText makes, in bytes.
 //
 // The work budget of the parser bounds the tree, but not the text. The parser
 // copies a link into each paragraph that follows it, and the url is written
-// for each copy. The url can also grow three times when it is written (a space
-// or a byte that is not ASCII becomes %XX). Without this limit, 85 KB of markup
-// with a link of 700 bytes and 21,000 paragraphs gave 43 MB of text.
+// for each copy. Before linkURL cut long urls, 85 KB of markup with a link of 700
+// bytes and 21,000 paragraphs gave 43 MB of text. This limit holds for any other
+// way to make a text larger than its markup.
 //
 // The limit counts the text as it is built: with the line breaks of the blocks
 // and the spaces that tidyLines takes away at the end. The result is never
@@ -170,6 +201,15 @@ var dropTags = tagSet(
 	"img",
 )
 
+// fallbackTags are removed together with everything inside them, like dropTags.
+// Their text is only a fallback for a client without the feature, or a choice in a
+// list. A sender has no need for it, so it counts as hidden (see HiddenReport).
+var fallbackTags = tagSet(
+	"video", "audio", "canvas", "progress", "meter", "applet",
+	"select", "option", "optgroup",
+	"annotation", "annotation-xml",
+)
+
 // paragraphTags are separated from the text around them by a blank line.
 var paragraphTags = tagSet("p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre", "hr", "dl")
 
@@ -194,9 +234,18 @@ func tagSet(names ...string) map[string]bool {
 // opens an element that classify kept, and it takes the state off the stack
 // (pop) when it closes that element.
 type visibility struct {
-	rules  *styleRules // rules in style elements
-	states []inherited // inherited properties of the open elements, innermost last
-	root   float64     // font size of the html element, in pixels (for rem)
+	rules  *styleRules  // rules in style elements
+	states []inherited  // inherited properties of the open elements, innermost last
+	root   float64      // font size of the html element, in pixels (for rem)
+	report HiddenReport // what the walk found until now
+
+	// shownLinksOnly makes prune remove an href that the text does not show.
+	shownLinksOnly bool
+
+	// closed holds the answer of closedDetails for the details elements that
+	// the walk has met. Each child asks about its parent, and the answer reads
+	// the attributes of the parent.
+	closed map[*xhtml.Node]bool
 }
 
 // newVisibility reads the style rules of the document and returns the state
@@ -206,7 +255,15 @@ func newVisibility(doc *xhtml.Node) visibility {
 		rules:  collectStyleRules(doc),
 		root:   initialFontSize,
 		states: []inherited{{fontSize: initialFontSize}},
+		closed: map[*xhtml.Node]bool{},
 	}
+}
+
+// result returns the report at the end of a walk.
+func (v *visibility) result() HiddenReport {
+	report := v.report
+	report.Suspected = report.Suspected || v.rules.suspected
+	return report
 }
 
 // textRenderer collects the text of a parsed document.
@@ -232,11 +289,12 @@ func (r *textRenderer) room(n int) bool {
 type inherited struct {
 	invisible bool    // visibility is hidden or collapse
 	fontSize  float64 // font size in pixels
+	unsure    bool    // a style on this element or on a parent is not worked out
 }
 
 // textHidden reports whether text with these properties cannot be seen.
 func (s inherited) textHidden() bool {
-	return s.invisible || s.fontSize <= minReadableFontSize
+	return s.invisible || s.fontSize < minReadableFontSize
 }
 
 // state returns the properties of the element that is open now.
@@ -249,14 +307,62 @@ func (v *visibility) state() inherited {
 // dropTags), it has a hiding attribute, or a style hides it as a whole. When it
 // is shown, the effect of its styles is returned, for push.
 func (v *visibility) classify(n *xhtml.Node) (effect styleEffect, shown bool) {
-	if dropTags[n.Data] || hasHiddenAttribute(n) {
+	if dropTags[n.Data] {
+		return styleEffect{}, false
+	}
+	if fallbackTags[n.Data] || hasHiddenAttribute(n) || v.hiddenByDetails(n) {
+		v.noteDropped(n, false)
 		return styleEffect{}, false
 	}
 	effect = v.rules.effectFor(n)
 	if style, ok := attributeValue(n, "style"); ok {
 		effect = effect.merge(parseStyle(style))
 	}
-	return effect, !effect.dropped()
+	if effect.dropped() {
+		v.noteDropped(n, effect.unsure)
+		return effect, false
+	}
+	return effect, true
+}
+
+// textShown reports whether a text node can be seen.
+//
+// The state of the element says whether a style around the text is not worked
+// out. This check is made here, and not for each such element, because the text
+// can be far below the element, and such elements can be inside each other.
+func (v *visibility) textShown(n *xhtml.Node) bool {
+	s := v.state()
+	if s.textHidden() || v.hiddenByDetails(n) {
+		v.noteDropped(n, s.unsure)
+		return false
+	}
+	v.report.Suspected = v.report.Suspected || (s.unsure && hasText(n))
+	return true
+}
+
+// noteDropped counts a node that is left out, if it has text (see HiddenReport).
+// unsure says that a style hides the node and that it is not worked out.
+func (v *visibility) noteDropped(n *xhtml.Node, unsure bool) {
+	if hasText(n) {
+		v.report.Dropped++
+		v.report.Suspected = v.report.Suspected || unsure
+	}
+}
+
+// hasText reports whether a node is, or has below it, text that is not white
+// space. A walk leaves out each such node once, and it does not go inside, so
+// together these calls read every node at most once.
+func hasText(n *xhtml.Node) bool {
+	if n.Type == xhtml.TextNode {
+		return strings.TrimSpace(n.Data) != ""
+	}
+	end := nextAfter(n)
+	for c := n; c != nil && c != end; c = nextNode(c) {
+		if c.Type == xhtml.TextNode && strings.TrimSpace(c.Data) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // push opens an element with the given effect and works out its properties.
@@ -264,6 +370,7 @@ func (v *visibility) push(n *xhtml.Node, e styleEffect) {
 	s := v.state()
 	s.invisible = e.invisible(s.invisible)
 	s.fontSize = e.size(s.fontSize, v.root)
+	s.unsure = s.unsure || e.unsure
 	// rem is relative to the html element. Its own size uses the default.
 	if n.Data == "html" && n.Parent != nil && n.Parent.Type == xhtml.DocumentNode {
 		v.root = s.fontSize
@@ -315,7 +422,7 @@ func (r *textRenderer) enter(n *xhtml.Node) bool {
 	case xhtml.DocumentNode:
 		return true
 	case xhtml.TextNode:
-		if !r.state().textHidden() {
+		if r.textShown(n) {
 			r.text(CleanUntrusted(n.Data))
 		}
 		return false
@@ -512,18 +619,47 @@ func tidyLines(s string) string {
 // maxShownURL is the longest url that is shown, in characters.
 const maxShownURL = 2048
 
-// linkURL returns the url to show for an a element, or "" when none is shown.
+// linkURL returns the url that the text shows for an a element, or "" when it
+// shows none. A url that is longer than maxShownURL is not shown, and a long one
+// that fits is cut (see shortenURL). The result is exactly what the text shows,
+// so it has urlCutMark when the text does not show the whole url.
+//
+// This is the url of normalizedURL, cut. Code that must know whether the text
+// shows the whole url compares the two (see setShownLink).
+func linkURL(n *xhtml.Node) string {
+	return shownURL(parseLink(n))
+}
+
+// normalizedURL returns the whole url of an a element in one form, or "" when
+// the element has no url that may be shown. It is not cut and not limited in
+// length.
+func normalizedURL(n *xhtml.Node) string {
+	_, whole := parseLink(n)
+	return whole
+}
+
+// shownURL returns what the text shows for a url that parseLink returned. It is
+// "" for a url that is longer than maxShownURL, and the cut form of a long one.
+func shownURL(u *url.URL, whole string) string {
+	if whole == "" || len(whole) > maxShownURL {
+		return ""
+	}
+	return shortenURL(u, whole)
+}
+
+// parseLink returns the parsed url of an a element and the whole url in one
+// form. Both are empty when the element has no url that may be shown.
 //
 // The href is parsed. If it does not parse, or its scheme is not http, https
-// or mailto, nothing is shown. What is shown is the parsed url written out
-// again, with every character that is not safe in one word written as %XX.
-// That includes spaces and round brackets. Without this, a sender could write
-// an href that ends the url early and goes on with a sentence that looks like
-// text of the mail. A url that is longer than maxShownURL is not shown.
-func linkURL(n *xhtml.Node) string {
+// or mailto, nothing is shown. The form is the parsed url written out again,
+// with every character that is not safe in one word written as %XX. That
+// includes spaces and round brackets. Without this, a sender could write an
+// href that ends the url early and goes on with a sentence that looks like text
+// of the mail.
+func parseLink(n *xhtml.Node) (*url.URL, string) {
 	href, ok := attributeValue(n, "href")
 	if !ok {
-		return ""
+		return nil, ""
 	}
 	href = CleanUntrusted(href)
 	// Browsers ignore tabs and line breaks inside a url, and white space at its
@@ -538,18 +674,97 @@ func linkURL(n *xhtml.Node) string {
 
 	u, err := url.Parse(href)
 	if err != nil {
-		return ""
+		return nil, ""
 	}
 	switch u.Scheme { // url.Parse writes the scheme in lower case
 	case "http", "https", "mailto":
 	default:
-		return "" // includes a relative url, which has no meaning in a mail
+		return nil, "" // includes a relative url, which has no meaning in a mail
 	}
-	shown := escapeURL(u.String())
-	if len(shown) > maxShownURL {
-		return ""
+	return u, escapeURL(u.String())
+}
+
+const (
+	// The most characters that shortenURL keeps of each part of a url.
+	maxShortUser  = 32 // the user name and the password
+	maxShortHost  = 64 // the host and the port
+	maxShortPath  = 64 // the path, or the address of a mailto link
+	maxShortQuery = 32 // the query and the fragment together
+
+	// urlCutMark stands for the part of a url that was cut.
+	urlCutMark = "...[cut]"
+)
+
+// shortenURL cuts the url u, which is written as shown. A url with no long part
+// comes back as it is. Otherwise the scheme stays, and each part keeps at most its
+// number of characters (see maxShortPath and the others). The host keeps its end,
+// because the end says who owns it. After a path that was cut, the query goes too.
+//
+// A person reads the text of a link and rarely the url. An agent reads both, so
+// each part of a url is a place for text that only the agent sees. A mailto link
+// has the same place in its body parameter.
+func shortenURL(u *url.URL, shown string) string {
+	var user string
+	if u.User != nil {
+		user = escapeURL(u.User.String())
 	}
-	return shown
+	host := escapeURL(u.Host)
+	path := escapeURL(u.EscapedPath())
+	if u.Opaque != "" {
+		path = escapeURL(u.Opaque) // the address of a mailto link
+	}
+	// The parts before the query write "?" and "#" as %XX, so the first one here
+	// starts the query or the fragment.
+	var tail string
+	if i := strings.IndexAny(shown, "?#"); i >= 0 {
+		tail = shown[i:]
+	}
+	if len(user) <= maxShortUser && len(host) <= maxShortHost && len(path) <= maxShortPath && len(tail) <= maxShortQuery {
+		return shown
+	}
+
+	var b strings.Builder
+	b.WriteString(u.Scheme)
+	b.WriteByte(':')
+	if u.Opaque == "" {
+		b.WriteString("//")
+	}
+	if u.User != nil {
+		b.WriteString(cutEnd(user, maxShortUser))
+		b.WriteByte('@')
+	}
+	b.WriteString(cutStart(host, maxShortHost))
+	b.WriteString(cutEnd(path, maxShortPath))
+	if len(path) <= maxShortPath {
+		b.WriteString(cutEnd(tail, maxShortQuery))
+	}
+	return b.String()
+}
+
+// cutEnd keeps the first limit bytes of a part of a url. A cut can fall inside a
+// %XX. The rest of it goes too.
+func cutEnd(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	s = s[:limit]
+	if i := strings.LastIndexByte(s, '%'); i >= 0 && i >= len(s)-2 {
+		s = s[:i]
+	}
+	return s + urlCutMark
+}
+
+// cutStart keeps the last limit bytes of a host, from the start of a label if
+// there is one.
+func cutStart(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	s = s[len(s)-limit:]
+	if _, rest, ok := strings.Cut(s, "."); ok && rest != "" {
+		s = rest
+	}
+	return urlCutMark + s
 }
 
 // escapeURL writes every byte of a url that is not safe in one word as %XX.
@@ -591,13 +806,14 @@ func attributeValue(n *xhtml.Node, key string) (string, bool) {
 // --- hidden elements ---
 
 // hasHiddenAttribute reports whether an attribute of the element hides it, with
-// everything inside: the hidden attribute, aria-hidden="true", and a dialog
-// that is not open. (A hiding style is read separately, see parseStyle.)
+// everything inside: the hidden attribute, the popover attribute (a mail has no
+// script to open it), aria-hidden="true", and a dialog that is not open. (A
+// hiding style is read separately, see parseStyle.)
 func hasHiddenAttribute(n *xhtml.Node) bool {
 	hasOpen := false
 	for _, a := range n.Attr {
 		switch a.Key {
-		case "hidden":
+		case "hidden", "popover":
 			return true
 		case "aria-hidden":
 			if strings.EqualFold(strings.TrimSpace(a.Val), "true") {
@@ -608,6 +824,49 @@ func hasHiddenAttribute(n *xhtml.Node) bool {
 		}
 	}
 	return n.Data == "dialog" && !hasOpen
+}
+
+// closedDetails reports whether n is a details element that a reader has to open.
+func closedDetails(n *xhtml.Node) bool {
+	if n.Type != xhtml.ElementNode || n.Data != "details" || n.Namespace != "" {
+		return false
+	}
+	_, open := attributeValue(n, "open")
+	return !open
+}
+
+// hiddenByDetails reports whether a closed details element hides n. It shows
+// only its first summary.
+func (v *visibility) hiddenByDetails(n *xhtml.Node) bool {
+	parent := n.Parent
+	if parent == nil || parent.Data != "details" {
+		return false
+	}
+	closed, known := v.closed[parent]
+	if !known {
+		closed = closedDetails(parent)
+		v.closed[parent] = closed
+	}
+	return closed && !isFirstSummary(n)
+}
+
+// isFirstSummary reports whether n is the first summary among its siblings.
+func isFirstSummary(n *xhtml.Node) bool {
+	if !isSummary(n) {
+		return false
+	}
+	// The walk back ends at the summary before n, so all the calls for one parent
+	// read each sibling at most once.
+	for c := n.PrevSibling; c != nil; c = c.PrevSibling {
+		if isSummary(c) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSummary(n *xhtml.Node) bool {
+	return n.Type == xhtml.ElementNode && n.Data == "summary" && n.Namespace == ""
 }
 
 // --- SanitizeHTML ---

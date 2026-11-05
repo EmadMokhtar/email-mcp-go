@@ -338,9 +338,12 @@ func auditCode(err error) (audit.Outcome, string) {
 		return refused("draft_from_mismatch")
 	case errors.Is(err, ErrSendNotFound):
 		return refused("send_not_found")
-	// ErrHiddenAddress also matches ErrInvalidRequest, so it comes first.
+	// ErrHiddenAddress and ErrInexactDomain also match ErrInvalidRequest, so they
+	// come first.
 	case errors.Is(err, ErrHiddenAddress):
 		return refused("hidden_address")
+	case errors.Is(err, ErrInexactDomain):
+		return refused("inexact_domain")
 	case errors.Is(err, ErrInvalidRequest), isMessageError(err):
 		return refused("invalid_request")
 	case errors.Is(err, confirm.ErrPayloadChanged):
@@ -382,6 +385,7 @@ func isMessageError(err error) bool {
 	for _, target := range []error{
 		mime.ErrInvalidAddress, mime.ErrNoRecipients, mime.ErrHeaderInjection, mime.ErrNoOriginal,
 		mime.ErrReplyAndForward, mime.ErrInvalidContentType, mime.ErrHTMLTooComplex, mime.ErrInvalidFilename,
+		mime.ErrHiddenText, mime.ErrEmptyHTML,
 	} {
 		if errors.Is(err, target) {
 			return true
@@ -696,12 +700,19 @@ func aliasFolder(folders []mail.Folder, alias string) string {
 
 // CreateDraft saves a new draft and returns its ref. It needs Mail 3. A reply or
 // a forward reads the original message first. The draft keeps its Bcc header.
+// mime.Build makes it, so a draft follows the same rules as a send: its HTML is
+// cleaned, and text with hidden characters is refused.
 func (s *Service) CreateDraft(ctx context.Context, id account.AccountID, c mail.Compose) (mail.Ref, error) {
 	acc, b, err := s.begin(ctx, id, policy.ActDraft, toolCreateDraft)
 	if err != nil {
 		return "", err
 	}
 	msg, _, err := s.buildMessage(ctx, b, acc.Account, c, true)
+	if err == nil {
+		// A draft can be sent from another mail program, where nothing checks
+		// it, so it cannot hold an address that a send would refuse.
+		err = checkShownAddresses(msg)
+	}
 	if err != nil {
 		s.finish(ctx, acc, toolCreateDraft, 1, nil, "", err)
 		return "", err
@@ -1002,7 +1013,7 @@ func trashLine(s mail.Summary) string {
 	if !s.Date.IsZero() {
 		date = s.Date.Local().Format("2006-01-02 15:04 MST")
 	}
-	from := oneLineText(s.From.Email)
+	from := oneLineText(mime.MarkInvisible(s.From.Email))
 	if from == "" {
 		from = "(no sender)"
 	}

@@ -225,6 +225,23 @@ strong {
   font-weight: 600;
 }
 
+/* The sign-out button looks like a link of the menu, at the end of the menu. */
+.signout {
+  margin-top: auto;
+}
+
+.signout .menu-link {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.signout .menu-link:hover {
+  background: var(--hover);
+}
+
 .count {
   min-width: 1.5em;
   border-radius: 999px;
@@ -1128,6 +1145,11 @@ fieldset.notice .check input {
     padding: 6px 10px;
   }
 
+  .signout {
+    margin-top: 0;
+    margin-left: auto;
+  }
+
   .mail {
     flex: 1;
     height: auto;
@@ -1141,7 +1163,7 @@ fieldset.notice .check input {
 
 @media (max-width: 680px) {
   .menu {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     justify-content: space-between;
     gap: 0;
     padding: 6px 8px;
