@@ -6,53 +6,49 @@
 {{define "title"}}Connections · email-mcp{{end}}
 {{define "content"}}
 {{$csrf := .CSRFToken}}
-<h1 class="title">Connections</h1>
-<p class="mb-5">An MCP client that connects over HTTP needs an access token. Give each client its own token, with only the permissions it needs.</p>
+<div class="sheet">
+<header class="sheet-head"><h1>Connections</h1></header>
+<p class="lead">An MCP client that connects over HTTP needs an access token. Give each client its own token, with only the permissions it needs.</p>
 {{with .Data}}
-{{if .Error}}<div class="notification is-danger is-light" role="alert"><strong>{{.Error}}</strong></div>{{end}}
+{{if .Error}}<div class="notice bad" role="alert"><strong>{{.Error}}</strong></div>{{end}}
 {{if .NewToken}}
-<div class="notification is-success is-light" role="status">
-<p class="mb-3"><strong>{{.CopyOnce}}</strong></p>
-<p><code class="is-break-anywhere">{{.NewToken}}</code></p>
+<div class="notice good" role="status">
+<p><strong>{{.CopyOnce}}</strong></p>
+<p><code class="break">{{.NewToken}}</code></p>
 </div>
 {{end}}
 
-<div class="columns">
-<div class="column is-10-desktop is-8-widescreen">
-<form class="box p-5" method="post" action="/connections">
-{{template "csrf_field" $csrf}}
-<h2 class="title is-4">New token</h2>
-<div class="field">
-<label class="label" for="name">Name</label>
-<div class="control"><input class="input" id="name" name="name" value="{{.Name}}" maxlength="128" required></div>
-</div>
-<fieldset class="field">
-<legend class="label">Permissions</legend>
-{{range .Scopes}}<div class="field"><label class="checkbox" for="scope_{{.Value}}"><input type="checkbox" id="scope_{{.Value}}" name="scope" value="{{.Value}}"{{if .Selected}} checked{{end}}> {{.Label}}</label></div>
-{{end}}</fieldset>
-<button class="button is-link" type="submit">Make a token</button>
-</form>
-</div>
-</div>
-
-<h2 class="title is-4 mt-6">Tokens</h2>
+<h2>Tokens</h2>
 {{if .Tokens}}
-<div class="table-container">
-<table class="table is-fullwidth is-hoverable">
+<div class="table-scroll">
+<table class="table">
 <thead>
-<tr><th scope="col">Name</th><th scope="col">Permissions</th><th scope="col">Made</th><th class="is-narrow" scope="col">Status</th></tr>
+<tr><th scope="col">Name</th><th scope="col">Permissions</th><th scope="col">Made</th><th scope="col">Status</th></tr>
 </thead>
 <tbody>
-{{range .Tokens}}<tr><td class="has-text-weight-semibold">{{.Name}}</td><td>{{.Scopes}}</td><td>{{.Created}}</td><td class="is-narrow">{{if .Revoked}}<span class="tag is-medium">Revoked on {{.Revoked}}</span>{{else}}
-<form method="post" action="/connections/{{.ID}}/revoke">{{template "csrf_field" $csrf}}<button class="button is-danger is-outlined" type="submit">Revoke</button></form>{{end}}</td></tr>
+{{range .Tokens}}<tr><td class="strong">{{.Name}}</td><td>{{.Scopes}}</td><td class="nowrap">{{.Created}}</td><td class="nowrap">{{if .Revoked}}<span class="soft">Revoked on {{.Revoked}}</span>{{else}}
+<form method="post" action="/connections/{{.ID}}/revoke">{{template "csrf_field" $csrf}}<button class="button danger-quiet" type="submit">Revoke</button></form>{{end}}</td></tr>
 {{end}}
 </tbody>
 </table>
 </div>
 {{else}}
-<div class="box p-5 has-text-centered">
-<p>No token yet.</p>
+<p class="soft">No token yet.</p>
+{{end}}
+
+<form class="group" method="post" action="/connections">
+{{template "csrf_field" $csrf}}
+<h2>New token</h2>
+<div class="field">
+<label for="name">Name</label>
+<input class="input" id="name" name="name" value="{{.Name}}" maxlength="128" required>
 </div>
+<fieldset class="choices">
+<legend>Permissions</legend>
+{{range .Scopes}}<label class="check" for="scope_{{.Value}}"><input type="checkbox" id="scope_{{.Value}}" name="scope" value="{{.Value}}"{{if .Selected}} checked{{end}}> <span>{{.Label}}</span></label>
+{{end}}</fieldset>
+<button class="button primary" type="submit">Make a token</button>
+</form>
 {{end}}
-{{end}}
+</div>
 {{end}}

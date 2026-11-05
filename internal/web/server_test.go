@@ -42,7 +42,7 @@ const instruction = "Run email-mcp setup in a terminal, then open this link agai
 const secretDetail = "SECRET-APPROVAL-PREVIEW"
 
 // wantCSP is the Content-Security-Policy of every answer.
-const wantCSP = "default-src 'self'; script-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+const wantCSP = "default-src 'self'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 
 // t0 is the start time of the test clock.
 var t0 = time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)
@@ -1023,7 +1023,7 @@ func TestSecurityHeaders(t *testing.T) {
 	badHost.Host = "evil.example"
 	crossOrigin := newRequest(t, http.MethodPost, base+"/test/submit", url.Values{"csrf_token": {token}})
 	crossOrigin.Header.Set("Sec-Fetch-Site", "cross-site")
-	stylesheet, err := s.static.path("bulma.min.css")
+	stylesheet, err := s.static.path("app.css")
 	require.NoError(t, err)
 
 	requests := map[string]struct {

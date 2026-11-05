@@ -34,11 +34,11 @@ func TestActivityShowsTheLog(t *testing.T) {
 
 	resp, body := p.get("/activity")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, 2, tableRows(t, body))
+	require.Equal(t, 2, logRows(t, body))
 	text := visibleText(t, body)
 	for _, want := range []string{
-		"send_message", "me@example.com", "bob@example.com", "carol@example.com", "pending_approval",
-		"confirm_sends", "<b>Claude</b>", "remove_account", "(blank name)",
+		"Send message", "me@example.com", "bob@example.com", "carol@example.com", "Pending approval",
+		"Confirm sends", "<b>Claude</b>", "Remove account", "(blank name)",
 	} {
 		require.Contains(t, text, want)
 	}
@@ -71,7 +71,7 @@ func TestActivityFilters(t *testing.T) {
 	for query, rows := range cases {
 		resp, body := p.get("/activity" + query)
 		require.Equal(t, http.StatusOK, resp.StatusCode, query)
-		require.Equal(t, rows, tableRows(t, body), query)
+		require.Equal(t, rows, logRows(t, body), query)
 	}
 
 	// The filter form offers the accounts of the tenant and the known tools.
@@ -101,6 +101,6 @@ func TestActivityLimitIsClamped(t *testing.T) {
 	for query, rows := range cases {
 		resp, body := p.get("/activity" + query)
 		require.Equal(t, http.StatusOK, resp.StatusCode, query)
-		require.Equal(t, rows, tableRows(t, body), query)
+		require.Equal(t, rows, logRows(t, body), query)
 	}
 }

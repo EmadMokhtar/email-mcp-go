@@ -1,8 +1,6 @@
 package web
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -15,30 +13,20 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
 )
 
-// bulmaSHA256 is the SHA-256 of css/bulma.min.css in the npm package
-// bulma@1.0.4. The package matched the integrity value of the npm registry,
-// sha512-Ffb6YGXDiZYX3cqvSbHWqQ8+LkX6tVoTcZuVB3lm93sbAVXlO0D6QlOTMnV6g18gILpAXqkG2z9hf9z4hCjz2g==.
-// An update of Bulma changes the file and this value together.
-const bulmaSHA256 = "67fa26df1ca9e95d8f2adc7c04fa1b15fa3d24257470ebc10cc68b9aab914bee"
-
-// stylesheets are the files that every page loads.
-var stylesheets = []string{"bulma.min.css", "app.css"}
-
-// static/bulma.min.css is the released file, not changed by hand.
-func TestBulmaIsTheReleasedFile(t *testing.T) {
-	body, err := staticFS.ReadFile("static/bulma.min.css")
-	require.NoError(t, err)
-	sum := sha256.Sum256(body)
-	require.Equal(t, bulmaSHA256, hex.EncodeToString(sum[:]))
+// assets are the static files of the pages, with their Content-Type.
+var assets = map[string]string{
+	"app.css":  "text/css; charset=utf-8",
+	"app.js":   "text/javascript; charset=utf-8",
+	"icon.svg": "image/svg+xml",
 }
 
-// A stylesheet needs no session, so the page for a browser without one has
+// A static file needs no session, so the page for a browser without one has
 // its style too. Its address has the hash of its content, so a browser may
 // keep it.
-func TestStylesheetsNeedNoSession(t *testing.T) {
+func TestStaticFilesNeedNoSession(t *testing.T) {
 	f := newFixture(t)
 	s, base := f.start()
-	for _, name := range stylesheets {
+	for name, contentType := range assets {
 		want, err := staticFS.ReadFile("static/" + name)
 		require.NoError(t, err)
 		path, err := s.static.path(name)
@@ -47,7 +35,7 @@ func TestStylesheetsNeedNoSession(t *testing.T) {
 
 		resp, body := do(t, newBrowser(t), newRequest(t, http.MethodGet, base+path, nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode, name)
-		require.Equal(t, "text/css; charset=utf-8", resp.Header.Get("Content-Type"), name)
+		require.Equal(t, contentType, resp.Header.Get("Content-Type"), name)
 		require.Equal(t, staticCacheControl, resp.Header.Get("Cache-Control"), name)
 		require.Equal(t, []string{wantCSP}, resp.Header.Values("Content-Security-Policy"), name)
 		require.Equal(t, []string{"nosniff"}, resp.Header.Values("X-Content-Type-Options"), name)
@@ -99,33 +87,49 @@ func TestStaticServesOnlyTheExactAddresses(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, resp.StatusCode, "the Host check runs first")
 }
 
-// Every page, also the page for a browser without a session, loads both
-// stylesheets.
-func TestPagesLoadTheStylesheets(t *testing.T) {
+// Every page, also the page for a browser without a session, loads the
+// stylesheet, the script and the icon.
+func TestPagesLoadTheStaticFiles(t *testing.T) {
 	p := newPageFixture(t)
-	_, signedIn := p.get("/")
+	_, signedIn := p.get("/accounts")
 	resp, noSession := do(t, newBrowser(t), newRequest(t, http.MethodGet, p.base+"/", nil))
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	path := func(name string) string {
+		address, err := p.s.static.path(name)
+		require.NoError(t, err)
+		return address
+	}
 	for page, body := range map[string]string{"accounts": signedIn, "no session": noSession} {
-		for _, name := range stylesheets {
-			path, err := p.s.static.path(name)
-			require.NoError(t, err)
-			require.Contains(t, body, `<link rel="stylesheet" href="`+path+`">`, page)
-		}
+		require.Contains(t, body, `<link rel="stylesheet" href="`+path("app.css")+`">`, page)
+		require.Contains(t, body, `<script src="`+path("app.js")+`" defer></script>`, page)
+		require.Contains(t, body, `<link rel="icon" href="`+path("icon.svg")+`" type="image/svg+xml">`, page)
 	}
 }
 
-// The Content-Security-Policy runs no inline style and no script, so a
+// Every form works without the script: the script never posts anything by
+// itself, so it has no address and no request of its own.
+func TestScriptOnlyShowsThatAFormWorks(t *testing.T) {
+	body, err := staticFS.ReadFile("static/app.js")
+	require.NoError(t, err)
+	require.NotRegexp(t, regexp.MustCompile(`fetch\(|XMLHttpRequest|sendBeacon|WebSocket|\.submit\(\)|\.click\(\)|innerHTML|eval\(`), string(body))
+}
+
+// The Content-Security-Policy runs no inline style and no inline script, so a
 // template must not have them: the browser would drop them without an error.
+// The only script tag is the one that loads the file of the binary.
 func TestTemplatesHaveNoInlineStyleOrScript(t *testing.T) {
 	files, err := fs.Glob(templateFS, "templates/*.html")
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
-	inline := regexp.MustCompile(`(?i)<style|<script|\sstyle=|\son[a-z]+=|javascript:`)
+	inline := regexp.MustCompile(`(?i)<style|\sstyle=|\son[a-z]+=|javascript:`)
+	script := regexp.MustCompile(`(?i)<script[^>]*>`)
 	for _, file := range files {
 		body, err := templateFS.ReadFile(file)
 		require.NoError(t, err)
 		require.NotRegexp(t, inline, string(body), file)
+		for _, tag := range script.FindAllString(string(body), -1) {
+			require.Equal(t, `<script src="{{static "app.js"}}" defer>`, tag, file)
+		}
 	}
 }
 
@@ -135,12 +139,12 @@ func TestMenuMarksTheCurrentPart(t *testing.T) {
 	p := newPageFixture(t)
 	a := p.account()
 	send := p.fallbackSend(p.tenant, a, mail.Compose{To: []string{"bob@example.com"}, Subject: "Hi", Body: "Hello"})
-	current := regexp.MustCompile(`<a class="navbar-item is-tab is-active" href="([^"]*)" aria-current="page">`)
+	current := regexp.MustCompile(`<a class="menu-link" href="([^"]*)" aria-current="page">`)
 	for path, want := range map[string]string{
-		"/":        "/",
-		"/connect": "/",
-		"/accounts/" + string(a.ID) + "/settings":  "/",
-		"/accounts/" + string(a.ID) + "/reconnect": "/",
+		"/accounts": "/accounts",
+		"/connect":  "/accounts",
+		"/accounts/" + string(a.ID) + "/settings":  "/accounts",
+		"/accounts/" + string(a.ID) + "/reconnect": "/accounts",
 		"/approvals":         "/approvals",
 		"/approvals/" + send: "/approvals",
 		"/activity":          "/activity",
@@ -170,27 +174,4 @@ func TestEveryMenuPageHasASection(t *testing.T) {
 	for name := range sectionOf {
 		require.Contains(t, pages, name, "sectionOf names a page that does not exist")
 	}
-}
-
-// The MIT license of Bulma is served as text, and every page with the menu
-// links to it. The page for a browser without a session does not.
-func TestBulmaLicenseIsServed(t *testing.T) {
-	p := newPageFixture(t)
-	want, err := staticFS.ReadFile("static/LICENSE-bulma.txt")
-	require.NoError(t, err)
-	require.Contains(t, string(want), "The MIT License")
-	path, err := p.s.static.path("LICENSE-bulma.txt")
-	require.NoError(t, err)
-
-	resp, body := do(t, newBrowser(t), newRequest(t, http.MethodGet, p.base+path, nil))
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, "text/plain; charset=utf-8", resp.Header.Get("Content-Type"))
-	require.Equal(t, staticCacheControl, resp.Header.Get("Cache-Control"))
-	require.Equal(t, string(want), body)
-
-	link := `<a href="` + path + `">MIT license</a>`
-	_, signedIn := p.get("/")
-	require.Contains(t, signedIn, link)
-	_, noSession := do(t, newBrowser(t), newRequest(t, http.MethodGet, p.base+"/", nil))
-	require.NotContains(t, noSession, link)
 }

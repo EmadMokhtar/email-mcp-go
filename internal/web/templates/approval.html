@@ -1,64 +1,90 @@
 {{/*
-  The page of one action that waits for the user (see approvals.go), with its
-  Reject button while it waits, and its Approve button only when the page
-  shows the whole action (.CanApprove).
+  The actions that wait, as a list beside the action that is open (see
+  approvals.go). The open action has its Reject button while it waits, and its
+  Approve button only when the page shows the whole action (.CanApprove). An
+  action that has ended shows its true result, and the next action.
 
   Every text of the message is cleaned by the service and written here as
   text. The HTML of a message is never put in this page: Body is the text that
   the recipient sees, in a <pre> so that its lines stay as they are. The lines
   of the messages of a Trash action are cleaned the same way.
 */}}
-{{define "title"}}Approval · email-mcp{{end}}
+{{define "title"}}Waiting for you · email-mcp{{end}}
 {{define "content"}}
 {{$csrf := .CSRFToken}}
-<div class="columns">
-<div class="column is-10-desktop is-8-widescreen">
-<p class="mb-3"><a href="/approvals">← Back to the approvals</a></p>
-<h1 class="title">Approval</h1>
 {{with .Data}}
-{{if .Error}}<div class="notification is-danger is-light" role="alert"><strong>{{.Error}}</strong></div>{{end}}
-{{if .State}}<div class="notification is-info is-light" role="status">{{.State}}</div>{{end}}
-{{if .Account}}
-<div class="box p-5">
-{{if .Send}}
-<h2 class="title is-4 is-break-anywhere">Send a message from {{.Account}}</h2>
-{{if .Waiting}}
-<dl class="mb-5">
-<div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">From</dt><dd class="column is-break-anywhere">{{.From}}</dd></div>
-<div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">To (every recipient, Bcc included)</dt><dd class="column is-break-anywhere"><ul>{{range .Recipients}}<li>{{.}}</li>{{end}}</ul></dd></div>
-<div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">Subject</dt><dd class="column is-break-anywhere">{{.Subject}}</dd></div>
-<div class="columns mb-0"><dt class="column is-3 has-text-weight-semibold">Attachments</dt><dd class="column is-break-anywhere">{{if .Attachments}}<ul>{{range .Attachments}}<li>{{.}}</li>{{end}}</ul>{{else}}None{{end}}</dd></div>
-</dl>
-<h3 class="title is-5">Text</h3>
-{{if .BodyNote}}<p class="mb-3 is-break-anywhere">{{.BodyNote}}</p>{{end}}
-<pre class="is-pre-wrap mb-5">{{.Body}}</pre>
+{{$p := .}}
+<div class="mail{{if .Opened}} is-open{{end}}">
+<section class="queue-pane" aria-labelledby="queue-title">
+<h1 id="queue-title">Waiting for you</h1>
+{{if .Queue}}<ul class="queue">
+{{range .Queue}}<li><a class="queue-item" href="/approvals/{{.ID}}"{{if .Current}} aria-current="true"{{end}}>
+<span class="queue-title">{{.Title}}</span>
+{{if .To}}<span class="queue-line">To {{.ToShort}}</span>{{end}}
+<span class="queue-foot"><span class="queue-account">{{.Account}}</span><span class="queue-left">{{.Left}}</span></span>
+</a></li>
+{{end}}</ul>
+{{else}}<p class="queue-empty">Nothing else waits for you.</p>
 {{end}}
-{{else}}
-<h2 class="title is-4 is-break-anywhere">Move {{.Count}} {{if eq .Count 1}}message{{else}}messages{{end}} of {{.Account}} to Trash</h2>
-{{if .Messages}}
-<h3 class="title is-5">Messages (date, sender, subject)</h3>
-<div class="content is-break-anywhere">
-<ul>{{range .Messages}}<li>{{.}}</li>{{end}}</ul>
-{{if .MoreMessages}}<p>{{.MoreMessages}}</p>{{end}}
+</section>
+<article class="reader">
+<p class="back reader-back"><a href="/approvals">{{template "icon-back"}}Waiting for you</a></p>
+{{if .Error}}<div class="notice bad" role="alert"><strong>{{.Error}}</strong></div>{{end}}
+{{if .Outcome}}{{with .Outcome}}
+<section class="outcome {{.Tone}}" role="status">
+<div class="outcome-head">
+<span class="outcome-mark">{{if eq .Tone "good"}}{{template "icon-check"}}{{else if eq .Tone "bad"}}{{template "icon-cross"}}{{else}}{{template "icon-info"}}{{end}}</span>
+<h2 data-focus tabindex="-1">{{.Title}}</h2>
 </div>
-{{end}}
-{{end}}
-{{if .Waiting}}
-<p class="mb-4">This request expires on {{.Expires}}.</p>
-<div class="is-flex is-flex-wrap-wrap is-gap-2">
+{{with $p.Note}}<p class="outcome-what"><strong>{{.What}}</strong>{{if .To}}<br>To {{.To}}{{end}}</p>{{end}}
+<p>{{.Text}}</p>
+<p class="outcome-next">{{with $p.Next}}<a class="button{{if ne $p.Outcome.Tone "bad"}} primary{{end}}" href="/approvals/{{.ID}}">Next: {{.Title}}</a>{{else}}<a class="button" href="/activity">See the activity</a>{{end}}</p>
+</section>
+{{end}}{{else if .Account}}
+{{if .Waiting}}<div class="actionbar" data-busy-group>
+<p class="actionbar-note" data-note>Nothing {{if .Send}}goes out{{else}}moves{{end}} until you approve.</p>
+<div class="actionbar-buttons">
+<form method="post" action="/approvals/{{.ID}}/reject">
+{{template "csrf_field" $csrf}}
+<button class="button" type="submit" data-busy="Rejecting…">Reject</button>
+</form>
 {{if .CanApprove}}<form method="post" action="/approvals/{{.ID}}/approve">
 {{template "csrf_field" $csrf}}
-<button class="button is-success" type="submit">Approve</button>
+<button class="button primary" type="submit" data-busy="{{if .Send}}Sending…{{else}}Moving to Trash…{{end}}">{{if .Send}}Approve and send{{else}}Approve and move to Trash{{end}}</button>
 </form>
-{{end}}<form method="post" action="/approvals/{{.ID}}/reject">
-{{template "csrf_field" $csrf}}
-<button class="button is-danger is-outlined" type="submit">Reject</button>
-</form>
+{{end}}</div>
+</div>
+{{end}}{{if .Send}}
+<header class="message-head">
+<h2>{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</h2>
+{{if .Waiting}}<dl class="meta">
+<div><dt>From</dt><dd>{{.From}}</dd></div>
+<div><dt>To, every recipient (Bcc included)</dt><dd><ul>{{range .Recipients}}<li>{{.}}</li>{{end}}</ul></dd></div>
+<div><dt>Attachments</dt><dd>{{if .Attachments}}<ul>{{range .Attachments}}<li>{{.}}</li>{{end}}</ul>{{else}}None{{end}}</dd></div>
+<div><dt>Asked</dt><dd>{{.Asked}}</dd></div>
+<div><dt>Expires</dt><dd>{{.Expires}}</dd></div>
+</dl>{{end}}
+</header>
+{{if .Waiting}}
+{{if .BodyNote}}<div class="notice warn">{{.BodyNote}}</div>{{end}}
+<pre class="message-body">{{.Body}}</pre>
+{{end}}
+{{else}}
+<header class="message-head">
+<h2>Move {{.Count}} {{if eq .Count 1}}message{{else}}messages{{end}} of {{.Account}} to Trash</h2>
+{{if .Waiting}}<dl class="meta">
+<div><dt>Asked</dt><dd>{{.Asked}}</dd></div>
+<div><dt>Expires</dt><dd>{{.Expires}}</dd></div>
+</dl>{{end}}
+</header>
+{{if .Messages}}
+<h3 class="list-title">Messages (date, sender, subject)</h3>
+<ul class="lines">{{range .Messages}}<li>{{.}}</li>{{end}}</ul>
+{{if .MoreMessages}}<p class="soft">{{.MoreMessages}}</p>{{end}}
+{{end}}
+{{end}}
+{{end}}
+</article>
 </div>
 {{end}}
-</div>
-{{end}}
-{{end}}
-</div>
-</div>
 {{end}}

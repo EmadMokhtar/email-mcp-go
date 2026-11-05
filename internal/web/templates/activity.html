@@ -4,49 +4,47 @@
 */}}
 {{define "title"}}Activity · email-mcp{{end}}
 {{define "content"}}
-<h1 class="title">Activity</h1>
+<div class="sheet medium">
+<header class="sheet-head"><h1>Activity</h1></header>
 {{with .Data}}
-<form class="box p-5" method="get" action="/activity">
-<div class="field is-grouped is-grouped-multiline is-align-items-flex-end">
-<div class="control">
-<label class="label" for="account">Account</label>
-<div class="select"><select id="account" name="account">
+<form class="filters" method="get" action="/activity">
+<div class="field">
+<label for="account">Account</label>
+<select id="account" name="account">
 <option value="">All accounts</option>
 {{range .Accounts}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
-{{end}}</select></div>
+{{end}}</select>
 </div>
-<div class="control">
-<label class="label" for="tool">Tool</label>
-<div class="select"><select id="tool" name="tool">
+<div class="field">
+<label for="tool">Tool</label>
+<select id="tool" name="tool">
 <option value="">All tools</option>
 {{range .Tools}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
-{{end}}</select></div>
+{{end}}</select>
 </div>
-<div class="control">
-<label class="label" for="limit">Entries</label>
+<div class="field field-short">
+<label for="limit">Entries</label>
 <input class="input" id="limit" name="limit" value="{{.Limit}}" inputmode="numeric" size="6">
 </div>
-<div class="control">
-<button class="button is-link" type="submit">Show</button>
-</div>
-</div>
+<button class="button" type="submit">Show</button>
 </form>
 {{if .Entries}}
-<div class="table-container">
-<table class="table is-fullwidth is-striped is-hoverable is-narrow">
-<thead>
-<tr><th class="is-narrow" scope="col">Time</th><th scope="col">Account</th><th scope="col">Client</th><th scope="col">Tool</th><th class="is-narrow" scope="col">Items</th><th scope="col">Outcome</th><th scope="col">Detail</th><th scope="col">Recipients</th></tr>
-</thead>
-<tbody>
-{{range .Entries}}<tr><td class="is-narrow">{{.Time}}</td><td>{{.Account}}</td><td><code>{{.Client}}</code></td><td>{{.Tool}}</td><td class="is-narrow">{{.Count}}</td><td>{{.Outcome}}</td><td>{{.Detail}}</td><td>{{.Recipients}}</td></tr>
-{{end}}
-</tbody>
-</table>
+<ol class="log">
+{{range .Entries}}<li class="log-row">
+<div class="log-main">
+<h2 class="log-title">{{.Tool}}{{if gt .Count 1}}, {{.Count}} items{{end}}</h2>
+{{if .Recipients}}<p class="log-line break">To {{.Recipients}}</p>{{end}}
+<p class="row-line"><span{{if eq .Outcome "Error"}} class="danger-title"{{end}}>{{.Outcome}}</span>{{if .Detail}}<span>{{.Detail}}</span>{{end}}{{if .Account}}<span class="break">{{.Account}}</span>{{end}}<span><code class="break">{{.Client}}</code></span></p>
 </div>
+<time class="log-time" title="{{.FullTime}}">{{.Time}}</time>
+</li>
+{{end}}</ol>
 {{else}}
-<div class="box p-5 has-text-centered">
-<p>No activity yet.</p>
+<div class="empty">
+<h2>No activity yet</h2>
+<p>What your agent sends or changes appears here. Reading mail is not listed.</p>
 </div>
 {{end}}
 {{end}}
+</div>
 {{end}}
