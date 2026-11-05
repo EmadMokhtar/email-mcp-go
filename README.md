@@ -101,7 +101,27 @@ email-mcp setup
 
 It prints a link and opens it in your browser. The link works once, for 10
 minutes. It signs your browser in to the local web pages of email-mcp, which
-run on 127.0.0.1 (your own computer only). The sign-in lasts 30 days.
+run at `email-mcp.localhost` (a name that always means your own computer). The
+sign-in lasts 24 hours, and it ends sooner after 2 hours without use. Run
+`email-mcp setup` again to sign in again.
+
+Chrome, Edge and Firefox find `email-mcp.localhost` by themselves. If your
+browser does not find it, use one of those browsers, or add this line to your
+hosts file (`/etc/hosts` on macOS and Linux,
+`C:\Windows\System32\drivers\etc\hosts` on Windows):
+
+```text
+127.0.0.1 email-mcp.localhost
+```
+
+`email-mcp setup` also prints the address of a page on 127.0.0.1 that says the
+same. You cannot sign in on 127.0.0.1 itself (see
+[the security section](#security-what-local-mode-protects-against)).
+
+The command opens your browser through a private temporary file, so the link
+with its one-time token is not in the list of running programs. If your computer
+opens `.html` files in another program, or a sandboxed browser cannot read the
+file, open the printed link yourself. The command reminds you of this.
 
 In the browser:
 
@@ -322,6 +342,56 @@ a confirmation, or press **Approve** on its own pending send. No code can tell
 a human click from an automated one. So run `email-mcp setup`, and use the
 email-mcp web pages, in a browser or a browser profile that no agent controls,
 and do not give browser-control tools access to that profile.
+
+**What you approve is what goes out.** A message that an agent writes can only
+hold what a confirmation can show:
+
+- HTML is reduced to text, headings, lists, tables and `http`, `https` or
+  `mailto` links, and the text of the message is made from the result. Styles,
+  images, comments, other attributes and hidden text are removed, so an HTML
+  mail from an agent looks plain.
+- A subject, a plain text body or a display name with a character that a reader
+  cannot see is refused. Such characters are zero width characters, direction
+  controls, tag characters and the like. Direction marks (LRM, RLM and ALM) are
+  refused too, also in Arabic or Hebrew text, because nobody can see them. Emoji
+  and the letters of any language are fine, also the joiners that Persian, Arabic
+  and Indic text need, and the signs that a reader sees, such as the Arabic
+  number sign.
+- HTML that has nothing left after this is refused.
+- The same rules apply to `create_draft`.
+- A confirmation shows the display name of each recipient next to the address. A
+  long name is cut, and the confirmation says how much it left out.
+- A confirmation counts every character of the text that it does not show, such
+  as padding, and the approval covers the whole message: the text, the HTML, the
+  attachments and the display names. A change in any of these means that you are
+  asked again.
+- A confirmation shows the media type of each attachment next to its name. An
+  attachment keeps only the `charset` of its content type, and other parameters
+  do not go out. A media type over 100 bytes is refused. A forwarded attachment
+  with such a type goes out as `application/octet-stream`.
+
+A draft that you write yourself in another mail program goes out as you saved
+it, with its styles and images. The confirmation shows the text of it, and it
+counts hidden characters in its text and its HTML. It does not list the styles
+or the images. An agent cannot make such a draft, but a draft that it saved with
+an older version of email-mcp can still hold them.
+
+**Other web services on your computer.** A browser sends a cookie to every port
+of a host. So a sign-in cookie on `127.0.0.1` would also go to every other local
+web service that you open in that browser, such as a dev server, a notebook, a
+dashboard or a local AI tool. That service, a dependency inside it, or its
+request log could then use your sign-in to approve a send or make a token. This
+is why the web pages have their own name, `email-mcp.localhost`, which no other
+program uses. Only that name gets the cookie, and no sign-in works on
+`127.0.0.1` or `localhost`.
+
+One gap stays. email-mcp uses a random port, so if you open an old link after
+email-mcp has stopped, and another program now listens on that port, your
+browser sends the cookie to that program. To limit this, a sign-in lasts at most
+24 hours and ends after 2 hours without use. Click **Sign out** when you finish.
+The **Connections** page lists the signed-in browsers, and you can sign out each
+one. `email-mcp setup --revoke-sessions` signs out every browser at once, and
+stops every sign-in link that was not used yet.
 
 ## Recommended Claude Code deny rules
 
@@ -675,6 +745,7 @@ More help:
 | `email-mcp serve` | Serves MCP over stdio. This is what AI apps run. |
 | `email-mcp serve --http 127.0.0.1:8765` | Serves MCP over local HTTP at `/mcp`. |
 | `email-mcp setup` | Signs your browser in to the local web pages, and serves them until Ctrl-C. |
+| `email-mcp setup --revoke-sessions` | Signs every browser out, cancels unused sign-in links, and stops. |
 | `email-mcp account add\|list\|reconnect\|remove\|test` | Manages accounts without a browser. `reconnect <id>` gives an account a new password or trusts its new certificate, and keeps the account. `remove <id>` asks first; add `--yes` without a terminal. |
 | `email-mcp token create\|list\|revoke` | Manages the tokens of local HTTP mode. |
 | `email-mcp import-env [path]` | Imports the account of an old `.env` file. |

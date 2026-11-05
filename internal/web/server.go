@@ -14,21 +14,32 @@
 // database, and a cookie is not bound to a port, so a session made by one
 // process works in every later process.
 //
+// Every link uses the name "email-mcp.localhost", which a browser knows as the
+// computer itself. A browser sends a cookie to every port of a host, so a cookie
+// of 127.0.0.1 would go to every other web service on this computer. No other
+// program uses this name, so the cookie stays here. A session lives at most 24
+// hours, ends after 2 hours without a request, and ends at once with the
+// Sign out button, the Connections page or "email-mcp setup --revoke-sessions".
+//
 // Every request goes through these checks, in this order (see guard.go):
 //  1. The security headers are set on every answer. Each answer is "no-store",
 //     except a static file, which a browser may keep (see static.go).
-//  2. Host: the Host header must be "127.0.0.1:<port>" or "localhost:<port>",
-//     where <port> is the port of the connection. This stops DNS rebinding.
-//     Refused with 403.
+//  2. Host: the Host header must be "email-mcp.localhost:<port>",
+//     "127.0.0.1:<port>" or "localhost:<port>", where <port> is the port of the
+//     connection. This stops DNS rebinding. Refused with 403.
 //  3. Origin: http.CrossOriginProtection refuses a cross-origin request that is
 //     not GET, HEAD or OPTIONS. Refused with 403.
-//  4. Session: every path except /setup and the static files under /static/
+//  4. Name: a request on 127.0.0.1 or localhost gets, with 403, only a page that
+//     says how to reach the name of the web interface. No setup token is used,
+//     no cookie is set and no session works there. Static files are the
+//     exception, so that page has its style.
+//  5. Session: every path except /setup and the static files under /static/
 //     needs a valid session cookie. Without one, the answer is the no-session
 //     page with 401. /setup and /static/ take only GET and HEAD, and the guard
 //     answers them itself, never through the routes: any other method on them
 //     is refused with 405. A static file is the same for every user and holds
 //     nothing private (see static.go).
-//  5. Form token: every request that is not GET or HEAD needs the CSRF token of
+//  6. Form token: every request that is not GET or HEAD needs the CSRF token of
 //     its session in the url-encoded form body. Refused with 403. HEAD is a
 //     safe method like GET, and the routes answer it with their GET page, so
 //     no route may change anything on GET. The one exception is the setup
@@ -74,9 +85,19 @@ import (
 // that the system picks.
 const listenAddr = "127.0.0.1:0"
 
+// uiHost is the name of the web interface. A name under "localhost" always means
+// this computer (RFC 6761), and Chrome, Edge and Firefox answer it without DNS.
+// The name exists to keep the session cookie away from other local web services,
+// so only this name gets a cookie.
+const uiHost = "email-mcp.localhost"
+
+// fallbackHost is the address of the page for a browser that cannot find uiHost.
+const fallbackHost = "127.0.0.1"
+
 // The names of the pages. Each is a file in templates/ without ".html".
 const (
 	pageNoSession = "no_session"
+	pageUseName   = "use_name"
 	pageMessage   = "message"
 )
 
@@ -202,6 +223,8 @@ var routes = []route{
 	{"GET /connections", (*Server).handleConnections},
 	{"POST /connections", (*Server).handleCreateToken},
 	{"POST /connections/{id}/revoke", (*Server).handleRevokeToken},
+	{"POST /sessions/{id}/revoke", (*Server).handleRevokeSession},
+	{"POST /signout", (*Server).handleSignOut},
 }
 
 // addRoutes adds the routes to the mux.
@@ -220,11 +243,12 @@ func (s *Server) Attach(svc *service.Service) {
 }
 
 // EnsureStarted starts the server if it does not run yet, and returns its base
-// URL, such as "http://127.0.0.1:53123". It listens once per Server: every
-// later call, also from another goroutine at the same time, gets the same URL.
+// URL, such as "http://email-mcp.localhost:53123". It listens once per Server:
+// every later call, also from another goroutine at the same time, gets the same
+// URL.
 //
-// The URL always uses 127.0.0.1, never localhost. The session cookie is set for
-// the host 127.0.0.1, and a browser would not send it to localhost.
+// The URL always uses the name uiHost, the only host where a session works. The
+// server itself listens on 127.0.0.1.
 //
 // ctx limits only the start. The server runs until Shutdown. After Shutdown it
 // returns ErrClosed. When the listen fails, it returns the error, and the next
@@ -278,7 +302,7 @@ func (s *Server) EnsureStarted(ctx context.Context) (string, error) {
 		_ = srv.Close()
 	}()
 	s.srv = srv
-	s.baseURL = "http://127.0.0.1:" + strconv.Itoa(addr.Port)
+	s.baseURL = "http://" + uiHost + ":" + strconv.Itoa(addr.Port)
 	return s.baseURL, nil
 }
 

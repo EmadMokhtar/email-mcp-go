@@ -31,6 +31,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/webtest"
 )
 
 // instruction is the only text that a browser without a session sees (spec
@@ -51,11 +52,11 @@ var t0 = time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)
 var testKey = bytes.Repeat([]byte{7}, 32)
 
 var (
-	baseURLPattern  = regexp.MustCompile(`^http://127\.0\.0\.1:[0-9]+$`)
-	setupURLPattern = regexp.MustCompile(`^http://127\.0\.0\.1:[0-9]+/setup\?token=[A-Za-z0-9_-]{43}$`)
+	baseURLPattern  = regexp.MustCompile(`^http://email-mcp\.localhost:[0-9]+$`)
+	setupURLPattern = regexp.MustCompile(`^http://email-mcp\.localhost:[0-9]+/setup\?token=[A-Za-z0-9_-]{43}$`)
 	// cookiePattern is the whole Set-Cookie header of a new session: host-only
-	// (no Domain), not Secure, 30 days.
-	cookiePattern = regexp.MustCompile(`^emcp_session=[A-Za-z0-9_-]{43}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict$`)
+	// (no Domain), not Secure, 24 hours.
+	cookiePattern = regexp.MustCompile(`^emcp_session=[A-Za-z0-9_-]{43}; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax$`)
 	csrfPattern   = regexp.MustCompile(`<input type="hidden" name="csrf_token" value="([A-Za-z0-9_.-]+)">`)
 )
 
@@ -227,7 +228,7 @@ func newBrowser(t *testing.T) *http.Client {
 	t.Helper()
 	jar, err := cookiejar.New(nil)
 	require.NoError(t, err)
-	transport := &http.Transport{}
+	transport := webtest.Transport()
 	t.Cleanup(transport.CloseIdleConnections)
 	return &http.Client{
 		Jar:       jar,
@@ -294,6 +295,24 @@ func visibleText(t *testing.T, page string) string {
 		}
 	}
 	return strings.Join(words, " ")
+}
+
+// portOf returns the port of a base URL.
+func portOf(t *testing.T, base string) string {
+	t.Helper()
+	u, err := url.Parse(base)
+	require.NoError(t, err)
+	require.NotEmpty(t, u.Port(), base)
+	return u.Port()
+}
+
+// mainOf returns what a page holds after the menu: its <main> element and the
+// rest of the page.
+func mainOf(t *testing.T, page string) string {
+	t.Helper()
+	start := strings.Index(page, "<main")
+	require.GreaterOrEqual(t, start, 0, "the page has a main element")
+	return page[start:]
 }
 
 // tokenOf returns the setup token in a setup URL.
@@ -494,7 +513,7 @@ func TestWrongHostRefused(t *testing.T) {
 	s, base := f.start()
 	browser := newBrowser(t)
 	cookie := f.signIn(s, browser)
-	port := strings.TrimPrefix(base, "http://127.0.0.1:")
+	port := portOf(t, base)
 	setupURL, err := s.NewSetupURL(context.Background())
 	require.NoError(t, err)
 
@@ -503,6 +522,14 @@ func TestWrongHostRefused(t *testing.T) {
 		"evil.example:" + port,
 		"127.0.0.1",
 		"localhost",
+		"email-mcp.localhost",
+		"EMAIL-MCP.localhost:" + port,
+		"email-mcp.LOCALHOST:" + port,
+		"email-mcp.localhost.:" + port,
+		"x.email-mcp.localhost:" + port,
+		"email-mcp.localhost:0" + port,
+		"email-mcp.localhost:" + port + "0",
+		"email-mcp.evil.example:" + port,
 		"127.0.0.2:" + port,
 		"[::1]:" + port,
 		"LOCALHOST:" + port,
@@ -529,13 +556,11 @@ func TestWrongHostRefused(t *testing.T) {
 	}
 	require.Zero(t, f.reached.Load())
 
-	for _, host := range []string{"127.0.0.1:" + port, "localhost:" + port} {
-		req := newRequest(t, http.MethodGet, base+"/test/secret/p1", nil)
-		req.Host = host
-		req.Header.Set("Cookie", "emcp_session="+cookie)
-		resp, _ := do(t, newBrowser(t), req)
-		require.Equal(t, http.StatusOK, resp.StatusCode, host)
-	}
+	req := newRequest(t, http.MethodGet, base+"/test/secret/p1", nil)
+	req.Host = "email-mcp.localhost:" + port
+	req.Header.Set("Cookie", "emcp_session="+cookie)
+	resp, _ := do(t, newBrowser(t), req)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 	// The setup link was not used by the refused requests.
 	f.signInWith(setupURL)
 }
@@ -548,9 +573,9 @@ func TestHostCheckUsesConnectionPort(t *testing.T) {
 
 	for _, pair := range [][2]string{{baseA, baseB}, {baseB, baseA}} {
 		to, hostOf := pair[0], pair[1]
-		for _, name := range []string{"127.0.0.1:", "localhost:"} {
+		for _, name := range []string{"email-mcp.localhost:", "127.0.0.1:", "localhost:"} {
 			req := newRequest(t, http.MethodGet, to+"/test/secret/p1", nil)
-			req.Host = name + strings.TrimPrefix(hostOf, "http://127.0.0.1:")
+			req.Host = name + portOf(t, hostOf)
 			resp, _ := do(t, newBrowser(t), req)
 			require.Equal(t, http.StatusForbidden, resp.StatusCode,
 				"a Host with the port of the other server is refused")
@@ -573,7 +598,8 @@ func TestCrossOriginPostRefused(t *testing.T) {
 		"old browser, evil":     {"Origin": "http://evil.example"},
 		"old browser, other":    {"Origin": "http://127.0.0.1:1"},
 		"old browser, null":     {"Origin": "null"},
-		"old browser, localhst": {"Origin": strings.Replace(base, "127.0.0.1", "localhost", 1)},
+		"old browser, localhst": {"Origin": strings.Replace(base, "email-mcp.localhost", "localhost", 1)},
+		"old browser, address":  {"Origin": strings.Replace(base, "email-mcp.localhost", "127.0.0.1", 1)},
 	}
 	for name, headers := range refused {
 		req := newRequest(t, http.MethodPost, base+"/test/submit", form)
@@ -744,11 +770,12 @@ func TestServeFailureStartsANewListener(t *testing.T) {
 	require.NoError(t, err)
 
 	// A browser keeps an idle connection open to the first server.
-	addr := strings.TrimPrefix(first, "http://")
+	addr, err := webtest.Addr(first)
+	require.NoError(t, err)
 	conn, err := net.Dial("tcp", addr)
 	require.NoError(t, err)
 	defer func() { _ = conn.Close() }()
-	_, err = io.WriteString(conn, "GET /test/secret/p1 HTTP/1.1\r\nHost: "+addr+"\r\n\r\n")
+	_, err = io.WriteString(conn, "GET /test/secret/p1 HTTP/1.1\r\nHost: "+strings.TrimPrefix(first, "http://")+"\r\n\r\n")
 	require.NoError(t, err)
 	reader := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(reader, nil)
@@ -791,7 +818,7 @@ func TestServeFailureStartsANewListener(t *testing.T) {
 
 	// A shutdown after the restart still stops the new listener.
 	require.NoError(t, s.Shutdown(ctx))
-	_, err = http.Get(base + "/")
+	_, err = newBrowser(t).Get(base + "/")
 	require.Error(t, err)
 }
 
@@ -821,8 +848,8 @@ func TestSessionWorksAcrossPorts(t *testing.T) {
 	browser := newBrowser(t)
 	f.signIn(a, browser)
 
-	// The browser sends the cookie of 127.0.0.1 to both ports, and both
-	// servers accept it, because the session is in the shared store.
+	// The browser sends the cookie of the name to both ports, and both servers
+	// accept it, because the session is in the shared store.
 	for _, base := range []string{baseA, baseB} {
 		resp, body := do(t, browser, newRequest(t, http.MethodGet, base+"/test/secret/p1", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode, base)
@@ -846,13 +873,19 @@ func TestSessionExpires(t *testing.T) {
 	browser := newBrowser(t)
 	cookie := f.signIn(s, browser)
 
-	f.clock.Set(t0.Add(30*24*time.Hour - time.Millisecond))
+	// The browser stays in use, so only the limit of 24 hours can end it.
+	for hour := 1; hour < 24; hour++ {
+		f.clock.Set(t0.Add(time.Duration(hour) * time.Hour))
+		resp, _ := do(t, browser, newRequest(t, http.MethodGet, base+"/test/secret/p1", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode, "hour %d", hour)
+	}
+	f.clock.Set(t0.Add(24*time.Hour - time.Millisecond))
 	resp, _ := do(t, browser, newRequest(t, http.MethodGet, base+"/test/secret/p1", nil))
-	require.Equal(t, http.StatusOK, resp.StatusCode, "the session works for 30 days")
+	require.Equal(t, http.StatusOK, resp.StatusCode, "the session works for 24 hours")
 
-	f.clock.Set(t0.Add(30 * 24 * time.Hour))
+	f.clock.Set(t0.Add(24 * time.Hour))
 	resp, body := do(t, browser, newRequest(t, http.MethodGet, base+"/test/secret/p1", nil))
-	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "the session ends after 30 days")
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "the session ends after 24 hours")
 	require.Equal(t, instruction, visibleText(t, body))
 
 	_, err := f.store.WebSessionByHash(context.Background(), hashOf(cookie))
@@ -994,7 +1027,7 @@ func TestShutdown(t *testing.T) {
 	s, base := f.start()
 
 	require.NoError(t, s.Shutdown(ctx))
-	_, err := http.Get(base + "/")
+	_, err := newBrowser(t).Get(base + "/")
 	require.Error(t, err, "nothing listens after the shutdown")
 	_, err = s.EnsureStarted(ctx)
 	require.ErrorIs(t, err, ErrClosed, "a shut down server does not start again")

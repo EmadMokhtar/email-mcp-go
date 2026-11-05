@@ -40,11 +40,42 @@ import (
 // wraps ErrHTMLTooComplex (see HTMLToText). So does a document whose HTML
 // would be larger than maxVisibleHTMLBytes, before or after it is cleaned.
 func VisibleHTML(markup string) (string, error) {
+	return prunedHTML(markup, false)
+}
+
+// outgoingHTML returns the HTML that a message sends for HTML from the caller:
+// the HTML of VisibleHTML, with nothing in it that a preview cannot show.
+//
+// So it has no comment, no style, no image, no other element that loads from a
+// url, no attribute but href, no text that a style hides, and no character that
+// CleanUntrusted removes. The href of a link is exactly the url that the text
+// shows (see setShownLink). A link without a url that the text shows loses its
+// href, and its text stays. Because the styles are gone, text that a style hides
+// in a way that this package does not detect is shown: to the recipient and to
+// the user.
+//
+// It returns "" when only white space is left. Such a message has no HTML part.
+func outgoingHTML(markup string) (string, error) {
+	out, err := prunedHTML(markup, true)
+	if err != nil {
+		return "", err
+	}
+	out = CleanUntrusted(out)
+	if strings.TrimSpace(out) == "" {
+		return "", nil
+	}
+	return out, nil
+}
+
+// prunedHTML is VisibleHTML. With shownLinksOnly, a link keeps its href only
+// when HTMLToText writes it out.
+func prunedHTML(markup string, shownLinksOnly bool) (string, error) {
 	doc, err := parseHTML(markup)
 	if err != nil {
 		return "", err
 	}
 	v := newVisibility(doc)
+	v.shownLinksOnly = shownLinksOnly
 	v.prune(doc)
 
 	rendered := &limitedBuilder{max: maxVisibleHTMLBytes}
@@ -156,8 +187,11 @@ func (v *visibility) pruneElement(parent, n *xhtml.Node) {
 	case "a":
 		// A link that cannot be seen shows nothing, not even its url. Its
 		// children may still be shown, so the element stays.
-		if v.state().textHidden() {
+		switch {
+		case v.state().textHidden():
 			removeAttribute(n, "href")
+		case v.shownLinksOnly:
+			setShownLink(n)
 		}
 	case "noscript", "xmp", "plaintext":
 		// xhtml.Render writes the text of these elements as it is, without
@@ -186,6 +220,22 @@ func keepOnly(n *xhtml.Node, key string) {
 		}
 	}
 	n.Attr = kept
+}
+
+// setShownLink makes the href of a link exactly the url that the text shows. A
+// link whose whole url the text does not show loses its href, so no part of a
+// url goes out that the user cannot read.
+func setShownLink(n *xhtml.Node) {
+	url := normalizedURL(n)
+	if url == "" || url != linkURL(n) {
+		removeAttribute(n, "href")
+		return
+	}
+	for i := range n.Attr {
+		if n.Attr[i].Key == "href" {
+			n.Attr[i].Val = url
+		}
+	}
 }
 
 // removeAttribute removes the attributes with the given key.

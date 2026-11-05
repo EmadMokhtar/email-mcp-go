@@ -63,8 +63,9 @@ type system struct {
 	// returns when ctx ends (the first Ctrl-C), and then puts the terminal
 	// back as it was.
 	readPassword func(ctx context.Context) ([]byte, error)
-	// openBrowser opens url in the browser of the user.
-	openBrowser func(url string) error
+	// openBrowser opens target in the browser of the user. The target becomes an
+	// argument of a program, so it must never hold a secret.
+	openBrowser func(target string) error
 	// discover suggests mail server settings for an address (see
 	// discovery.Finder.Mail).
 	discover func(ctx context.Context, address string) ([]account.MailServer, error)
@@ -130,19 +131,20 @@ func readTerminalPassword(ctx context.Context, t terminalFuncs, fd int) ([]byte,
 	}
 }
 
-// openBrowser opens url in the default browser: "open" on macOS,
+// openBrowser opens target in the default browser: "open" on macOS,
 // "rundll32 url.dll,FileProtocolHandler" on Windows and "xdg-open" elsewhere.
-// The URL is one argument of the program, never a text for a shell. It does not
-// wait for the browser.
-func openBrowser(url string) error {
+// The target is one argument of the program, never a text for a shell. Other
+// users of the computer can read the arguments of a process, so a target must
+// never hold a secret (see writeSignInPage). It does not wait for the browser.
+func openBrowser(target string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url) //nolint:gosec // G204: a fixed program; the URL is one argument, not shell text
+		cmd = exec.Command("open", target) //nolint:gosec // G204: a fixed program; the target is one argument, not shell text
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url) //nolint:gosec // G204: a fixed program; the URL is one argument, not shell text
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", target) //nolint:gosec // G204: a fixed program; the target is one argument, not shell text
 	default:
-		cmd = exec.Command("xdg-open", url) //nolint:gosec // G204: a fixed program; the URL is one argument, not shell text
+		cmd = exec.Command("xdg-open", target) //nolint:gosec // G204: a fixed program; the target is one argument, not shell text
 	}
 	if err := cmd.Start(); err != nil {
 		return err
