@@ -104,3 +104,62 @@ func TestActivityLimitIsClamped(t *testing.T) {
 		require.Equal(t, rows, tableRows(t, body), query)
 	}
 }
+
+func TestActivityShowsTheArgumentsOfACall(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.record(audit.Entry{Kind: audit.KindCall, Account: a.ID, Client: "Claude", Tool: "search_messages",
+		Arguments: []byte("{\"subject\":\"<b>quarterly</b>ㅤ\"}")})
+
+	resp, body := p.get("/activity")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 1, tableRows(t, body))
+	text := visibleText(t, body)
+	require.Contains(t, text, "Request")
+	require.Contains(t, text, `{"subject":"<b>quarterly</b>"}`)
+	require.NotContains(t, body, "<b>quarterly</b>", "the arguments come from the agent, so they are escaped")
+	require.NotContains(t, body, "ㅤ", "hidden characters are removed")
+}
+
+func TestActivityNamesTheKindOfAnAction(t *testing.T) {
+	p := newPageFixture(t)
+	p.record(audit.Entry{Tool: "remove_account", Detail: "account_removed"})
+
+	_, body := p.get("/activity")
+
+	require.Contains(t, visibleText(t, body), "Action")
+	require.NotContains(t, body, "<details", "an action has no arguments to show")
+}
+
+// The kind is an exact match from a fixed list, like the other filters.
+func TestActivityFilterByKind(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.record(audit.Entry{Account: a.ID, Tool: "send_message", Count: 1})
+	p.record(audit.Entry{Kind: audit.KindCall, Account: a.ID, Tool: "send_message"})
+	p.record(audit.Entry{Kind: audit.KindCall, Account: a.ID, Tool: "get_message"})
+
+	cases := map[string]int{
+		"":                            3,
+		"?kind=call":                  2,
+		"?kind=action":                1,
+		"?kind=other":                 3,
+		"?kind=call&kind=action":      3,
+		"?kind=call&tool=get_message": 1,
+	}
+	for query, want := range cases {
+		resp, body := p.get("/activity" + query)
+		require.Equal(t, http.StatusOK, resp.StatusCode, query)
+		require.Equal(t, want, tableRows(t, body), query)
+	}
+}
+
+func TestActivityOffersTheKindFilter(t *testing.T) {
+	p := newPageFixture(t)
+
+	_, body := p.get("/activity?kind=call")
+
+	require.Contains(t, body, `<option value="call" selected>`)
+	require.Contains(t, body, `<option value="action">`)
+}

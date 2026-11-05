@@ -1,6 +1,7 @@
 {{/*
   The activity page: the audit log of the tenant, newest first (see
-  activity.go). Every text is written as text; the client name is not trusted.
+  activity.go). Every text is written as text; the client name and the
+  arguments are not trusted.
 */}}
 {{define "title"}}Activity · email-mcp{{end}}
 {{define "content"}}
@@ -23,6 +24,13 @@
 {{end}}</select></div>
 </div>
 <div class="control">
+<label class="label" for="kind">Type</label>
+<div class="select"><select id="kind" name="kind">
+<option value="">Requests and actions</option>
+{{range .Kinds}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
+{{end}}</select></div>
+</div>
+<div class="control">
 <label class="label" for="limit">Entries</label>
 <input class="input" id="limit" name="limit" value="{{.Limit}}" inputmode="numeric" size="6">
 </div>
@@ -35,10 +43,10 @@
 <div class="table-container">
 <table class="table is-fullwidth is-striped is-hoverable is-narrow">
 <thead>
-<tr><th class="is-narrow" scope="col">Time</th><th scope="col">Account</th><th scope="col">Client</th><th scope="col">Tool</th><th class="is-narrow" scope="col">Items</th><th scope="col">Outcome</th><th scope="col">Detail</th><th scope="col">Recipients</th></tr>
+<tr><th class="is-narrow" scope="col">Time</th><th scope="col">Type</th><th scope="col">Account</th><th scope="col">Client</th><th scope="col">Tool</th><th class="is-narrow" scope="col">Items</th><th scope="col">Outcome</th><th scope="col">Detail</th><th scope="col">Recipients</th><th scope="col">Arguments</th></tr>
 </thead>
 <tbody>
-{{range .Entries}}<tr><td class="is-narrow">{{.Time}}</td><td>{{.Account}}</td><td><code>{{.Client}}</code></td><td>{{.Tool}}</td><td class="is-narrow">{{.Count}}</td><td>{{.Outcome}}</td><td>{{.Detail}}</td><td>{{.Recipients}}</td></tr>
+{{range .Entries}}<tr><td class="is-narrow">{{.Time}}</td><td>{{.Kind}}</td><td>{{.Account}}</td><td><code>{{.Client}}</code></td><td>{{.Tool}}</td><td class="is-narrow">{{.Count}}</td><td>{{.Outcome}}</td><td>{{.Detail}}</td><td>{{.Recipients}}</td><td>{{if .Arguments}}<details><summary>Show</summary><pre class="activity-arguments">{{.Arguments}}</pre></details>{{end}}</td></tr>
 {{end}}
 </tbody>
 </table>

@@ -11,6 +11,8 @@
 //     panic, and turns an error into a tool result (see errors.go). A tool that
 //     is added with mcp.AddTool directly would run without a caller, so no code
 //     outside addTool may call mcp.AddTool.
+//   - Every tools/call request gets a call entry in the audit log (capture.go),
+//     with its arguments sealed and without message bodies and attachment data.
 //   - Text that third parties wrote is cleaned and marked untrusted (shape.go).
 //   - Nothing here logs a subject, an address, a name, a body, a token or the
 //     text of an error. The log gets the name of the tool and a fixed code.
@@ -59,6 +61,9 @@ type deps struct {
 	svc  *service.Service
 	opts Options
 	log  *slog.Logger
+	// tools are the names of the tools of the server. addTool fills it, and it
+	// does not change after New.
+	tools map[string]bool
 }
 
 // New returns an MCP server with the tools of this package.
@@ -73,7 +78,7 @@ func New(svc *service.Service, opts Options) *mcp.Server {
 	if opts.Principal == nil {
 		panic("mcpserver: New needs Options.Principal")
 	}
-	d := &deps{svc: svc, opts: opts, log: opts.Logger}
+	d := &deps{svc: svc, opts: opts, log: opts.Logger, tools: map[string]bool{}}
 	if d.log == nil {
 		d.log = slog.New(slog.DiscardHandler)
 	}
@@ -88,6 +93,7 @@ func New(svc *service.Service, opts Options) *mcp.Server {
 	})
 	registerReadTools(srv, d)
 	registerWriteTools(srv, d)
+	srv.AddReceivingMiddleware(d.capture)
 	return srv
 }
 
@@ -100,6 +106,9 @@ func New(svc *service.Service, opts Options) *mcp.Server {
 //  4. An error of the handler becomes a toolFailure (see toolError). The SDK
 //     turns that into a tool result with isError set and no structured content.
 //
+// It tells the caller and the code of a failure to the callTrace of the context,
+// for the call entry of the audit log (see capture.go).
+//
 // The log gets the name of the tool and a fixed code for a refused caller, a
 // panic, an unknown error, a timeout, a failed connection to the mail server and
 // a cancellation. For a panic it also gets the Go type of the panic value, and
@@ -111,9 +120,11 @@ func safe[In, Out any](d *deps, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFo
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (res *mcp.CallToolResult, out Out, err error) {
 		var zero Out
 		tool := toolName(req)
+		trace := traceFrom(ctx)
 		defer func() {
 			if r := recover(); r != nil {
 				d.log.Error("tool call failed", "tool", tool, "code", codePanic, "panic_type", fmt.Sprintf("%T", r))
+				trace.fail(codePanic)
 				res, out, err = nil, zero, errInternal
 			}
 		}()
@@ -123,14 +134,17 @@ func safe[In, Out any](d *deps, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFo
 		// with ErrNoPrincipal, but the handler must not run at all.
 		if perr != nil || p.Tenant == "" {
 			d.log.Warn("tool call refused", "tool", tool, "code", codeNotAuthorized)
+			trace.refuseCaller()
 			return nil, zero, errNotAuthorized
 		}
+		trace.setCaller(p)
 		ctx = service.WithPrincipal(ctx, p)
 
 		res, out, err = h(ctx, req, in)
 		if err != nil {
 			fail := toolError(tool, err)
 			d.logFailure(tool, fail, err)
+			trace.fail(fail.code)
 			return nil, zero, fail
 		}
 		return res, out, nil
@@ -139,7 +153,7 @@ func safe[In, Out any](d *deps, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFo
 
 // logFailure logs a failure that needs a log line, with the name of the tool and
 // the fixed code. Known refusals (a permission, a stale ref and so on) are not
-// logged: the agent gets their text, and the audit log has the write refusals.
+// logged: the agent gets their text, and the audit log has every one of them.
 func (d *deps) logFailure(tool string, fail *toolFailure, err error) {
 	switch fail.code {
 	case codeInternal:
@@ -157,6 +171,7 @@ func (d *deps) logFailure(tool string, fail *toolFailure, err error) {
 // TestEveryToolRunsThroughSafe calls every tool that the server lists and fails
 // for a tool that was added another way.
 func addTool[In, Out any](srv *mcp.Server, d *deps, tool *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
+	d.tools[tool.Name] = true
 	mcp.AddTool(srv, tool, safe(d, h))
 }
 

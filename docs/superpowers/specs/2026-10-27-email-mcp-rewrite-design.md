@@ -488,7 +488,7 @@ All defaults are **[my call]** and can be changed per account.
   - Graph: move to `deleteditems` only.
 - **Protected folders and labels:** see `tag_messages` and `move_messages`.
 - **Optional "new recipient check":** asks for confirmation when mailing or inviting an address the account has never sent to. Default off, because full autonomy means no confirmations. **[my call]**
-- **Activity log:** every tool call that changes anything.
+- **Activity log:** every tool call of an agent, with its arguments encrypted, and every action that changes anything.
 
 ### 7.7 Outbox and undo window
 
@@ -528,7 +528,7 @@ All defaults are **[my call]** and can be changed per account.
    - working hours per weekday (default Mon–Fri 09:00–17:00 in the system time zone);
    - which address book holds the VIP group, and the group's name (default "VIP").
 5. **Approvals:** pending actions, shown in full, with Approve and Reject buttons.
-6. **Activity:** the audit log, filterable by account, area, and tool.
+6. **Activity:** the audit log, filterable by account, area, tool, and type (agent request or action).
 7. **Connections** (local HTTP and M3): bearer tokens and OAuth-connected harnesses, with revoke.
 
 ### 8.2 How the user reaches it
@@ -613,13 +613,13 @@ Tables (a sketch; the exact columns are **[builder]**):
 | `account_secrets` | Account, kind (`password` / `refresh_token`), ciphertext, key version |
 | `pending_actions` | Confirmation and approval state (hashes, expiry, status) |
 | `outbox` | Encrypted outgoing message, `send_after`, status, error |
-| `audit_log` | Time, tenant, account, area, client name, tool, counts, encrypted recipient/attendee list, outcome |
+| `audit_log` | Time, kind (call or action), tenant, account, area, client name, tool, counts, encrypted recipient/attendee list, encrypted tool arguments (no bodies, no attachment data), outcome |
 | `web_sessions` | Hashed session IDs, expiry (local and hosted) |
 | `api_tokens` | Hashed local or personal tokens, scopes, expiry, last used |
 | `rate_counters` | Per-account counters for sends, trashes, contact reads |
 | M3 only | `identities`, `oauth_clients`, `oauth_codes`, `oauth_tokens` (hashed), `consents`, `recovery_codes` (hashed) |
 
-The server **does not store mail, event, or contact content.** The exceptions are the outbox (until sent) and recipient lists in the audit log (encrypted).
+The server **does not store mail, event, or contact content.** The exceptions are the outbox (until sent), and in the audit log the recipient lists and the tool arguments, such as search text and subjects (all encrypted). The audit log never holds a message body or attachment data.
 
 ### 9.2 Envelope encryption
 

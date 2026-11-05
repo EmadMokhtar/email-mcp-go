@@ -7,6 +7,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -213,14 +214,17 @@ func checkMode(mode ConfirmMode) error {
 
 // ---------------------------------------------------------------- audit
 
-// entry is what a write use case records in the audit log.
+// entry is what a use case records in the audit log, and what RecordToolCall
+// records for a tool call.
 type entry struct {
+	kind       audit.Kind // empty means audit.KindAction
 	tool       string
 	account    account.AccountID // empty for an entry that is not about one account
 	count      int
 	recipients []string
 	outcome    audit.Outcome
 	detail     string
+	arguments  json.RawMessage
 }
 
 // record writes an audit entry for the principal.
@@ -231,6 +235,7 @@ type entry struct {
 // nothing else, because the error could hold a value of the entry.
 func (s *Service) record(ctx context.Context, p Principal, e entry) {
 	ae := audit.Entry{
+		Kind:       e.kind,
 		Tenant:     p.Tenant,
 		Account:    e.account,
 		Client:     p.Client,
@@ -239,6 +244,7 @@ func (s *Service) record(ctx context.Context, p Principal, e entry) {
 		Recipients: e.recipients,
 		Outcome:    e.outcome,
 		Detail:     e.detail,
+		Arguments:  e.arguments,
 	}
 	if e.account != "" {
 		ae.Area = account.AreaMail
