@@ -222,6 +222,18 @@ func newPageFixture(t *testing.T) *pageFixture {
 	return p
 }
 
+// signInAgain signs the browser in at the time of the clock, for a test that
+// moves the clock past the end of the first session.
+func (p *pageFixture) signInAgain() {
+	p.t.Helper()
+	p.signIn(p.s, p.browser)
+	resp, body := p.get("/connections")
+	require.Equal(p.t, http.StatusOK, resp.StatusCode)
+	m := csrfPattern.FindStringSubmatch(body)
+	require.NotNil(p.t, m, "the connections page has a CSRF field")
+	p.csrf = m[1]
+}
+
 // get loads a page in the signed-in browser.
 func (p *pageFixture) get(path string) (*http.Response, string) {
 	p.t.Helper()

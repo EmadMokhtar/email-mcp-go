@@ -3,10 +3,16 @@ package store
 import (
 	"bytes"
 	"context"
+	"io/fs"
+	"strconv"
+	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 )
 
 // webHash returns a 32-byte hash made of one byte, so two fills give two
@@ -28,11 +34,14 @@ func TestWebSetupTokenBecomesSession(t *testing.T) {
 
 	session, err := s.WebSessionByHash(ctx, webHash(2))
 	require.NoError(t, err)
+	require.NotZero(t, session.ID)
 	require.Equal(t, &WebSessionRow{
-		Hash:      webHash(2),
-		Tenant:    tenant,
-		CreatedAt: testNow.Add(time.Minute),
-		ExpiresAt: sessionExpiry,
+		ID:         session.ID,
+		Hash:       webHash(2),
+		Tenant:     tenant,
+		CreatedAt:  testNow.Add(time.Minute),
+		ExpiresAt:  sessionExpiry,
+		LastSeenAt: testNow.Add(time.Minute),
 	}, session)
 
 	// The token works once. The second use finds nothing and makes no session.
@@ -127,7 +136,8 @@ func TestWebTableRules(t *testing.T) {
 	// The tables refuse rows that do not go through the methods, too.
 	inserts := []string{
 		`INSERT INTO web_setup_tokens (hash, tenant_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
-		`INSERT INTO web_sessions (hash, tenant_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO web_sessions (hash, tenant_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ` +
+			strconv.FormatInt(testNow.UnixMilli(), 10) + `)`,
 	}
 	for name, hash := range map[string]any{"short": webHash(5)[:31], "long": bytes.Repeat([]byte{5}, 33), "text": "abc"} {
 		for _, insert := range inserts {
@@ -135,10 +145,164 @@ func TestWebTableRules(t *testing.T) {
 			require.Error(t, err, "%s hash: %s", name, insert)
 		}
 	}
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO web_sessions (hash, tenant_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
-		webHash(2), string(tenant), testNow.UnixMilli(), expires.UnixMilli())
+	const insertSession = `INSERT INTO web_sessions (hash, tenant_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)`
+	_, err = s.db.ExecContext(ctx, insertSession,
+		webHash(2), string(tenant), testNow.UnixMilli(), expires.UnixMilli(), testNow.UnixMilli())
 	require.Error(t, err, "a session hash is unique")
+	_, err = s.db.ExecContext(ctx, insertSession,
+		webHash(7), string(tenant), testNow.UnixMilli(), expires.UnixMilli(), testNow.Add(-time.Second).UnixMilli())
+	require.Error(t, err, "a session is not seen before it was made")
+}
+
+// newWebSession makes a session of the tenant with this hash, made at at, valid
+// for 24 hours.
+func newWebSession(t *testing.T, s *Store, tenant account.TenantID, fill byte, at time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	token := webHash(fill + 100)
+	require.NoError(t, s.CreateWebSetupToken(ctx, tenant, token, at, at.Add(10*time.Minute)))
+	_, err := s.UseWebSetupToken(ctx, token, webHash(fill), at, at.Add(24*time.Hour))
+	require.NoError(t, err)
+}
+
+// otherTenant adds a second tenant.
+func otherTenant(t *testing.T, s *Store) account.TenantID {
+	t.Helper()
+	_, err := s.db.ExecContext(context.Background(), `INSERT INTO tenants (id, created_at) VALUES ('other', 0)`)
+	require.NoError(t, err)
+	return "other"
+}
+
+func TestTouchWebSession(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	other := otherTenant(t, s)
+	newWebSession(t, s, tenant, 1, testNow)
+
+	later := testNow.Add(time.Hour)
+	require.NoError(t, s.TouchWebSession(ctx, tenant, webHash(1), later))
+	row, err := s.WebSessionByHash(ctx, webHash(1))
+	require.NoError(t, err)
+	require.Equal(t, later, row.LastSeenAt)
+
+	require.NoError(t, s.TouchWebSession(ctx, tenant, webHash(1), testNow.Add(time.Minute)))
+	row, err = s.WebSessionByHash(ctx, webHash(1))
+	require.NoError(t, err)
+	require.Equal(t, later, row.LastSeenAt, "the time never moves back")
+
+	require.NoError(t, s.TouchWebSession(ctx, other, webHash(1), later.Add(time.Hour)))
+	row, err = s.WebSessionByHash(ctx, webHash(1))
+	require.NoError(t, err)
+	require.Equal(t, later, row.LastSeenAt, "another tenant cannot touch the session")
+
+	require.NoError(t, s.TouchWebSession(ctx, tenant, webHash(9), later), "a deleted session is not an error")
+}
+
+func TestListWebSessions(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	other := otherTenant(t, s)
+
+	newWebSession(t, s, tenant, 1, testNow)
+	newWebSession(t, s, tenant, 2, testNow.Add(time.Minute))
+	newWebSession(t, s, other, 3, testNow.Add(2*time.Minute))
+	newWebSession(t, s, tenant, 4, testNow.Add(-30*time.Hour))
+	require.NoError(t, s.TouchWebSession(ctx, tenant, webHash(1), testNow.Add(3*time.Minute)))
+
+	now := testNow.Add(10 * time.Minute)
+	got, err := s.ListWebSessions(ctx, tenant, now, testNow.Add(-time.Hour))
+	require.NoError(t, err)
+	require.Len(t, got, 2, "the session of the other tenant and the expired one are not listed")
+	require.Equal(t, testNow.Add(3*time.Minute), got[0].LastSeenAt, "the one last used comes first")
+	require.Equal(t, testNow.Add(time.Minute), got[1].CreatedAt)
+	for _, row := range got {
+		require.Empty(t, row.Hash, "the list never holds a hash")
+		require.Equal(t, tenant, row.Tenant)
+	}
+
+	got, err = s.ListWebSessions(ctx, tenant, now, testNow.Add(2*time.Minute))
+	require.NoError(t, err)
+	require.Len(t, got, 1, "a session not seen since the limit is idle")
+}
+
+func TestDeleteWebSessionByID(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	other := otherTenant(t, s)
+	newWebSession(t, s, tenant, 1, testNow)
+	row, err := s.WebSessionByHash(ctx, webHash(1))
+	require.NoError(t, err)
+
+	require.ErrorIs(t, s.DeleteWebSessionByID(ctx, other, row.ID), ErrNotFound, "another tenant cannot delete it")
+	_, err = s.WebSessionByHash(ctx, webHash(1))
+	require.NoError(t, err)
+
+	require.NoError(t, s.DeleteWebSessionByID(ctx, tenant, row.ID))
+	_, err = s.WebSessionByHash(ctx, webHash(1))
+	require.ErrorIs(t, err, ErrNotFound)
+	require.ErrorIs(t, s.DeleteWebSessionByID(ctx, tenant, row.ID), ErrNotFound)
+}
+
+func TestDeleteWebSessions(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	other := otherTenant(t, s)
+	newWebSession(t, s, tenant, 1, testNow)
+	newWebSession(t, s, tenant, 2, testNow)
+	newWebSession(t, s, other, 3, testNow)
+
+	n, err := s.DeleteWebSessions(ctx, tenant)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, n)
+	for _, fill := range []byte{1, 2} {
+		_, err = s.WebSessionByHash(ctx, webHash(fill))
+		require.ErrorIs(t, err, ErrNotFound)
+	}
+	_, err = s.WebSessionByHash(ctx, webHash(3))
+	require.NoError(t, err, "the session of the other tenant stays")
+
+	n, err = s.DeleteWebSessions(ctx, tenant)
+	require.NoError(t, err)
+	require.Zero(t, n)
+}
+
+// The migration signs every browser out: a session of the old program has a
+// long life and no idle limit, and its cookie went to every local port.
+func TestMigrationDeletesOldWebSessions(t *testing.T) {
+	ctx := context.Background()
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	require.NoError(t, err)
+	before := fstest.MapFS{}
+	all := fstest.MapFS{}
+	for _, e := range entries {
+		data, err := fs.ReadFile(migrationsFS, "migrations/"+e.Name())
+		require.NoError(t, err)
+		all[e.Name()] = &fstest.MapFile{Data: data}
+		if strings.Compare(e.Name(), "0012") < 0 {
+			before[e.Name()] = &fstest.MapFile{Data: data}
+		}
+	}
+	db := newRawDB(t)
+	require.NoError(t, migrate(ctx, db, before))
+	_, err = db.ExecContext(ctx, `INSERT INTO tenants (id, created_at) VALUES ('local', 0)`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `INSERT INTO web_sessions (hash, tenant_id, created_at, expires_at) VALUES (?, 'local', 1, 2)`,
+		webHash(1))
+	require.NoError(t, err)
+
+	require.NoError(t, migrate(ctx, db, all))
+
+	var rows int
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM web_sessions`).Scan(&rows))
+	require.Zero(t, rows)
 }
 
 func TestWebRowsDeletedWithTenant(t *testing.T) {

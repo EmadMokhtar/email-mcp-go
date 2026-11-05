@@ -16,15 +16,21 @@ const webHashSize = 32
 
 // WebSessionRow is one signed-in browser of the web interface. The store keeps
 // only the hash of the session id, never the id. The web package makes the ids
-// and the hashes. See migration 0008.
+// and the hashes. See migrations 0008 and 0012.
 type WebSessionRow struct {
-	// Hash is the SHA-256 of the session id, 32 bytes.
+	// ID is the number of the row. It is not a secret: the Connections page
+	// uses it to name one session. It is not the session id of the cookie.
+	ID int64
+	// Hash is the SHA-256 of the session id, 32 bytes. ListWebSessions leaves
+	// it empty.
 	Hash   []byte
 	Tenant account.TenantID
-	// CreatedAt and ExpiresAt are kept as whole milliseconds. The session is
-	// valid while the time is before ExpiresAt.
-	CreatedAt time.Time
-	ExpiresAt time.Time
+	// CreatedAt, ExpiresAt and LastSeenAt are kept as whole milliseconds. The
+	// session is valid while the time is before ExpiresAt, and the web package
+	// also refuses a session that was not seen for too long.
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+	LastSeenAt time.Time
 }
 
 // CreateWebSetupToken adds a setup token of the tenant, by its hash. In the
@@ -69,8 +75,8 @@ func (s *Store) CreateWebSetupToken(ctx context.Context, tenant account.TenantID
 //  2. If the token expired at now or before, it keeps the delete and returns
 //     ErrNotFound. No session is made.
 //  3. It deletes the sessions that expired at now or before.
-//  4. It adds a session of the token's tenant with sessionHash, made at now,
-//     valid until sessionExpiresAt.
+//  4. It adds a session of the token's tenant with sessionHash, made and last
+//     seen at now, valid until sessionExpiresAt.
 //
 // It returns the tenant of the new session. It returns ErrNotFound when no
 // token has the hash or the token expired. If any step fails, nothing changes,
@@ -118,8 +124,8 @@ func (s *Store) UseWebSetupToken(ctx context.Context, tokenHash, sessionHash []b
 		return "", fmt.Errorf("store: use web setup token: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO web_sessions (hash, tenant_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
-		sessionHash, string(tenant), now.UnixMilli(), sessionExpiresAt.UnixMilli()); err != nil {
+		`INSERT INTO web_sessions (hash, tenant_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)`,
+		sessionHash, string(tenant), now.UnixMilli(), sessionExpiresAt.UnixMilli(), now.UnixMilli()); err != nil {
 		return "", fmt.Errorf("store: use web setup token: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -136,12 +142,12 @@ func (s *Store) UseWebSetupToken(ctx context.Context, tokenHash, sessionHash []b
 // caller has only the cookie, and the row says which tenant it belongs to.
 func (s *Store) WebSessionByHash(ctx context.Context, hash []byte) (*WebSessionRow, error) {
 	var (
-		row              WebSessionRow
-		created, expires int64
+		row                    WebSessionRow
+		created, expires, seen int64
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT hash, tenant_id, created_at, expires_at FROM web_sessions WHERE hash = ?`, hash).
-		Scan(&row.Hash, &row.Tenant, &created, &expires)
+		`SELECT id, hash, tenant_id, created_at, expires_at, last_seen_at FROM web_sessions WHERE hash = ?`, hash).
+		Scan(&row.ID, &row.Hash, &row.Tenant, &created, &expires, &seen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -150,7 +156,55 @@ func (s *Store) WebSessionByHash(ctx context.Context, hash []byte) (*WebSessionR
 	}
 	row.CreatedAt = time.UnixMilli(created).UTC()
 	row.ExpiresAt = time.UnixMilli(expires).UTC()
+	row.LastSeenAt = time.UnixMilli(seen).UTC()
 	return &row, nil
+}
+
+// ListWebSessions returns the sessions of the tenant that still work: those
+// that expire after now and were last seen after idleSince. The session used
+// last comes first. The rows have no Hash, so a page cannot show it.
+func (s *Store) ListWebSessions(ctx context.Context, tenant account.TenantID, now, idleSince time.Time) ([]WebSessionRow, error) {
+	if err := validateID("tenant", string(tenant)); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, created_at, expires_at, last_seen_at FROM web_sessions
+		 WHERE tenant_id = ? AND expires_at > ? AND last_seen_at > ?
+		 ORDER BY last_seen_at DESC, id DESC`,
+		string(tenant), now.UnixMilli(), idleSince.UnixMilli())
+	if err != nil {
+		return nil, fmt.Errorf("store: list web sessions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var list []WebSessionRow
+	for rows.Next() {
+		var (
+			row                    WebSessionRow
+			created, expires, seen int64
+		)
+		if err := rows.Scan(&row.ID, &row.Tenant, &created, &expires, &seen); err != nil {
+			return nil, fmt.Errorf("store: list web sessions: %w", err)
+		}
+		row.CreatedAt = time.UnixMilli(created).UTC()
+		row.ExpiresAt = time.UnixMilli(expires).UTC()
+		row.LastSeenAt = time.UnixMilli(seen).UTC()
+		list = append(list, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list web sessions: %w", err)
+	}
+	return list, nil
+}
+
+// TouchWebSession records that the session of the tenant was used at seenAt.
+// The time never moves back. A session that no longer exists is not an error.
+func (s *Store) TouchWebSession(ctx context.Context, tenant account.TenantID, hash []byte, seenAt time.Time) error {
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE web_sessions SET last_seen_at = ? WHERE tenant_id = ? AND hash = ? AND last_seen_at < ?`,
+		seenAt.UnixMilli(), string(tenant), hash, seenAt.UnixMilli()); err != nil {
+		return fmt.Errorf("store: touch web session: %w", err)
+	}
+	return nil
 }
 
 // DeleteWebSession deletes the session with this hash. Deleting a session that
@@ -160,6 +214,37 @@ func (s *Store) DeleteWebSession(ctx context.Context, hash []byte) error {
 		return fmt.Errorf("store: delete web session: %w", err)
 	}
 	return nil
+}
+
+// DeleteWebSessionByID deletes one session of the tenant, by the number of its
+// row. It returns ErrNotFound when the tenant has no session with this number.
+func (s *Store) DeleteWebSessionByID(ctx context.Context, tenant account.TenantID, id int64) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM web_sessions WHERE tenant_id = ? AND id = ?`, string(tenant), id)
+	if err != nil {
+		return fmt.Errorf("store: delete web session: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: delete web session: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteWebSessions deletes every session of the tenant, and returns how many
+// there were. It signs every browser of the tenant out.
+func (s *Store) DeleteWebSessions(ctx context.Context, tenant account.TenantID) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM web_sessions WHERE tenant_id = ?`, string(tenant))
+	if err != nil {
+		return 0, fmt.Errorf("store: delete web sessions: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: delete web sessions: %w", err)
+	}
+	return n, nil
 }
 
 // checkWebRow checks the hash and the times of a new setup token or session.

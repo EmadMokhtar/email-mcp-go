@@ -6,9 +6,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,6 +36,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/imaptest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/smtptest"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/webtest"
 )
 
 // ---------------------------------------------------------------- helpers
@@ -1676,26 +1679,66 @@ func TestKeyRotateToTheKeychainAndBack(t *testing.T) {
 
 // ---------------------------------------------------------------- setup
 
-// setup prints the sign-in link and gives it to the browser as one argument. The
-// link works, and it never reaches the log. The command serves until it is
-// stopped. A browser that cannot be opened is only a note.
+// signInLink reads the sign-in page that setup gave to the browser, and returns
+// the link in it and the path of the page.
+func signInLink(target string) (link, path string, err error) {
+	u, err := url.Parse(target)
+	if err != nil {
+		return "", "", err
+	}
+	if u.Scheme != "file" {
+		return "", "", fmt.Errorf("the browser got a %q address, not a file", u.Scheme)
+	}
+	data, err := os.ReadFile(u.Path)
+	if err != nil {
+		return "", "", err
+	}
+	m := regexp.MustCompile(`http-equiv="refresh" content="0; url=([^"]+)"`).FindSubmatch(data)
+	if m == nil {
+		return "", "", errors.New("the page has no refresh")
+	}
+	return string(m[1]), u.Path, nil
+}
+
+// signInWith opens a sign-in link and returns the status of the page after it.
+func signInWith(link string) (int, error) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return 0, err
+	}
+	client := &http.Client{Jar: jar, Timeout: 10 * time.Second, Transport: webtest.Transport()}
+	resp, err := client.Get(link) //nolint:gosec // G107: the local link of the test
+	if err != nil {
+		return 0, err
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode, nil
+}
+
+// setup prints the sign-in link and gives the browser only the address of a
+// private file that holds it, so the token is never in the arguments of a
+// program. The link works, and it never reaches the log. The command serves
+// until it is stopped. A browser that cannot be opened is only a note, and the
+// file is gone.
 func TestSetupOpensTheBrowserAndNeverLogsTheLink(t *testing.T) {
 	dir, _ := newCLIEnv(t)
 	links := make(chan string, 1)
+	targets := make(chan string, 1)
 	pages := make(chan int, 1)
-	f := &fakeSystem{open: func(url string) error {
-		links <- url
-		jar, err := cookiejar.New(nil)
+	files := make(chan string, 1)
+	f := &fakeSystem{open: func(target string) error {
+		targets <- target
+		link, path, err := signInLink(target)
 		if err != nil {
 			return err
 		}
-		client := &http.Client{Jar: jar, Timeout: 10 * time.Second}
-		resp, err := client.Get(url) //nolint:gosec // G107: the local link of the test
+		files <- path
+		links <- link
+		status, err := signInWith(link)
 		if err != nil {
 			return err
 		}
-		_ = resp.Body.Close()
-		pages <- resp.StatusCode
+		pages <- status
 		return errors.New("no browser here")
 	}}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1712,7 +1755,9 @@ func TestSetupOpensTheBrowserAndNeverLogsTheLink(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("setup did not open the browser")
 	}
-	require.Regexp(t, regexp.MustCompile(`^http://127\.0\.0\.1:\d+/setup\?token=[A-Za-z0-9_-]+$`), link)
+	require.Regexp(t, regexp.MustCompile(`^http://email-mcp\.localhost:\d+/setup\?token=[A-Za-z0-9_-]+$`), link)
+	token := link[strings.Index(link, "token=")+len("token="):]
+	require.NotContains(t, <-targets, token, "the token is not in the arguments of a program")
 	require.Equal(t, http.StatusOK, <-pages, "the link signs the browser in")
 	require.Eventually(t, func() bool { return strings.Contains(errOut.String(), "could not open") }, 10*time.Second, 10*time.Millisecond)
 
@@ -1724,9 +1769,158 @@ func TestSetupOpensTheBrowserAndNeverLogsTheLink(t *testing.T) {
 		t.Fatal("setup did not stop")
 	}
 	require.Equal(t, 1, strings.Count(out.String(), link), "standard output shows the link once")
-	token := link[strings.Index(link, "token=")+len("token="):]
+	require.Regexp(t, regexp.MustCompile(`cannot find that address[^\n]*\nhttp://127\.0\.0\.1:\d+/setup\n`), out.String(),
+		"the help page comes after the link, and it has no token")
+	require.Less(t, strings.Index(out.String(), link), strings.Index(out.String(), "http://127.0.0.1"))
 	require.NotContains(t, errOut.String(), token, "the log never has the link")
 	require.NotContains(t, errOut.String(), "/setup?")
+	_, err := os.Stat(<-files)
+	require.ErrorIs(t, err, os.ErrNotExist, "the file with the token is gone")
+}
+
+// A browser that opens leaves the page in place only while setup runs.
+func TestSetupRemovesTheSignInPage(t *testing.T) {
+	dir, _ := newCLIEnv(t)
+	files := make(chan string, 1)
+	f := &fakeSystem{open: func(target string) error {
+		_, path, err := signInLink(target)
+		if err != nil {
+			return err
+		}
+		files <- path
+		return nil
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var out, errOut syncBuffer
+	done := make(chan int, 1)
+	go func() {
+		done <- runWith(ctx, f.system(), []string{"setup", "--data-dir", dir}, strings.NewReader(""), &out, &errOut)
+	}()
+	var path string
+	select {
+	case path = <-files:
+	case <-time.After(30 * time.Second):
+		t.Fatal("setup did not open the browser")
+	}
+	require.Eventually(t, func() bool { return strings.Contains(out.String(), "runs until") }, 10*time.Second, 10*time.Millisecond)
+	_, err := os.Stat(path)
+	require.NoError(t, err, "the browser has time to read the page")
+
+	cancel()
+	select {
+	case code := <-done:
+		require.Equal(t, exitOK, code, errOut.String())
+	case <-time.After(30 * time.Second):
+		t.Fatal("setup did not stop")
+	}
+	_, err = os.Stat(path)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+// The page is private, it says where to go, and the link in it is escaped.
+func TestWriteSignInPage(t *testing.T) {
+	const link = `http://email-mcp.localhost:1/setup?token=a&b="<`
+	target, remove, err := writeSignInPage(link)
+	require.NoError(t, err)
+	defer remove()
+
+	u, err := url.Parse(target)
+	require.NoError(t, err)
+	require.Equal(t, "file", u.Scheme)
+	data, err := os.ReadFile(u.Path)
+	require.NoError(t, err)
+	text := string(data)
+	require.NotContains(t, text, `b="<`, "the link is escaped")
+	require.Contains(t, text, html.EscapeString(link))
+	require.Contains(t, text, `<meta name="referrer" content="no-referrer">`)
+
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(u.Path)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "only this user can read the file")
+		parent, err := os.Stat(filepath.Dir(u.Path))
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o700), parent.Mode().Perm())
+	}
+
+	remove()
+	remove()
+	_, err = os.Stat(filepath.Dir(u.Path))
+	require.ErrorIs(t, err, os.ErrNotExist, "the private directory is gone too")
+}
+
+// Without a page, setup does not open the browser with the link. The user has
+// the printed link.
+func TestSetupWithoutASignInPageOpensNothing(t *testing.T) {
+	dir, _ := newCLIEnv(t)
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	t.Setenv("TEMP", filepath.Join(t.TempDir(), "missing"))
+	t.Setenv("TMP", filepath.Join(t.TempDir(), "missing"))
+	f := &fakeSystem{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var out, errOut syncBuffer
+	done := make(chan int, 1)
+	go func() {
+		done <- runWith(ctx, f.system(), []string{"setup", "--data-dir", dir}, strings.NewReader(""), &out, &errOut)
+	}()
+	require.Eventually(t, func() bool { return strings.Contains(out.String(), "runs until") }, 30*time.Second, 10*time.Millisecond)
+	cancel()
+	select {
+	case code := <-done:
+		require.Equal(t, exitOK, code, errOut.String())
+	case <-time.After(30 * time.Second):
+		t.Fatal("setup did not stop")
+	}
+	require.Contains(t, errOut.String(), "could not open")
+	require.Contains(t, out.String(), "/setup?token=", "the printed link is the way in")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	require.Empty(t, f.opened)
+}
+
+// "setup --revoke-sessions" signs every browser out and stops. It opens no
+// browser and starts no server.
+func TestSetupRevokesSessions(t *testing.T) {
+	dir, _ := newCLIEnv(t)
+	signedIn := make(chan error, 1)
+	f := &fakeSystem{open: func(target string) error {
+		link, _, err := signInLink(target)
+		if err == nil {
+			_, err = signInWith(link)
+		}
+		signedIn <- err
+		return nil
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var out, errOut syncBuffer
+	done := make(chan int, 1)
+	go func() {
+		done <- runWith(ctx, f.system(), []string{"setup", "--data-dir", dir}, strings.NewReader(""), &out, &errOut)
+	}()
+	select {
+	case err := <-signedIn:
+		require.NoError(t, err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("setup did not open the browser")
+	}
+	cancel()
+	require.Equal(t, exitOK, <-done, errOut.String())
+
+	quiet := &fakeSystem{}
+	r := runCLI(t, quiet, "", "setup", "--revoke-sessions", "--data-dir", dir)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	require.Contains(t, r.stdout, "Signed out 1 browser")
+	require.NotContains(t, r.stdout, "/setup")
+	quiet.mu.Lock()
+	require.Empty(t, quiet.opened)
+	quiet.mu.Unlock()
+
+	r = runCLI(t, quiet, "", "setup", "--revoke-sessions", "--data-dir", dir)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	require.Contains(t, r.stdout, "Signed out 0 browsers", "the first run deleted the session")
 }
 
 // Flags may come before and after the other arguments. After "--" every
