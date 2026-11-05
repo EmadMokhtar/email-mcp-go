@@ -12,10 +12,13 @@ package web
 // as Save. The link changes nothing, never ticks a box, and never skips the
 // warning: the user must still press the button.
 //
-// Turning off Confirm sends is the step that lets mail leave unchecked, with or
-// without Confirm deletes. That save needs the box "accept_autonomy_risk",
-// whose label is the warning of spec section 7.3. Every save that ends with both
-// switches off (full autonomy) needs the box again. The box always starts empty.
+// A save that lets mail leave unchecked needs the box "accept_autonomy_risk",
+// whose label is the warning of spec section 7.3. That is a save that turns off
+// Confirm sends, with or without Confirm deletes, and a save that raises the
+// level to Send or above while it is off. Every save that ends with both
+// switches off (full autonomy) needs the box again. service.NeedsRiskAcceptance
+// holds this rule. The box always starts empty. The form of a request has the
+// box too, when applying that level needs it.
 
 import (
 	"errors"
@@ -47,7 +50,7 @@ const autonomyWarning = "An email or a calendar invite can contain hidden instru
 // The fixed texts of the settings page.
 const (
 	msgNoAccount       = "This account was not found."
-	msgAutonomyNeeded  = "To turn off Confirm sends, or to keep both confirmations off, tick the box that accepts the risk."
+	msgAutonomyNeeded  = "To turn off Confirm sends, to let the agent send with it off, or to keep both confirmations off, tick the box that accepts the risk."
 	msgBadLevel        = "Choose a mail level from 0 to 5."
 	msgBadLimits       = "The limits are not valid. Each count must be a whole number from 0 to 1000000, and each undo window from 0 to 300 seconds."
 	msgRemoveConfirm   = "To remove the account, tick the box that confirms it."
@@ -75,9 +78,6 @@ type settingsPage struct {
 	Current        string
 	ConfirmSends   bool
 	ConfirmDeletes bool
-	// BothOff is true when the account has both confirmations off now, so
-	// every save needs the box that accepts the risk.
-	BothOff bool
 	// AutonomyWarning is the label of the box that accepts the risk.
 	AutonomyWarning string
 	// AcceptedAt is when the user last accepted the risk, or empty.
@@ -104,6 +104,9 @@ type levelRequest struct {
 	// AlreadySet is true when the account has this level, so there is nothing
 	// to apply.
 	AlreadySet bool
+	// NeedsAcceptance is true when applying the level needs the box that
+	// accepts the risk, so the form of the button shows it.
+	NeedsAcceptance bool
 	// SendsUnasked is true when the level lets the agent send and Confirm
 	// sends is off.
 	SendsUnasked bool
@@ -147,7 +150,7 @@ func (s *Server) handleAccountSettings(w http.ResponseWriter, r *http.Request) {
 // handleSaveAccountSettings saves the posted settings with
 // Service.UpdateSettings, and then redirects to the page. A refusal shows the
 // form again with the posted values and a fixed text, and changes nothing. The
-// box that accepts full autonomy is never ticked on the page that comes back.
+// box that accepts the risk is never ticked on the page that comes back.
 func (s *Server) handleSaveAccountSettings(w http.ResponseWriter, r *http.Request) {
 	svc, sess, ctx, ok := s.userCall(r)
 	if !ok {
@@ -190,14 +193,8 @@ func (s *Server) handleApplyRequestedLevel(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	page.Requested = levelRequestOf(level, a)
-	s.finishSave(w, r, a, page, svc.UpdateSettings(ctx, a.ID, service.SettingsUpdate{
-		MailLevel:          level,
-		ConfirmSends:       a.ConfirmSends,
-		ConfirmDeletes:     a.ConfirmDeletes,
-		AcceptAutonomyRisk: r.PostForm.Get("accept_autonomy_risk") == "1",
-		Limits:             a.Limits,
-		SaveSentCopy:       a.Mail != nil && a.Mail.SaveSentCopy,
-	}))
+	accepted := r.PostForm.Get("accept_autonomy_risk") == "1"
+	s.finishSave(w, r, a, page, svc.UpdateSettings(ctx, a.ID, levelUpdate(a, level, accepted)))
 }
 
 // finishSave answers a call of Service.UpdateSettings: a redirect to the page
@@ -286,7 +283,6 @@ func settingsOf(a *account.Account) settingsPage {
 		Current:         level.MailName(),
 		ConfirmSends:    a.ConfirmSends,
 		ConfirmDeletes:  a.ConfirmDeletes,
-		BothOff:         !a.ConfirmSends && !a.ConfirmDeletes,
 		AutonomyWarning: autonomyWarning,
 		RemoveWarning:   msgRemoveWarning,
 		Limits: limitFields{
@@ -320,12 +316,26 @@ func levelOptions(selected account.Level) []levelOption {
 // account.
 func levelRequestOf(level account.Level, a *account.Account) *levelRequest {
 	return &levelRequest{
-		Value:        int(level),
-		Name:         level.MailName(),
-		Allows:       levelAllows(level),
-		AlreadySet:   level == a.Level(account.AreaMail),
-		SendsUnasked: level >= account.MailSend && !a.ConfirmSends,
-		TrashUnasked: level >= account.MailDelete && !a.ConfirmDeletes,
+		Value:           int(level),
+		Name:            level.MailName(),
+		Allows:          levelAllows(level),
+		AlreadySet:      level == a.Level(account.AreaMail),
+		NeedsAcceptance: service.NeedsRiskAcceptance(a, levelUpdate(a, level, false)),
+		SendsUnasked:    level >= account.MailSend && !a.ConfirmSends,
+		TrashUnasked:    level >= account.MailDelete && !a.ConfirmDeletes,
+	}
+}
+
+// levelUpdate is a save that changes only the mail level. Everything else keeps
+// the value of the account.
+func levelUpdate(a *account.Account, level account.Level, accepted bool) service.SettingsUpdate {
+	return service.SettingsUpdate{
+		MailLevel:          level,
+		ConfirmSends:       a.ConfirmSends,
+		ConfirmDeletes:     a.ConfirmDeletes,
+		AcceptAutonomyRisk: accepted,
+		Limits:             a.Limits,
+		SaveSentCopy:       a.Mail != nil && a.Mail.SaveSentCopy,
 	}
 }
 
@@ -380,8 +390,7 @@ func parseLevel(text string) (account.Level, bool) {
 // readSettings reads the posted form. It returns the page with the posted
 // values (to show again after a refusal), the update for the service, and a
 // fixed text when a value is not valid. A box that is not ticked is not in the
-// form, so it is off. The box that accepts full autonomy is never ticked on the
-// page.
+// form, so it is off. The box that accepts the risk is never ticked on the page.
 func readSettings(form url.Values, a *account.Account) (settingsPage, service.SettingsUpdate, string) {
 	page := settingsOf(a)
 	page.ConfirmSends = form.Get("confirm_sends") == "1"

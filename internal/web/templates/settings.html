@@ -3,8 +3,9 @@
   agent, changes the permissions here.
 
   The box "accept_autonomy_risk" is never ticked by the page: the user ticks it
-  in each save that turns off Confirm sends, and in each save with both
-  confirmations off. Its label is the warning of spec section 7.3.
+  in each save that turns off Confirm sends, in each save that raises the level
+  to Send or above while it is off, and in each save with both confirmations
+  off. Its label is the warning of spec section 7.3.
 
   A level that a link asks for is never selected in the form, so a Save for
   another reason cannot raise it. It has its own form with one button, and
@@ -29,7 +30,7 @@
 <form method="post" action="/accounts/{{$page.ID}}/level">
 {{template "csrf_field" $csrf}}
 <input type="hidden" id="apply_mail_level" name="mail_level" value="{{.Value}}">
-{{if $page.BothOff}}<label class="check" for="apply_accept_autonomy_risk"><input type="checkbox" id="apply_accept_autonomy_risk" name="accept_autonomy_risk" value="1"> <span>{{$page.AutonomyWarning}}</span></label>{{end}}
+{{if .NeedsAcceptance}}<label class="check" for="apply_accept_autonomy_risk"><input type="checkbox" id="apply_accept_autonomy_risk" name="accept_autonomy_risk" value="1"> <span>{{$page.AutonomyWarning}}</span></label>{{end}}
 <button class="button primary" type="submit">Apply requested level {{.Value}}</button>
 </form>
 {{end}}
@@ -50,7 +51,7 @@
 <label class="check" for="confirm_sends"><input type="checkbox" id="confirm_sends" name="confirm_sends" value="1"{{if .ConfirmSends}} checked{{end}}> <span>Confirm sends: ask me before the agent sends a message</span></label>
 <fieldset class="notice warn">
 <legend>Turning off Confirm sends</legend>
-<p>With Confirm sends off, the agent sends mail without asking you. A save that turns it off needs this box. With both confirmations off, every save needs it.</p>
+<p>With Confirm sends off, the agent sends mail without asking you. A save that turns it off needs this box, and so does a save that raises the level to Send or above while it is off. With both confirmations off, every save needs it.</p>
 {{if .AcceptedAt}}<p>You last accepted this risk on {{.AcceptedAt}}.</p>{{end}}
 <label class="check" for="accept_autonomy_risk"><input type="checkbox" id="accept_autonomy_risk" name="accept_autonomy_risk" value="1"> <span>{{.AutonomyWarning}}</span></label>
 </fieldset>

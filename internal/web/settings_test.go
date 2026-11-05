@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/audit"
@@ -19,7 +20,7 @@ import (
 
 // The fixed texts of the settings page.
 const (
-	textAutonomyNeeded = "To turn off Confirm sends, or to keep both confirmations off, tick the box that accepts the risk."
+	textAutonomyNeeded = "To turn off Confirm sends, to let the agent send with it off, or to keep both confirmations off, tick the box that accepts the risk."
 	textRemoveWarning  = "Removing the account also deletes its messages that wait in the outbox and are not sent yet. They are never sent."
 	textRemoveConfirm  = "To remove the account, tick the box that confirms it."
 	textBadLevel       = "Choose a mail level from 0 to 5."
@@ -256,13 +257,18 @@ func requireApplyButton(t *testing.T, page string, a *account.Account, level str
 	require.NotNil(t, input, "the page has the button")
 	require.Equal(t, level, attr(input, "value"))
 	require.Equal(t, "hidden", attr(input, "type"))
-	form := input.Parent
-	for form != nil && form.DataAtom != atom.Form {
-		form = form.Parent
-	}
+	form := formOf(input)
 	require.NotNil(t, form)
 	require.Equal(t, levelPath(a), attr(form, "action"))
 	require.Equal(t, "post", attr(form, "method"))
+}
+
+// formOf returns the form that holds an element, or nil.
+func formOf(n *html.Node) *html.Node {
+	for n != nil && n.DataAtom != atom.Form {
+		n = n.Parent
+	}
+	return n
 }
 
 // The link of request_permission_change (chosen by the agent) only asks. It
@@ -456,6 +462,128 @@ func TestApplyRequestedLevelRefusesBadValues(t *testing.T) {
 	}
 	p.requireUnchanged(a)
 	require.Empty(t, p.entries())
+}
+
+// sendsOffAt saves the account at a level with only Confirm sends off.
+func (p *pageFixture) sendsOffAt(a *account.Account, level string) {
+	p.t.Helper()
+	resp, _ := p.post(settingsPath(a), settingsForm("mail_level", level, "confirm_sends", "", "accept_autonomy_risk", "1"))
+	require.Equal(p.t, http.StatusSeeOther, resp.StatusCode)
+}
+
+// Raising the level to Send with Confirm sends off starts unattended sends, so
+// Save needs the box.
+func TestSaveRaisingTheLevelWithSendsOffNeedsAcceptance(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.sendsOffAt(a, "3")
+	before, _ := p.reload(a)
+
+	resp, body := p.post(settingsPath(a), settingsForm("mail_level", "4", "confirm_sends", ""))
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), textAutonomyNeeded)
+	p.requireUnchanged(before)
+
+	p.clock.Set(t0.Add(time.Hour))
+	resp, _ = p.post(settingsPath(a), settingsForm("mail_level", "4", "confirm_sends", "", "accept_autonomy_risk", "1"))
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	got, _ := p.reload(a)
+	require.Equal(t, account.MailSend, got.Level(account.AreaMail))
+	require.Equal(t, t0.Add(time.Hour), *got.AutonomyAcceptedAt)
+}
+
+// The button follows the same rule. The box is beside the button, in the same
+// form, also on the page that comes back after a refusal, so the user can
+// always go on.
+func TestApplyRaisingTheLevelWithSendsOffNeedsAcceptance(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.sendsOffAt(a, "3")
+	before, _ := p.reload(a)
+	requireBoxBesideButton := func(page string) {
+		t.Helper()
+		requireApplyButton(t, page, a, "4")
+		box := element(t, page, atom.Input, "apply_accept_autonomy_risk")
+		require.NotNil(t, box, "the form of the button has the box")
+		require.False(t, hasAttr(box, "checked"), "the box is never ticked for the user")
+		require.Equal(t, "accept_autonomy_risk", attr(box, "name"))
+		require.Equal(t, levelPath(a), attr(formOf(box), "action"), "the box is in the form of the button")
+		require.Equal(t, autonomyText, labelFor(t, page, "apply_accept_autonomy_risk"))
+	}
+
+	_, body := p.get(settingsPath(a) + "?area=mail&level=4")
+	requireBoxBesideButton(body)
+	require.Contains(t, visibleText(t, body), "Confirm sends is off, so the agent will send mail without asking you.")
+
+	entries := len(p.entries())
+	resp, body := p.post(levelPath(a), url.Values{"mail_level": {"4"}})
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), textAutonomyNeeded)
+	requireBoxBesideButton(body)
+	p.requireUnchanged(before)
+	require.Len(t, p.entries(), entries, "a refusal writes no entry")
+
+	p.clock.Set(t0.Add(time.Hour))
+	resp, _ = p.post(levelPath(a), url.Values{"mail_level": {"4"}, "accept_autonomy_risk": {"1"}})
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	got, _ := p.reload(a)
+	require.Equal(t, account.MailSend, got.Level(account.AreaMail))
+	require.False(t, got.ConfirmSends)
+	require.True(t, got.ConfirmDeletes)
+	require.Equal(t, t0.Add(time.Hour), *got.AutonomyAcceptedAt)
+}
+
+// Below Send level the agent cannot send, so the button needs no box.
+func TestApplyBelowSendWithSendsOffNeedsNoBox(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.sendsOffAt(a, "1")
+	before, _ := p.reload(a)
+
+	_, body := p.get(settingsPath(a) + "?area=mail&level=3")
+	require.Nil(t, element(t, body, atom.Input, "apply_accept_autonomy_risk"))
+
+	p.clock.Set(t0.Add(time.Hour))
+	resp, _ := p.post(levelPath(a), url.Values{"mail_level": {"3"}})
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	got, _ := p.reload(a)
+	require.Equal(t, account.MailDraft, got.Level(account.AreaMail))
+	require.Equal(t, *before.AutonomyAcceptedAt, *got.AutonomyAcceptedAt)
+}
+
+// An account that already sends unattended gets no new prompt for a move from
+// Send to Delete.
+func TestApplyWhileUnattendedNeedsNoBox(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.sendsOffAt(a, "4")
+	before, _ := p.reload(a)
+
+	_, body := p.get(settingsPath(a) + "?area=mail&level=5")
+	require.Nil(t, element(t, body, atom.Input, "apply_accept_autonomy_risk"))
+
+	p.clock.Set(t0.Add(time.Hour))
+	resp, _ := p.post(levelPath(a), url.Values{"mail_level": {"5"}})
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	got, _ := p.reload(a)
+	require.Equal(t, account.MailDelete, got.Level(account.AreaMail))
+	require.Equal(t, *before.AutonomyAcceptedAt, *got.AutonomyAcceptedAt)
+}
+
+// Staying at Send level with Confirm sends off and changing a limit asks
+// nothing new.
+func TestSaveStayingUnattendedNeedsNoAcceptance(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.sendsOffAt(a, "4")
+	before, _ := p.reload(a)
+
+	p.clock.Set(t0.Add(time.Hour))
+	resp, _ := p.post(settingsPath(a), settingsForm("confirm_sends", "", "sends_per_hour", "3"))
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	got, _ := p.reload(a)
+	require.Equal(t, 3, got.Limits.SendsPerHour)
+	require.Equal(t, *before.AutonomyAcceptedAt, *got.AutonomyAcceptedAt)
 }
 
 func TestApplyRequestedLevelOfAnotherTenantIsNotFound(t *testing.T) {

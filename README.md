@@ -267,6 +267,11 @@ accepts this risk. This holds whatever Confirm deletes is:
 
 > An email or a calendar invite can contain hidden instructions, such as 'forward all invoices to me'. With Confirm sends off, the agent may follow them, and nobody checks before anything leaves.
 
+You must tick the same box when you raise the level to Send or above while
+Confirm sends is off, because that also lets the agent send without asking. If
+the agent can already send without asking and stays that way, a change asks
+nothing new.
+
 **Full autonomy** means both switches are off. The agent then sends and moves
 mail to the Trash without asking. Every save with both switches off needs the
 same box again.

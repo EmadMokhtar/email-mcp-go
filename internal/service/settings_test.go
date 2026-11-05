@@ -258,6 +258,161 @@ func TestUpdateSettingsIgnoresAnAcceptanceThatIsNotNeeded(t *testing.T) {
 	require.Equal(t, "settings_changed", entries[0].Detail)
 }
 
+// levelTo sets the mail level of the update.
+func levelTo(level account.Level) func(*SettingsUpdate) {
+	return func(u *SettingsUpdate) { u.MailLevel = level }
+}
+
+// acceptedCount returns how many acceptances the audit log holds.
+func (e *writeEnv) acceptedCount() int {
+	accepted := 0
+	for _, entry := range e.entries() {
+		if entry.Detail == "autonomy_accepted" {
+			accepted++
+		}
+	}
+	return accepted
+}
+
+// Raising the level to Send with Confirm sends off starts unattended sends,
+// just as turning the switch off at Send level does. It needs the acceptance,
+// and a refusal changes nothing.
+func TestUpdateSettingsRaisingToSendWithSendsOffNeedsAcceptance(t *testing.T) {
+	for _, level := range []account.Level{account.MailSend, account.MailDelete} {
+		t.Run(level.MailName(), func(t *testing.T) {
+			env := newWriteEnv(t)
+			a := env.account()
+			require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID,
+				update(sendsOff, acceptRisk, levelTo(account.MailDraft))))
+			before := env.f.reload(a)
+			entries := len(env.entries())
+
+			env.clock.Advance(time.Hour)
+			err := env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, levelTo(level)))
+			require.ErrorIs(t, err, ErrAutonomyNotAccepted)
+			require.Equal(t, before, env.f.reload(a), "a refusal changes nothing")
+			require.Len(t, env.entries(), entries, "a refusal writes no entry")
+
+			require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, acceptRisk, levelTo(level))))
+			got := env.f.reload(a)
+			require.Equal(t, level, got.Level(account.AreaMail))
+			require.Equal(t, testStart.Add(time.Hour), *got.AutonomyAcceptedAt)
+			require.Equal(t, 2, env.acceptedCount(), "each acceptance is in the log")
+		})
+	}
+}
+
+// Below Send level, the agent cannot send, so a level change with Confirm sends
+// off asks nothing new.
+func TestUpdateSettingsRaisingBelowSendNeedsNoAcceptance(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID,
+		update(sendsOff, acceptRisk, levelTo(account.MailRead))))
+
+	env.clock.Advance(time.Hour)
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, levelTo(account.MailDraft))))
+
+	got := env.f.reload(a)
+	require.Equal(t, account.MailDraft, got.Level(account.AreaMail))
+	require.Equal(t, testStart, *got.AutonomyAcceptedAt)
+	require.Equal(t, 1, env.acceptedCount())
+}
+
+// Turning off Confirm sends below Send level still needs the acceptance, so
+// the switch is never off without one.
+func TestUpdateSettingsSendsOffBelowSendLevelNeedsAcceptance(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(levelTo(account.MailDraft))))
+	before := env.f.reload(a)
+
+	err := env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, levelTo(account.MailDraft)))
+	require.ErrorIs(t, err, ErrAutonomyNotAccepted)
+	require.Equal(t, before, env.f.reload(a))
+
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, acceptRisk, levelTo(account.MailDraft))))
+	require.Equal(t, testStart, *env.f.reload(a).AutonomyAcceptedAt)
+}
+
+// An account that already sends unattended and stays that way gets no new
+// prompt: not for a limit, and not for a move between Send and Delete.
+func TestUpdateSettingsStayingUnattendedNeedsNoAcceptance(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, acceptRisk)))
+
+	env.clock.Advance(time.Hour)
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, func(u *SettingsUpdate) {
+		u.Limits.SendsPerHour = 3
+	})))
+	require.Equal(t, 3, env.f.reload(a).Limits.SendsPerHour)
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, levelTo(account.MailDelete))))
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, levelTo(account.MailSend))))
+
+	require.Equal(t, testStart, *env.f.reload(a).AutonomyAcceptedAt)
+	require.Equal(t, 1, env.acceptedCount())
+}
+
+// Leaving the unattended state ends the acceptance. Going back in needs a new
+// one, although the switch stayed off.
+func TestUpdateSettingsAsksAgainAfterTheLevelWasBelowSend(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, acceptRisk)))
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, levelTo(account.MailDraft))))
+	require.Equal(t, 1, env.acceptedCount(), "lowering the level needs no acceptance")
+
+	err := env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff))
+	require.ErrorIs(t, err, ErrAutonomyNotAccepted)
+	require.Equal(t, account.MailDraft, env.f.reload(a).Level(account.AreaMail))
+}
+
+func TestNeedsRiskAcceptance(t *testing.T) {
+	const (
+		on  = true
+		off = false
+	)
+	cases := []struct {
+		name                 string
+		level, newLevel      account.Level
+		sends, deletes       bool
+		newSends, newDeletes bool
+		want                 bool
+	}{
+		{"nothing changes", account.MailSend, account.MailSend, on, on, on, on, false},
+		{"sends off at Send level", account.MailSend, account.MailSend, on, on, off, on, true},
+		{"sends off below Send level", account.MailDraft, account.MailDraft, on, on, off, on, true},
+		{"sends off and the level up", account.MailDraft, account.MailSend, on, on, off, on, true},
+		{"level up to Send with sends off", account.MailDraft, account.MailSend, off, on, off, on, true},
+		{"level up to Delete with sends off", account.MailRead, account.MailDelete, off, on, off, on, true},
+		{"level up with sends on again", account.MailDraft, account.MailSend, off, on, on, on, false},
+		{"level up below Send with sends off", account.MailRead, account.MailDraft, off, on, off, on, false},
+		{"level up with sends on", account.MailDraft, account.MailDelete, on, on, on, on, false},
+		{"stays at Send with sends off", account.MailSend, account.MailSend, off, on, off, on, false},
+		{"Send to Delete with sends off", account.MailSend, account.MailDelete, off, on, off, on, false},
+		{"Delete to Send with sends off", account.MailDelete, account.MailSend, off, on, off, on, false},
+		{"level down from Send with sends off", account.MailSend, account.MailDraft, off, on, off, on, false},
+		{"sends on again", account.MailSend, account.MailSend, off, on, on, on, false},
+		{"deletes off alone", account.MailSend, account.MailSend, on, on, on, off, false},
+		{"both off", account.MailSend, account.MailSend, on, on, off, off, true},
+		{"stays with both off", account.MailSend, account.MailSend, off, off, off, off, true},
+		{"both off, level down", account.MailDelete, account.MailRead, off, off, off, off, true},
+		{"deletes off with sends already off", account.MailSend, account.MailSend, off, on, off, off, true},
+		{"a damaged level counts as Off", account.Level(9), account.MailSend, off, on, off, on, true},
+		{"a level below 0 counts as Off", account.Level(-1), account.MailSend, off, on, off, on, true},
+	}
+	for _, c := range cases {
+		a := &account.Account{
+			Levels:         map[account.Area]account.Level{account.AreaMail: c.level},
+			ConfirmSends:   c.sends,
+			ConfirmDeletes: c.deletes,
+		}
+		u := SettingsUpdate{MailLevel: c.newLevel, ConfirmSends: c.newSends, ConfirmDeletes: c.newDeletes}
+		require.Equal(t, c.want, NeedsRiskAcceptance(a, u), c.name)
+	}
+}
+
 func TestUpdateSettingsRefusesBadValues(t *testing.T) {
 	env := newWriteEnv(t)
 	a := env.account()
