@@ -26,6 +26,17 @@ func (r recipients) envelope() []string {
 	return out
 }
 
+// names returns the display names of all recipients, in the order of envelope.
+func (r recipients) names() []string {
+	out := make([]string, 0, len(r.to)+len(r.cc)+len(r.bcc))
+	for _, list := range [][]*netmail.Address{r.to, r.cc, r.bcc} {
+		for _, a := range list {
+			out = append(out, a.Name)
+		}
+	}
+	return out
+}
+
 func (r recipients) empty() bool {
 	return len(r.to)+len(r.cc)+len(r.bcc) == 0
 }

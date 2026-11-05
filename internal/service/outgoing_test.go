@@ -333,6 +333,246 @@ func TestAChangeThatThePreviewDoesNotShowIsAChangedMessage(t *testing.T) {
 		require.NoError(t, err, "a new Message-ID and a new boundary change nothing")
 	})
 
+	t.Run("the bytes of a forwarded attachment", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := forwardWithAttachments(env.backend, "plan.pdf")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+		require.NoError(t, err)
+		env.backend.attachments["2"].Data = []byte("PDF")
+		_, _, err = env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, accept(needs))
+
+		require.ErrorIs(t, err, confirm.ErrPayloadChanged)
+		require.Empty(t, env.sender.sent())
+	})
+
+	t.Run("a display name, after the part that is shown", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		long := strings.Repeat("n", 150)
+		env.backend.nextOriginal = func(_ mail.Ref, call int) *mail.Message {
+			o := original()
+			o.From.Name = long
+			if call > 1 {
+				o.From.Name = long[:149] + "m"
+			}
+			return o
+		}
+		c := mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Body: "Yes."}
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+		require.NoError(t, err)
+		_, _, err = env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, accept(needs))
+
+		require.ErrorIs(t, err, confirm.ErrPayloadChanged)
+		require.Empty(t, env.sender.sent())
+	})
+
 	require.False(t, samePreview(confirm.Preview{BodyHash: "a"}, confirm.Preview{BodyHash: "b"}))
 	require.False(t, samePreview(confirm.Preview{}, confirm.Preview{BodyHash: "b"}), "a stored preview without a hash does not match")
+}
+
+// The preview names an attachment by the name that goes out. A cleaned name of
+// the original is the same in both places.
+func TestForwardedAttachmentNameInThePreviewIsTheNameThatIsSent(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	c := forwardWithAttachments(env.backend,
+		"\U00000645\U000006CC\U0000200C\U00000631.pdf", // Persian with ZWNJ
+		"a\U0000200Cb.pdf", // ZWNJ between Latin letters
+		"two\U00002028lines.pdf",
+		"plan"+spaceWithNoWidth+tagLetterA+".pdf",
+		spaceWithNoWidth, // nothing is left of this name
+	)
+
+	_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+	require.NoError(t, err)
+	_, _, err = env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, accept(needs))
+	require.NoError(t, err)
+
+	var sent []string
+	for _, att := range sentParts(t, env.sender.sent()[0].Msg.Data).Attachments {
+		sent = append(sent, att.Filename)
+	}
+	require.Equal(t, []string{
+		"\U00000645\U000006CC\U0000200C\U00000631.pdf", "ab.pdf", "two lines.pdf", "plan.pdf", "attachment", "own.txt",
+	}, sent)
+	require.Equal(t, sent, needs.Pending.Preview.Attachments)
+}
+
+// A draft with HTML sends its text part too, so the count holds the hidden
+// characters of both parts.
+func TestDraftCountsTheHiddenCharactersOfBothParts(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	raw := draftWithHTML(`<p>Hello` + strings.Repeat(spaceWithNoWidth, 2) + `</p>`)
+	raw = bytes.Replace(raw, []byte("Harmless"), []byte("Harm"+strings.Repeat(tagLetterA, 5)+"less"), 1)
+	env.backend.addMessage("d1", raw, true)
+	draft := mail.Ref("d1")
+
+	_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "Hello", needs.Pending.Preview.BodyStart)
+	require.Equal(t, 7, needs.Pending.Preview.BodyMore)
+}
+
+// The detail page shows the whole text with its white space, so only what it
+// cannot show is counted there.
+func TestPendingDetailCountsWhatItCannotShow(t *testing.T) {
+	t.Run("a draft with hidden characters", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		raw := strings.Replace(string(draftMail("me@example.com")), "Draft body", "Draft"+strings.Repeat(spaceWithNoWidth, 3)+" body", 1)
+		env.backend.addMessage("d1", []byte(raw), true)
+		draft := mail.Ref("d1")
+		res, _, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmFallback, nil)
+		require.NoError(t, err)
+
+		_, detail, err := env.svc.PendingDetail(env.webCtx(), res.SendID)
+
+		require.NoError(t, err)
+		require.Equal(t, "… and 3 more characters not shown", detail.MoreChars)
+	})
+
+	t.Run("padding is on the page", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := mail.Compose{To: []string{"bob@example.com"}, Subject: "S", Body: "a" + strings.Repeat(" ", 50) + "b"}
+		res, _, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmFallback, nil)
+		require.NoError(t, err)
+
+		p, detail, err := env.svc.PendingDetail(env.webCtx(), res.SendID)
+
+		require.NoError(t, err)
+		require.Equal(t, 49, p.Preview.BodyMore)
+		require.Empty(t, detail.MoreChars)
+		require.Contains(t, detail.Body, strings.Repeat(" ", 50))
+	})
+}
+
+func TestSendRefusesHTMLWithNothingToShow(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	c := mail.Compose{To: []string{"bob@example.com"}, Subject: "S", HTMLBody: `<img src="https://example.com/logo.png">`}
+
+	_, _, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+	require.ErrorIs(t, err, mime.ErrEmptyHTML)
+	require.True(t, isMessageError(err))
+	env.requireNothingQueued()
+	requireEntry(t, env.lastEntry(), "send_message", audit.OutcomeRefused, "invalid_request")
+}
+
+func TestPreviewShowsTheDisplayNames(t *testing.T) {
+	t.Run("in to, cc and bcc", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := mail.Compose{
+			To:      []string{"Bob Smith <bob@example.com>", "ann@example.com"},
+			Cc:      []string{"Carol <carol@example.com>"},
+			Bcc:     []string{`"Dan, the boss" <dan@example.com>`},
+			Subject: "S", Body: "hi",
+		}
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		p := needs.Pending.Preview
+		require.Equal(t, []string{"bob@example.com", "ann@example.com", "carol@example.com", "dan@example.com"}, p.To)
+		require.Equal(t, []string{"Bob Smith", "", "Carol", "Dan, the boss"}, p.Names)
+		require.Zero(t, p.NamesMore)
+		require.Equal(t, []string{
+			`bob@example.com ("Bob Smith")`, "ann@example.com", `carol@example.com ("Carol")`, `dan@example.com ("Dan, the boss")`,
+		}, p.Recipients())
+	})
+
+	t.Run("no names means no list", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := compose("bob@example.com")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Nil(t, needs.Pending.Preview.Names)
+		require.Equal(t, []string{"bob@example.com"}, needs.Pending.Preview.Recipients())
+	})
+
+	t.Run("a long name is cut and counted", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := mail.Compose{
+			To:      []string{strings.Repeat("n", 130) + " <bob@example.com>", strings.Repeat("m", 110) + " <ann@example.com>"},
+			Subject: "S", Body: "hi",
+		}
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		p := needs.Pending.Preview
+		require.Equal(t, []string{strings.Repeat("n", 100) + "...", strings.Repeat("m", 100) + "..."}, p.Names)
+		require.Equal(t, 40, p.NamesMore)
+		require.Equal(t, "… and 40 more characters of display names not shown", p.MoreNamesText())
+	})
+
+	t.Run("a reply to all shows the names of the original, cleaned", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		o := original()
+		o.From.Name = "Ali" + spaceWithNoWidth + "ce"
+		o.To = []mail.Address{{Name: strings.Repeat("d", 120), Email: "dan@example.com"}, {Email: "me@example.com"}}
+		env.backend.originals["o1"] = o
+		c := mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1", All: true}, Body: "Yes."}
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		p := needs.Pending.Preview
+		require.Equal(t, []string{"alice@example.com", "dan@example.com", "erin@example.com"}, p.To)
+		require.Equal(t, []string{"Alice", strings.Repeat("d", 100) + "...", ""}, p.Names)
+		require.Equal(t, 20, p.NamesMore)
+	})
+
+	t.Run("a draft shows the names of its headers", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		raw := strings.Replace(string(draftMail("me@example.com")), "Bcc: hidden@example.com", "Bcc: Hid"+spaceWithNoWidth+"den <hidden@example.com>", 1)
+		env.backend.addMessage("d1", []byte(raw), true)
+		draft := mail.Ref("d1")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Equal(t, []string{"Ann", "Hidden"}, needs.Pending.Preview.Names)
+		require.Equal(t, 1, needs.Pending.Preview.NamesMore, "the hidden character is counted")
+	})
+
+	t.Run("the detail page shows them too", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		c := mail.Compose{To: []string{"Bob <bob@example.com>", strings.Repeat("n", 105) + " <ann@example.com>"}, Subject: "S", Body: "hi"}
+		res, _, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmFallback, nil)
+		require.NoError(t, err)
+
+		_, detail, err := env.svc.PendingDetail(env.webCtx(), res.SendID)
+
+		require.NoError(t, err)
+		require.Equal(t, []string{`bob@example.com ("Bob")`, `ann@example.com ("` + strings.Repeat("n", 100) + `...")`}, detail.Recipients)
+		require.Equal(t, "… and 5 more characters of display names not shown", detail.MoreNames)
+	})
+}
+
+func TestSamePreviewComparesTheDisplayNames(t *testing.T) {
+	named := func(to []string, names ...string) confirm.Preview { return confirm.Preview{To: to, Names: names} }
+	both := []string{"a@example.com", "b@example.com"}
+
+	require.True(t, samePreview(named(both, "Ann", "Bob"), named(both, "Ann", "Bob")))
+	require.False(t, samePreview(named(both, "Ann", "Bob"), named(both, "Ann", "Eve")))
+	require.False(t, samePreview(named(both, "Ann", ""), named(both, "", "Ann")), "the name of another recipient")
+	require.False(t, samePreview(named(both, "Ann", "Bob"), confirm.Preview{To: both}))
+	require.True(t, samePreview(named(both, "Ann", "Bob"), named([]string{"B@example.com", "a@example.com"}, "Bob", "Ann")),
+		"recipients are compared without case and order")
+	require.False(t, samePreview(confirm.Preview{NamesMore: 1}, confirm.Preview{NamesMore: 2}))
 }

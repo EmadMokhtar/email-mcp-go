@@ -209,6 +209,9 @@ type RawMessage struct {
 	// Recipients are the envelope recipient addresses. They include Cc and Bcc
 	// recipients.
 	Recipients []string
+	// Names are the display names of Recipients, by position. A recipient with
+	// no display name has "". It is for a confirmation: delivery does not use it.
+	Names []string
 	// Data is the message in RFC 5322 format (the internet message format).
 	Data []byte
 }

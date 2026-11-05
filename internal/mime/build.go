@@ -52,6 +52,10 @@ var (
 	// see the character, and it would still go out. Such a value is refused and
 	// not cleaned, because the caller must know that its text is not sent.
 	ErrHiddenText = errors.New("mime: text has a character that a reader cannot see")
+	// ErrEmptyHTML means that nothing is left of the HTML body after the parts
+	// that a reader cannot see, and those that cannot go out, were removed. The
+	// caller gave content, so an empty message would lose it with no word.
+	ErrEmptyHTML = errors.New("mime: nothing is left of the html body")
 )
 
 // BuildContext is what Build needs besides the Compose request.
@@ -91,8 +95,9 @@ type BuildContext struct {
 // What goes out is what a preview can show. So the subject, the plain text body
 // and the display names of Compose are refused with ErrHiddenText when they
 // have a character that CleanUntrusted removes. The HTML body is rewritten (see
-// outgoingHTML), and the text part is made from the result. A body in Compose
-// is not used when Compose has HTML: a message has one text.
+// outgoingHTML), and the text part is made from the result. Build returns
+// ErrEmptyHTML when nothing is left of it. A body in Compose is not used when
+// Compose has HTML: a message has one text.
 //
 // Values that come from the original message are not checked but cleaned,
 // because a third party wrote them and they must not stop a reply. Each run
@@ -178,7 +183,7 @@ func Build(c mail.Compose, bc BuildContext) (*mail.RawMessage, error) {
 	if err := m.write(&buf); err != nil {
 		return nil, fmt.Errorf("mime: write message: %w", err)
 	}
-	return &mail.RawMessage{From: from.Address, Recipients: rcpt.envelope(), Data: buf.Bytes()}, nil
+	return &mail.RawMessage{From: from.Address, Recipients: rcpt.envelope(), Names: rcpt.names(), Data: buf.Bytes()}, nil
 }
 
 // lineBreaks are the characters that a header value must not have: CR, LF

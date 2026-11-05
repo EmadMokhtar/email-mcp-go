@@ -1158,6 +1158,29 @@ func TestPreviewText(t *testing.T) {
 	require.Equal(t, 500, utf8.RuneCountInString(body), "at most 500 characters of the body")
 }
 
+// A recipient has its display name next to the address, in quotes, so a name
+// cannot pose as another address. A line says how much of the names is left out.
+func TestPreviewTextShowsTheDisplayNames(t *testing.T) {
+	got := sendPreview(confirm.Preview{
+		From:  "me@example.com",
+		To:    []string{"a@example.com", "b@example.com", "c@example.com"},
+		Names: []string{"Ann", "", "c@corp.example\", d\n@corp.example"},
+		// The text of the names is cut by the service.
+		NamesMore: 25,
+		Subject:   "Lunch",
+		BodyStart: "Hello",
+	})
+
+	lines := strings.Split(got, "\n")
+	require.Equal(t, `To (every recipient, Bcc included): a@example.com ("Ann"), b@example.com, c@example.com ("c@corp.example', d @corp.example")`, lines[1])
+	require.Equal(t, "… and 25 more characters of display names not shown", lines[2])
+	require.Equal(t, "Subject: Lunch", lines[3])
+	requireNoHiddenText(t, sendPreview(confirm.Preview{To: []string{"a@example.com"}, Names: []string{"An" + zwsp + "n" + rlo}}))
+
+	plain := sendPreview(confirm.Preview{To: []string{"a@example.com"}, Subject: "Lunch"})
+	require.Equal(t, "Subject: Lunch", strings.Split(plain, "\n")[2], "no line when nothing is left out")
+}
+
 // The line that says how much of the body is left out counts what the preview
 // left out (BodyMore) and what the form cuts.
 func TestPreviewTextSaysWhenTheBodyGoesOn(t *testing.T) {
@@ -1293,7 +1316,9 @@ func TestWriteToolErrorMapping(t *testing.T) {
 		{"a hidden character in a file name", "send_message", fmt.Errorf("%w: attachment file name", mime.ErrInvalidFilename),
 			"bad_message", []string{"file name", "U+202E"}, nil, endNoRepeat},
 		{"a hidden character in the text", "send_message", fmt.Errorf("%w: subject", mime.ErrHiddenText),
-			"bad_message", []string{"cannot see", "Remove it"}, nil, endNoRepeat},
+			"bad_message", []string{"cannot see", "direction mark", "Remove it"}, nil, endNoRepeat},
+		{"html with nothing to show", "send_message", mime.ErrEmptyHTML, "bad_message",
+			[]string{"HTML body", "nothing"}, nil, endNoRepeat},
 		{"body and html body", "send_message", service.ErrBodyAndHTML, "body_and_html", []string{"body or html_body"}, nil, endNoRepeat},
 		{"an address that cannot be shown", "send_message", service.ErrHiddenAddress, "hidden_address",
 			[]string{"address", "hidden", "nothing was sent"}, nil, endNoRepeat},

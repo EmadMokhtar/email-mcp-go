@@ -204,10 +204,13 @@ func linkRequest(message, link string) *mcp.CallToolResult {
 // longer than the preview, a last line says how many characters are not shown
 // (confirm.Preview.MoreCharsText), so the person knows that the text goes on.
 // The recipients are the whole envelope, so the label says that Bcc is in the
-// list, as the web page does: other recipients do not see those addresses.
+// list, as the web page does: other recipients do not see those addresses. Each
+// recipient has its display name next to the address (confirm.Preview.Recipients).
+// When the preview cut a name, a line says how much it left out.
 //
 //	Send this email from <from>?
-//	To (every recipient, Bcc included): <to, comma-separated>
+//	To (every recipient, Bcc included): <address ("name"), comma-separated>
+//	… and <n> more characters of display names not shown
 //	Subject: <subject>
 //	Attachments: <n> (<name>, ... and <n> more) | Attachments: none
 //
@@ -216,8 +219,12 @@ func linkRequest(message, link string) *mcp.CallToolResult {
 //	… and <n> more characters not shown
 func sendPreview(p confirm.Preview) string {
 	to := make([]string, 0, len(p.To))
-	for _, addr := range p.To {
-		to = append(to, oneLine(addr))
+	for _, recipient := range p.Recipients() {
+		to = append(to, oneLine(recipient))
+	}
+	recipients := strings.Join(to, ", ")
+	if more := p.MoreNamesText(); more != "" {
+		recipients += "\n" + more
 	}
 	body := clean(p.BodyStart)
 	shown := firstChars(body, previewBodyChars)
@@ -228,7 +235,7 @@ func sendPreview(p confirm.Preview) string {
 		shown += "\n" + more
 	}
 	return fmt.Sprintf("Send this email from %s?\nTo (every recipient, Bcc included): %s\nSubject: %s\nAttachments: %s\n\nBody:\n%s",
-		oneLine(p.From), strings.Join(to, ", "), cut(oneLine(p.Subject), previewSubjectChars),
+		oneLine(p.From), recipients, cut(oneLine(p.Subject), previewSubjectChars),
 		attachmentList(p.Attachments), shown)
 }
 

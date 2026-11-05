@@ -382,7 +382,7 @@ func isMessageError(err error) bool {
 	for _, target := range []error{
 		mime.ErrInvalidAddress, mime.ErrNoRecipients, mime.ErrHeaderInjection, mime.ErrNoOriginal,
 		mime.ErrReplyAndForward, mime.ErrInvalidContentType, mime.ErrHTMLTooComplex, mime.ErrInvalidFilename,
-		mime.ErrHiddenText,
+		mime.ErrHiddenText, mime.ErrEmptyHTML,
 	} {
 		if errors.Is(err, target) {
 			return true

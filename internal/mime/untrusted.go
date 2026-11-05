@@ -25,13 +25,14 @@ import (
 //   - Turns "\r\n" and a lone "\r" into "\n".
 //   - Removes every character of the Unicode category Cf (format characters),
 //     except the zero width non-joiner (U+200C) and the zero width joiner
-//     (U+200D), which the last rule handles. Cf holds, among others, the zero
-//     width space, the direction marks, the bidi embeddings, overrides and
-//     isolates, the word joiner and invisible operators, the soft hyphen, the
-//     Arabic letter mark, the Mongolian vowel separator, the interlinear
-//     annotation marks, the byte order mark, the tag characters and the
-//     musical, shorthand and hieroglyph format controls. The table is the one
-//     of the Go version that builds the program.
+//     (U+200D), which the last rule handles, and the few that a reader sees
+//     (see isVisibleFormatRune). Cf holds, among others, the zero width space,
+//     the direction marks, the bidi embeddings, overrides and isolates, the
+//     word joiner and invisible operators, the soft hyphen, the Arabic letter
+//     mark, the Mongolian vowel separator, the interlinear annotation marks, the
+//     byte order mark, the tag characters and the musical, shorthand and
+//     hieroglyph format controls. The table is the one of the Go version that
+//     builds the program.
 //   - Removes these characters, which are not Cf but cannot be seen or are
 //     used to hide text: all of U+E0000 to U+E0FFF (the tag block, the
 //     variation selectors supplement U+E0100 to U+E01EF, which is used to hide
@@ -61,8 +62,16 @@ func CleanUntrusted(s string) string {
 // line breaks that it rewrites do not count, and neither do bytes that are not
 // valid UTF-8: they become U+FFFD, which a reader sees.
 func HiddenRunes(s string) int {
+	_, hidden := CleanAndCount(s)
+	return hidden
+}
+
+// CleanAndCount returns CleanUntrusted(s) and HiddenRunes(s), with one pass over
+// the text.
+func CleanAndCount(s string) (clean string, hidden int) {
 	s = normalizeText(s)
-	return utf8.RuneCountInString(s) - utf8.RuneCountInString(removeHidden(s))
+	clean = removeHidden(s)
+	return clean, utf8.RuneCountInString(s) - utf8.RuneCountInString(clean)
 }
 
 // normalizeText returns s as valid UTF-8 with each line break written as "\n".
@@ -107,7 +116,7 @@ func nextShown(s string) rune {
 // joiner the answer depends on the text around it (see keepsJoiner).
 func isHiddenRune(r rune) bool {
 	switch {
-	case r == '\n' || r == '\t' || isJoiner(r):
+	case r == '\n' || r == '\t' || isJoiner(r) || isVisibleFormatRune(r):
 		return false
 	case isFormatRune(r) || unicode.IsControl(r):
 		return true
@@ -214,6 +223,23 @@ func isEmojiBase(r rune) bool {
 // isKeycapBase reports whether r can start a keycap sequence.
 func isKeycapBase(r rune) bool {
 	return (r >= '0' && r <= '9') || r == '#' || r == '*'
+}
+
+// isVisibleFormatRune reports whether r is a format character (Cf) that a reader
+// sees: it draws a sign around the digits that follow it. These are the Arabic
+// number signs (U+0600 to U+0605), the Arabic end of ayah (U+06DD), the Syriac
+// abbreviation mark (U+070F), the Arabic pound and piastre marks above (U+0890,
+// U+0891), the Arabic disputed end of ayah (U+08E2), and the Kaithi number signs
+// (U+110BD, U+110CD). The direction marks are not among them: LRM, RLM and ALM
+// draw nothing.
+func isVisibleFormatRune(r rune) bool {
+	switch {
+	case r >= 0x0600 && r <= 0x0605:
+		return true
+	case r == 0x06DD, r == 0x070F, r == 0x0890, r == 0x0891, r == 0x08E2, r == 0x110BD, r == 0x110CD:
+		return true
+	}
+	return false
 }
 
 // isFormatRune reports whether r is in the Unicode category Cf (format

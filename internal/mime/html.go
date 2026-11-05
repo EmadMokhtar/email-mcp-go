@@ -514,15 +514,26 @@ func tidyLines(s string) string {
 // maxShownURL is the longest url that is shown, in characters.
 const maxShownURL = 2048
 
-// linkURL returns the url to show for an a element, or "" when none is shown.
+// linkURL returns the url that the text shows for an a element, or "" when it
+// shows none. A url that is longer than maxShownURL is not shown.
+func linkURL(n *xhtml.Node) string {
+	shown := normalizedURL(n)
+	if len(shown) > maxShownURL {
+		return ""
+	}
+	return shown
+}
+
+// normalizedURL returns the whole url of an a element in one form, or "" when
+// the element has no url that may be shown.
 //
 // The href is parsed. If it does not parse, or its scheme is not http, https
-// or mailto, nothing is shown. What is shown is the parsed url written out
-// again, with every character that is not safe in one word written as %XX.
-// That includes spaces and round brackets. Without this, a sender could write
-// an href that ends the url early and goes on with a sentence that looks like
-// text of the mail. A url that is longer than maxShownURL is not shown.
-func linkURL(n *xhtml.Node) string {
+// or mailto, the result is "". The form is the parsed url written out again,
+// with every character that is not safe in one word written as %XX. That
+// includes spaces and round brackets. Without this, a sender could write an
+// href that ends the url early and goes on with a sentence that looks like text
+// of the mail.
+func normalizedURL(n *xhtml.Node) string {
 	href, ok := attributeValue(n, "href")
 	if !ok {
 		return ""
@@ -547,11 +558,7 @@ func linkURL(n *xhtml.Node) string {
 	default:
 		return "" // includes a relative url, which has no meaning in a mail
 	}
-	shown := escapeURL(u.String())
-	if len(shown) > maxShownURL {
-		return ""
-	}
-	return shown
+	return escapeURL(u.String())
 }
 
 // escapeURL writes every byte of a url that is not safe in one word as %XX.

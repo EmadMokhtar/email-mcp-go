@@ -23,15 +23,22 @@ type SendDetail struct {
 	// From is the envelope sender.
 	From string
 	// Recipients are the envelope recipients: To, Cc and Bcc, and the people
-	// that a reply to all adds.
+	// that a reply to all adds, each with its display name (see
+	// confirm.Preview.Recipients).
 	Recipients []string
-	Subject    string
+	// MoreNames says how much of the display names Recipients leaves out, or is
+	// empty.
+	MoreNames string
+	Subject   string
 	// Attachments are the file names of the attachments, in the order of the
 	// message.
 	Attachments []string
 	// Body is the whole text that the recipient sees: the text of the HTML
 	// when the message has HTML.
 	Body string
+	// MoreChars says how many hidden characters of the message Body leaves out,
+	// or is empty. White space is not counted: the page shows all of it.
+	MoreChars string
 }
 
 // PendingApprovals returns the actions of the tenant of the principal that wait
@@ -143,10 +150,12 @@ func detailOf(built *builtSend) *SendDetail {
 	msg := built.msg
 	return &SendDetail{
 		From:        mime.CleanUntrusted(msg.From),
-		Recipients:  cleanAll(msg.Recipients),
+		Recipients:  cleanAll(built.preview.Recipients()),
+		MoreNames:   built.preview.MoreNamesText(),
 		Subject:     previewSubject(msg.Data),
 		Attachments: cleanAll(built.content.attachments),
 		Body:        mime.CleanUntrusted(built.content.body),
+		MoreChars:   confirm.Preview{BodyMore: built.content.hidden}.MoreCharsText(),
 	}
 }
 
@@ -156,6 +165,7 @@ func cleanPreview(p confirm.Preview) confirm.Preview {
 	p.Account = mime.CleanUntrusted(p.Account)
 	p.From = mime.CleanUntrusted(p.From)
 	p.To = cleanAll(p.To)
+	p.Names = cleanAll(p.Names)
 	p.Subject = mime.CleanUntrusted(p.Subject)
 	p.BodyStart = mime.CleanUntrusted(p.BodyStart)
 	p.Attachments = cleanAll(p.Attachments)

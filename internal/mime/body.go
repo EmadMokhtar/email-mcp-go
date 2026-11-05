@@ -34,25 +34,30 @@ type bodies struct {
 //
 // The HTML of Compose comes from the caller. If it is too complex to clean or
 // to make text of (see ErrHTMLTooComplex), the error wraps that error. The HTML
-// of the original does not stop a forward: see newForwarded.
+// of the original does not stop a forward: see newForwarded. When nothing is
+// left of HTML that had content, composeBodies returns ErrEmptyHTML.
 func composeBodies(c mail.Compose, original *mail.Message) (bodies, error) {
 	if err := checkVisible("body", c.Body); err != nil {
 		return bodies{}, err
 	}
 	b := bodies{text: c.Body}
 	if c.HTMLBody != "" {
-		var err error
-		if b.html, err = outgoingHTML(c.HTMLBody); err != nil {
+		html, err := outgoingHTML(c.HTMLBody)
+		if err != nil {
 			return bodies{}, fmt.Errorf("mime: html body: %w", err)
 		}
-		b.text = ""
+		if html == "" && strings.TrimSpace(c.HTMLBody) != "" {
+			return bodies{}, ErrEmptyHTML
+		}
+		b = bodies{html: html}
 	}
 	if c.ForwardOf != nil {
-		// The text and the HTML of the forward are added apart from the HTML of
-		// the caller, so an element that is not closed cannot swallow them.
+		// The block of the forward is added after the HTML of the caller was
+		// cleaned, so an element that is not closed cannot swallow it.
 		f := newForwarded(original)
-		b.text += f.plain()
-		if b.html != "" {
+		if b.html == "" {
+			b.text += f.plain()
+		} else {
 			b.html += f.html()
 		}
 	}
@@ -165,19 +170,35 @@ type attachment struct {
 	data      []byte
 }
 
-// collectAttachments returns the attachments of the message: the original
-// ones for a forward that asks for them, then the new ones. It returns
-// mail.ErrTooLarge when the data is over MaxAttachmentBytes in all. The file
-// name of an original attachment comes from a third party, so it is cleaned
-// (see cleanOriginal). The file name of a new attachment is checked.
-func collectAttachments(c mail.Compose, bc BuildContext) ([]attachment, error) {
-	var in []mail.OutgoingAttachment
+// OutgoingAttachments returns the attachments that Build writes for a message,
+// with the file names that go out: the original ones for a forward that asks for
+// them, then the new ones. The file name of an original attachment comes from a
+// third party, so it is cleaned (see cleanOriginalName). A file name that is
+// empty, also after the cleaning, is "attachment".
+//
+// Build uses this list, and a preview must use it too, so it shows the names
+// that are sent. It does not check them: see newAttachment.
+func OutgoingAttachments(c mail.Compose, bc BuildContext) []mail.OutgoingAttachment {
+	var out []mail.OutgoingAttachment
 	if c.ForwardOf != nil && c.IncludeOriginalAttachments {
 		for _, a := range bc.OriginalAttachments {
-			in = append(in, mail.OutgoingAttachment{Filename: cleanOriginalName(a.Filename), ContentType: a.ContentType, Data: a.Data})
+			out = append(out, mail.OutgoingAttachment{Filename: cleanOriginalName(a.Filename), ContentType: a.ContentType, Data: a.Data})
 		}
 	}
-	in = append(in, c.Attachments...)
+	out = append(out, c.Attachments...)
+	for i := range out {
+		if out[i].Filename == "" {
+			out[i].Filename = "attachment"
+		}
+	}
+	return out
+}
+
+// collectAttachments returns the checked attachments of the message (see
+// OutgoingAttachments). It returns mail.ErrTooLarge when the data is over
+// MaxAttachmentBytes in all.
+func collectAttachments(c mail.Compose, bc BuildContext) ([]attachment, error) {
+	in := OutgoingAttachments(c, bc)
 
 	total := 0
 	for _, a := range in {
@@ -198,48 +219,41 @@ func collectAttachments(c mail.Compose, bc BuildContext) ([]attachment, error) {
 	return out, nil
 }
 
-// hidesText reports whether r is a character that hides or reorders text in a
-// file name: a format character (Cf) or a line or paragraph separator (Zl, Zp).
-func hidesText(r rune) bool {
-	return unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+// isLineSeparator reports whether r is a line or paragraph separator (Zl, Zp).
+func isLineSeparator(r rune) bool {
+	return unicode.In(r, unicode.Zl, unicode.Zp)
 }
 
 // cleanOriginalName cleans the file name of an attachment of the original
-// message, which a third party wrote. It removes the format characters, turns a
-// line or paragraph separator into a space, and then does what cleanOriginal
-// does. The result passes the checks of newAttachment.
+// message, which a third party wrote. It turns a line or paragraph separator
+// into a space, and then does what cleanOriginal does. The result passes the
+// checks of newAttachment.
 func cleanOriginalName(s string) string {
-	s = strings.Map(func(r rune) rune {
-		switch {
-		case unicode.In(r, unicode.Zl, unicode.Zp):
+	return cleanOriginal(strings.Map(func(r rune) rune {
+		if isLineSeparator(r) {
 			return ' '
-		case hidesText(r):
-			return -1
 		}
 		return r
-	}, s)
-	return cleanOriginal(s)
+	}, s))
 }
 
 // newAttachment checks the file name and the content type. An empty content
-// type is found from the data. An empty file name becomes "attachment". A file
-// name with a character that hides or reorders text, or that CleanUntrusted
-// removes, is refused with ErrInvalidFilename: a preview shows cleaned names.
+// type is found from the data. A file name with a line or paragraph separator,
+// or with a character that CleanUntrusted removes, is refused with
+// ErrInvalidFilename: a character that hides or reorders text could make a name
+// look like another one.
 //
 // The content type must be one type with a slash and parameters that are
 // valid, it must not be multipart (the writer would treat the data as parts),
 // and its charset, if any, must be UTF-8 or US-ASCII, because the writer
-// refuses any other.
+// refuses any other. Of the parameters only the charset goes out: no preview
+// shows a content type, so a value in it would leave unseen.
 func newAttachment(a mail.OutgoingAttachment) (attachment, error) {
 	if err := checkValue("attachment file name", a.Filename); err != nil {
 		return attachment{}, err
 	}
-	if strings.IndexFunc(a.Filename, hidesText) >= 0 || HiddenRunes(a.Filename) > 0 {
+	if strings.ContainsFunc(a.Filename, isLineSeparator) || HiddenRunes(a.Filename) > 0 {
 		return attachment{}, ErrInvalidFilename
-	}
-	filename := a.Filename
-	if filename == "" {
-		filename = "attachment"
 	}
 
 	contentType := a.ContentType
@@ -253,12 +267,17 @@ func newAttachment(a mail.OutgoingAttachment) (attachment, error) {
 	if err != nil || !strings.Contains(mediaType, "/") || strings.HasPrefix(mediaType, "multipart/") {
 		return attachment{}, ErrInvalidContentType
 	}
-	switch strings.ToLower(params["charset"]) {
+	charset := strings.ToLower(params["charset"])
+	switch charset {
 	case "", "us-ascii", "utf-8":
 	default:
 		return attachment{}, ErrInvalidContentType
 	}
-	return attachment{filename: filename, mediaType: mediaType, params: params, data: a.Data}, nil
+	kept := map[string]string{}
+	if charset != "" {
+		kept["charset"] = charset
+	}
+	return attachment{filename: a.Filename, mediaType: mediaType, params: kept, data: a.Data}, nil
 }
 
 // write writes the attachment as a part of a multipart/mixed message. The

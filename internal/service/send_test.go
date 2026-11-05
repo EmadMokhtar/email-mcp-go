@@ -105,6 +105,7 @@ func TestSendInBandNeedsConfirmationThenSends(t *testing.T) {
 		Account:   "me@example.com",
 		From:      "me@example.com",
 		To:        []string{"bob@example.com"},
+		Names:     []string{"Bob"},
 		Subject:   "Plans",
 		BodyHash:  needs.Pending.Preview.BodyHash,
 		BodyStart: "See you at noon.",

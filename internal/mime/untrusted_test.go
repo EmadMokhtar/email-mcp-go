@@ -44,6 +44,9 @@ func isRemovedRune(r rune) bool {
 		return true
 	case r == 0x200C, r == 0x200D: // ZWNJ and ZWJ are kept
 		return false
+	case r >= 0x0600 && r <= 0x0605, r == 0x06DD, r == 0x070F, r == 0x0890, r == 0x0891,
+		r == 0x08E2, r == 0x110BD, r == 0x110CD: // format characters that a reader sees
+		return false
 	case unicode.Is(unicode.Cf, r): // every other format character
 		return true
 	}
@@ -180,6 +183,32 @@ func TestCleanUntrustedRemovesTheJoinersThatChangeNothing(t *testing.T) {
 	}
 }
 
+// A few format characters draw a sign, such as the Arabic number sign or the end
+// of an ayah. They stay, because a reader sees them. The direction marks are
+// format characters that nobody sees, so they go, also in Arabic text.
+func TestCleanUntrustedKeepsFormatCharactersThatAreSeen(t *testing.T) {
+	for _, r := range []rune{
+		0x0600, 0x0601, 0x0602, 0x0603, 0x0604, 0x0605, 0x06DD, 0x070F, 0x0890, 0x0891, 0x08E2, 0x110BD, 0x110CD,
+	} {
+		require.True(t, unicode.Is(unicode.Cf, r), "U+%04X", r)
+		in := string(r) + "\U00000661"
+		require.Equal(t, in, CleanUntrusted(in), "U+%04X", r)
+		require.Zero(t, HiddenRunes(in), "U+%04X", r)
+	}
+	for name, r := range map[string]rune{"LRM": 0x200E, "RLM": 0x200F, "ALM": 0x061C} {
+		require.Equal(t, "\U00000628\U00000628", CleanUntrusted("\U00000628"+string(r)+"\U00000628"), name)
+		require.Equal(t, 1, HiddenRunes(string(r)), name)
+	}
+}
+
+func TestCleanAndCountIsCleanUntrustedAndHiddenRunes(t *testing.T) {
+	for _, in := range []string{"", "plain\r\ntext", "a\U0000200Bb\U000E0041\xff", "\U00000628\U0000200C\U0000200C\U00000628"} {
+		clean, hidden := CleanAndCount(in)
+		require.Equal(t, CleanUntrusted(in), clean, "%q", in)
+		require.Equal(t, HiddenRunes(in), hidden, "%q", in)
+	}
+}
+
 func TestHiddenRunes(t *testing.T) {
 	require.Zero(t, HiddenRunes(""))
 	require.Zero(t, HiddenRunes("plain text\r\nwith\rlines\n\tand a tab"), "a line break is not hidden")
@@ -253,9 +282,6 @@ func TestCleanUntrustedRemovesEveryFormatCharacter(t *testing.T) {
 		{"shorthand format letter overlap (Cf)", 0x1BCA0},
 		{"shorthand format up step (Cf)", 0x1BCA3},
 		{"Egyptian hieroglyph vertical joiner (Cf)", 0x13430},
-		{"Arabic number sign (Cf)", 0x0600},
-		{"Arabic end of ayah (Cf)", 0x06DD},
-		{"Syriac abbreviation mark (Cf)", 0x070F},
 		{"language tag (Cf)", 0xE0001},
 		{"Mongolian free variation selector one", 0x180B},
 		{"Mongolian free variation selector three", 0x180D},
@@ -274,7 +300,7 @@ func TestCleanUntrustedRemovesEveryFormatCharacter(t *testing.T) {
 	}
 	// Every Cf code point that Go knows.
 	for r := rune(0); r <= unicode.MaxRune; r++ {
-		if !unicode.Is(unicode.Cf, r) || r == 0x200C || r == 0x200D {
+		if !unicode.Is(unicode.Cf, r) || !isRemovedRune(r) {
 			continue
 		}
 		require.Equal(t, "ab", CleanUntrusted("a"+string(r)+"b"), "U+%04X", r)
