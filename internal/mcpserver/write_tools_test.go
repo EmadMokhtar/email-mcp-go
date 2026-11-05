@@ -1104,17 +1104,21 @@ func TestCanElicitInBand(t *testing.T) {
 		caps    map[string]any
 		legacy  bool
 		want    bool
+		caller  *service.Principal
 	}{
-		{"new protocol with form", "2026-07-28", form, false, true},
-		{"new protocol with an empty elicitation", "2026-07-28", empty, false, true},
-		{"new protocol with only url", "2026-07-28", urlOnly, false, false},
-		{"new protocol without elicitation", "2026-07-28", none, false, false},
-		{"new protocol without capabilities", "2026-07-28", nil, false, false},
-		{"older protocol with form", "2025-11-25", form, false, false},
-		{"older protocol with form on stdio", "2025-11-25", form, true, true},
-		{"oldest protocol with an empty elicitation on stdio", "2025-06-18", empty, true, true},
-		{"older protocol without elicitation on stdio", "2025-11-25", none, true, false},
-		{"no version", "", form, false, false},
+		{"new protocol with form", "2026-07-28", form, false, true, nil},
+		{"new protocol with an empty elicitation", "2026-07-28", empty, false, true, nil},
+		{"new protocol with only url", "2026-07-28", urlOnly, false, false, nil},
+		{"new protocol without elicitation", "2026-07-28", none, false, false, nil},
+		{"new protocol without capabilities", "2026-07-28", nil, false, false, nil},
+		{"older protocol with form", "2025-11-25", form, false, false, nil},
+		{"older protocol with form on stdio", "2025-11-25", form, true, true, nil},
+		{"oldest protocol with an empty elicitation on stdio", "2025-06-18", empty, true, true, nil},
+		{"older protocol without elicitation on stdio", "2025-11-25", none, true, false, nil},
+		{"no version", "", form, false, false, nil},
+		{"a caller without the flag", "2026-07-28", form, false, false, &service.Principal{Tenant: "t1"}},
+		{"a caller without the flag on stdio", "2025-11-25", form, true, false, &service.Principal{Tenant: "t1"}},
+		{"no caller", "2026-07-28", form, false, false, &service.Principal{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1127,7 +1131,13 @@ func TestCanElicitInBand(t *testing.T) {
 			}
 			req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Meta: meta, Name: "send_message"}}
 
-			require.Equal(t, tc.want, canElicitInBand(req, Options{InBandLegacyElicitation: tc.legacy}))
+			caller := service.Principal{Tenant: "t1", InBandConfirm: true}
+			if tc.caller != nil {
+				caller = *tc.caller
+			}
+			ctx := service.WithPrincipal(context.Background(), caller)
+
+			require.Equal(t, tc.want, canElicitInBand(ctx, req, Options{InBandLegacyElicitation: tc.legacy}))
 		})
 	}
 }

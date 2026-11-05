@@ -145,3 +145,78 @@ func TestRevokeAPITokenNeverBeforeCreation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, testNow, got.RevokedAt)
 }
+
+func TestAPITokenLimitsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+
+	row := testTokenRow(tenant, "tok1", 1)
+	row.InBandConfirm = true
+	row.ExpiresAt = testNow.Add(time.Hour)
+	require.NoError(t, s.CreateAPIToken(ctx, row))
+
+	got, err := s.APITokenByHash(ctx, row.Hash)
+	require.NoError(t, err)
+	require.Equal(t, row, got)
+}
+
+// A row from before migration 0013 cannot confirm in band and has no end date.
+func TestAPITokenDefaults(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	hash := bytes.Repeat([]byte{1}, 32)
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO api_tokens (tenant_id, id, name, hash, scopes, created_at) VALUES (?, 'tok1', 'old', ?, '["email:send"]', ?)`,
+		string(tenant), hash, testNow.UnixMilli())
+	require.NoError(t, err)
+
+	got, err := s.APITokenByHash(ctx, hash)
+
+	require.NoError(t, err)
+	require.False(t, got.InBandConfirm)
+	require.True(t, got.ExpiresAt.IsZero())
+	require.True(t, got.LastUsedAt.IsZero())
+}
+
+func TestAPITokenEndMustFollowTheStart(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+
+	row := testTokenRow(tenant, "tok1", 1)
+	row.ExpiresAt = testNow
+
+	require.Error(t, s.CreateAPIToken(ctx, row))
+}
+
+func TestNoteAPITokenUse(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+	row := testTokenRow(tenant, "tok1", 1)
+	require.NoError(t, s.CreateAPIToken(ctx, row))
+	lastUse := func() time.Time {
+		got, err := s.APITokenByHash(ctx, row.Hash)
+		require.NoError(t, err)
+		return got.LastUsedAt
+	}
+
+	require.NoError(t, s.NoteAPITokenUse(ctx, tenant, "tok1", testNow, time.Minute))
+	require.Equal(t, testNow, lastUse())
+
+	require.NoError(t, s.NoteAPITokenUse(ctx, tenant, "tok1", testNow.Add(59*time.Second), time.Minute))
+	require.Equal(t, testNow, lastUse(), "inside the gap nothing changes")
+
+	require.NoError(t, s.NoteAPITokenUse(ctx, tenant, "tok1", testNow.Add(time.Minute), time.Minute))
+	require.Equal(t, testNow.Add(time.Minute), lastUse())
+
+	require.NoError(t, s.NoteAPITokenUse(ctx, "other", "tok1", testNow.Add(time.Hour), time.Minute))
+	require.Equal(t, testNow.Add(time.Minute), lastUse(), "another tenant changes nothing")
+	require.NoError(t, s.NoteAPITokenUse(ctx, tenant, "nope", testNow, time.Minute), "no such token is no error")
+}

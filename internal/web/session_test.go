@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
+	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 )
 
@@ -300,7 +301,7 @@ func sessionIDs(body string) []string {
 // and never shows a hash or a cookie. The button signs one browser out.
 func TestConnectionsPageListsAndRevokesSessions(t *testing.T) {
 	p := newPageFixture(t)
-	_, err := p.tokens.Create(context.Background(), p.tenant, "laptop", policy.Scopes{"email:read"})
+	_, err := p.tokens.Create(context.Background(), p.tenant, "laptop", policy.Scopes{"email:read"}, service.TokenOptions{})
 	require.NoError(t, err)
 	other := newBrowser(t)
 	otherCookie := p.signIn(p.s, other)

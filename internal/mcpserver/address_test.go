@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -293,4 +294,40 @@ func TestSendPreviewShowsTheASCIIFormTheNameTheWarningAndTheType(t *testing.T) {
 	require.Equal(t, "… and 7 more characters of display names not shown", lines[3])
 	require.Equal(t, "Subject: Plans", lines[4])
 	require.Equal(t, "Attachments: 1 (plan.pdf (application/pdf))", lines[5])
+}
+
+// get_message keeps the fields of every fix that touches its shape: PR 36 (the
+// other version of the body and the text left out), PR 38 (hidden content) and
+// PR 34 (the addresses in plain form only). The fields of the server stand
+// outside the Untrusted wrapper.
+func TestMessageOutKeepsTheFieldsOfEveryFix(t *testing.T) {
+	data, err := json.Marshal(MessageOut{})
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &fields))
+
+	for _, name := range []string{
+		"alternatives_differ", "text_left_out",
+		"hidden_content_suspected", "hidden_parts_dropped",
+		"invalid_address", "truncated_recipients",
+		"from_email", "to_emails", "cc_emails", "reply_to_emails", "untrusted",
+	} {
+		require.Contains(t, fields, name)
+	}
+	var untrusted struct {
+		Content map[string]json.RawMessage `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(fields["untrusted"], &untrusted))
+	require.Contains(t, untrusted.Content, "invalid_addresses")
+
+	out := messageOut(&mail.Message{
+		AlternativesDiffer: true, TextLeftOut: true, HiddenContentSuspected: true, HiddenParts: 3,
+		Summary: mail.Summary{From: mail.Address{Email: "ceo\u200b@corp.example"}},
+	})
+	require.True(t, out.AlternativesDiffer)
+	require.True(t, out.TextLeftOut)
+	require.True(t, out.HiddenContentSuspected)
+	require.Equal(t, 3, out.HiddenPartsDropped)
+	require.True(t, out.InvalidAddress, "an address with a hidden character is not shown as plain")
+	require.Empty(t, out.FromEmail)
 }

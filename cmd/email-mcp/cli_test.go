@@ -39,6 +39,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/imaptest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/smtptest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/webtest"
+	"github.com/EmadMokhtar/email-mcp-go/internal/tokens"
 )
 
 // ---------------------------------------------------------------- helpers
@@ -1160,6 +1161,78 @@ func TestTokenCreatePrintsOnce(t *testing.T) {
 
 	r = runCLI(t, nil, "", "token", "list", "--data-dir", dir)
 	require.Contains(t, r.stdout, "revoked")
+}
+
+// "token create" says what the token can do in the end, and "token list" shows it
+// again. The in-band choice is off unless the user asks for it.
+func TestTokenCreateAndListShowTheLimits(t *testing.T) {
+	dir, _ := newCLIEnv(t)
+	const level = "effective maximum level: 4 (Send), includes read, organize, draft"
+
+	r := runCLI(t, nil, "", "token", "create", "--name", "plain", "--scopes", "email:send", "--data-dir", dir)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	require.Contains(t, r.stderr, level)
+	require.Contains(t, r.stderr, "approval page")
+	require.Contains(t, r.stderr, "It expires on "+time.Now().Add(90*24*time.Hour).UTC().Format("2006-01-02"))
+
+	r = runCLI(t, nil, "", "token", "create", "--name", "form", "--scopes", "email:read",
+		"--in-band-confirm", "--expires-in", "2d", "--data-dir", dir)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	require.Contains(t, r.stderr, "effective maximum level: 1 (Read).")
+	require.Contains(t, r.stderr, "answer a confirmation in its own window")
+	require.Contains(t, r.stderr, "It expires on "+time.Now().Add(48*time.Hour).UTC().Format("2006-01-02"))
+
+	a, err := app.Open(context.Background(), app.Config{DataDir: dir, Local: true, LogOutput: io.Discard})
+	require.NoError(t, err)
+	list, err := a.Tokens.List(context.Background(), store.LocalTenantID)
+	require.NoError(t, err)
+	require.Len(t, list, 2)
+	require.False(t, list[0].InBandConfirm)
+	require.True(t, list[1].InBandConfirm)
+	require.WithinDuration(t, time.Now().Add(48*time.Hour), list[1].ExpiresAt, time.Minute)
+	require.NoError(t, a.CloseNow(context.Background()))
+
+	r = runCLI(t, nil, "", "token", "list", "--data-dir", dir)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	for _, text := range []string{
+		"EFFECTIVE MAXIMUM LEVEL", "IN-BAND CONFIRM", "EXPIRES", "LAST USED",
+		"4 (Send), includes read, organize, draft", "1 (Read)", formatTime(list[1].ExpiresAt),
+	} {
+		require.Contains(t, r.stdout, text)
+	}
+	lines := strings.Split(r.stdout, "\n")
+	require.Regexp(t, `\bno\s`, lines[1], "the first token did not ask for the in-band way")
+	require.Regexp(t, `\byes\s`, lines[2])
+	require.Contains(t, lines[1], "never", "it was not used yet")
+}
+
+func TestTokenCreateRefusesABadLifetime(t *testing.T) {
+	dir, _ := newCLIEnv(t)
+	const typed = "typed-text-k3v7"
+	for _, value := range []string{"0", "0d", "-1d", "30s", "3651d", "99999999999999d", "soon", typed, "d", "1.5d"} {
+		r := runCLI(t, nil, "", "token", "create", "--name", "n", "--scopes", "all", "--expires-in", value, "--data-dir", dir)
+		require.Equal(t, exitUsage, r.code, value)
+		require.Empty(t, r.stdout, value)
+		require.Contains(t, r.stderr, "--expires-in", value)
+		require.NotContains(t, r.stderr, typed)
+		requireNoData(t, dir)
+	}
+}
+
+func TestTokenStatus(t *testing.T) {
+	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Hour)
+	require.Equal(t, "valid", tokenStatus(tokens.Info{ExpiresAt: now.Add(time.Hour)}, now))
+	require.Equal(t, "valid", tokenStatus(tokens.Info{}, now), "no end date")
+	require.Equal(t, "expired", tokenStatus(tokens.Info{ExpiresAt: past}, now))
+	require.Equal(t, "revoked "+formatTime(past), tokenStatus(tokens.Info{ExpiresAt: past, RevokedAt: past}, now))
+}
+
+// A token from before the end dates says so in the list.
+func TestTimeOr(t *testing.T) {
+	require.Equal(t, "no end date", timeOr(time.Time{}, "no end date"))
+	at := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	require.Equal(t, formatTime(at), timeOr(at, "no end date"))
 }
 
 // A token always has an explicit list of known scopes. No scope is never the

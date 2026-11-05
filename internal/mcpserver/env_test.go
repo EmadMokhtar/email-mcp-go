@@ -213,7 +213,7 @@ func newEnv(t *testing.T, opts envOptions) *env {
 	principal := opts.principal
 	if principal == nil {
 		principal = func(tenant account.TenantID, _ *mcp.CallToolRequest) (service.Principal, error) {
-			return service.Principal{Tenant: tenant, Client: "test-client"}, nil
+			return service.Principal{Tenant: tenant, Client: "test-client", InBandConfirm: true}, nil
 		}
 	}
 	e.server = New(svc, Options{

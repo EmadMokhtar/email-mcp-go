@@ -26,15 +26,20 @@ in one of two ways:
   that supports MCP elicitation (a way for a server to ask the person a
   question through the app).
   - Over **stdio**, this works with every MCP protocol version.
-  - Over **HTTP**, this works only when the app uses the MCP protocol version
-    2026-07-28 or newer. The HTTP server is stateless, so it cannot ask an older
-    app in the middle of a call.
+  - Over **HTTP**, this needs two things. The app must use the MCP protocol
+    version 2026-07-28 or newer: the HTTP server is stateless, so it cannot ask
+    an older app in the middle of a call. And its token must be made with
+    `email-mcp token create --in-band-confirm`: without the flag, the server does
+    not accept the answer of the app.
 - **Approval link:** in every other case, the tool answers `pending_approval`
   with a link to the Approvals page. Open it in the browser that
   `email-mcp setup` signed in.
 
 Use stdio when the app supports it. Use local HTTP only for an app that cannot
 start a program.
+
+The table below says what each app can do. Over local HTTP, a token without
+`--in-band-confirm` always gets the approval link.
 
 | App | Over stdio | Over local HTTP |
 |---|---|---|
@@ -54,7 +59,11 @@ environment variable `MCP_SDK_GENERATION` (`v1` or `v2`) chooses the runtime,
 and `MCP_PROTOCOL_NEGOTIATION=legacy` keeps Claude Code on the older protocol.
 
 An app that answers the form by itself defeats the confirmation. Only use apps
-that show the form to you.
+that show the form to you. Over HTTP, the server cannot tell an app that shows
+the form from a program that answers it, and any program with a token can claim
+that it shows a form. So the default is the approval link, and
+`--in-band-confirm` is your statement that you trust the app of that token. A
+token in a config file in plain text is a reason to leave the flag off.
 
 ## Agents that control a browser
 
@@ -108,6 +117,9 @@ Local HTTP (see [Local HTTP mode](../README.md#local-http-mode)):
 claude mcp add --transport http --scope user email \
   http://127.0.0.1:8765/mcp --header "Authorization: Bearer <token>"
 ```
+
+To get the form in Claude Code instead of the approval link, make the token with
+`email-mcp token create --in-band-confirm`.
 
 With `--header`, Claude Code stores the token **in plain text** in
 `~/.claude.json`. To keep it out of that file, use a

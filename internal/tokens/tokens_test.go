@@ -51,7 +51,7 @@ func newFixture(t *testing.T) *fixture {
 // create makes a token of the local tenant and fails the test on an error.
 func (f *fixture) create(name string, scopes ...string) string {
 	f.t.Helper()
-	token, err := f.m.Create(context.Background(), f.tenant, name, policy.Scopes(scopes))
+	token, err := f.m.Create(context.Background(), f.tenant, name, policy.Scopes(scopes), service.TokenOptions{})
 	require.NoError(f.t, err)
 	return token
 }
@@ -112,20 +112,22 @@ func TestTokenVerifyAndRevoke(t *testing.T) {
 
 	p, err := f.m.Verify(ctx, token)
 	require.NoError(t, err)
-	require.Equal(t, service.Principal{Tenant: f.tenant, Scopes: policy.Scopes{"email:read", "email:send"}}, p,
-		"the scopes are sorted and each one is kept once")
 
 	list, err := f.m.List(ctx, f.tenant)
 	require.NoError(t, err)
 	require.Len(t, list, 1)
+	require.Equal(t, service.Principal{Tenant: f.tenant, Scopes: policy.Scopes{"email:read", "email:send"}, TokenID: list[0].ID}, p,
+		"the scopes are sorted and each one is kept once")
 	info := list[0]
 	require.NotEmpty(t, info.ID)
 	require.NotContains(t, token, info.ID, "the id is not a part of the token")
 	require.Equal(t, Info{
-		ID:        info.ID,
-		Name:      "laptop",
-		Scopes:    policy.Scopes{"email:read", "email:send"},
-		CreatedAt: testNow,
+		ID:         info.ID,
+		Name:       "laptop",
+		Scopes:     policy.Scopes{"email:read", "email:send"},
+		CreatedAt:  testNow,
+		ExpiresAt:  testNow.Add(DefaultLifetime),
+		LastUsedAt: testNow,
 	}, info)
 
 	f.now = testNow.Add(time.Hour)
@@ -194,7 +196,7 @@ func TestCreateRefusesBadScopes(t *testing.T) {
 		"other case":      {"EMAIL:READ"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			token, err := f.m.Create(ctx, f.tenant, "laptop", scopes)
+			token, err := f.m.Create(ctx, f.tenant, "laptop", scopes, service.TokenOptions{})
 			require.ErrorIs(t, err, ErrInvalidScopes)
 			require.Empty(t, token)
 		})
@@ -217,19 +219,19 @@ func TestCreateRefusesBadName(t *testing.T) {
 		"bidi override": "laptop\u202e",
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := f.m.Create(ctx, f.tenant, tokenName, policy.Scopes{"email:read"})
+			_, err := f.m.Create(ctx, f.tenant, tokenName, policy.Scopes{"email:read"}, service.TokenOptions{})
 			require.ErrorIs(t, err, ErrInvalidName)
 		})
 	}
-	_, err := f.m.Create(ctx, f.tenant, strings.Repeat("n", 128), policy.Scopes{"email:read"})
+	_, err := f.m.Create(ctx, f.tenant, strings.Repeat("n", 128), policy.Scopes{"email:read"}, service.TokenOptions{})
 	require.NoError(t, err, "a name of 128 bytes is allowed")
 }
 
 func TestCreateNeedsAKnownTenant(t *testing.T) {
 	f := newFixture(t)
-	_, err := f.m.Create(context.Background(), "nobody", "laptop", policy.Scopes{"email:read"})
+	_, err := f.m.Create(context.Background(), "nobody", "laptop", policy.Scopes{"email:read"}, service.TokenOptions{})
 	require.Error(t, err)
-	_, err = f.m.Create(context.Background(), "", "laptop", policy.Scopes{"email:read"})
+	_, err = f.m.Create(context.Background(), "", "laptop", policy.Scopes{"email:read"}, service.TokenOptions{})
 	require.Error(t, err)
 }
 
@@ -294,4 +296,151 @@ func TestVerifyReturnsAFreshScopeList(t *testing.T) {
 	again, err := f.m.Verify(context.Background(), token)
 	require.NoError(t, err)
 	require.Equal(t, policy.Scopes{"email:read"}, again.Scopes)
+}
+
+// A new token has the default end date and may not confirm in band, unless the
+// user chose otherwise.
+func TestCreateDefaults(t *testing.T) {
+	f := newFixture(t)
+	f.create("laptop", "email:read")
+
+	list, err := f.m.List(context.Background(), f.tenant)
+
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	require.Equal(t, testNow.Add(90*24*time.Hour), list[0].ExpiresAt)
+	require.False(t, list[0].InBandConfirm)
+	require.True(t, list[0].LastUsedAt.IsZero())
+}
+
+func TestCreateKeepsTheOptions(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	token, err := f.m.Create(ctx, f.tenant, "laptop", policy.Scopes{"email:send"},
+		service.TokenOptions{InBandConfirm: true, ExpiresIn: time.Hour})
+	require.NoError(t, err)
+
+	list, err := f.m.List(ctx, f.tenant)
+	require.NoError(t, err)
+	require.Equal(t, testNow.Add(time.Hour), list[0].ExpiresAt)
+	require.True(t, list[0].InBandConfirm)
+
+	p, err := f.m.Verify(ctx, token)
+	require.NoError(t, err)
+	require.True(t, p.InBandConfirm)
+	require.Equal(t, list[0].ID, p.TokenID)
+}
+
+func TestVerifyTellsNoInBandWithoutTheChoice(t *testing.T) {
+	f := newFixture(t)
+
+	p, err := f.m.Verify(context.Background(), f.create("laptop", "email:send"))
+
+	require.NoError(t, err)
+	require.False(t, p.InBandConfirm)
+	require.NotEmpty(t, p.TokenID)
+}
+
+func TestCreateRefusesABadLifetime(t *testing.T) {
+	f := newFixture(t)
+	for _, lifetime := range []time.Duration{-time.Hour, time.Second, MinLifetime - 1, MaxLifetime + 1} {
+		_, err := f.m.Create(context.Background(), f.tenant, "laptop", policy.Scopes{"email:read"},
+			service.TokenOptions{ExpiresIn: lifetime})
+		require.ErrorIs(t, err, ErrInvalidLifetime, lifetime.String())
+	}
+	list, err := f.m.List(context.Background(), f.tenant)
+	require.NoError(t, err)
+	require.Empty(t, list)
+
+	for _, lifetime := range []time.Duration{MinLifetime, MaxLifetime} {
+		_, err := f.m.Create(context.Background(), f.tenant, "laptop", policy.Scopes{"email:read"},
+			service.TokenOptions{ExpiresIn: lifetime})
+		require.NoError(t, err, lifetime.String())
+	}
+}
+
+// A token works until its end date, and at that moment it stops. The refusal is
+// the same as for any other bad token.
+func TestVerifyRefusesAnExpiredToken(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	token, err := f.m.Create(ctx, f.tenant, "laptop", policy.Scopes{"email:read"}, service.TokenOptions{ExpiresIn: time.Hour})
+	require.NoError(t, err)
+
+	f.now = testNow.Add(time.Hour - time.Millisecond)
+	_, err = f.m.Verify(ctx, token)
+	require.NoError(t, err)
+
+	f.now = testNow.Add(time.Hour)
+	p, err := f.m.Verify(ctx, token)
+	require.ErrorIs(t, err, ErrInvalidToken)
+	require.Empty(t, p)
+}
+
+// A token from before the end dates has none, and it may not confirm in band. It
+// works until the user revokes it.
+func TestOldTokenWithoutEndDate(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	raw := make([]byte, randomBytes)
+	raw[0] = 1
+	token := prefix + encoding.EncodeToString(raw)
+	sum := sha256.Sum256([]byte(token))
+	require.NoError(t, f.store.CreateAPIToken(ctx, &store.APITokenRow{
+		ID: "old", Tenant: f.tenant, Name: "old", Hash: sum[:], Scopes: []string{"email:send"}, CreatedAt: testNow,
+	}))
+
+	f.now = testNow.Add(10 * 365 * 24 * time.Hour)
+	p, err := f.m.Verify(ctx, token)
+	require.NoError(t, err)
+	require.False(t, p.InBandConfirm)
+
+	list, err := f.m.List(ctx, f.tenant)
+	require.NoError(t, err)
+	require.True(t, list[0].ExpiresAt.IsZero())
+	require.False(t, list[0].Expired(f.now))
+}
+
+// The last use is written at most about once a minute. A refused token writes
+// nothing.
+func TestVerifyNotesTheLastUse(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	token := f.create("laptop", "email:read")
+	lastUse := func() time.Time {
+		list, err := f.m.List(ctx, f.tenant)
+		require.NoError(t, err)
+		return list[0].LastUsedAt
+	}
+
+	_, err := f.m.Verify(ctx, token)
+	require.NoError(t, err)
+	require.Equal(t, testNow, lastUse())
+
+	f.now = testNow.Add(59 * time.Second)
+	_, err = f.m.Verify(ctx, token)
+	require.NoError(t, err)
+	require.Equal(t, testNow, lastUse(), "less than a minute later nothing is written")
+
+	f.now = testNow.Add(time.Minute)
+	_, err = f.m.Verify(ctx, token)
+	require.NoError(t, err)
+	require.Equal(t, f.now, lastUse())
+
+	list, err := f.m.List(ctx, f.tenant)
+	require.NoError(t, err)
+	require.NoError(t, f.m.Revoke(ctx, f.tenant, list[0].ID))
+	used := lastUse()
+	f.now = testNow.Add(time.Hour)
+	_, err = f.m.Verify(ctx, token)
+	require.ErrorIs(t, err, ErrInvalidToken)
+	require.Equal(t, used, lastUse())
+}
+
+func TestInfoExpired(t *testing.T) {
+	end := testNow.Add(time.Hour)
+	require.False(t, Info{ExpiresAt: end}.Expired(end.Add(-time.Millisecond)))
+	require.True(t, Info{ExpiresAt: end}.Expired(end))
+	require.False(t, Info{}.Expired(end), "no end date")
 }

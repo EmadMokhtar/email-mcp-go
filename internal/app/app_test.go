@@ -310,7 +310,7 @@ func TestOpenUsesTheClockOfTheConfig(t *testing.T) {
 	t.Cleanup(func() { _ = a.CloseNow(context.Background()) })
 
 	// The tokens and the audit log of the service.
-	_, err = a.Service.CreateToken(localCtx(), "clock", []string{"email:read"})
+	_, err = a.Service.CreateToken(localCtx(), "clock", []string{"email:read"}, service.TokenOptions{})
 	require.NoError(t, err)
 	list, err := a.Tokens.List(context.Background(), store.LocalTenantID)
 	require.NoError(t, err)

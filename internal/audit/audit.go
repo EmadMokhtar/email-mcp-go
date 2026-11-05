@@ -15,12 +15,13 @@
 // it gives them to this package.
 //
 // The other fields are checked on the way in. Detail is a short code, and Tool
-// is short text without control characters. Both come from the server, so Record
-// refuses an entry with a bad one. Client is the name that the MCP client gave
-// for itself. The client is the party that the log watches, so it can choose a bad
-// name on purpose. Record cleans that name and does not refuse the entry: a bad
-// name must never hide an action. Nothing in this package writes recipients,
-// arguments, details or mail content to a log or into an error.
+// is short text without control characters. TokenID is the id of an access
+// token. All three come from the server, so Record refuses an entry with a bad
+// one. Client is the name that the MCP client gave for itself. The client is the
+// party that the log watches, so it can choose a bad name on purpose. Record
+// cleans that name and does not refuse the entry: a bad name must never hide an
+// action. Nothing in this package writes recipients, arguments, details or mail
+// content to a log or into an error.
 package audit
 
 import (
@@ -125,6 +126,11 @@ const (
 // not match.
 var detailPattern = regexp.MustCompile(`^[a-z0-9_]{0,64}$`)
 
+// tokenIDPattern is the form of TokenID: the id of an access token, or empty. Only
+// lower-case letters and digits, so a token cannot fit in the field by mistake: a
+// token has an underscore.
+var tokenIDPattern = regexp.MustCompile(`^[a-z0-9]{0,64}$`)
+
 // Entry is one tool call of an agent, or one action of a use case.
 type Entry struct {
 	// ID is assigned by the log. Record ignores the ID of the entry.
@@ -145,6 +151,10 @@ type Entry struct {
 	// paragraph-separator characters become U+FFFD, and the result is cut to at
 	// most 128 bytes at the end of a character.
 	Client string
+	// TokenID is the id of the access token of the call, the one that "token list"
+	// shows. It is empty when the caller had no token. It comes from the server,
+	// and it is never the token itself. It is 0 to 64 characters from a-z and 0-9.
+	TokenID string
 	// Tool is the name of the tool. It comes from the server. It must not be
 	// empty, and it must be at most 128 bytes of valid UTF-8 without control
 	// characters (see validText).
@@ -243,6 +253,7 @@ func (l *Log) Record(ctx context.Context, e Entry) error {
 		Account: e.Account,
 		Area:    e.Area,
 		Client:  cleanClient(e.Client),
+		TokenID: e.TokenID,
 		Tool:    e.Tool,
 		Count:   e.Count,
 		Outcome: string(e.Outcome),
@@ -320,6 +331,7 @@ func (l *Log) List(ctx context.Context, tenant account.TenantID, f Filter) ([]En
 			Account: row.Account,
 			Area:    row.Area,
 			Client:  row.Client,
+			TokenID: row.TokenID,
 			Tool:    row.Tool,
 			Count:   row.Count,
 			Outcome: Outcome(row.Outcome),
@@ -423,6 +435,9 @@ func validate(e Entry) error {
 	}
 	if !detailPattern.MatchString(e.Detail) {
 		return invalid("the detail must be a code of at most 64 characters from a-z, 0-9 and _")
+	}
+	if !tokenIDPattern.MatchString(e.TokenID) {
+		return invalid("the token id must be at most 64 characters from a-z and 0-9")
 	}
 	if e.Tool == "" || !validText(e.Tool) {
 		return invalid("the tool must be 1 to 128 bytes of valid UTF-8 without control characters")

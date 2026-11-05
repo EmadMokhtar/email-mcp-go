@@ -68,6 +68,13 @@ const (
 	codeTokenCheck   = "token_check_failed"
 )
 
+// The keys of TokenInfo.Extra. The token check fills them from the database, and
+// nothing that the client sends can reach them.
+const (
+	extraTokenID       = "email_mcp_token_id" //nolint:gosec // G101: a map key, not a credential
+	extraInBandConfirm = "email_mcp_in_band_confirm"
+)
+
 // ErrNoToken means that a tool call came without a verified token. Principal
 // returns it.
 var ErrNoToken = errors.New("httpserve: the request has no verified token")
@@ -154,8 +161,9 @@ func Handler(newServer func() *mcp.Server, tm *tokens.Manager, allowedOrigins []
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return newServer() },
 		&mcp.StreamableHTTPOptions{Stateless: true, MaxRequestBodyBytes: MaxBodyBytes})
 	bearer := auth.RequireBearerToken(verifier(tm, cfg.log), &auth.RequireBearerTokenOptions{
-		// The tokens of this program do not expire. They stay valid until the user
-		// revokes them.
+		// The check of a token decides about its end date (see tokens.Verify), with
+		// the one clock of the token manager. The SDK has nothing to add, and a
+		// token from before the end dates has none.
 		AllowMissingExpiration: true,
 	})
 	return &handler{
@@ -290,16 +298,20 @@ func refuse(w http.ResponseWriter, log *slog.Logger, status int, code string) {
 }
 
 // verifier returns the token check for auth.RequireBearerToken. A valid token
-// becomes a TokenInfo with the tenant as UserID and the scopes of the token. A
-// bad token gives auth.ErrInvalidToken, which the SDK answers with 401. Any
-// other failure gives errTokenCheck, which the SDK answers with 500 and the
-// fixed text "internal error".
+// becomes a TokenInfo with the tenant as UserID, the scopes of the token, and
+// the id and the in-band choice of the token in Extra. A bad token gives
+// auth.ErrInvalidToken, which the SDK answers with 401. Any other failure gives
+// errTokenCheck, which the SDK answers with 500 and the fixed text "internal
+// error".
 func verifier(tm *tokens.Manager, log *slog.Logger) auth.TokenVerifier {
 	return func(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
 		p, err := tm.Verify(ctx, token)
 		switch {
 		case err == nil:
-			return &auth.TokenInfo{UserID: string(p.Tenant), Scopes: p.Scopes}, nil
+			return &auth.TokenInfo{UserID: string(p.Tenant), Scopes: p.Scopes, Extra: map[string]any{
+				extraTokenID:       p.TokenID,
+				extraInBandConfirm: p.InBandConfirm,
+			}}, nil
 		case errors.Is(err, tokens.ErrInvalidToken):
 			log.Warn("http request refused", "code", codeInvalidToken, "status", http.StatusUnauthorized)
 			return nil, auth.ErrInvalidToken
@@ -316,8 +328,10 @@ func verifier(tm *tokens.Manager, log *slog.Logger) auth.TokenVerifier {
 // It reads the TokenInfo that the token check put on the request: the UserID is
 // the tenant and the scopes are the scopes of the token. A call without a
 // TokenInfo or without a UserID is refused with ErrNoToken. The scopes are a new
-// list that is never nil, so a token can never mean "no limit". The client name
-// comes from the request. It is not trusted: the audit log cleans it.
+// list that is never nil, so a token can never mean "no limit". The token id and
+// the in-band choice come from Extra. A missing or odd value there means no id and
+// no in-band confirmation. The client name comes from the request. It is not
+// trusted: the audit log cleans it.
 func Principal(_ context.Context, req *mcp.CallToolRequest) (service.Principal, error) {
 	if req == nil || req.Extra == nil || req.Extra.TokenInfo == nil || req.Extra.TokenInfo.UserID == "" {
 		return service.Principal{}, ErrNoToken
@@ -327,10 +341,14 @@ func Principal(_ context.Context, req *mcp.CallToolRequest) (service.Principal, 
 	if impl := req.ClientInfo(); impl != nil {
 		client = impl.Name
 	}
+	tokenID, _ := info.Extra[extraTokenID].(string)
+	inBand, _ := info.Extra[extraInBandConfirm].(bool)
 	return service.Principal{
-		Tenant: account.TenantID(info.UserID),
-		Scopes: append(policy.Scopes{}, info.Scopes...),
-		Client: client,
+		Tenant:        account.TenantID(info.UserID),
+		Scopes:        append(policy.Scopes{}, info.Scopes...),
+		Client:        client,
+		TokenID:       tokenID,
+		InBandConfirm: inBand,
 	}, nil
 }
 

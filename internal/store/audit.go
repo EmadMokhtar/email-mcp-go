@@ -13,7 +13,7 @@ import (
 // action of a use case. The store does not look inside the sealed recipients and
 // arguments, and does not know what the outcomes mean. The audit package does.
 // The table checks the rules that do not depend on the meaning, such as the form
-// of Detail. See migrations 0005 and 0011.
+// of Detail. See migrations 0005, 0011 and 0013.
 type AuditRow struct {
 	// ID is assigned by the database. CreateAudit ignores the ID of the row.
 	ID int64
@@ -27,8 +27,11 @@ type AuditRow struct {
 	// Area is empty only when Account is empty.
 	Area         account.Area
 	Client, Tool string
-	Count        int
-	Outcome      string
+	// TokenID is the id of the access token of the call. It is empty when the
+	// caller had no token. It is never the token itself.
+	TokenID string
+	Count   int
+	Outcome string
 	// Detail is a short code, never free text.
 	Detail string
 	// Recipients is sealed. It is nil when the call had no recipients, and then
@@ -57,7 +60,7 @@ type AuditFilter struct {
 // auditColumns lists the columns that scanAudit reads.
 const auditColumns = `id, tenant_id, COALESCE(account_id, ''), recorded_at, area, client, tool,
 	item_count, outcome, detail, recipients, COALESCE(recipients_key_version, 0),
-	kind, arguments, COALESCE(arguments_key_version, 0)`
+	kind, arguments, COALESCE(arguments_key_version, 0), COALESCE(token_id, '')`
 
 // CreateAudit adds an entry. The ID of the row is ignored.
 //
@@ -91,11 +94,11 @@ func (s *Store) CreateAudit(ctx context.Context, row *AuditRow) error {
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO audit_log (tenant_id, account_id, recorded_at, area, client, tool, item_count,
-			outcome, detail, recipients, recipients_key_version, kind, arguments, arguments_key_version)
-		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), 'action'), ?, ?)`,
+			outcome, detail, recipients, recipients_key_version, kind, arguments, arguments_key_version, token_id)
+		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), 'action'), ?, ?, NULLIF(?, ''))`,
 		string(row.Tenant), string(row.Account), row.Time.UnixMilli(), string(row.Area),
 		row.Client, row.Tool, row.Count, row.Outcome, row.Detail, recipients, keyVersion,
-		row.Kind, arguments, argumentsKeyVersion)
+		row.Kind, arguments, argumentsKeyVersion, row.TokenID)
 	if err != nil {
 		return fmt.Errorf("store: create audit entry: %w", err)
 	}
@@ -170,7 +173,7 @@ func scanAudit(row rowScanner) (*AuditRow, error) {
 	)
 	err := row.Scan(&a.ID, &a.Tenant, &a.Account, &at, &a.Area, &a.Client, &a.Tool,
 		&a.Count, &a.Outcome, &a.Detail, &a.Recipients, &a.RecipientsKeyVersion,
-		&a.Kind, &a.Arguments, &a.ArgumentsKeyVersion)
+		&a.Kind, &a.Arguments, &a.ArgumentsKeyVersion, &a.TokenID)
 	if err != nil {
 		return nil, err
 	}

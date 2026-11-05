@@ -9,6 +9,7 @@ package policy
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 )
@@ -106,6 +107,24 @@ func maxScopeLevel(scopes Scopes) account.Level {
 		highest = max(highest, scopeLevels[scope])
 	}
 	return highest
+}
+
+// EffectiveLevel says in words what scopes allow in the end, for example
+// "4 (Send), includes read, organize, draft". Scopes are not separate permissions:
+// they add up to the highest level, and that level includes each level under it.
+// So "email:send" alone also allows reading, organizing and drafting. The account
+// level can still lower what a token may do on one account (see Decide).
+func EffectiveLevel(scopes Scopes) string {
+	top := maxScopeLevel(scopes)
+	text := fmt.Sprintf("%d (%s)", top, top.MailName())
+	var below []string
+	for level := account.MailRead; level < top; level++ {
+		below = append(below, strings.ToLower(level.MailName()))
+	}
+	if len(below) > 0 {
+		text += ", includes " + strings.Join(below, ", ")
+	}
+	return text
 }
 
 // Decision is the answer to "may the agent do this?".

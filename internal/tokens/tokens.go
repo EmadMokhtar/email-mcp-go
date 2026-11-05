@@ -9,6 +9,10 @@
 // nil list, which means "no limit" to the policy package, is only for the local
 // stdio caller, which has no token.
 //
+// A new token has an end date (90 days by default), and it may answer a
+// confirmation in its own window only when the user chose that. A token from
+// before these two rules has no end date and may not.
+//
 // Nothing here logs a token or its hash.
 package tokens
 
@@ -40,6 +44,15 @@ const (
 	randomBytes = 32
 	// maxNameBytes is the longest name of a token, in bytes.
 	maxNameBytes = 128
+	// DefaultLifetime is how long a token stays valid when Create gets no lifetime.
+	DefaultLifetime = 90 * 24 * time.Hour
+	// MinLifetime and MaxLifetime are the shortest and the longest lifetime that
+	// Create takes.
+	MinLifetime = time.Minute
+	MaxLifetime = 3650 * 24 * time.Hour
+	// useGap is the shortest time between two writes of the last use of a token.
+	// A check of a token must not write to the database on every call.
+	useGap = time.Minute
 )
 
 // encoding is lower-case base32 without padding.
@@ -50,8 +63,8 @@ var tokenLen = len(prefix) + encoding.EncodedLen(randomBytes)
 
 var (
 	// ErrInvalidToken means that a token is not valid: it has the wrong form, no
-	// token has its hash, or it was revoked. The error does not say which, so a
-	// caller learns nothing from it.
+	// token has its hash, it was revoked, or it expired. The error does not say
+	// which, so a caller learns nothing from it.
 	ErrInvalidToken = errors.New("tokens: invalid token")
 	// ErrInvalidScopes means that Create got no scopes, or a scope that the
 	// policy package does not know.
@@ -59,6 +72,9 @@ var (
 	// ErrInvalidName means that the name of a new token is empty, longer than
 	// 128 bytes, not valid UTF-8, or has a control or format character.
 	ErrInvalidName = errors.New("tokens: the name must be 1 to 128 bytes of text without control or format characters")
+	// ErrInvalidLifetime means that the lifetime of a new token is shorter than a
+	// minute or longer than ten years.
+	ErrInvalidLifetime = errors.New("tokens: the lifetime must be from one minute to ten years")
 	// ErrNotFound means that the tenant has no token with the id.
 	ErrNotFound = errors.New("tokens: no such token")
 )
@@ -68,10 +84,27 @@ type Info struct {
 	ID     string
 	Name   string
 	Scopes policy.Scopes
-	// CreatedAt is when the token was made. RevokedAt is when it was revoked,
-	// or zero while it is valid. Both are in UTC, in whole milliseconds.
-	CreatedAt time.Time
-	RevokedAt time.Time
+	// InBandConfirm says that the client of the token may answer a confirmation
+	// in its own window.
+	InBandConfirm bool
+	// CreatedAt is when the token was made. RevokedAt is when it was revoked, or
+	// zero while it is not revoked. ExpiresAt is when it stops working, or zero for
+	// a token that has no end date. LastUsedAt is about when it was last used, or
+	// zero when it was not used yet. All are in UTC, in whole milliseconds.
+	CreatedAt  time.Time
+	RevokedAt  time.Time
+	ExpiresAt  time.Time
+	LastUsedAt time.Time
+}
+
+// Expired reports whether the token is past its end date at the time now.
+func (i Info) Expired(now time.Time) bool {
+	return expired(i.ExpiresAt, now)
+}
+
+// expired reports whether end is set and has come at the time now.
+func expired(end, now time.Time) bool {
+	return !end.IsZero() && !now.Before(end)
 }
 
 // Manager is the TokenMaker of the service.
@@ -99,7 +132,10 @@ func New(st *store.Store, now func() time.Time) *Manager {
 // name is a label for the user. It is trimmed of spaces at both ends. scopes
 // must have at least one scope, and every scope must be known to the policy
 // package. The stored list is sorted and has each scope once.
-func (m *Manager) Create(ctx context.Context, tenant account.TenantID, name string, scopes policy.Scopes) (string, error) {
+//
+// opts.ExpiresIn must be zero, which means DefaultLifetime, or a time from
+// MinLifetime to MaxLifetime.
+func (m *Manager) Create(ctx context.Context, tenant account.TenantID, name string, scopes policy.Scopes, opts service.TokenOptions) (string, error) {
 	name = strings.TrimSpace(name)
 	if !validName(name) {
 		return "", ErrInvalidName
@@ -107,6 +143,13 @@ func (m *Manager) Create(ctx context.Context, tenant account.TenantID, name stri
 	clean, err := cleanScopes(scopes)
 	if err != nil {
 		return "", err
+	}
+	lifetime := opts.ExpiresIn
+	if lifetime == 0 {
+		lifetime = DefaultLifetime
+	}
+	if lifetime < MinLifetime || lifetime > MaxLifetime {
+		return "", ErrInvalidLifetime
 	}
 
 	raw := make([]byte, randomBytes)
@@ -116,13 +159,16 @@ func (m *Manager) Create(ctx context.Context, tenant account.TenantID, name stri
 	token := prefix + encoding.EncodeToString(raw)
 	sum := sha256.Sum256([]byte(token))
 
+	now := m.now()
 	row := &store.APITokenRow{
-		ID:        strings.ToLower(rand.Text()),
-		Tenant:    tenant,
-		Name:      name,
-		Hash:      sum[:],
-		Scopes:    clean,
-		CreatedAt: m.now(),
+		ID:            strings.ToLower(rand.Text()),
+		Tenant:        tenant,
+		Name:          name,
+		Hash:          sum[:],
+		Scopes:        clean,
+		InBandConfirm: opts.InBandConfirm,
+		CreatedAt:     now,
+		ExpiresAt:     now.Add(lifetime),
 	}
 	if err := m.store.CreateAPIToken(ctx, row); err != nil {
 		return "", fmt.Errorf("tokens: create: %w", err)
@@ -130,17 +176,21 @@ func (m *Manager) Create(ctx context.Context, tenant account.TenantID, name stri
 	return token, nil
 }
 
-// Verify checks a token and returns its caller: the tenant and the scopes. The
-// Client of the principal is empty: the HTTP layer fills it in.
+// Verify checks a token and returns its caller: the tenant, the scopes, the id of
+// the token and whether it may confirm in band. The Client of the principal is
+// empty: the HTTP layer fills it in.
 //
 // A token with the wrong form is refused before any lookup. For a token with the
 // right form, it looks up the SHA-256 of the token and compares the stored hash
-// again in constant time. A revoked token is refused. Every refusal is
-// ErrInvalidToken. Any other error is a problem of the database, and it holds
-// no part of the token.
+// again in constant time. A revoked token and an expired token are refused. Every
+// refusal is ErrInvalidToken. Any other error is a problem of the database, and
+// it holds no part of the token.
 //
 // The scopes of the principal are a new list that is never nil, so a token can
 // never mean "no limit".
+//
+// A valid token notes its last use, at most about once a minute. A failure of that
+// write does not refuse the token: the time is only for the user to read.
 func (m *Manager) Verify(ctx context.Context, token string) (service.Principal, error) {
 	if !wellFormed(token) {
 		return service.Principal{}, ErrInvalidToken
@@ -156,10 +206,20 @@ func (m *Manager) Verify(ctx context.Context, token string) (service.Principal, 
 	// The database found the row by the hash. The hash is compared here once
 	// more, in constant time, so the answer does not depend on how the database
 	// compares bytes.
-	if subtle.ConstantTimeCompare(row.Hash, sum[:]) != 1 || !row.RevokedAt.IsZero() || len(row.Scopes) == 0 {
+	now := m.now()
+	if subtle.ConstantTimeCompare(row.Hash, sum[:]) != 1 || !row.RevokedAt.IsZero() ||
+		expired(row.ExpiresAt, now) || len(row.Scopes) == 0 {
 		return service.Principal{}, ErrInvalidToken
 	}
-	return service.Principal{Tenant: row.Tenant, Scopes: policy.Scopes(slices.Clone(row.Scopes))}, nil
+	if now.Sub(row.LastUsedAt) >= useGap {
+		_ = m.store.NoteAPITokenUse(ctx, row.Tenant, row.ID, now, useGap)
+	}
+	return service.Principal{
+		Tenant:        row.Tenant,
+		Scopes:        policy.Scopes(slices.Clone(row.Scopes)),
+		TokenID:       row.ID,
+		InBandConfirm: row.InBandConfirm,
+	}, nil
 }
 
 // List returns the tokens of the tenant, revoked ones too, oldest first.
@@ -171,11 +231,14 @@ func (m *Manager) List(ctx context.Context, tenant account.TenantID) ([]Info, er
 	list := make([]Info, 0, len(rows))
 	for _, r := range rows {
 		list = append(list, Info{
-			ID:        r.ID,
-			Name:      r.Name,
-			Scopes:    policy.Scopes(r.Scopes),
-			CreatedAt: r.CreatedAt,
-			RevokedAt: r.RevokedAt,
+			ID:            r.ID,
+			Name:          r.Name,
+			Scopes:        policy.Scopes(r.Scopes),
+			InBandConfirm: r.InBandConfirm,
+			CreatedAt:     r.CreatedAt,
+			RevokedAt:     r.RevokedAt,
+			ExpiresAt:     r.ExpiresAt,
+			LastUsedAt:    r.LastUsedAt,
 		})
 	}
 	return list, nil

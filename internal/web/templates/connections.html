@@ -8,7 +8,7 @@
 {{$csrf := .CSRFToken}}
 <div class="sheet">
 <header class="sheet-head"><h1>Connections</h1></header>
-<p class="lead">An MCP client that connects over HTTP needs an access token. Give each client its own token, with only the permissions it needs.</p>
+<p class="lead">An MCP client that connects over HTTP needs an access token. Give each client its own token, with only the permissions it needs. Permissions add up: the highest one includes all the ones below it. A new token stops working after {{.Data.NewTokenDays}} days. A token with no end date works until you revoke it.</p>
 {{with .Data}}
 {{if .Error}}<div class="notice bad" role="alert"><strong>{{.Error}}</strong></div>{{end}}
 {{if .NewToken}}
@@ -23,10 +23,10 @@
 <div class="table-scroll">
 <table class="table">
 <thead>
-<tr><th scope="col">Name</th><th scope="col">Permissions</th><th scope="col">Made</th><th scope="col">Status</th></tr>
+<tr><th scope="col">Name</th><th scope="col">Permissions</th><th scope="col">Highest level</th><th scope="col">Confirms in its own window</th><th scope="col">Made</th><th scope="col">Expires</th><th scope="col">Last used</th><th scope="col">Status</th></tr>
 </thead>
 <tbody>
-{{range .Tokens}}<tr><td class="strong">{{.Name}}</td><td>{{.Scopes}}</td><td class="nowrap">{{.Created}}</td><td class="nowrap">{{if .Revoked}}<span class="soft">Revoked on {{.Revoked}}</span>{{else}}
+{{range .Tokens}}<tr><td><span class="strong">{{.Name}}</span><br><code class="break">{{.ID}}</code></td><td>{{.Scopes}}</td><td>{{.Level}}</td><td>{{if .InBandConfirm}}Yes{{else}}No{{end}}</td><td class="nowrap">{{.Created}}</td><td class="nowrap">{{if .Expires}}{{.Expires}}{{else}}No end date{{end}}</td><td class="nowrap">{{if .LastUsed}}{{.LastUsed}}{{else}}Never{{end}}</td><td class="nowrap">{{if .Revoked}}<span class="soft">Revoked on {{.Revoked}}</span>{{else if .Expired}}<span class="soft">Expired</span>{{else}}
 <form method="post" action="/connections/{{.ID}}/revoke">{{template "csrf_field" $csrf}}<button class="button danger-quiet" type="submit">Revoke</button></form>{{end}}</td></tr>
 {{end}}
 </tbody>
@@ -47,6 +47,11 @@
 <legend>Permissions</legend>
 {{range .Scopes}}<label class="check" for="scope_{{.Value}}"><input type="checkbox" id="scope_{{.Value}}" name="scope" value="{{.Value}}"{{if .Selected}} checked{{end}}> <span>{{.Label}}</span></label>
 {{end}}</fieldset>
+<fieldset class="choices">
+<legend>Confirmations</legend>
+<label class="check" for="in_band_confirm"><input type="checkbox" id="in_band_confirm" name="in_band_confirm" value="1"{{if .InBandConfirm}} checked{{end}}> <span>Let this app ask me in its own window</span></label>
+<p class="soft">Leave this off unless the app shows you the confirmation form. When it is off, you approve sends and moves to Trash on the Waiting for you page. When it is on, any program with this token can answer the form for you.</p>
+</fieldset>
 <button class="button primary" type="submit">Make a token</button>
 </form>
 

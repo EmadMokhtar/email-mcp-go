@@ -199,7 +199,7 @@ func (s *Service) Send(ctx context.Context, id account.AccountID, c *mail.Compos
 	}
 	req, err := newSendRequest(c, draft)
 	if err == nil {
-		err = checkMode(mode)
+		mode, err = confirmChannel(acc.Principal, mode, ans)
 	}
 	if err != nil {
 		s.finish(ctx, acc, toolSend, 1, nil, "", err)

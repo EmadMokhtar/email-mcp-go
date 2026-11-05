@@ -1,15 +1,19 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/url"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
+	"github.com/EmadMokhtar/email-mcp-go/internal/service"
+	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 	"github.com/EmadMokhtar/email-mcp-go/internal/tokens"
 )
 
@@ -89,16 +93,84 @@ func TestTokenRefusesBadInput(t *testing.T) {
 	require.Empty(t, list)
 }
 
+// A token from the form may not confirm in band unless the user ticks the box. It
+// has the default end date, and the list says all of it.
+func TestTokenFormInBandChoice(t *testing.T) {
+	p := newPageFixture(t)
+	ctx := context.Background()
+
+	resp, body := p.get("/connections")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, body, `name="in_band_confirm"`)
+	require.NotContains(t, body, `value="1" checked`, "the box is off by default")
+
+	resp, _ = p.post("/connections", url.Values{"name": {"plain"}, "scope": {"email:send"}})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp, _ = p.post("/connections", url.Values{"name": {"form"}, "scope": {"email:read"}, "in_band_confirm": {"1"}})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	list, err := p.tokens.List(ctx, p.tenant)
+	require.NoError(t, err)
+	require.Len(t, list, 2)
+	byName := map[string]tokens.Info{list[0].Name: list[0], list[1].Name: list[1]}
+	require.False(t, byName["plain"].InBandConfirm)
+	require.True(t, byName["form"].InBandConfirm)
+	require.False(t, byName["plain"].ExpiresAt.IsZero())
+
+	_, body = p.get("/connections")
+	text := visibleText(t, body)
+	require.Contains(t, text, "4 (Send), includes read, organize, draft")
+	require.Contains(t, text, byName["plain"].ID)
+	require.Contains(t, text, formatTime(byName["plain"].ExpiresAt))
+	require.Contains(t, text, "Never")
+
+	_, body = p.post("/connections", url.Values{"name": {""}, "scope": {"email:read"}, "in_band_confirm": {"1"}})
+	require.Contains(t, body, `value="1" checked`, "a refused form keeps the choice")
+
+	entries := p.entries()
+	require.Len(t, entries, 2)
+	require.Equal(t, "token_created_in_band", entries[0].Detail)
+	require.Equal(t, "token_created", entries[1].Detail)
+}
+
+// An expired token says so and has no revoke button. A token that has no end date
+// says that too.
+func TestConnectionsShowsTheEndOfAToken(t *testing.T) {
+	p := newPageFixture(t)
+	ctx := context.Background()
+	_, err := p.tokens.Create(ctx, p.tenant, "short", policy.Scopes{"email:read"}, service.TokenOptions{ExpiresIn: time.Minute})
+	require.NoError(t, err)
+	list, err := p.tokens.List(ctx, p.tenant)
+	require.NoError(t, err)
+	require.NoError(t, p.store.CreateAPIToken(ctx, &store.APITokenRow{
+		ID: "old", Tenant: p.tenant, Name: "old", Hash: bytes.Repeat([]byte{1}, 32),
+		Scopes: []string{"email:read"}, CreatedAt: p.clock.Now(),
+	}))
+
+	_, body := p.get("/connections")
+	require.Contains(t, body, "/connections/"+list[0].ID+"/revoke", "the token is still valid")
+	text := visibleText(t, body)
+	require.Contains(t, text, "No end date")
+	require.Contains(t, text, "A new token stops working after 90 days.")
+	require.NotContains(t, text, "A token stops working", "an old token has no end date")
+	require.Contains(t, text, "A token with no end date works until you revoke it.")
+
+	p.clock.Set(p.clock.Now().Add(time.Minute))
+	_, body = p.get("/connections")
+	require.Contains(t, visibleText(t, body), "Expired")
+	require.NotContains(t, body, "/connections/"+list[0].ID+"/revoke")
+}
+
 func TestRevokeToken(t *testing.T) {
 	p := newPageFixture(t)
 	ctx := context.Background()
-	token, err := p.tokens.Create(ctx, p.tenant, "laptop", policy.Scopes{"email:read"})
+	token, err := p.tokens.Create(ctx, p.tenant, "laptop", policy.Scopes{"email:read"}, service.TokenOptions{})
 	require.NoError(t, err)
 	list, err := p.tokens.List(ctx, p.tenant)
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	p.addTenant("other")
-	theirToken, err := p.tokens.Create(ctx, "other", "theirs", policy.Scopes{"email:read"})
+	theirToken, err := p.tokens.Create(ctx, "other", "theirs", policy.Scopes{"email:read"}, service.TokenOptions{})
 	require.NoError(t, err)
 	theirs, err := p.tokens.List(ctx, "other")
 	require.NoError(t, err)

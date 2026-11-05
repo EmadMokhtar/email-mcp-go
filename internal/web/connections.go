@@ -9,7 +9,9 @@ package web
 // service, which writes an audit entry of the tenant without the token or its
 // name. A token always has an explicit list
 // of known scopes. The form offers each known scope and "all", which stands for
-// the whole list. Revoking is a POST with the CSRF token, for a token of the
+// the whole list. A new token gets the default end date. It may answer a
+// confirmation in its own window only when the user ticks that box, which is off
+// by default. Revoking is a POST with the CSRF token, for a token of the
 // tenant of the session only.
 //
 // The page also lists the browsers that are signed in, so the user can sign out
@@ -23,8 +25,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
+	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 	"github.com/EmadMokhtar/email-mcp-go/internal/tokens"
 )
@@ -56,21 +60,34 @@ type connectionsPage struct {
 	// the POST that made it.
 	NewToken string
 	CopyOnce string
-	// Name is the name in the form, after a refusal.
-	Name   string
-	Scopes []choice
-	Tokens []tokenRow
+	// Name is the name in the form, after a refusal. InBandConfirm is the box of
+	// the form, after a refusal.
+	Name          string
+	InBandConfirm bool
+	Scopes        []choice
+	Tokens        []tokenRow
+	// NewTokenDays is how many days a new token stays valid.
+	NewTokenDays int
 	// Sessions are the browsers that are signed in.
 	Sessions []sessionRow
 }
 
 // tokenRow is one token in the list. It never holds the token.
 type tokenRow struct {
-	ID      string
-	Name    string
-	Scopes  string
-	Created string
-	Revoked string
+	ID     string
+	Name   string
+	Scopes string
+	// Level says what the scopes add up to, see policy.EffectiveLevel.
+	Level         string
+	InBandConfirm bool
+	Created       string
+	// Expires is empty for a token without an end date. LastUsed is empty for a
+	// token that was not used yet.
+	Expires  string
+	LastUsed string
+	Revoked  string
+	// Expired is true when the end date of the token has passed.
+	Expired bool
 }
 
 // sessionRow is one signed-in browser in the list. It never holds the session
@@ -100,14 +117,18 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, codeConnectionsFailed, errNoService)
 		return
 	}
-	page := connectionsPage{Name: r.PostForm.Get("name"), Scopes: scopeChoices(r.PostForm["scope"])}
+	page := connectionsPage{
+		Name:          r.PostForm.Get("name"),
+		InBandConfirm: r.PostForm.Get("in_band_confirm") == "1",
+		Scopes:        scopeChoices(r.PostForm["scope"]),
+	}
 	scopes, ok := readScopes(r.PostForm["scope"])
 	if !ok {
 		page.Error = msgNoScope
 		s.renderConnections(w, r, http.StatusUnprocessableEntity, page)
 		return
 	}
-	token, err := svc.CreateToken(ctx, page.Name, scopes)
+	token, err := svc.CreateToken(ctx, page.Name, scopes, service.TokenOptions{InBandConfirm: page.InBandConfirm})
 	switch {
 	case errors.Is(err, tokens.ErrInvalidName):
 		page.Error = msgBadTokenName
@@ -191,15 +212,25 @@ func (s *Server) renderConnections(w http.ResponseWriter, r *http.Request, statu
 		s.fail(w, r, codeConnectionsFailed, err)
 		return
 	}
+	page.NewTokenDays = int(tokens.DefaultLifetime / (24 * time.Hour))
 	for _, t := range list {
 		row := tokenRow{
-			ID:      t.ID,
-			Name:    t.Name,
-			Scopes:  strings.Join(t.Scopes, ", "),
-			Created: formatTime(t.CreatedAt),
+			ID:            t.ID,
+			Name:          t.Name,
+			Scopes:        strings.Join(t.Scopes, ", "),
+			Level:         policy.EffectiveLevel(t.Scopes),
+			InBandConfirm: t.InBandConfirm,
+			Created:       formatTime(t.CreatedAt),
+			Expired:       t.Expired(s.now()),
 		}
 		if !t.RevokedAt.IsZero() {
 			row.Revoked = formatTime(t.RevokedAt)
+		}
+		if !t.ExpiresAt.IsZero() {
+			row.Expires = formatTime(t.ExpiresAt)
+		}
+		if !t.LastUsedAt.IsZero() {
+			row.LastUsed = formatTime(t.LastUsedAt)
 		}
 		page.Tokens = append(page.Tokens, row)
 	}

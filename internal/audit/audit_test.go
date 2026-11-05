@@ -1043,3 +1043,26 @@ func TestACallEntryHasAShortTimeLimit(t *testing.T) {
 	require.NoError(t, log.Record(context.Background(), f.entry()))
 	require.Greater(t, st.left, 20*time.Second, "an action happened already, so its entry may wait longer")
 }
+
+func TestRecordKeepsTheTokenID(t *testing.T) {
+	f := newFixture(t)
+	e := f.entry()
+	e.TokenID = "ab2c3d"
+
+	f.record(e)
+
+	got := f.list(Filter{})
+	require.Len(t, got, 1)
+	require.Equal(t, "ab2c3d", got[0].TokenID)
+}
+
+// A token has an underscore, so a token cannot end up in this field by mistake.
+func TestRecordRefusesABadTokenID(t *testing.T) {
+	f := newFixture(t)
+	for _, id := range []string{"emcp_abc", "AB", "a b", strings.Repeat("a", 65)} {
+		e := f.entry()
+		e.TokenID = id
+		require.ErrorIs(t, f.log.Record(context.Background(), e), ErrInvalidEntry, id)
+	}
+	require.Empty(t, f.list(Filter{}))
+}

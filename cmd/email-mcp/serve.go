@@ -13,7 +13,8 @@ package main
 // request needs a bearer token ("email-mcp token create"), and runs with the
 // tenant and the scopes of that token. The server is stateless, so it never
 // asks a client in band with elicitation/create: such a client gets the
-// approval link instead.
+// approval link instead. A newer client gets the in-band form only with a token
+// that was made with --in-band-confirm.
 //
 // On SIGINT or SIGTERM (or, on stdio, when the client closes standard input)
 // the command stops in the order of app.App.Close and exits with 0. The whole
@@ -220,7 +221,9 @@ func serveStdio(ctx context.Context, a *app.App, stdin io.Reader, stdout io.Writ
 
 // localPrincipal is the caller of every tool call on stdio: the local tenant,
 // with no scope limit (a local install has no tokens on stdio), and the name
-// that the client gave. It is never used for HTTP, where the token decides.
+// that the client gave. The user started this client, and only that client can
+// reach stdin, so it may show the confirmation form. It is never used for HTTP,
+// where the token decides all of this.
 func localPrincipal(_ context.Context, req *mcp.CallToolRequest) (service.Principal, error) {
 	var client string
 	if req != nil {
@@ -228,7 +231,7 @@ func localPrincipal(_ context.Context, req *mcp.CallToolRequest) (service.Princi
 			client = info.Name
 		}
 	}
-	return service.Principal{Tenant: store.LocalTenantID, Client: client}, nil
+	return service.Principal{Tenant: store.LocalTenantID, Client: client, InBandConfirm: true}, nil
 }
 
 // nopWriteCloser is an io.WriteCloser whose Close does nothing. The transport

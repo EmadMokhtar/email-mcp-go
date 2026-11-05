@@ -171,7 +171,7 @@ func (f *fixture) newCacheWithTimers(timers *fakeTimers) *BackendCache {
 // ctx returns a context with a principal of the fixture tenant and no scope
 // limit, as on a local install.
 func (f *fixture) ctx() context.Context {
-	return WithPrincipal(context.Background(), Principal{Tenant: f.tenant, Client: "test-client"})
+	return WithPrincipal(context.Background(), Principal{Tenant: f.tenant, Client: "test-client", InBandConfirm: true})
 }
 
 // settingsCall is one call to fakeLinks.Settings.

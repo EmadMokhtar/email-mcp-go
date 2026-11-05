@@ -96,6 +96,9 @@ type httpEnv struct {
 	servers atomic.Int32
 	// tools counts the tool calls that reached the Principal function.
 	tools atomic.Int32
+	// elapsed is how far the clock of the env moved from testStart, in
+	// nanoseconds.
+	elapsed *atomic.Int64
 }
 
 // newHTTPEnv builds the env. allowedOrigins is passed to Handler.
@@ -117,7 +120,8 @@ func newHTTPEnv(t *testing.T, allowedOrigins []string) *httpEnv {
 	signer := signing.New(bytes.Repeat([]byte{7}, 32))
 	backends := service.NewBackendFactory(st, vault, signer, true, nil)
 	t.Cleanup(backends.Close)
-	clock := func() time.Time { return testStart }
+	elapsed := &atomic.Int64{}
+	clock := func() time.Time { return testStart.Add(time.Duration(elapsed.Load())) }
 	send := func(ctx context.Context, tenant account.TenantID, id account.AccountID, msg *mail.RawMessage, _ mail.Ref) error {
 		a, err := st.GetAccount(ctx, tenant, id)
 		if err != nil {
@@ -142,7 +146,7 @@ func newHTTPEnv(t *testing.T, allowedOrigins []string) *httpEnv {
 		Now:      clock,
 	})
 
-	h := &httpEnv{t: t, store: st, tenant: tenant, tokens: tokens.New(st, clock), logs: &syncBuffer{}}
+	h := &httpEnv{t: t, store: st, tenant: tenant, tokens: tokens.New(st, clock), logs: &syncBuffer{}, elapsed: elapsed}
 	logger := slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	server := mcpserver.New(svc, mcpserver.Options{
 		Version:                 "test",
@@ -184,10 +188,23 @@ func (h *httpEnv) addAccount(imapSrv *imaptest.Server, smtpSrv *smtptest.Server,
 	return a
 }
 
-// token makes a token of the local tenant with the scopes.
+// token makes a token of the local tenant with the scopes and the default
+// options, so it cannot confirm in band.
 func (h *httpEnv) token(scopes ...string) string {
 	h.t.Helper()
-	token, err := h.tokens.Create(context.Background(), h.tenant, "test", policy.Scopes(scopes))
+	return h.tokenWith(service.TokenOptions{}, scopes...)
+}
+
+// inBandToken makes a token of the local tenant that may confirm in band.
+func (h *httpEnv) inBandToken(scopes ...string) string {
+	h.t.Helper()
+	return h.tokenWith(service.TokenOptions{InBandConfirm: true}, scopes...)
+}
+
+// tokenWith makes a token of the local tenant with the options and the scopes.
+func (h *httpEnv) tokenWith(opts service.TokenOptions, scopes ...string) string {
+	h.t.Helper()
+	token, err := h.tokens.Create(context.Background(), h.tenant, "test", policy.Scopes(scopes), opts)
 	require.NoError(h.t, err)
 	return token
 }
@@ -713,7 +730,7 @@ func TestHTTPTokenScopesLimitTools(t *testing.T) {
 // answer sends. The server keeps nothing between the two requests.
 func TestHTTPSendConfirmationInBand(t *testing.T) {
 	h := newHTTPEnv(t, nil)
-	token := h.token("email:read", "email:send")
+	token := h.inBandToken("email:read", "email:send")
 
 	t.Run("by hand", func(t *testing.T) {
 		cs := h.connect(token, &mcp.ClientOptions{
@@ -791,12 +808,113 @@ func TestHTTPSendFromAnOlderClientFallsBack(t *testing.T) {
 	require.Empty(t, h.smtp.Messages())
 }
 
+// A token without the in-band flag cannot answer the confirmation form itself,
+// even when the client says that it can show a form. The send waits for the user
+// on the approval page.
+func TestHTTPTokenWithoutInBandFlagGetsTheApprovalLink(t *testing.T) {
+	h := newHTTPEnv(t, nil)
+	var asked atomic.Int32
+	cs := h.connect(h.token("email:read", "email:send"), &mcp.ClientOptions{
+		ElicitationHandler: func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+			asked.Add(1)
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+		},
+	}, nil)
+
+	res := call(t, cs, &mcp.CallToolParams{Name: "send_message", Arguments: h.sendArgs()})
+
+	require.False(t, res.IsError, textOf(t, res))
+	require.Equal(t, "pending_approval", structured(t, res)["status"])
+	require.Zero(t, asked.Load(), "the client is never asked")
+	require.Empty(t, h.smtp.Messages(), "nothing is sent")
+}
+
+// The flag counts on the answer call too. A token without it cannot use a request
+// state from another client, also not to say no, and the try does not use up the
+// confirmation.
+func TestHTTPAnswerNeedsTheInBandFlag(t *testing.T) {
+	h := newHTTPEnv(t, nil)
+	byHand := func() *mcp.ClientOptions {
+		return &mcp.ClientOptions{
+			ElicitationHandler: func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+				t.Error("the client answers the input request by hand")
+				return &mcp.ElicitResult{Action: "decline"}, nil
+			},
+			MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true},
+		}
+	}
+	allowed := h.connect(h.inBandToken("email:read", "email:send"), byHand(), nil)
+	other := h.connect(h.token("email:read", "email:send"), byHand(), nil)
+	answer := func(cs *mcp.ClientSession, action, state string) *mcp.CallToolResult {
+		return call(t, cs, &mcp.CallToolParams{
+			Name:      "send_message",
+			Arguments: h.sendArgs(),
+			InputResponses: mcp.InputResponseMap{"confirm": &mcp.ElicitResult{
+				Action: action, Content: map[string]any{"confirm": true},
+			}},
+			RequestState: state,
+		})
+	}
+
+	first := call(t, allowed, &mcp.CallToolParams{Name: "send_message", Arguments: h.sendArgs()})
+	require.True(t, first.NeedsInput())
+	require.NotEmpty(t, first.RequestState)
+
+	for _, action := range []string{"accept", "decline"} {
+		res := answer(other, action, first.RequestState)
+		require.True(t, res.IsError, action)
+		require.Contains(t, textOf(t, res), "The confirmation is not valid", action)
+		require.Empty(t, h.smtp.Messages(), "nothing is sent")
+	}
+
+	res := answer(allowed, "accept", first.RequestState)
+	require.False(t, res.IsError, textOf(t, res))
+	require.Equal(t, "sent", structured(t, res)["status"], "the action still waits for its own client")
+}
+
+// An expired token gets the same answer as a token that never existed, so the
+// answer says nothing about the token.
+func TestHTTPExpiredTokenIsRefused(t *testing.T) {
+	h := newHTTPEnv(t, nil)
+	token := h.tokenWith(service.TokenOptions{ExpiresIn: time.Hour}, "email:read")
+	status, _ := h.post(listBody, withToken(token))
+	require.Equal(t, http.StatusOK, status, "the token works before its end date")
+
+	h.elapsed.Store(int64(time.Hour))
+
+	unknownStatus, unknownBody := h.post(listBody, withToken("emcp_"+strings.Repeat("b", 51)+"a"))
+	status, body := h.post(listBody, withToken(token))
+	require.Equal(t, http.StatusUnauthorized, status)
+	require.Equal(t, unknownStatus, status)
+	require.Equal(t, unknownBody, body)
+}
+
+// Every entry of a call over HTTP names its token by id, never by the token.
+func TestHTTPAuditNamesTheToken(t *testing.T) {
+	h := newHTTPEnv(t, nil)
+	token := h.token("email:read")
+	list, err := h.tokens.List(context.Background(), h.tenant)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	cs := h.connect(token, nil, nil)
+
+	res := call(t, cs, &mcp.CallToolParams{Name: "send_message", Arguments: h.sendArgs()})
+	require.True(t, res.IsError, "the scope does not allow a send")
+
+	for _, kind := range []string{"action", "call"} {
+		rows, err := h.store.ListAudit(context.Background(), h.tenant, store.AuditFilter{Tool: "send_message", Kind: kind, Limit: 10})
+		require.NoError(t, err)
+		require.Len(t, rows, 1, kind)
+		require.Equal(t, list[0].ID, rows[0].TokenID, kind)
+	}
+}
+
 // ---------------------------------------------------------------- logs
 
 func TestHTTPLogsHoldNoSecrets(t *testing.T) {
 	h := newHTTPEnv(t, nil)
 	readToken := h.token("email:read")
-	sendToken := h.token("email:send")
+	sendToken := h.inBandToken("email:send")
 	unknown := "emcp_" + strings.Repeat("b", 51) + "a"
 
 	cs := h.connect(sendToken, &mcp.ClientOptions{
@@ -906,4 +1024,20 @@ func TestErrorLogWritesOnlyAFixedCode(t *testing.T) {
 	require.Contains(t, out, "code=http_server_error")
 	require.NotContains(t, out, "secret")
 	require.NotContains(t, out, "Bearer")
+}
+
+// A value in Extra of another type is no value: the call has no token id and no
+// in-band confirmation.
+func TestPrincipalReadsExtraStrictly(t *testing.T) {
+	info := &auth.TokenInfo{UserID: "local", Scopes: []string{"email:read"}, Extra: map[string]any{
+		extraTokenID:       7,
+		extraInBandConfirm: "true",
+	}}
+	req := &mcp.CallToolRequest{Extra: &mcp.RequestExtra{TokenInfo: info}, Params: &mcp.CallToolParamsRaw{Name: "list_accounts"}}
+
+	p, err := Principal(context.Background(), req)
+
+	require.NoError(t, err)
+	require.Empty(t, p.TokenID)
+	require.False(t, p.InBandConfirm)
 }
