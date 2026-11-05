@@ -323,6 +323,39 @@ a human click from an automated one. So run `email-mcp setup`, and use the
 email-mcp web pages, in a browser or a browser profile that no agent controls,
 and do not give browser-control tools access to that profile.
 
+**What you approve is what goes out.** A message that an agent writes can only
+hold what a confirmation can show:
+
+- HTML is reduced to text, headings, lists, tables and `http`, `https` or
+  `mailto` links, and the text of the message is made from the result. Styles,
+  images, comments, other attributes and hidden text are removed, so an HTML
+  mail from an agent looks plain.
+- A subject, a plain text body or a display name with a character that a reader
+  cannot see is refused. Such characters are zero width characters, direction
+  controls, tag characters and the like. Direction marks (LRM, RLM and ALM) are
+  refused too, also in Arabic or Hebrew text, because nobody can see them. Emoji
+  and the letters of any language are fine, also the joiners that Persian, Arabic
+  and Indic text need, and the signs that a reader sees, such as the Arabic
+  number sign.
+- HTML that has nothing left after this is refused.
+- The same rules apply to `create_draft`.
+- A confirmation shows the display name of each recipient next to the address. A
+  long name is cut, and the confirmation says how much it left out.
+- A confirmation counts every character of the text that it does not show, such
+  as padding, and the approval covers the whole message: the text, the HTML, the
+  attachments and the display names. A change in any of these means that you are
+  asked again.
+- A confirmation shows the media type of each attachment next to its name. An
+  attachment keeps only the `charset` of its content type, and other parameters
+  do not go out. A media type over 100 bytes is refused. A forwarded attachment
+  with such a type goes out as `application/octet-stream`.
+
+A draft that you write yourself in another mail program goes out as you saved
+it, with its styles and images. The confirmation shows the text of it, and it
+counts hidden characters in its text and its HTML. It does not list the styles
+or the images. An agent cannot make such a draft, but a draft that it saved with
+an older version of email-mcp can still hold them.
+
 ## Recommended Claude Code deny rules
 
 Claude Code has permission rules. A "deny" rule blocks a tool call. Deny rules
