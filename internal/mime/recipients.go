@@ -155,8 +155,8 @@ func parseRecipients(field string, given []string) ([]*netmail.Address, error) {
 		if err := checkAddress(name, a); err != nil {
 			return nil, err
 		}
-		// A hidden character is left to the check of the service, which refuses
-		// it with its own error before the user is asked.
+		// A hidden character is left to the check of the service (send and
+		// create_draft both run it), which refuses it with its own error.
 		if local, _ := splitAddress(a.Address); !isPrintableASCII(local) && CleanUntrusted(local) == local {
 			return nil, fmt.Errorf("%w: %s", ErrNonASCIILocalPart, name)
 		}

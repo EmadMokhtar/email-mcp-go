@@ -172,6 +172,70 @@ func TestInvalidAddressesAreCapped(t *testing.T) {
 	require.Len(t, contentOf(out)["invalid_addresses"], 50)
 }
 
+// The check runs on the real value. Without a hidden character the text is
+// another address, so a value with one is never shown as a clean address: not
+// outside the wrapper, and not inside it.
+func TestHiddenCharacterIsNeverShownAsACleanAddress(t *testing.T) {
+	const clean = "ceo@corp.example"
+	for name, raw := range map[string]string{
+		"zero width space":  "ceo" + zwsp + "@corp.example",
+		"bidi override":     "ceo" + rlo + "@corp.example",
+		"tag character":     "ceo" + tagA + "@corp.example",
+		"zero width joiner": "ceo\U0000200d@corp.example",
+		"variation mark":    "ceo\U0000fe0f@corp.example",
+		"braille blank":     "ceo\U00002800@corp.example",
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := mail.Summary{Ref: "r", From: mail.Address{Email: raw}, To: []mail.Address{{Email: raw}, {Email: "ok@example.com"}}}
+			e := newEnv(t, envOptions{backends: &countingFactory{backend: addressBackend(s, nil, nil)}})
+			a := e.offlineAccount()
+
+			res := e.call("get_message", map[string]any{"account": string(a.ID), "ref": "r"})
+
+			require.False(t, res.IsError, textOf(t, res))
+			require.NotContains(t, wireOf(t, res), clean)
+			requireNoHiddenText(t, wireOf(t, res))
+			out := structured(t, res)
+			require.Equal(t, "", out["from_email"])
+			require.Equal(t, []any{"ok@example.com"}, out["to_emails"])
+			require.Equal(t, true, out["invalid_address"])
+			mark := map[string]any{"field": "from", "address": "ceo\U0000fffd@corp.example"}
+			require.Equal(t, mark, contentOf(out)["invalid_addresses"].([]any)[0])
+		})
+	}
+}
+
+// A value of hidden characters alone is a bad address. It is not a missing one.
+func TestAddressOfHiddenCharactersIsFlagged(t *testing.T) {
+	s := mail.Summary{Ref: "r", From: mail.Address{Email: zwsp + zwsp}}
+	e := newEnv(t, envOptions{backends: &countingFactory{backend: addressBackend(s, nil, nil)}})
+	a := e.offlineAccount()
+
+	res := e.call("get_message", map[string]any{"account": string(a.ID), "ref": "r"})
+
+	require.Equal(t, true, structured(t, res)["invalid_address"])
+}
+
+// A refusal of an address names the rule, and neither the result nor the log
+// holds the address.
+func TestRefusedDomainNamesTheRuleWithoutTheAddress(t *testing.T) {
+	const address = "bob@\U0000ff45xample.com"
+	ask := accepting()
+	m := newMailSetup(t, envOptions{client: ask.options()})
+	args := sendArgs(m.a)
+	args["to"] = []string{address}
+
+	res := callIn(t, m.e, "send_message", args)
+
+	require.True(t, res.IsError)
+	text := textOf(t, res)
+	require.Contains(t, text, "exact ASCII form")
+	require.Contains(t, text, "reply")
+	require.NotContains(t, text, address)
+	require.Empty(t, ask.requests(), "the user is not asked")
+	require.NotContains(t, m.e.logs.String(), address)
+}
+
 // The form that the person answers shows the ASCII form of a look-alike domain,
 // and says why it asks.
 func TestSendFormWarnsAboutALookAlikeDomain(t *testing.T) {
@@ -186,6 +250,7 @@ func TestSendFormWarnsAboutALookAlikeDomain(t *testing.T) {
 	require.Len(t, asked, 1)
 	require.Contains(t, asked[0].Message, "To: bob@ex\u0430mple.com (xn--exmple-4nf.com)\nWarning: ")
 	require.Contains(t, asked[0].Message, "mixes Cyrillic and Latin letters")
+	require.Equal(t, 1, strings.Count(asked[0].Message, "xn--exmple-4nf.com"), "the ASCII form is shown once")
 }
 
 func TestSendPreviewShowsTheASCIIForm(t *testing.T) {

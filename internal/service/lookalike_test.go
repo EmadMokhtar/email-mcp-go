@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -13,10 +14,21 @@ import (
 )
 
 // lookAlike has a Cyrillic letter (U+0430) in place of the Latin "a" of example.
-const lookAlike = "bob@ex\u0430mple.com"
+const lookAlike = "bob@ex\U00000430mple.com"
 
 // foreignLocal is a real address form (SMTPUTF8) that has no ASCII spelling.
-const foreignLocal = "jos\u00e9@example.com"
+const foreignLocal = "jos\U000000e9@example.com"
+
+// hiddenInForeign has a local part outside ASCII and a zero width space.
+const hiddenInForeign = "jos\U000000e9\U0000200b@example.com"
+
+// inexactDomains are domains that IDNA would change before it encodes them, or
+// cannot encode at all.
+var inexactDomains = map[string]string{
+	"full-width letter": "bob@\U0000ff45xample.com",
+	"capital letter":    "bob@B\U000000fccher.de",
+	"no ascii form":     "bob@\U00000301name.example",
+}
 
 func TestPreviewWarnsAboutALookAlikeDomain(t *testing.T) {
 	env := newWriteEnv(t)
@@ -28,8 +40,8 @@ func TestPreviewWarnsAboutALookAlikeDomain(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, needs)
 	require.Equal(t, []string{lookAlike}, needs.Pending.Preview.To, "the envelope address stays as it is")
+	require.Equal(t, lookAlike+" (xn--exmple-4nf.com)", mime.ShownAddress(needs.Pending.Preview.To[0]))
 	require.Len(t, needs.Pending.Preview.Warnings, 1)
-	require.Contains(t, needs.Pending.Preview.Warnings[0], "xn--exmple-4nf.com")
 	require.Contains(t, needs.Pending.Preview.Warnings[0], "Cyrillic and Latin")
 }
 
@@ -44,10 +56,9 @@ func TestApprovalDetailShowsTheASCIIForm(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, detail)
-	require.Equal(t, []string{mime.ShownAddress(lookAlike)}, detail.Recipients)
-	require.Contains(t, detail.Recipients[0], "xn--exmple-4nf.com")
+	require.Equal(t, []string{lookAlike + " (xn--exmple-4nf.com)"}, detail.Recipients)
 	require.Len(t, detail.Warnings, 1)
-	require.Equal(t, []string{mime.ShownAddress(lookAlike)}, pending.Preview.To, "the list of the page shows it too")
+	require.Equal(t, []string{lookAlike + " (xn--exmple-4nf.com)"}, pending.Preview.To, "the list of the page shows it too")
 	require.Equal(t, detail.Warnings, pending.Preview.Warnings)
 }
 
@@ -110,6 +121,44 @@ func TestCreateDraftRefusesATypedLocalPartOutsideASCII(t *testing.T) {
 	_, err := env.svc.CreateDraft(env.ctx(), a.ID, mail.Compose{To: []string{foreignLocal}, Subject: "Hi", Body: "Hello"})
 
 	require.ErrorIs(t, err, mime.ErrNonASCIILocalPart)
+	require.Empty(t, env.backend.saved)
+}
+
+// A draft cannot carry an address that a send would refuse. The user could send
+// it from another mail program, where nothing checks it.
+func TestCreateDraftRefusesWhatASendRefuses(t *testing.T) {
+	cases := map[string]struct {
+		address string
+		want    error
+		code    string
+	}{
+		"hidden and outside ASCII": {hiddenInForeign, ErrHiddenAddress, "hidden_address"},
+		"hidden in plain text":     {"ann\U0000200b@example.com", ErrHiddenAddress, "hidden_address"},
+		"a domain IDNA changes":    {"bob@\U0000ff45xample.com", ErrInexactDomain, "inexact_domain"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			env := newWriteEnv(t)
+			a := env.account()
+
+			_, err := env.svc.CreateDraft(env.ctx(), a.ID, mail.Compose{To: []string{tc.address}, Subject: "Hi", Body: "Hello"})
+
+			require.ErrorIs(t, err, tc.want)
+			require.Empty(t, env.backend.saved, "nothing is saved")
+			requireEntry(t, env.lastEntry(), "create_draft", audit.OutcomeRefused, tc.code)
+		})
+	}
+}
+
+func TestCreateDraftRefusesAReplyToAHiddenAddress(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	env.backend.originals["o1"] = original(mail.Address{Email: "ann\U0000200b@example.com"})
+
+	_, err := env.svc.CreateDraft(env.ctx(), a.ID, mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Body: "Yes."})
+
+	require.ErrorIs(t, err, ErrHiddenAddress)
+	require.Empty(t, env.backend.saved)
 }
 
 // A reply answers a person of the thread, so the address was not typed by the
@@ -138,16 +187,75 @@ func TestReplyToALocalPartOutsideASCIIAsksWithAWarning(t *testing.T) {
 	}
 }
 
-func TestSendRefusesADomainWithNoASCIIForm(t *testing.T) {
+// A hidden character is part of the real address. A reply is not sent to the
+// address without it, which is another mailbox. It is refused instead.
+func TestReplyNeverGoesToTheAddressWithoutItsHiddenCharacter(t *testing.T) {
+	for name, address := range map[string]string{
+		"zero width space":  "ceo\U0000200b@corp.example",
+		"zero width joiner": "ceo\U0000200d@corp.example",
+		"braille blank":     "ceo\U00002800@corp.example",
+		"private use":       "ceo\U0000e000@corp.example",
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := newWriteEnv(t)
+			a := env.account()
+			env.backend.originals["o1"] = original(mail.Address{Email: address})
+			c := mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Body: "Yes."}
+
+			_, _, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+			require.ErrorIs(t, err, ErrHiddenAddress)
+			env.requireNothingQueued()
+		})
+	}
+}
+
+// The form next to the address is the form of the domain in the envelope. When
+// IDNA would change the domain first, the two differ, so the send is refused.
+func TestSendRefusesADomainThatIDNAWouldChange(t *testing.T) {
+	for name, address := range inexactDomains {
+		t.Run(name, func(t *testing.T) {
+			env := newWriteEnv(t)
+			a := env.account()
+			c := compose(address)
+
+			_, _, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+			require.ErrorIs(t, err, ErrInexactDomain)
+			require.ErrorIs(t, err, ErrInvalidRequest)
+			requireEntry(t, env.lastEntry(), "send_message", audit.OutcomeRefused, "inexact_domain")
+			env.requireNothingQueued()
+		})
+	}
+}
+
+// One bad domain in the thread stops a reply to all: the agent does not choose
+// these recipients, and leaving one out without a word would change who the
+// message goes to. The error names the rule, and a plain reply still works.
+func TestReplyToAllFailsClosedOnABadDomain(t *testing.T) {
 	env := newWriteEnv(t)
 	a := env.account()
-	env.backend.originals["o1"] = original(mail.Address{Email: "bob@\u0301name.example"})
-	c := mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Body: "Yes."}
+	message := original()
+	message.Cc = append(message.Cc, mail.Address{Email: "bob@\U0000ff45xample.com"})
+	env.backend.originals["o1"] = message
 
-	_, _, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
-
-	require.ErrorIs(t, err, ErrHiddenAddress)
+	all := mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1", All: true}, Body: "Yes."}
+	_, _, err := env.svc.Send(env.ctx(), a.ID, &all, nil, ConfirmInBand, nil)
+	require.ErrorIs(t, err, ErrInexactDomain)
+	requireEntry(t, env.lastEntry(), "send_message", audit.OutcomeRefused, "inexact_domain")
 	env.requireNothingQueued()
+
+	plain := mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Cc: []string{"dan@example.com"}, Body: "Yes."}
+	_, needs, err := env.svc.Send(env.ctx(), a.ID, &plain, nil, ConfirmInBand, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"alice@example.com", "dan@example.com"}, needs.Pending.Preview.To)
+}
+
+func TestTrashLineMarksAHiddenCharacterInAnAddress(t *testing.T) {
+	line := trashLine(mail.Summary{From: mail.Address{Email: "ceo\U0000200b@corp.example"}, Subject: "Hi"})
+
+	require.Contains(t, line, "ceo\U0000fffd@corp.example")
+	require.False(t, strings.Contains(line, "ceo@corp.example"))
 }
 
 func TestSamePreviewComparesTheWarnings(t *testing.T) {

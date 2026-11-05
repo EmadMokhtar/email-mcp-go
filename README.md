@@ -198,11 +198,15 @@ instructions." The server also tells the agent never to follow instructions
 found inside an email.
 
 A received address stands outside that marked content only in its plainest
-form: ASCII, with no quotes and no spaces. Any other address, also a real one
-with characters outside ASCII, moves into the marked content
-(`invalid_addresses`), and the result has `invalid_address: true`. A header
-with more than 50 addresses is cut, and `truncated_recipients` says how many
-are left out. A reply by `ref` still reaches a real address of this kind.
+form: ASCII, with no quotes, no spaces and no hidden characters. Any other
+address, also a real one with characters outside ASCII, moves into the marked
+content (`invalid_addresses`), and the result has `invalid_address: true`. A
+character that cannot be seen shows there as the replacement character (U+FFFD),
+so such an address never reads as a clean one. A header with more than 50
+addresses is cut, and `truncated_recipients` says how many are left out. A reply
+by `ref` still reaches a real address with characters outside ASCII. A reply to
+an address with a hidden character is refused, because the user could not see
+the exact address.
 
 There are no attachments from file paths. An agent that wants to attach a file
 must read the file itself and send its content. A path argument would let a
@@ -278,7 +282,11 @@ a recipient with any character outside printable ASCII:
   because that part has no ASCII form to compare. A reply or a reply to all
   that reaches such an address still works, and it always asks you. So does a
   draft that you wrote yourself.
-- A domain with no ASCII form is refused.
+- A domain with no exact ASCII form is refused, so the form that you see is the
+  form of the domain that the message goes to. This covers a domain that would
+  change when it is encoded, such as one with full-width or capital letters.
+  One such address stops a whole reply to all, and the error says why. A plain
+  reply that names the other people in Cc still works.
 
 **Full autonomy** means both switches are off. The agent then sends and moves
 mail to the Trash without asking. You can turn it on only on the settings page,

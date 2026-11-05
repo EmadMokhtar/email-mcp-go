@@ -10,21 +10,46 @@ import (
 )
 
 // lookAlike has a Cyrillic letter (U+0430) in place of the Latin "a" of example.
-const lookAlike = "bob@ex\u0430mple.com"
+const lookAlike = "bob@ex\U00000430mple.com"
 
 func TestShownAddressAddsTheASCIIFormOfADomain(t *testing.T) {
 	cases := map[string]string{
-		"bob@example.com":         "bob@example.com",
-		"bob@xn--exmple-4nf.com":  "bob@xn--exmple-4nf.com",
-		lookAlike:                 lookAlike + " (xn--exmple-4nf.com)",
-		"user@b\u00fccher.de":     "user@b\u00fccher.de (xn--bcher-kva.de)",
-		"jos\u00e9@example.com":   "jos\u00e9@example.com",
-		"bob@\uff45xample.com":    "bob@\uff45xample.com (example.com)", // full-width letter
-		"bob@not\u2800valid\xff.": "bob@not\u2800valid\xff.",            // no ASCII form
+		"bob@example.com":           "bob@example.com",
+		"bob@xn--exmple-4nf.com":    "bob@xn--exmple-4nf.com",
+		lookAlike:                   lookAlike + " (xn--exmple-4nf.com)",
+		"user@b\U000000fccher.de":   "user@b\U000000fccher.de (xn--bcher-kva.de)",
+		"jos\U000000e9@example.com": "jos\U000000e9@example.com",
 	}
 	for addr, want := range cases {
 		require.Equal(t, want, ShownAddress(addr), addr)
 	}
+}
+
+// IDNA would change these domains before it encodes them, so an ASCII form would
+// be the form of another string than the domain in the envelope. What the user
+// sees must be what the message goes to, so no form is shown, and a send is
+// refused.
+func TestNoASCIIFormForADomainThatIDNAWouldChange(t *testing.T) {
+	for name, addr := range map[string]string{
+		"full-width letter": "bob@\U0000ff45xample.com",
+		"capital outside":   "bob@B\U000000dcCHER.de",
+		"capital inside":    "bob@B\U000000fccher.de",
+		"another dot":       "bob@b\U000000fccher\U00003002de",
+		"not composed":      "bob@bu\U00000308cher.de",
+		"leading mark":      "bob@\U00000301name.example",
+		"not valid UTF-8":   "bob@\xff.example",
+	} {
+		require.Equal(t, addr, ShownAddress(addr), name)
+		require.False(t, HasExactASCIIDomain(addr), name)
+	}
+}
+
+func TestHasExactASCIIDomain(t *testing.T) {
+	require.True(t, HasExactASCIIDomain("bob@example.com"))
+	require.True(t, HasExactASCIIDomain("bob@EXAMPLE.com"), "a plain domain is what it is")
+	require.True(t, HasExactASCIIDomain(lookAlike))
+	require.True(t, HasExactASCIIDomain("bob@b\U000000fccher.de"))
+	require.True(t, HasExactASCIIDomain("jos\U000000e9@example.com"), "only the domain counts")
 }
 
 func TestAddressWarning(t *testing.T) {
@@ -35,44 +60,86 @@ func TestAddressWarning(t *testing.T) {
 	t.Run("a look-alike name is flagged by its label", func(t *testing.T) {
 		got := AddressWarning(lookAlike)
 		require.Contains(t, got, "outside ASCII")
-		require.Contains(t, got, "xn--exmple-4nf.com")
-		require.Contains(t, got, "ex\u0430mple")
-		require.Contains(t, got, "Cyrillic and Latin")
+		require.Contains(t, got, "The name ex\U00000430mple mixes Cyrillic and Latin letters.")
+		require.NotContains(t, got, "xn--", "the form stands next to the address, not here too")
 	})
 	t.Run("a name in one script has no mixed line", func(t *testing.T) {
-		got := AddressWarning("bob@\u043f\u0440\u0438\u043c\u0435\u0440.com") // Cyrillic only
+		got := AddressWarning("bob@\U0000043f\U00000440\U00000438\U0000043c\U00000435\U00000440.com") // Cyrillic only
 		require.Contains(t, got, "outside ASCII")
-		require.Contains(t, got, "xn--")
 		require.NotContains(t, got, "mixes")
 	})
 	t.Run("Japanese mixes scripts on purpose", func(t *testing.T) {
-		got := AddressWarning("bob@\u65e5\u672c\u8a9e\u306e\u30ab\u30bf\u30ab\u30ca.jp")
+		got := AddressWarning("bob@\U000065e5\U0000672c\U00008a9e\U0000306e\U000030ab\U000030bf\U000030ab\U000030ca.jp")
 		require.NotContains(t, got, "mixes")
 	})
 	t.Run("a local part is named", func(t *testing.T) {
-		got := AddressWarning("jos\u00e9@example.com")
+		got := AddressWarning("jos\U000000e9@example.com")
 		require.Contains(t, got, "before the @")
-		require.NotContains(t, got, "xn--")
 	})
+}
+
+// The sets are the "highly restrictive" level of Unicode TS 39.
+func TestMixedScriptsFollowTS39(t *testing.T) {
+	const (
+		han      = "\U00006f22"
+		hiragana = "\U00003042"
+		katakana = "\U000030a2"
+		hangul   = "\U0000d55c"
+		bopomofo = "\U00003105"
+		cyrillic = "\U00000430"
+		greek    = "\U000003b1"
+	)
+	for _, label := range []string{
+		"abc", han, cyrillic + "1-2", hiragana + katakana,
+		"a" + han + hiragana + katakana, // Japanese
+		"a" + han + bopomofo,            // Chinese
+		"a" + han + hangul,              // Korean
+	} {
+		require.Nil(t, mixedScripts(label), label)
+	}
+	for label, want := range map[string][]string{
+		"a" + cyrillic:      {"Cyrillic", "Latin"},
+		cyrillic + greek:    {"Cyrillic", "Greek"},
+		han + cyrillic:      {"Cyrillic", "Han"},
+		hiragana + hangul:   {"Hangul", "Hiragana"},
+		katakana + hangul:   {"Hangul", "Katakana"},
+		bopomofo + hangul:   {"Bopomofo", "Hangul"},
+		bopomofo + hiragana: {"Bopomofo", "Hiragana"},
+	} {
+		require.Equal(t, want, mixedScripts(label), label)
+	}
+}
+
+func TestMarkInvisible(t *testing.T) {
+	const mark = "\U0000fffd"
+	for in, want := range map[string]string{
+		"ceo@corp.example":               "ceo@corp.example",
+		"jos\U000000e9@corp.example":     "jos\U000000e9@corp.example",
+		"ceo\U0000200b@corp.example":     "ceo" + mark + "@corp.example", // zero width space
+		"ce\U0000202eo@corp.example":     "ce" + mark + "o@corp.example", // bidi override
+		"ceo\U000e0041@corp.example":     "ceo" + mark + "@corp.example", // tag character
+		"ceo\U0000200c@corp.example":     "ceo" + mark + "@corp.example", // CleanUntrusted keeps it
+		"ceo\U0000200d@corp.example":     "ceo" + mark + "@corp.example", // CleanUntrusted keeps it
+		"ceo\U0000fe0f@corp.example":     "ceo" + mark + "@corp.example", // CleanUntrusted keeps it
+		"ceo\U00002800@corp.example":     "ceo" + mark + "@corp.example", // braille blank
+		"ceo\U0000e000@corp.example":     "ceo" + mark + "@corp.example", // private use
+		"ceo\U000e0080@corp.example":     "ceo" + mark + "@corp.example", // not assigned
+		"ceo\xff@corp.example":           "ceo" + mark + "@corp.example", // not valid UTF-8
+		"\U0000200b\U0000200b@x.example": mark + mark + "@x.example",
+	} {
+		require.Equal(t, want, MarkInvisible(in))
+	}
 }
 
 func TestHasNonASCIIAddress(t *testing.T) {
 	require.False(t, HasNonASCIIAddress(nil))
 	require.False(t, HasNonASCIIAddress([]string{"a@example.com", "b@xn--exmple-4nf.com"}))
 	require.True(t, HasNonASCIIAddress([]string{"a@example.com", lookAlike}))
-	require.True(t, HasNonASCIIAddress([]string{"jos\u00e9@example.com"}))
-	require.True(t, HasNonASCIIAddress([]string{"blank\u2800@example.com"}), "a braille blank looks like nothing")
-	require.True(t, HasNonASCIIAddress([]string{"a@example.com\u0301"}), "a combining mark")
-	require.True(t, HasNonASCIIAddress([]string{"a\ue000@example.com"}), "a private-use character")
+	require.True(t, HasNonASCIIAddress([]string{"jos\U000000e9@example.com"}))
+	require.True(t, HasNonASCIIAddress([]string{"blank\U00002800@example.com"}), "a braille blank looks like nothing")
+	require.True(t, HasNonASCIIAddress([]string{"a@example.com\U00000301"}), "a combining mark")
+	require.True(t, HasNonASCIIAddress([]string{"a\U0000e000@example.com"}), "a private-use character")
 	require.True(t, HasNonASCIIAddress([]string{"a\x7f@example.com"}), "DEL is not printable")
-}
-
-func TestHasASCIIDomain(t *testing.T) {
-	require.True(t, HasASCIIDomain("bob@example.com"))
-	require.True(t, HasASCIIDomain(lookAlike))
-	require.True(t, HasASCIIDomain("jos\u00e9@example.com"), "only the domain counts")
-	require.False(t, HasASCIIDomain("bob@bad\u2003domain.com"), "a wide space has no ASCII form")
-	require.False(t, HasASCIIDomain("bob@\xff.example"), "not valid UTF-8")
 }
 
 func TestIsPlainAddress(t *testing.T) {
@@ -107,10 +174,11 @@ func TestIsPlainAddress(t *testing.T) {
 		"ip literal":        "bob@[127.0.0.1]",
 		"long label":        "bob@" + strings.Repeat("a", 64) + ".com",
 		"too long":          "bob@" + strings.Repeat("a.", 126) + "com",
-		"non-ascii local":   "jos\u00e9@example.com",
+		"non-ascii local":   "jos\U000000e9@example.com",
 		"non-ascii domain":  lookAlike,
 		"line break":        "bob\n@example.com",
 		"angle bracket":     "<bob@example.com>",
+		"hidden character":  "ceo\U0000200b@corp.example",
 	}
 	for name, s := range bad {
 		require.False(t, IsPlainAddress(s), name)
@@ -123,11 +191,11 @@ func TestBuildRefusesATypedLocalPartOutsideASCII(t *testing.T) {
 		c := mail.Compose{Subject: "Hi", Body: "Hello"}
 		switch field {
 		case "to":
-			c.To = []string{"jos\u00e9@example.com"}
+			c.To = []string{"jos\U000000e9@example.com"}
 		case "cc":
-			c.To, c.Cc = []string{"bob@example.com"}, []string{"jos\u00e9@example.com"}
+			c.To, c.Cc = []string{"bob@example.com"}, []string{"jos\U000000e9@example.com"}
 		case "bcc":
-			c.To, c.Bcc = []string{"bob@example.com"}, []string{"jos\u00e9@example.com"}
+			c.To, c.Bcc = []string{"bob@example.com"}, []string{"jos\U000000e9@example.com"}
 		}
 
 		_, err := Build(c, bc)
@@ -151,7 +219,7 @@ func TestBuildKeepsADomainOutsideASCII(t *testing.T) {
 func TestReplyKeepsALocalPartOutsideASCIIFromTheOriginal(t *testing.T) {
 	original := &mail.Message{
 		Summary: mail.Summary{
-			From:    mail.Address{Email: "jos\u00e9@example.com"},
+			From:    mail.Address{Email: "jos\U000000e9@example.com"},
 			To:      []mail.Address{{Email: "me@example.com"}},
 			Subject: "Lunch",
 		},
@@ -165,5 +233,26 @@ func TestReplyKeepsALocalPartOutsideASCIIFromTheOriginal(t *testing.T) {
 	msg, err := Build(mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Body: "Yes."}, bc)
 
 	require.NoError(t, err)
-	require.Equal(t, []string{"jos\u00e9@example.com"}, msg.Recipients)
+	require.Equal(t, []string{"jos\U000000e9@example.com"}, msg.Recipients)
+}
+
+// The block of a forward quotes the addresses of the original. An address with a
+// hidden character must not read as a clean address there.
+func TestForwardMarksAHiddenCharacterInAnAddress(t *testing.T) {
+	original := originalMessage()
+	original.From = mail.Address{Name: "Boss", Email: "ceo\U0000200b@corp.example"}
+	original.To = []mail.Address{{Email: "me\U0000200d@corp.example"}}
+	ref := mail.Ref("o1")
+	bc := newContext()
+	bc.Original = original
+
+	msg, err := Build(mail.Compose{To: []string{"bob@example.com"}, ForwardOf: &ref, Body: "FYI"}, bc)
+
+	require.NoError(t, err)
+	parsed, err := ParseMessage(strings.NewReader(string(msg.Data)), 0)
+	require.NoError(t, err)
+	require.Contains(t, parsed.Text, "ceo\U0000fffd@corp.example")
+	require.Contains(t, parsed.Text, "me\U0000fffd@corp.example")
+	require.NotContains(t, parsed.Text, "ceo@corp.example")
+	require.NotContains(t, parsed.Text, "\U0000200b")
 }

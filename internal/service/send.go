@@ -112,11 +112,20 @@ var (
 	// address that a reply adds) has a character that mime.CleanUntrusted
 	// removes or changes: one that is hidden or changes how text is shown. A
 	// confirmation shows cleaned text, so the user could not see the exact
-	// address. The same goes for a domain outside ASCII that has no ASCII form,
-	// because the form next to it is how the user tells it from a look-alike.
-	// Such a message is not sent. It matches ErrInvalidRequest.
+	// address. Such a message is not sent. It matches ErrInvalidRequest.
 	ErrHiddenAddress = fmt.Errorf("%w: an address has a character that is hidden or changes how text is shown, "+
 		"so the user could not see the exact address. Use the plain address", ErrInvalidRequest)
+
+	// ErrInexactDomain means that an envelope recipient has a domain outside
+	// ASCII with no exact ASCII form: it has none, or IDNA would change the
+	// domain first (mime.HasExactASCIIDomain). The ASCII form next to an address
+	// is how the user tells it from a look-alike, and it must be the form of the
+	// domain that the message goes to. Such a message is not sent. This also
+	// stops a reply to all with one such address: leaving the address out would
+	// change who the message goes to without a word. It matches
+	// ErrInvalidRequest.
+	ErrInexactDomain = fmt.Errorf("%w: an address has a domain with no exact ASCII form, "+
+		"so the user could not check where the message goes", ErrInvalidRequest)
 )
 
 // sendDeps checks that every part that a send needs is set up (see confirmDeps).
@@ -465,13 +474,17 @@ func (s *Service) buildForConfirmation(ctx context.Context, b mail.Backend, a *a
 }
 
 // checkShownAddresses returns ErrHiddenAddress when an envelope recipient of the
-// message is not exactly the text that a confirmation shows of it, or when its
-// domain has no ASCII form to show next to it. The sender is the address of the
-// account, which the agent cannot choose.
+// message has a character that a reader cannot see, so a confirmation could not
+// show the exact address. It returns ErrInexactDomain when the recipient has no
+// ASCII form of its domain to show next to it. The errors never hold the address.
+// The sender is the address of the account, which the agent cannot choose.
 func checkShownAddresses(msg *mail.RawMessage) error {
 	for _, r := range msg.Recipients {
-		if mime.CleanUntrusted(r) != r || !mime.HasASCIIDomain(r) {
+		if mime.MarkInvisible(r) != r {
 			return ErrHiddenAddress
+		}
+		if !mime.HasExactASCIIDomain(r) {
+			return ErrInexactDomain
 		}
 	}
 	return nil

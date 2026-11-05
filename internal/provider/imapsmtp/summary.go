@@ -379,10 +379,17 @@ func convertAddresses(list []imap.Address) []mail.Address {
 
 // convertAddress converts an address of the envelope. It returns false for a
 // group marker, which has no mail address.
+//
+// The address is kept as the server gives it, and it is not cleaned like the
+// other text. Without a hidden character it would be another address: a reply
+// would go to a mailbox that is not the sender's, and a tool result would show
+// it as a clean address. The readers decide what to do with the real value: a
+// send refuses a hidden character (service.ErrHiddenAddress), a tool result
+// moves it into the Untrusted wrapper, and text for a person marks it.
 func convertAddress(a imap.Address) (mail.Address, bool) {
 	email := a.Addr()
 	if email == "" {
 		return mail.Address{}, false
 	}
-	return mail.Address{Name: cleanHeaderText(a.Name), Email: mime.CleanUntrusted(email)}, true
+	return mail.Address{Name: cleanHeaderText(a.Name), Email: email}, true
 }
