@@ -595,12 +595,28 @@ func TestPreviewShowsTheAttachmentTypes(t *testing.T) {
 		env := newWriteEnv(t)
 		a := env.account()
 		c := forwardWithAttachments(env.backend, "plan.pdf")
-		env.backend.attachments["2"].ContentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+		env.backend.attachments["2"].ContentType = "application/" + strings.Repeat("x", mime.MaxMediaTypeBytes)
 
 		_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
 
 		require.NoError(t, err)
 		require.Equal(t, []string{"application/octet-stream", "text/plain"}, needs.Pending.Preview.AttachmentTypes)
+	})
+
+	t.Run("a type that the agent gives is shown whole", func(t *testing.T) {
+		longest := "application/" + strings.Repeat("x", mime.MaxMediaTypeBytes-len("application/"))
+		for _, mediaType := range []string{longest, "application/vnd.openxmlformats-officedocument.presentationml.presentation"} {
+			env := newWriteEnv(t)
+			a := env.account()
+			c := mail.Compose{To: []string{"bob@example.com"}, Subject: "S", Body: "hi", Attachments: []mail.OutgoingAttachment{
+				{Filename: "a.bin", ContentType: mediaType, Data: []byte("x")},
+			}}
+
+			_, needs, err := env.svc.Send(env.ctx(), a.ID, &c, nil, ConfirmInBand, nil)
+
+			require.NoError(t, err)
+			require.Equal(t, []string{mediaType}, needs.Pending.Preview.AttachmentTypes)
+		}
 	})
 
 	t.Run("a draft shows the type of its header", func(t *testing.T) {
@@ -640,7 +656,7 @@ func TestPreviewShowsTheAttachmentTypes(t *testing.T) {
 		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
 
 		require.NoError(t, err)
-		require.Equal(t, []string{long[:previewAttachmentTypeChars] + "..."}, needs.Pending.Preview.AttachmentTypes)
+		require.Equal(t, []string{long[:mime.MaxMediaTypeBytes] + "..."}, needs.Pending.Preview.AttachmentTypes)
 	})
 
 	t.Run("the detail page shows the type next to the name", func(t *testing.T) {

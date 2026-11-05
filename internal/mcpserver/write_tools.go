@@ -54,7 +54,7 @@ var errAttachmentsTooLarge = failure(codeTooLarge, fmt.Sprintf(
 // mail out any local file.
 type AttachmentIn struct {
 	Filename    string `json:"filename" jsonschema:"The file name that the recipients see."`
-	ContentType string `json:"content_type,omitempty" jsonschema:"Media type, for example application/pdf, at most 64 bytes long. Found from the data when left out."`
+	ContentType string `json:"content_type,omitempty" jsonschema:"Media type, for example application/pdf, at most 100 bytes long. Found from the data when left out."`
 	DataBase64  string `json:"data_base64" jsonschema:"The file data in standard base64 (RFC 4648). Not a file path."`
 }
 

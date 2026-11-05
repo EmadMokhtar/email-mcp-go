@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -1181,6 +1182,14 @@ func TestPreviewTextShowsTheDisplayNames(t *testing.T) {
 	require.Equal(t, "Subject: Lunch", strings.Split(plain, "\n")[2], "no line when nothing is left out")
 }
 
+// The tool schema is a struct tag, so it cannot use the constant. This test keeps
+// the two the same.
+func TestAttachmentSchemaNamesTheMediaTypeLimit(t *testing.T) {
+	field, ok := reflect.TypeFor[AttachmentIn]().FieldByName("ContentType")
+	require.True(t, ok)
+	require.Contains(t, field.Tag.Get("jsonschema"), fmt.Sprintf("%d bytes", mime.MaxMediaTypeBytes))
+}
+
 // The line that says how much of the body is left out counts what the preview
 // left out (BodyMore) and what the form cuts.
 func TestPreviewTextSaysWhenTheBodyGoesOn(t *testing.T) {
@@ -1319,7 +1328,7 @@ func TestWriteToolErrorMapping(t *testing.T) {
 		{"no recipients", "send_message", mime.ErrNoRecipients, "bad_message", []string{"no recipients"}, nil, endNoRepeat},
 		{"a line break in a header", "create_draft", mime.ErrHeaderInjection, "bad_message", []string{"line break"}, nil, endNoRepeat},
 		{"a reply and a forward", "send_message", mime.ErrReplyAndForward, "bad_message", []string{"reply_to or forward_of"}, nil, endNoRepeat},
-		{"a bad content type", "send_message", mime.ErrInvalidContentType, "bad_message", []string{"content type", "64 bytes"}, nil, endNoRepeat},
+		{"a bad content type", "send_message", mime.ErrInvalidContentType, "bad_message", []string{"content type", fmt.Sprintf("%d bytes", mime.MaxMediaTypeBytes)}, nil, endNoRepeat},
 		{"a hidden character in a file name", "send_message", fmt.Errorf("%w: attachment file name", mime.ErrInvalidFilename),
 			"bad_message", []string{"file name", "U+202E"}, nil, endNoRepeat},
 		{"a hidden character in the text", "send_message", fmt.Errorf("%w: subject", mime.ErrHiddenText),

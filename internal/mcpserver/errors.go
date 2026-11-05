@@ -339,9 +339,9 @@ var messageErrors = []struct {
 	{mime.ErrHeaderInjection, "A value that goes into a header (an address, the subject or an attachment file name) " +
 		"has a line break or a NUL character. Remove it."},
 	{mime.ErrReplyAndForward, "A message cannot be a reply and a forward. Give reply_to or forward_of, not both."},
-	{mime.ErrInvalidContentType, "The content type of an attachment is not valid. Use one type such as " +
-		"application/pdf: not multipart, at most 64 bytes long, and with no charset other than UTF-8. For a longer " +
-		"type, leave content_type out or use application/octet-stream."},
+	{mime.ErrInvalidContentType, fmt.Sprintf("The content type of an attachment is not valid. Use one type such as "+
+		"application/pdf: not multipart, at most %d bytes long, and with no charset other than UTF-8. For a longer "+
+		"type, leave content_type out or use application/octet-stream.", mime.MaxMediaTypeBytes)},
 	{mime.ErrHTMLTooComplex, "The HTML body is too complex to make its text form. Use simpler HTML, " +
 		"or send a plain text body instead."},
 	{mime.ErrInvalidFilename, "An attachment file name has a character that hides or reorders text (for example " +

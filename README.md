@@ -347,9 +347,8 @@ hold what a confirmation can show:
   asked again.
 - A confirmation shows the media type of each attachment next to its name. An
   attachment keeps only the `charset` of its content type, and other parameters
-  do not go out. A media type over 64 bytes is refused, so a long type such as
-  the one for `.docx` must be left out or sent as `application/octet-stream`. A
-  forwarded attachment with such a type goes out as `application/octet-stream`.
+  do not go out. A media type over 100 bytes is refused. A forwarded attachment
+  with such a type goes out as `application/octet-stream`.
 
 A draft that you write yourself in another mail program goes out as you saved
 it, with its styles and images. The confirmation shows the text of it, and it

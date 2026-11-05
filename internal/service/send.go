@@ -62,10 +62,6 @@ const (
 	// previewRecipientNameChars is the most characters of the display name of one
 	// recipient in a preview.
 	previewRecipientNameChars = 100
-	// previewAttachmentTypeChars is the most characters of the media type of one
-	// attachment in a preview. mime.Build refuses a longer type than this, so
-	// only a draft that a person wrote can have one.
-	previewAttachmentTypeChars = 100
 	// sendPayloadVersion is the version of the send payload format.
 	sendPayloadVersion = 1
 	// maxSendPayloadBytes is the largest send payload: 15 MB, the largest HTTP
@@ -939,10 +935,12 @@ func previewOf(a *account.Account, msg *mail.RawMessage, content sendContent) co
 }
 
 // previewAttachmentType returns a media type as a preview shows it: cleaned, on
-// one line, and cut to previewAttachmentTypeChars.
+// one line, and cut to mime.MaxMediaTypeBytes. Only a draft that a person wrote
+// can have a longer type, because mime.Build refuses one. A media type is ASCII,
+// so its bytes and its characters are the same count.
 func previewAttachmentType(mediaType string) string {
 	line := oneLineText(mediaType)
-	if short := firstRunes(line, previewAttachmentTypeChars); len(short) < len(line) {
+	if short := firstRunes(line, mime.MaxMediaTypeBytes); len(short) < len(line) {
 		return short + "..."
 	}
 	return line

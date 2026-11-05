@@ -39,7 +39,7 @@ var (
 	// ErrReplyAndForward means one Compose asks for a reply and a forward.
 	ErrReplyAndForward = errors.New("mime: a message cannot be a reply and a forward")
 	// ErrInvalidContentType means the content type of an attachment is not
-	// one that Build can write, or that its media type is over 64 bytes.
+	// one that Build can write, or that its media type is over MaxMediaTypeBytes.
 	ErrInvalidContentType = errors.New("mime: invalid attachment content type")
 	// ErrInvalidFilename means the file name of an attachment has a character
 	// that hides or reorders text: a Unicode format character (category Cf,

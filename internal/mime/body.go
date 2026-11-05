@@ -170,9 +170,11 @@ type attachment struct {
 	data      []byte
 }
 
-// maxMediaTypeBytes is the longest media type of an attachment that Build writes,
-// such as "application/pdf".
-const maxMediaTypeBytes = 64
+// MaxMediaTypeBytes is the longest media type of an attachment that Build writes,
+// such as "application/pdf". A preview cuts a media type at the same length, so a
+// type that Build accepts is always shown whole. The types of Office documents
+// are long: the one for .pptx is 73 bytes.
+const MaxMediaTypeBytes = 100
 
 // OutgoingAttachments returns the attachments that Build writes for a message,
 // with the file names and the content types that go out: the original ones for a
@@ -221,7 +223,7 @@ func AttachmentType(a mail.OutgoingAttachment) string {
 // application/octet-stream, and its data stays the same.
 func originalContentType(contentType string) string {
 	mediaType, _, err := stdmime.ParseMediaType(contentType)
-	if err == nil && len(mediaType) > maxMediaTypeBytes {
+	if err == nil && len(mediaType) > MaxMediaTypeBytes {
 		return "application/octet-stream"
 	}
 	return contentType
@@ -302,14 +304,14 @@ func newAttachment(a mail.OutgoingAttachment) (attachment, error) {
 // value in them would leave unseen.
 //
 // The content type must be one type with a slash and parameters that are valid,
-// and the media type must be at most maxMediaTypeBytes long. It must not be
+// and the media type must be at most MaxMediaTypeBytes long. It must not be
 // multipart (the writer would treat the data as parts), and its charset, if any,
 // must be UTF-8 or US-ASCII, because the writer refuses any other. Any other
 // content type gives ErrInvalidContentType.
 func parseContentType(contentType string) (mediaType, charset string, err error) {
 	mediaType, params, err := stdmime.ParseMediaType(contentType)
 	if err != nil || !strings.Contains(mediaType, "/") || strings.HasPrefix(mediaType, "multipart/") ||
-		len(mediaType) > maxMediaTypeBytes {
+		len(mediaType) > MaxMediaTypeBytes {
 		return "", "", ErrInvalidContentType
 	}
 	charset = strings.ToLower(params["charset"])

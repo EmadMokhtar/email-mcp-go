@@ -431,13 +431,41 @@ func TestBuildKeepsOnlyTheCharsetOfAnAttachmentContentType(t *testing.T) {
 	})
 }
 
-func TestBuildRefusesAMediaTypeOver64Bytes(t *testing.T) {
-	fits := "application/" + strings.Repeat("x", 64-len("application/"))
-	attach := func(contentType string) mail.Compose {
-		return mail.Compose{To: []string{"bob@x"}, Body: "hi", Attachments: []mail.OutgoingAttachment{
-			{Filename: "a.bin", ContentType: contentType, Data: []byte("x")},
-		}}
+// attachedAs is a short message with one attachment of the given content type.
+func attachedAs(contentType string) mail.Compose {
+	return mail.Compose{To: []string{"bob@x"}, Body: "hi", Attachments: []mail.OutgoingAttachment{
+		{Filename: "a.bin", ContentType: contentType, Data: []byte("x")},
+	}}
+}
+
+// The media types of Office documents are long, and people send these files
+// every day. They must go out as they are, new or forwarded.
+func TestOfficeMediaTypesGoOut(t *testing.T) {
+	for name, mediaType := range map[string]string{
+		"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := mustBuild(t, attachedAs(mediaType), newContext())
+			require.Equal(t, mediaType, parsedOf(t, raw.Data).Attachments[0].ContentType)
+
+			bc := newContext()
+			bc.Original = originalMessage()
+			bc.OriginalAttachments = []mail.Attachment{{
+				AttachmentInfo: mail.AttachmentInfo{Filename: "a." + name, ContentType: mediaType},
+				Data:           []byte("x"),
+			}}
+			raw = mustBuild(t, mail.Compose{ForwardOf: forwardOf(), To: []string{"dave@x"}, Body: "fyi", IncludeOriginalAttachments: true}, bc)
+			require.Equal(t, mediaType, parsedOf(t, raw.Data).Attachments[0].ContentType)
+		})
 	}
+}
+
+func TestBuildRefusesAMediaTypeOverTheLimit(t *testing.T) {
+	require.Equal(t, 100, MaxMediaTypeBytes, "the error text and the tool schema name this number")
+	fits := "application/" + strings.Repeat("x", MaxMediaTypeBytes-len("application/"))
+	attach := attachedAs
 
 	raw := mustBuild(t, attach(fits), newContext())
 	require.Equal(t, fits, parsedOf(t, raw.Data).Attachments[0].ContentType)
@@ -464,7 +492,7 @@ func TestForwardOfAnOriginalWithALongMediaTypeGoesOut(t *testing.T) {
 	bc.OriginalAttachments = []mail.Attachment{
 		{AttachmentInfo: mail.AttachmentInfo{
 			Filename:    "report.docx",
-			ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			ContentType: "application/" + strings.Repeat("x", MaxMediaTypeBytes),
 		}, Data: []byte("x")},
 		{AttachmentInfo: mail.AttachmentInfo{Filename: "plan.pdf", ContentType: "application/pdf"}, Data: []byte("x")},
 	}
