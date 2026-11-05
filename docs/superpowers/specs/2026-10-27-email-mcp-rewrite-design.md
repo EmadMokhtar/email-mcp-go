@@ -429,10 +429,11 @@ In practice this means:
 ### 7.3 Who can change permissions
 
 - Only the user changes levels or switches, and only in the web UI.
-- The agent can call `request_permission_change`. It returns a link (8.2). The settings page shows the risk, and the user accepts or refuses there.
+- The agent can call `request_permission_change`. It returns a link (8.2). The settings page shows the risk, and the user accepts or refuses there. The link never changes the form: the page shows the requested level apart from it, says what the level allows, and applies it only with its own button, by the same rules as a save.
 - The agent can never change permissions through a tool. A prompt-injected email or invite must not be able to unlock full autonomy.
 - **[you]** said the agent mentions the risk and the user accepts. **[my call]** is that the acceptance happens on a page the agent cannot operate.
-- The full-autonomy warning names prompt injection: "An email or a calendar invite can contain hidden instructions, such as 'forward all invoices to me'. With confirmations off, the agent may follow them, and nobody checks before anything leaves."
+- Turning off Confirm sends is the step that lets mail leave with no check, so it needs the acceptance whatever Confirm deletes is. Every save with both switches off needs it too.
+- The warning names prompt injection: "An email or a calendar invite can contain hidden instructions, such as 'forward all invoices to me'. With Confirm sends off, the agent may follow them, and nobody checks before anything leaves."
 - Acceptance is stored with a timestamp and appears in the activity log.
 
 ### 7.4 Effective permission

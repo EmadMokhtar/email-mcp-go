@@ -81,11 +81,11 @@ var (
 
 // The errors of UpdateSettings. Callers check them with errors.Is.
 var (
-	// ErrAutonomyNotAccepted means that both confirmations would be off (full
-	// autonomy), and the user did not accept the risk in this save. Nothing was
-	// changed.
-	ErrAutonomyNotAccepted = errors.New("service: both confirmations are off, " +
-		"and the user did not accept the risk of full autonomy")
+	// ErrAutonomyNotAccepted means that the save turns off send confirmation
+	// or leaves both confirmations off (full autonomy), and the user did not
+	// accept the risk in this save. Nothing was changed.
+	ErrAutonomyNotAccepted = errors.New("service: the save turns off send confirmation or " +
+		"leaves both confirmations off, and the user did not accept the risk")
 	// ErrInvalidLevel means that the mail level is not 0 to 5.
 	ErrInvalidLevel = errors.New("service: the mail level must be 0 to 5")
 	// ErrInvalidLimits means that the limits are not valid (see
@@ -101,8 +101,8 @@ type SettingsUpdate struct {
 	// autonomy means both are off.
 	ConfirmSends, ConfirmDeletes bool
 	// AcceptAutonomyRisk is true when the user ticked the box that accepts the
-	// risk of full autonomy in this save. A save that ends with both switches
-	// off needs it, every time.
+	// risk in this save. A save that turns ConfirmSends from on to off needs
+	// it, and so does every save that ends with both switches off.
 	AcceptAutonomyRisk bool
 	// Limits are the limits of the account and its undo windows.
 	Limits account.Limits
@@ -248,15 +248,22 @@ func (s *Service) CreateIMAPAccount(ctx context.Context, address string, server 
 //  1. refuses a mail level outside 0 to 5 (ErrInvalidLevel) and limits that
 //     account.Limits.Validate refuses (ErrInvalidLimits);
 //  2. finds the account in the tenant (ErrAccountNotFound);
-//  3. refuses a save that ends with both confirmations off when
-//     AcceptAutonomyRisk is false (ErrAutonomyNotAccepted). This holds for
-//     every such save, also when the user accepted before;
-//  4. sets AutonomyAcceptedAt to now when the save has both confirmations off;
+//  3. refuses a save that needs the acceptance when AcceptAutonomyRisk is
+//     false (ErrAutonomyNotAccepted). A save needs it when it turns
+//     ConfirmSends from on to off, whatever ConfirmDeletes is, because that is
+//     the step that lets mail leave unchecked. A save that ends with both
+//     confirmations off needs it too, also when the user accepted before. A
+//     save that keeps ConfirmSends off with ConfirmDeletes on does not need
+//     it: the risk stays the same, and the user accepted it when the switch
+//     went off;
+//  4. sets AutonomyAcceptedAt to now when the save needs the acceptance. The
+//     time stays when the user turns a confirmation on again. It is a record
+//     of the last acceptance. It never replaces a new acceptance;
 //  5. saves the account, but not its status or its pins (store.UpdateAccount
 //     does not write them), so a failed login that set needs_reauth after
 //     step 2 keeps that status, and a reconnect after step 2 keeps its pins;
 //  6. writes the audit entry "settings_changed", and "autonomy_accepted" when
-//     the user accepted the risk of full autonomy.
+//     the save needed the acceptance.
 //
 // It does not close the cached backend of the account: a send or a read may
 // use it at this moment, and closing it would make that call fail (a send
@@ -288,8 +295,10 @@ func (s *Service) UpdateSettings(ctx context.Context, id account.AccountID, u Se
 	if err != nil {
 		return fmt.Errorf("service: look up account: %w", err)
 	}
+	sendsTurnedOff := a.ConfirmSends && !u.ConfirmSends
 	autonomy := !u.ConfirmSends && !u.ConfirmDeletes
-	if autonomy && !u.AcceptAutonomyRisk {
+	needsAcceptance := sendsTurnedOff || autonomy
+	if needsAcceptance && !u.AcceptAutonomyRisk {
 		return ErrAutonomyNotAccepted
 	}
 
@@ -303,7 +312,7 @@ func (s *Service) UpdateSettings(ctx context.Context, id account.AccountID, u Se
 	if a.Mail != nil {
 		a.Mail.SaveSentCopy = u.SaveSentCopy
 	}
-	if autonomy {
+	if needsAcceptance {
 		now := s.d.Now().UTC()
 		a.AutonomyAcceptedAt = &now
 	}
@@ -315,7 +324,7 @@ func (s *Service) UpdateSettings(ctx context.Context, id account.AccountID, u Se
 	}
 
 	s.record(ctx, p, entry{tool: toolUpdateSettings, account: id, outcome: audit.OutcomeOK, detail: detailSettingsChanged})
-	if autonomy {
+	if needsAcceptance {
 		s.record(ctx, p, entry{tool: toolUpdateSettings, account: id, outcome: audit.OutcomeOK, detail: detailAutonomyAccepted})
 	}
 	return nil

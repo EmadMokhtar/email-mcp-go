@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 
 // The fixed texts of the settings page.
 const (
-	textAutonomyNeeded = "To turn off both confirmations, tick the box that accepts the risk."
+	textAutonomyNeeded = "To turn off Confirm sends, or to keep both confirmations off, tick the box that accepts the risk."
 	textRemoveWarning  = "Removing the account also deletes its messages that wait in the outbox and are not sent yet. They are never sent."
 	textRemoveConfirm  = "To remove the account, tick the box that confirms it."
 	textBadLevel       = "Choose a mail level from 0 to 5."
@@ -111,6 +112,62 @@ func TestAutonomyRequiresAcceptance(t *testing.T) {
 	require.Empty(t, p.entries())
 }
 
+// Turning off Confirm sends alone is the step that lets mail leave with no
+// check, so it needs the box.
+func TestSendsOffRequiresAcceptance(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+
+	resp, body := p.post(settingsPath(a), settingsForm("confirm_sends", ""))
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), textAutonomyNeeded)
+	require.False(t, hasAttr(element(t, body, atom.Input, "accept_autonomy_risk"), "checked"), "the box is never ticked for the user")
+	require.False(t, hasAttr(element(t, body, atom.Input, "confirm_sends"), "checked"), "the page keeps what the user chose")
+	p.requireUnchanged(a)
+	require.Empty(t, p.entries())
+}
+
+func TestSendsOffAcceptanceRecorded(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.clock.Set(t0.Add(time.Hour))
+
+	resp, _ := p.post(settingsPath(a), settingsForm("confirm_sends", "", "accept_autonomy_risk", "1"))
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+
+	got, _ := p.reload(a)
+	require.False(t, got.ConfirmSends)
+	require.True(t, got.ConfirmDeletes)
+	require.Equal(t, t0.Add(time.Hour), *got.AutonomyAcceptedAt)
+	details := []string{}
+	for _, e := range p.entries() {
+		details = append(details, e.Detail)
+	}
+	require.ElementsMatch(t, []string{"settings_changed", "autonomy_accepted"}, details)
+
+	_, body := p.get(settingsPath(a))
+	require.Contains(t, visibleText(t, body), "You last accepted this risk on")
+}
+
+// The box sits next to the switch it is about, and it is in the page without
+// any script.
+func TestRiskBoxIsNextToConfirmSends(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+
+	_, body := p.get(settingsPath(a))
+	sends := strings.Index(body, `id="confirm_sends"`)
+	risk := strings.Index(body, `id="accept_autonomy_risk"`)
+	deletes := strings.Index(body, `id="confirm_deletes"`)
+	require.Positive(t, sends)
+	require.Greater(t, risk, sends)
+	require.Greater(t, deletes, risk)
+
+	for n := element(t, body, atom.Input, "accept_autonomy_risk"); n != nil; n = n.Parent {
+		require.False(t, hasAttr(n, "hidden"), "the box shows without a script")
+	}
+}
+
 func TestAutonomyAcceptedRecorded(t *testing.T) {
 	p := newPageFixture(t)
 	a := p.account()
@@ -186,17 +243,44 @@ func TestLevelChangeAudited(t *testing.T) {
 	require.Equal(t, "2", selectedLevel(t, body))
 }
 
-// The link of request_permission_change (chosen by the agent) only pre-selects
-// the level. It changes nothing, ticks no box, and a value that is not exactly
-// a known area and a level from 0 to 5 is ignored.
-func TestSettingsLinkOnlyPreselectsTheLevel(t *testing.T) {
+// levelPath returns the address of the route that applies a requested level.
+func levelPath(a *account.Account) string {
+	return "/accounts/" + string(a.ID) + "/level"
+}
+
+// requireApplyButton checks that the page offers the level in a form of its
+// own, which posts that level to the route of the button.
+func requireApplyButton(t *testing.T, page string, a *account.Account, level string) {
+	t.Helper()
+	input := element(t, page, atom.Input, "apply_mail_level")
+	require.NotNil(t, input, "the page has the button")
+	require.Equal(t, level, attr(input, "value"))
+	require.Equal(t, "hidden", attr(input, "type"))
+	form := input.Parent
+	for form != nil && form.DataAtom != atom.Form {
+		form = form.Parent
+	}
+	require.NotNil(t, form)
+	require.Equal(t, levelPath(a), attr(form, "action"))
+	require.Equal(t, "post", attr(form, "method"))
+}
+
+// The link of request_permission_change (chosen by the agent) only asks. It
+// changes nothing, ticks no box, and the level in the form stays the level that
+// the account has. A value that is not exactly a known area and a level from 0
+// to 5 is ignored.
+func TestSettingsLinkOnlyAsks(t *testing.T) {
 	p := newPageFixture(t)
 	a := p.account()
 
 	resp, body := p.get(settingsPath(a) + "?area=mail&level=5&accept_autonomy_risk=1&confirm_sends=0&confirm_deletes=0")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, "5", selectedLevel(t, body))
-	require.Contains(t, visibleText(t, body), "Nothing has changed yet.")
+	require.Equal(t, "4", selectedLevel(t, body), "the form keeps the current level")
+	text := visibleText(t, body)
+	require.Contains(t, text, "Nothing has changed yet.")
+	require.Contains(t, text, "Apply requested level 5")
+	require.Contains(t, text, "lets the agent send mail and move mail to Trash", "the page names what the level allows")
+	requireApplyButton(t, body, a, "5")
 	require.False(t, hasAttr(element(t, body, atom.Input, "accept_autonomy_risk"), "checked"))
 	require.True(t, hasAttr(element(t, body, atom.Input, "confirm_sends"), "checked"))
 	require.True(t, hasAttr(element(t, body, atom.Input, "confirm_deletes"), "checked"))
@@ -210,10 +294,179 @@ func TestSettingsLinkOnlyPreselectsTheLevel(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode, query)
 		require.Equal(t, "4", selectedLevel(t, body), "%s: the current level stays selected", query)
 		require.NotContains(t, visibleText(t, body), "Nothing has changed yet.", query)
+		require.Nil(t, element(t, body, atom.Input, "apply_mail_level"), query)
 	}
 	p.requireUnchanged(a)
 	require.Empty(t, p.entries())
 	require.Empty(t, p.backends.forgot())
+}
+
+// Each level has its own words on the page, and a request for the level that
+// the account already has offers no button.
+func TestSettingsLinkNamesWhatTheLevelAllows(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	allows := map[string]string{
+		"0": "stops the agent from using this mail account",
+		"1": "lets the agent read mail",
+		"2": "lets the agent read and organize mail",
+		"3": "lets the agent read and organize mail, and write drafts",
+		"5": "lets the agent send mail and move mail to Trash",
+	}
+	for level, text := range allows {
+		_, body := p.get(settingsPath(a) + "?area=mail&level=" + level)
+		require.Contains(t, visibleText(t, body), text, level)
+		requireApplyButton(t, body, a, level)
+	}
+
+	_, body := p.get(settingsPath(a) + "?area=mail&level=4")
+	text := visibleText(t, body)
+	require.Contains(t, text, "Nothing has changed yet.")
+	require.Contains(t, text, "Mail is already at this level.")
+	require.NotContains(t, text, "Apply requested level")
+	require.Nil(t, element(t, body, atom.Input, "apply_mail_level"))
+}
+
+// The page says so when the requested level would act without asking, because
+// a confirmation is off.
+func TestSettingsLinkWarnsWhenAConfirmationIsOff(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	const noSendCheck = "Confirm sends is off, so the agent will send mail without asking you."
+	const noTrashCheck = "Confirm deletes is off, so the agent will move mail to Trash without asking you."
+
+	_, body := p.get(settingsPath(a) + "?area=mail&level=5")
+	require.NotContains(t, visibleText(t, body), noSendCheck)
+	require.NotContains(t, visibleText(t, body), noTrashCheck)
+
+	resp, _ := p.post(settingsPath(a), settingsForm("mail_level", "1", "confirm_sends", "", "confirm_deletes", "",
+		"accept_autonomy_risk", "1"))
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+
+	_, body = p.get(settingsPath(a) + "?area=mail&level=5")
+	require.Contains(t, visibleText(t, body), noSendCheck)
+	require.Contains(t, visibleText(t, body), noTrashCheck)
+
+	_, body = p.get(settingsPath(a) + "?area=mail&level=3")
+	require.NotContains(t, visibleText(t, body), noSendCheck, "level 3 does not send")
+	require.NotContains(t, visibleText(t, body), noTrashCheck)
+}
+
+// A user who opens the link and presses Save does not raise the level. Save
+// posts what the form shows, and the form shows the current level.
+func TestSaveAfterASettingsLinkKeepsTheLevel(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+
+	_, body := p.get(settingsPath(a) + "?area=mail&level=5")
+	resp, _ := p.post(settingsPath(a), settingsForm("mail_level", selectedLevel(t, body), "sends_per_hour", "7"))
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+
+	got, _ := p.reload(a)
+	require.Equal(t, account.MailSend, got.Level(account.AreaMail))
+	require.Equal(t, 7, got.Limits.SendsPerHour)
+}
+
+// The button of a request changes the level and nothing else, whatever else the
+// form holds.
+func TestApplyRequestedLevelChangesOnlyTheLevel(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+
+	resp, _ := p.post(levelPath(a), url.Values{
+		"mail_level":      {"5"},
+		"confirm_deletes": {"1"},
+		"sends_per_hour":  {"1"},
+		"save_sent_copy":  {"1"},
+	})
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	require.Equal(t, settingsPath(a), resp.Header.Get("Location"))
+
+	got, _ := p.reload(a)
+	require.Equal(t, account.MailDelete, got.Level(account.AreaMail))
+	want := *a
+	want.Levels = map[account.Area]account.Level{account.AreaMail: account.MailDelete}
+	require.Equal(t, &want, got, "nothing else changed")
+
+	entries := p.entries()
+	require.Len(t, entries, 1)
+	require.Equal(t, "update_settings", entries[0].Tool)
+	require.Equal(t, "settings_changed", entries[0].Detail)
+	require.Equal(t, a.ID, entries[0].Account)
+	require.Equal(t, "web", entries[0].Client)
+}
+
+// The button follows the rules of Save. With both confirmations off, a save
+// needs the box, so the button does too, and the page offers the box.
+func TestApplyRequestedLevelFollowsTheAcceptanceRule(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	resp, _ := p.post(settingsPath(a), settingsForm("mail_level", "1", "confirm_sends", "", "confirm_deletes", "",
+		"accept_autonomy_risk", "1"))
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	before, _ := p.reload(a)
+
+	_, body := p.get(settingsPath(a) + "?area=mail&level=5")
+	box := element(t, body, atom.Input, "apply_accept_autonomy_risk")
+	require.NotNil(t, box, "the form of the button has the box")
+	require.False(t, hasAttr(box, "checked"), "the box is never ticked for the user")
+
+	entries := len(p.entries())
+	resp, body = p.post(levelPath(a), url.Values{"mail_level": {"5"}})
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), textAutonomyNeeded)
+	requireApplyButton(t, body, a, "5")
+	require.Equal(t, "1", selectedLevel(t, body), "the form keeps the current level")
+	p.requireUnchanged(before)
+	require.Len(t, p.entries(), entries, "a refusal writes no entry")
+
+	p.clock.Set(t0.Add(time.Hour))
+	resp, _ = p.post(levelPath(a), url.Values{"mail_level": {"5"}, "accept_autonomy_risk": {"1"}})
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	got, _ := p.reload(a)
+	require.Equal(t, account.MailDelete, got.Level(account.AreaMail))
+	require.False(t, got.ConfirmSends)
+	require.False(t, got.ConfirmDeletes)
+	require.Equal(t, t0.Add(time.Hour), *got.AutonomyAcceptedAt)
+}
+
+// With one confirmation still on, a level change needs no acceptance, so the
+// form of the button has no box.
+func TestApplyRequestedLevelHasNoBoxWhenNoneIsNeeded(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+
+	_, body := p.get(settingsPath(a) + "?area=mail&level=5")
+	require.Nil(t, element(t, body, atom.Input, "apply_accept_autonomy_risk"))
+}
+
+func TestApplyRequestedLevelRefusesBadValues(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	for name, form := range map[string]url.Values{
+		"level 6":      {"mail_level": {"6"}},
+		"not a number": {"mail_level": {"x"}},
+		"no level":     {},
+		"two levels":   {"mail_level": {"5", "1"}},
+		"two digits":   {"mail_level": {"05"}},
+	} {
+		resp, body := p.post(levelPath(a), form)
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, name)
+		require.Contains(t, visibleText(t, body), textBadLevel, name)
+	}
+	p.requireUnchanged(a)
+	require.Empty(t, p.entries())
+}
+
+func TestApplyRequestedLevelOfAnotherTenantIsNotFound(t *testing.T) {
+	p := newPageFixture(t)
+	p.addTenant("other")
+	theirs := p.addAccount("other", "them@example.com")
+
+	resp, body := p.post(levelPath(theirs), url.Values{"mail_level": {"5"}})
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), textNoAccount)
+	p.requireUnchanged(theirs)
 }
 
 func TestSettingsRefusesBadValues(t *testing.T) {

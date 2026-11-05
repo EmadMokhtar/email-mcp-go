@@ -151,6 +151,113 @@ func TestUpdateSettingsNeedsTheAcceptanceOnEverySave(t *testing.T) {
 	require.Equal(t, testStart.Add(time.Hour), *env.f.reload(a).AutonomyAcceptedAt)
 }
 
+// sendsOff turns off only the send confirmation.
+func sendsOff(u *SettingsUpdate) { u.ConfirmSends = false }
+
+// Turning off send confirmation alone is what allows unattended mail, so it
+// needs the same acceptance as full autonomy. A refusal changes nothing.
+func TestUpdateSettingsRefusesSendsOffWithoutAcceptance(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+
+	err := env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff))
+	require.ErrorIs(t, err, ErrAutonomyNotAccepted)
+
+	require.Equal(t, a, env.f.reload(a), "the account is unchanged")
+	require.Empty(t, env.entries())
+}
+
+func TestUpdateSettingsRecordsTheAcceptanceOfSendsOff(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, acceptRisk)))
+
+	got := env.f.reload(a)
+	require.False(t, got.ConfirmSends)
+	require.True(t, got.ConfirmDeletes)
+	require.NotNil(t, got.AutonomyAcceptedAt)
+	require.Equal(t, testStart, *got.AutonomyAcceptedAt)
+	entries := env.entries()
+	require.Len(t, entries, 2)
+	require.ElementsMatch(t, []string{"settings_changed", "autonomy_accepted"},
+		[]string{entries[0].Detail, entries[1].Detail})
+}
+
+// When send confirmation is already off and deletes are still confirmed, the
+// risk does not change, so another change needs no new acceptance. The time of
+// the last acceptance stays, and no new acceptance goes in the log.
+func TestUpdateSettingsDoesNotAskAgainWhenSendsStayOff(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, acceptRisk)))
+
+	env.clock.Advance(time.Hour)
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, func(u *SettingsUpdate) {
+		u.Limits.SendsPerHour = 3
+	})))
+
+	got := env.f.reload(a)
+	require.Equal(t, 3, got.Limits.SendsPerHour)
+	require.Equal(t, testStart, *got.AutonomyAcceptedAt)
+	accepted := 0
+	for _, e := range env.entries() {
+		if e.Detail == "autonomy_accepted" {
+			accepted++
+		}
+	}
+	require.Equal(t, 1, accepted)
+}
+
+// An old acceptance does not carry over. After the user turns send
+// confirmation on again, the time stays as a record, and the next change to
+// off needs the box again.
+func TestUpdateSettingsAsksAgainAfterSendsWereOnAgain(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, acceptRisk)))
+
+	env.clock.Advance(time.Hour)
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update()))
+	got := env.f.reload(a)
+	require.True(t, got.ConfirmSends)
+	require.Equal(t, testStart, *got.AutonomyAcceptedAt, "the record of the last acceptance stays")
+
+	require.ErrorIs(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff)), ErrAutonomyNotAccepted)
+	require.True(t, env.f.reload(a).ConfirmSends)
+
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(sendsOff, acceptRisk)))
+	require.Equal(t, testStart.Add(time.Hour), *env.f.reload(a).AutonomyAcceptedAt)
+}
+
+// Turning off delete confirmation alone does not let mail leave. It needs no
+// acceptance, and it is not recorded as one.
+func TestUpdateSettingsDeletesOffAloneNeedsNoAcceptance(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(func(u *SettingsUpdate) {
+		u.ConfirmDeletes = false
+	})))
+
+	got := env.f.reload(a)
+	require.False(t, got.ConfirmDeletes)
+	require.Nil(t, got.AutonomyAcceptedAt)
+}
+
+// A box that is ticked when no acceptance is needed records nothing.
+func TestUpdateSettingsIgnoresAnAcceptanceThatIsNotNeeded(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+
+	require.NoError(t, env.svc.UpdateSettings(env.webCtx(), a.ID, update(acceptRisk)))
+
+	require.Nil(t, env.f.reload(a).AutonomyAcceptedAt)
+	entries := env.entries()
+	require.Len(t, entries, 1)
+	require.Equal(t, "settings_changed", entries[0].Detail)
+}
+
 func TestUpdateSettingsRefusesBadValues(t *testing.T) {
 	env := newWriteEnv(t)
 	a := env.account()

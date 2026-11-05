@@ -340,7 +340,9 @@ func TestNoSecretsInLogs(t *testing.T) {
 	link := mustOK(t, cs, "request_permission_change", map[string]any{"account": acct, "area": "mail", "level": 4})["link"].(string)
 	status, _ = b.get(pathOf(t, link))
 	require.Equal(t, http.StatusOK, status)
-	status, _ = b.post("/accounts/"+acct+"/settings", settingsForm(account.MailDelete, false, true, 300))
+	form = settingsForm(account.MailDelete, false, true, 300)
+	form.Set("accept_autonomy_risk", "1")
+	status, _ = b.post("/accounts/"+acct+"/settings", form)
 	require.Equal(t, http.StatusSeeOther, status)
 	queued := mustOK(t, cs, "send_message", sendArgs(id))
 	require.Equal(t, "queued", queued["status"])
@@ -469,6 +471,7 @@ func TestNoPlaintextSecretsInDB(t *testing.T) {
 	// is stored), and a send that waits in the outbox for its undo window.
 	u := settingsOf(account.MailSend)
 	u.ConfirmSends = false
+	u.AcceptAutonomyRisk = true
 	u.Limits.UndoWindowAuto = 0
 	h.update(a.ID, u)
 	refusedArgs := sendArgs(a.ID)
@@ -611,6 +614,7 @@ func TestEveryWriteToolRefusedBelowItsLevel(t *testing.T) {
 	// the calls need: refs, an attachment id, a draft and a queued send.
 	top := settingsOf(account.MailDelete)
 	top.ConfirmSends = false
+	top.AcceptAutonomyRisk = true
 	top.Limits.UndoWindowAuto = 300 * time.Second
 	h.update(a.ID, top)
 	refs := refsIn(t, cs, a.ID, "@inbox")
@@ -1124,6 +1128,7 @@ func TestPlainTextToRemoteRefused(t *testing.T) {
 		// next call reads the changed settings.
 		u := settingsOf(account.MailSend)
 		u.ConfirmSends = false
+		u.AcceptAutonomyRisk = true
 		u.Limits.UndoWindowAuto = 0
 		hosted.update(a.ID, u)
 
@@ -1299,6 +1304,7 @@ func TestTLSCertificateChecksEnforced(t *testing.T) {
 		a := h.connect(localCtx(), accountAddress, m)
 		u := settingsOf(account.MailSend)
 		u.ConfirmSends = false
+		u.AcceptAutonomyRisk = true
 		u.Limits.UndoWindowAuto = 0
 		cs := h.client(nil)
 		for name, pins := range map[string][2]string{

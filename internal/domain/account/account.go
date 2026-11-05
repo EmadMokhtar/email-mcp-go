@@ -288,8 +288,10 @@ type Account struct {
 	ConfirmSends   bool
 	ConfirmDeletes bool
 
-	// AutonomyAcceptedAt is the time the user accepted the risk of full
-	// autonomy (both confirmations off). It is nil until then.
+	// AutonomyAcceptedAt is the last time the user accepted the risk of
+	// turning off send confirmation or of full autonomy (both confirmations
+	// off). It is nil until then. It is a record only: it stays when a
+	// confirmation goes on again, and it never replaces a new acceptance.
 	AutonomyAcceptedAt *time.Time
 
 	Limits    Limits

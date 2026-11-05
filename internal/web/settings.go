@@ -5,14 +5,17 @@ package web
 // removal of the account. Only the user changes them, here. No MCP tool can.
 //
 // The agent can give the user a link to this page (request_permission_change)
-// with "?area=mail&level=N". The agent chooses that link, so it only pre-selects
-// the level in the form. It changes nothing, never ticks a box, and never skips
-// the warning: the user must still submit the form.
+// with "?area=mail&level=N". The agent chooses that link, so it only asks. The
+// form keeps the current level, so a Save for another reason cannot raise it.
+// The page shows the request apart from the form, with a button that names
+// what the level allows. The button applies the level alone, by the same rules
+// as Save. The link changes nothing, never ticks a box, and never skips the
+// warning: the user must still press the button.
 //
-// Turning off both switches is full autonomy. The save then needs the box
-// "accept_autonomy_risk", whose label is the warning of spec section 7.3. The
-// box always starts empty, and every save that ends with both switches off
-// needs it again.
+// Turning off Confirm sends is the step that lets mail leave unchecked, with or
+// without Confirm deletes. That save needs the box "accept_autonomy_risk",
+// whose label is the warning of spec section 7.3. Every save that ends with both
+// switches off (full autonomy) needs the box again. The box always starts empty.
 
 import (
 	"errors"
@@ -35,16 +38,16 @@ const (
 	codeRemoveFailed   = "remove_failed"
 )
 
-// autonomyWarning is the risk of full autonomy, exactly as spec section 7.3
-// words it. It is the label of the box that accepts the risk.
+// autonomyWarning is the risk of turning off Confirm sends, exactly as spec
+// section 7.3 words it. It is the label of the box that accepts the risk.
 const autonomyWarning = "An email or a calendar invite can contain hidden instructions, " +
-	"such as 'forward all invoices to me'. With confirmations off, the agent may follow them, " +
+	"such as 'forward all invoices to me'. With Confirm sends off, the agent may follow them, " +
 	"and nobody checks before anything leaves."
 
 // The fixed texts of the settings page.
 const (
 	msgNoAccount       = "This account was not found."
-	msgAutonomyNeeded  = "To turn off both confirmations, tick the box that accepts the risk."
+	msgAutonomyNeeded  = "To turn off Confirm sends, or to keep both confirmations off, tick the box that accepts the risk."
 	msgBadLevel        = "Choose a mail level from 0 to 5."
 	msgBadLimits       = "The limits are not valid. Each count must be a whole number from 0 to 1000000, and each undo window from 0 to 300 seconds."
 	msgRemoveConfirm   = "To remove the account, tick the box that confirms it."
@@ -67,14 +70,17 @@ type settingsPage struct {
 	Levels []levelOption
 	// Requested is the level that a link asks for. It is nil when the address
 	// has no valid request.
-	Requested *levelOption
+	Requested *levelRequest
 	// Current is the name of the level that the account has now.
 	Current        string
 	ConfirmSends   bool
 	ConfirmDeletes bool
-	// AutonomyWarning is the label of the box that accepts full autonomy.
+	// BothOff is true when the account has both confirmations off now, so
+	// every save needs the box that accepts the risk.
+	BothOff bool
+	// AutonomyWarning is the label of the box that accepts the risk.
 	AutonomyWarning string
-	// AcceptedAt is when the user last accepted full autonomy, or empty.
+	// AcceptedAt is when the user last accepted the risk, or empty.
 	AcceptedAt string
 	Limits     limitFields
 	SaveSent   bool
@@ -87,6 +93,23 @@ type levelOption struct {
 	Value    int
 	Name     string
 	Selected bool
+}
+
+// levelRequest is the level that a link asks for, as the page shows it.
+type levelRequest struct {
+	Value int
+	Name  string
+	// Allows says what the level lets the agent do.
+	Allows string
+	// AlreadySet is true when the account has this level, so there is nothing
+	// to apply.
+	AlreadySet bool
+	// SendsUnasked is true when the level lets the agent send and Confirm
+	// sends is off.
+	SendsUnasked bool
+	// TrashUnasked is true when the level lets the agent move mail to Trash and
+	// Confirm deletes is off.
+	TrashUnasked bool
 }
 
 // limitFields are the limits as the form shows them, as text, so that a value
@@ -102,7 +125,8 @@ type limitFields struct {
 }
 
 // handleAccountSettings shows the settings of an account of the tenant of the
-// session. It changes nothing. A valid "?area=mail&level=N" pre-selects N.
+// session. It changes nothing. A valid "?area=mail&level=N" shows the request
+// with its button. The form keeps the level of the account.
 func (s *Server) handleAccountSettings(w http.ResponseWriter, r *http.Request) {
 	sess, ok := sessionFrom(r.Context())
 	if !ok {
@@ -115,8 +139,7 @@ func (s *Server) handleAccountSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	page := settingsOf(a)
 	if level, ok := requestedLevel(r.URL.Query()); ok {
-		page.Requested = &levelOption{Value: int(level), Name: level.MailName()}
-		page.Levels = levelOptions(level)
+		page.Requested = levelRequestOf(level, a)
 	}
 	s.render(w, r, http.StatusOK, pageSettings, page)
 }
@@ -141,7 +164,45 @@ func (s *Server) handleSaveAccountSettings(w http.ResponseWriter, r *http.Reques
 		s.render(w, r, http.StatusUnprocessableEntity, pageSettings, page)
 		return
 	}
-	err := svc.UpdateSettings(ctx, a.ID, update)
+	s.finishSave(w, r, a, page, svc.UpdateSettings(ctx, a.ID, update))
+}
+
+// handleApplyRequestedLevel applies the level of a request: the button that the
+// page shows for a link. It reads only the level and the box that accepts the
+// risk from the form. Everything else keeps the value of the account. It goes
+// through Service.UpdateSettings, so every rule of a save holds here too. A
+// refusal shows the request again and changes nothing.
+func (s *Server) handleApplyRequestedLevel(w http.ResponseWriter, r *http.Request) {
+	svc, sess, ctx, ok := s.userCall(r)
+	if !ok {
+		s.fail(w, r, codeSettingsFailed, errNoService)
+		return
+	}
+	a, found := s.loadAccount(w, r, sess)
+	if !found {
+		return
+	}
+	page := settingsOf(a)
+	level, ok := postedLevel(r.PostForm)
+	if !ok {
+		page.Error = msgBadLevel
+		s.render(w, r, http.StatusUnprocessableEntity, pageSettings, page)
+		return
+	}
+	page.Requested = levelRequestOf(level, a)
+	s.finishSave(w, r, a, page, svc.UpdateSettings(ctx, a.ID, service.SettingsUpdate{
+		MailLevel:          level,
+		ConfirmSends:       a.ConfirmSends,
+		ConfirmDeletes:     a.ConfirmDeletes,
+		AcceptAutonomyRisk: r.PostForm.Get("accept_autonomy_risk") == "1",
+		Limits:             a.Limits,
+		SaveSentCopy:       a.Mail != nil && a.Mail.SaveSentCopy,
+	}))
+}
+
+// finishSave answers a call of Service.UpdateSettings: a redirect to the page
+// when it worked, or else the page that the caller prepared with a fixed text.
+func (s *Server) finishSave(w http.ResponseWriter, r *http.Request, a *account.Account, page settingsPage, err error) {
 	switch {
 	case err == nil:
 		http.Redirect(w, r, "/accounts/"+url.PathEscape(string(a.ID))+"/settings", http.StatusSeeOther)
@@ -225,6 +286,7 @@ func settingsOf(a *account.Account) settingsPage {
 		Current:         level.MailName(),
 		ConfirmSends:    a.ConfirmSends,
 		ConfirmDeletes:  a.ConfirmDeletes,
+		BothOff:         !a.ConfirmSends && !a.ConfirmDeletes,
 		AutonomyWarning: autonomyWarning,
 		RemoveWarning:   msgRemoveWarning,
 		Limits: limitFields{
@@ -254,12 +316,54 @@ func levelOptions(selected account.Level) []levelOption {
 	return options
 }
 
+// levelRequestOf returns the request for a level, as the page shows it for an
+// account.
+func levelRequestOf(level account.Level, a *account.Account) *levelRequest {
+	return &levelRequest{
+		Value:        int(level),
+		Name:         level.MailName(),
+		Allows:       levelAllows(level),
+		AlreadySet:   level == a.Level(account.AreaMail),
+		SendsUnasked: level >= account.MailSend && !a.ConfirmSends,
+		TrashUnasked: level >= account.MailDelete && !a.ConfirmDeletes,
+	}
+}
+
+// levelAllows says what a mail level lets the agent do, for the sentence
+// "Level N ...". The levels are those of the README.
+func levelAllows(level account.Level) string {
+	switch level {
+	case account.MailRead:
+		return "lets the agent read mail"
+	case account.MailOrganize:
+		return "lets the agent read and organize mail"
+	case account.MailDraft:
+		return "lets the agent read and organize mail, and write drafts"
+	case account.MailSend:
+		return "lets the agent send mail"
+	case account.MailDelete:
+		return "lets the agent send mail and move mail to Trash"
+	default:
+		return "stops the agent from using this mail account"
+	}
+}
+
 // requestedLevel reads the level that a link asks for. The address must have
 // exactly one "area", which is "mail", and exactly one "level", which is one
 // digit from 0 to 5. Anything else is not a request.
 func requestedLevel(q url.Values) (account.Level, bool) {
 	areas, levels := q["area"], q["level"]
 	if len(areas) != 1 || areas[0] != string(account.AreaMail) || len(levels) != 1 {
+		return 0, false
+	}
+	return parseLevel(levels[0])
+}
+
+// postedLevel reads the mail level of a posted form, which must have exactly
+// one value.
+func postedLevel(form url.Values) (account.Level, bool) {
+	levels := form["mail_level"]
+	if len(levels) != 1 {
 		return 0, false
 	}
 	return parseLevel(levels[0])
@@ -300,10 +404,7 @@ func readSettings(form url.Values, a *account.Account) (settingsPage, service.Se
 	}
 
 	// A level that is not valid keeps the stored level selected on the page.
-	level, ok := account.Level(0), false
-	if levels := form["mail_level"]; len(levels) == 1 {
-		level, ok = parseLevel(levels[0])
-	}
+	level, ok := postedLevel(form)
 	if !ok {
 		return page, update, msgBadLevel
 	}

@@ -191,6 +191,7 @@ var routes = []route{
 	{"POST /connect/save", (*Server).handleSave},
 	{"GET /accounts/{id}/settings", (*Server).handleAccountSettings},
 	{"POST /accounts/{id}/settings", (*Server).handleSaveAccountSettings},
+	{"POST /accounts/{id}/level", (*Server).handleApplyRequestedLevel},
 	{"POST /accounts/{id}/remove", (*Server).handleRemoveAccount},
 	{"GET /accounts/{id}/reconnect", (*Server).handleReconnect},
 	{"POST /accounts/{id}/reconnect", (*Server).handleSaveReconnect},
