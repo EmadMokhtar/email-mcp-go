@@ -29,6 +29,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/webtest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/web"
 )
 
@@ -262,7 +263,7 @@ func TestOpenWiresEverything(t *testing.T) {
 	// The connect link points at the local web server and has no token.
 	link, err := a.Service.ConnectLink(localCtx())
 	require.NoError(t, err)
-	require.Regexp(t, `^http://127\.0\.0\.1:\d+/connect$`, link)
+	require.Regexp(t, `^http://email-mcp\.localhost:\d+/connect$`, link)
 	require.NotContains(t, logs.String(), link, "the log never has a link")
 }
 
@@ -1128,7 +1129,8 @@ func TestCloseShutsDownTheWebServer(t *testing.T) {
 	ta := openTest(t)
 	base, err := ta.Web.EnsureStarted(context.Background())
 	require.NoError(t, err)
-	addr := strings.TrimPrefix(base, "http://")
+	addr, err := webtest.Addr(base)
+	require.NoError(t, err)
 	conn, err := net.Dial("tcp", addr)
 	require.NoError(t, err)
 	require.NoError(t, conn.Close())
@@ -1195,7 +1197,8 @@ func TestCloseSendsWhatARunningToolCallQueued(t *testing.T) {
 	acct := ta.addAccount(t)
 	base, err := ta.Web.EnsureStarted(context.Background())
 	require.NoError(t, err)
-	addr := strings.TrimPrefix(base, "http://")
+	addr, err := webtest.Addr(base)
+	require.NoError(t, err)
 	var webUpWhileSending atomic.Bool
 	ta.factory.backend.onSend = func(int) {
 		if conn, err := net.DialTimeout("tcp", addr, time.Second); err == nil {

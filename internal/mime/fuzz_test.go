@@ -23,6 +23,8 @@ func FuzzCleanUntrusted(f *testing.F) {
 		"keep a\U0000200Cb\U0000200Dc but not a\U0000200Bb",
 		"soft\U000000ADhyphen \U0000180E\U00002060\U00002064",
 		"x\U000E0100y\U000E01EFz and \U00002764\U0000FE0F",
+		"\U00000628\U0000200C\U0000200D\U0000200C\U00000628 a\U0000200Cb 1\U0000FE0F\U000020E3 \U0001F600\U0000FE0F\U0000200D\U0001F600",
+		"\U00002800\U0000E000\U0010FFFD\U000E0FFF\U0000FE00",
 		"\U0000061C\U0000115F\U00001160\U00003164\U0000FFA0\U0000034F\U0000206A\U0000206F\U0000FFF9\U0000FFFB",
 	}
 	for _, s := range seeds {
@@ -65,6 +67,14 @@ func FuzzHTMLToText(f *testing.F) {
 		`<style>.\78 {d\69splay:n\6fne}</style><i class="x">y</i>`,
 		`<style>.x{.a{color:red}display:none}.y{</style><i class="x">y</i>`,
 		`<style>}{;"'\(/*@.a,,{{</style><p>x</p>`,
+		`<style>&&&.a#b,p.c.d,*,div>.e:hover,[f]{display:none}</style><p class="a c d" id="b">x</p>`,
+		`<style>@media not print and (min-width:1px),((max-width:9em)){.x{display:none}}</style><i class="x">y</i>`,
+		`<style>@layer a{@supports (b:c){.x{@container (d:e){.y{font-size:0}}}}}</style><i class="x y">z</i>`,
+		`<style>.x{@media all{display:none}.y{@layer a{opacity:0}}}</style><i class="x y">z</i>`,
+		`<style media="(prefers-color-scheme:dark)" type="text/css">.x{display:none}</style><i class="x">y</i>`,
+		`<details><summary hidden>a</summary><summary>b</summary>c</details><details open>d</details><div popover>e</div>`,
+		`<a href="https://a:b@c.example:1/d?e#f">g</a><a href="mailto:a://b?c=d">e</a><a href="https://%41:%42@[::1]/"></a>`,
+		`<p style="font-size:0;font-size:1em!important;opacity:calc(1);display:var(--a);height:0;overflow:auto">x</p>`,
 		`<p style="font-family:'/*';display:none;x:'*/'">y</p>`,
 		`<div style="font-size:0"><span style="font-size:13px">a</span> <span style="font-size:2em">b</span></div>`,
 		`<style>.a{font-size:0}.b{font-size:2em;visibility:visible}</style><i class="a"><b class="b">x</b></i>`,

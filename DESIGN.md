@@ -320,7 +320,7 @@ Counts, times, and table values use tabular figures, so digits line up.
 
 ## Layout
 
-The frame is a 224px menu beside the page. The menu sits on the ground and stays in view, and the page is a white pane. The mail view divides the page again: a waiting list of 280 to 340px, and a reader that takes the rest. The list and the reader each scroll alone, so the mail view fills exactly one screen height.
+The frame is a 224px menu beside the page. The menu sits on the ground and stays in view, and the page is a white pane. Sign out is the last item of the menu: a button that looks like a menu link, at the bottom of the column, and at the end of the row when the menu is a row. The mail view divides the page again: a waiting list of 280 to 340px, and a reader that takes the rest. The list and the reader each scroll alone, so the mail view fills exactly one screen height.
 
 The reader has 44px side gutters. Its action bar stays at the top while the message scrolls. Message headers and results are limited to 44rem and start at the left, so there is free space on the right on a large screen. Other pages use a left-aligned sheet with 36px top padding and 44px side padding, 44rem wide for forms and 60rem wide for Accounts and Activity. Nothing is centred except empty states and the sign-in message.
 
@@ -391,7 +391,7 @@ Quiet, direct, and honest about state. A control looks ordinary until it is work
 A column of full-width rows split by hairlines, with no cards. Each row has a bold title, an optional recipient line, and a foot with the account and the time left. Long text is cut with an ellipsis, on one line. The open row has a green wash. Hover uses the pale wash.
 
 ### Lists and Tables
-Accounts and the activity log are rows split by hairlines, with a main column and an action or time at the right. Tables exist only for lists with many columns: the tokens on the Connections page. A table has hairlines between rows and no fill, and it scrolls sideways alone.
+Accounts and the activity log are rows split by hairlines, with a main column and an action or time at the right. Tables exist only for lists with many columns: the tokens and the signed-in browsers on the Connections page. A table has hairlines between rows and no fill, and it scrolls sideways alone.
 
 ### Empty States
 A centred block of up to 30rem, with a heading, one soft sentence, and at most one button.

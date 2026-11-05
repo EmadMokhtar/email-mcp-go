@@ -234,10 +234,15 @@ func DecodeHeaderValue(v string) string {
 
 // Parsed is the content of a whole message.
 type Parsed struct {
-	// Text is the first text/plain part that is not an attachment, and HTML
-	// is the first text/html part that is not an attachment. Each is cut to
-	// the maxText argument of ParseMessage. They are decoded, but not
-	// cleaned.
+	// Shown holds the text parts that a mail client shows, in the order of the
+	// message (see LayoutOf). Each is cut to the maxText argument of ParseMessage.
+	// They are decoded, but not cleaned. To show a message to a person, use this
+	// or ShownText, and not Text or HTML.
+	Shown []ShownPart
+	// Text is the first text/plain part and HTML is the first text/html part of
+	// the body and its other versions. A message that Build made has one of each.
+	// Each is cut to the maxText argument of ParseMessage. They are decoded, but
+	// not cleaned.
 	Text, HTML string
 	// Attachments describes the parts that are attachments, without their
 	// data. The ID of each is its MIME part path, as IMAP numbers parts: "2"
@@ -255,19 +260,40 @@ type Parsed struct {
 	Incomplete bool
 }
 
+// ShownPart is one text part that a mail client shows.
+type ShownPart struct {
+	// ID is the part path, like the ID of an attachment.
+	ID string
+	// Text is the decoded part: HTML when the HTML field is true, else plain text.
+	Text string
+	HTML bool
+}
+
+// ShownText returns all that a mail client shows of the message, as plain text.
+// The error wraps ErrHTMLTooComplex when an HTML part cannot be turned into text.
+func (p *Parsed) ShownText() (string, error) {
+	texts := make([]string, 0, len(p.Shown))
+	for _, part := range p.Shown {
+		text := part.Text
+		if part.HTML {
+			var err error
+			if text, err = HTMLToText(text); err != nil {
+				return "", err
+			}
+		}
+		texts = append(texts, text)
+	}
+	return strings.Join(texts, PartSeparator), nil
+}
+
 // ParseMessage reads a whole message (header and body) and finds its text,
-// its HTML and its attachments.
+// its HTML and its attachments. LayoutOf says which part is what, so the result
+// is the same as for a backend that reads the structure of a message.
 //
-// A part is an attachment when its Content-Disposition is "attachment", or
-// when it is not multipart and not text (an image, a PDF), or when it is a
-// text part with a file name that is not the text or the HTML of the message.
-// A text/plain part is Text if it is the first one and its Content-Disposition
-// is not "attachment". The same holds for text/html and HTML. This means that
-// a text part with a file name is the body when no body came before it. Names
-// of attachments are cleaned with CleanUntrusted. The size of an attachment
+// Names of attachments are cleaned with CleanUntrusted. The size of an attachment
 // is its size after the transfer encoding is removed.
 //
-// maxText limits Text and HTML to that many characters. Zero or less means no
+// maxText limits each text part to that many characters. Zero or less means no
 // limit.
 //
 // The work is bounded. ParseMessage reads at most 10000 parts, follows
@@ -293,19 +319,23 @@ func parseMessage(r io.Reader, maxText int) (parsed *Parsed, recovered any, err 
 		defer func() { recovered = recover() }()
 		w.run(src)
 	}()
+	w.finish()
 	if recovered != nil || src.err != nil {
 		w.out.Incomplete = true
 	}
 	return w.out, recovered, src.err
 }
 
-// walker goes through the parts of one message and fills out.
+// walker goes through the parts of one message. The walk builds a tree of the
+// parts, and finish fills out from it.
 type walker struct {
 	maxText int
 	out     *Parsed
 	// parts counts the parts found, not counting the message itself.
-	parts            int
-	hasText, hasHTML bool
+	parts int
+	// root is the message. A part joins the tree before it is read, so what was
+	// read before a failure is used.
+	root *PartNode
 }
 
 func (w *walker) run(src io.Reader) {
@@ -316,25 +346,75 @@ func (w *walker) run(src io.Reader) {
 	if end == headerTooBig {
 		w.out.Incomplete = true
 	}
-	w.part(h, br, "", 0)
+	w.part(h, br, "", 0, nil)
 }
 
-// part handles one part. id is its part path, empty for the message itself.
-// It returns false when the whole walk must stop.
-func (w *walker) part(h textproto.Header, body io.Reader, id string, depth int) bool {
+// finish fills out from the tree of the parts.
+func (w *walker) finish() {
+	layout := LayoutOf(w.root)
+	body := map[*PartNode]bool{}
+	for _, n := range layout.Shown {
+		w.out.Shown = append(w.out.Shown, ShownPart{ID: n.ID, Text: n.text, HTML: n.MediaType == "text/html"})
+		body[n] = true
+	}
+	for _, n := range layout.Others {
+		body[n] = true
+	}
+	for _, n := range layout.Attachments {
+		w.out.Attachments = append(w.out.Attachments, mail.AttachmentInfo{
+			ID:          n.ID,
+			Filename:    n.filename,
+			ContentType: n.MediaType,
+			Size:        n.size,
+		})
+	}
+	if w.root != nil {
+		w.setFirstOfEachKind(w.root, body)
+	}
+}
+
+// setFirstOfEachKind sets Text and HTML from the parts of the body below n, in the
+// order of the message.
+func (w *walker) setFirstOfEachKind(n *PartNode, body map[*PartNode]bool) {
+	for _, child := range n.Children {
+		w.setFirstOfEachKind(child, body)
+	}
+	switch {
+	case !body[n]:
+	case n.MediaType == "text/plain" && w.out.Text == "":
+		w.out.Text = n.text
+	case n.MediaType == "text/html" && w.out.HTML == "":
+		w.out.HTML = n.text
+	}
+}
+
+// part handles one part. id is its part path, empty for the message itself, and
+// parent is nil for the message itself. It returns false when the whole walk must
+// stop.
+func (w *walker) part(h textproto.Header, body io.Reader, id string, depth int, parent *PartNode) bool {
 	mediaType, params := contentTypeOf(h)
 	if _, hasMethod := params["method"]; hasMethod || mediaType == "text/calendar" {
 		w.out.HasInvite = true
 	}
 
-	if strings.HasPrefix(mediaType, "multipart/") {
-		return w.multipart(params["boundary"], body, id, depth)
+	n := &PartNode{ID: id, MediaType: mediaType}
+	if parent == nil {
+		w.root = n
+	} else {
+		parent.Children = append(parent.Children, n)
 	}
-	w.leaf(h, mediaType, params, body, id)
+	if isMultipart(n) {
+		n.Start = params["start"]
+		return w.multipart(n, params["boundary"], body, depth)
+	}
+	if n.ID == "" {
+		n.ID = "1"
+	}
+	w.leaf(n, h, params, body)
 	return true
 }
 
-func (w *walker) multipart(boundary string, body io.Reader, id string, depth int) bool {
+func (w *walker) multipart(n *PartNode, boundary string, body io.Reader, depth int) bool {
 	if depth >= maxDepth || boundary == "" || len(boundary) > maxBoundary {
 		w.out.Incomplete = true
 		return true
@@ -356,54 +436,52 @@ func (w *walker) multipart(boundary string, body io.Reader, id string, depth int
 			continue
 		}
 		childID := strconv.Itoa(i)
-		if id != "" {
-			childID = id + "." + childID
+		if n.ID != "" {
+			childID = n.ID + "." + childID
 		}
-		if !w.part(h, partBody, childID, depth+1) {
+		if !w.part(h, partBody, childID, depth+1, n) {
 			return false
 		}
 	}
 }
 
-// leaf handles a part that is not multipart.
-func (w *walker) leaf(h textproto.Header, mediaType string, params map[string]string, body io.Reader, id string) {
-	if id == "" {
-		id = "1"
-	}
+// leaf reads a part that is not multipart. Which parts are used is decided after
+// the walk, so a part that can be the body is decoded here.
+func (w *walker) leaf(n *PartNode, h textproto.Header, params map[string]string, body io.Reader) {
 	encoding := h.Get("Content-Transfer-Encoding")
 	disposition, _ := parseMedia(h.Get("Content-Disposition"))
-	filename := filenameOf(h)
+	n.Attachment = disposition == "attachment"
+	n.ContentID = h.Get("Content-Id")
+	n.filename = CleanUntrusted(filenameOf(h))
+	n.Named = n.filename != ""
 
-	if disposition != "attachment" {
-		switch {
-		case mediaType == "text/plain" && !w.hasText:
-			w.out.Text, w.hasText = w.bodyText(mediaType, params, encoding, body)
-			return
-		case mediaType == "text/html" && !w.hasHTML:
-			w.out.HTML, w.hasHTML = w.bodyText(mediaType, params, encoding, body)
-			return
-		}
-	}
-
-	if disposition == "attachment" || !strings.HasPrefix(mediaType, "text/") || filename != "" {
+	raw := &byteCounter{r: body}
+	switch {
+	case n.Attachment || !isBodyType(n.MediaType):
 		// Count the bytes without keeping them.
-		size, _ := io.Copy(io.Discard, transferDecoder(encoding, body))
-		w.out.Attachments = append(w.out.Attachments, mail.AttachmentInfo{
-			ID:          id,
-			Filename:    CleanUntrusted(filename),
-			ContentType: mediaType,
-			Size:        size,
-		})
+		n.size, _ = io.Copy(io.Discard, transferDecoder(encoding, raw))
+	case n.Named:
+		// This part can be the body or an attachment, so it needs its text and
+		// its size.
+		data, _ := io.ReadAll(raw)
+		n.text, _ = decodeText(n.MediaType, params, encoding, bytes.NewReader(data), w.maxText)
+		n.size, _ = io.Copy(io.Discard, transferDecoder(encoding, bytes.NewReader(data)))
+	default:
+		n.text, _ = decodeText(n.MediaType, params, encoding, raw, w.maxText)
 	}
-	// Any other part is a second text or HTML alternative, or a text part
-	// without a name. It is not used.
+	n.Empty = raw.n == 0
 }
 
-// bodyText decodes a part that may be the text or the HTML of the message.
-// A part with no text does not take that place, so ok is false for it.
-func (w *walker) bodyText(mediaType string, params map[string]string, encoding string, body io.Reader) (text string, ok bool) {
-	text, _ = decodeText(mediaType, params, encoding, body, w.maxText)
-	return text, text != ""
+// byteCounter counts the bytes read from r.
+type byteCounter struct {
+	r io.Reader
+	n int64
+}
+
+func (c *byteCounter) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }
 
 // filenameOf returns the decoded file name of a part, or an empty string.

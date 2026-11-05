@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -53,10 +55,11 @@ func (p *pageFixture) state(ids ...string) state {
 // each route with the ids of those items.
 type routeFixture struct {
 	*pageFixture
-	account *account.Account
-	send    string
-	queued  string
-	tokenID string
+	account   *account.Account
+	send      string
+	queued    string
+	tokenID   string
+	sessionID string
 }
 
 func newRouteFixture(t *testing.T) *routeFixture {
@@ -68,7 +71,13 @@ func newRouteFixture(t *testing.T) *routeFixture {
 	require.NoError(t, err)
 	list, err := p.tokens.List(context.Background(), p.tenant)
 	require.NoError(t, err)
-	return &routeFixture{pageFixture: p, account: a, send: send, queued: p.queueSend(p.tenant, a), tokenID: list[0].ID}
+	sessions, err := p.store.ListWebSessions(context.Background(), p.tenant, p.clock.Now(), t0.Add(-time.Hour))
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	return &routeFixture{
+		pageFixture: p, account: a, send: send, queued: p.queueSend(p.tenant, a), tokenID: list[0].ID,
+		sessionID: strconv.FormatInt(sessions[0].ID, 10),
+	}
 }
 
 // path returns the path of a route pattern, with the ids of the fixture.
@@ -85,6 +94,8 @@ func (r *routeFixture) path(pattern string) string {
 		path = strings.Replace(path, "{id}", r.queued, 1)
 	case strings.HasPrefix(path, "/connections/"):
 		path = strings.Replace(path, "{id}", r.tokenID, 1)
+	case strings.HasPrefix(path, "/sessions/"):
+		path = strings.Replace(path, "{id}", r.sessionID, 1)
 	}
 	require.NotContains(r.t, path, "{", pattern)
 	return path

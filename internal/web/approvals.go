@@ -157,8 +157,13 @@ type approvalPage struct {
 	Expires string
 
 	// The message of a send.
-	From        string
-	Recipients  []string
+	From       string
+	Recipients []string
+	// MoreNames says how much of the display names Recipients leaves out, or is
+	// empty.
+	MoreNames string
+	// Warnings are lines about recipients that can look like another address.
+	Warnings    []string
 	Subject     string
 	Attachments []string
 	Body        string
@@ -447,15 +452,20 @@ func approvalOf(svc *service.Service, ctx context.Context, id string) (approvalP
 		return page, true, nil
 	}
 	if detail != nil {
-		page.From, page.Recipients, page.Subject = detail.From, detail.Recipients, detail.Subject
+		page.From, page.Recipients, page.MoreNames, page.Subject = detail.From, detail.Recipients, detail.MoreNames, detail.Subject
+		page.Warnings = detail.Warnings
 		page.Attachments, page.Body = detail.Attachments, detail.Body
+		if detail.MoreChars != "" {
+			page.Body += "\n" + detail.MoreChars
+		}
 		page.CanApprove = true
 		return page, true, nil
 	}
 	// The service refuses Approve in this case too (it builds the message in
 	// the same way), so the page offers only Reject.
-	page.From, page.Recipients, page.Subject = p.Preview.From, p.Preview.To, p.Preview.Subject
-	page.Attachments, page.Body, page.BodyNote = p.Preview.Attachments, p.Preview.BodyStart, msgDetailUnavailable
+	page.From, page.Recipients, page.MoreNames, page.Subject = p.Preview.From, p.Preview.Recipients(), p.Preview.MoreNamesText(), p.Preview.Subject
+	page.Warnings = p.Preview.Warnings
+	page.Attachments, page.Body, page.BodyNote = p.Preview.AttachmentLines(), p.Preview.BodyStart, msgDetailUnavailable
 	if more := p.Preview.MoreCharsText(); more != "" {
 		page.Body += "\n" + more
 	}

@@ -1,8 +1,9 @@
 package web
 
 // This file holds the checks that run before every page: the security headers,
-// the Host check, the cross-origin check, the session check and the form token
-// (CSRF) check. The package documentation lists their order.
+// the Host check, the cross-origin check, the check of the name, the session
+// check and the form token (CSRF) check. The package documentation lists their
+// order.
 
 import (
 	"crypto/subtle"
@@ -27,6 +28,7 @@ const csrfField = "csrf_token"
 // Fixed codes for the log.
 const (
 	codeBadHost      = "bad_host"
+	codeUseName      = "use_name"
 	codeCrossOrigin  = "cross_origin"
 	codeNoSession    = "no_session"
 	codeBadCSRF      = "bad_csrf"
@@ -58,6 +60,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			s.refuse(w, http.StatusMethodNotAllowed, codeBadMethod)
 			return
 		}
+		if !onUIHost(r) {
+			s.useName(w, r)
+			return
+		}
 		s.handleSetup(w, r)
 		return
 	}
@@ -65,6 +71,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	// too. Like /setup, they are answered here and never through the mux.
 	if strings.HasPrefix(r.URL.Path, staticPrefix) {
 		s.handleStatic(w, r)
+		return
+	}
+	// No session works on 127.0.0.1 or localhost, not even with a good cookie. A
+	// browser sends a cookie of those hosts to every local web service.
+	if !onUIHost(r) {
+		s.useName(w, r)
 		return
 	}
 
@@ -107,19 +119,51 @@ func setSecurityHeaders(h http.Header) {
 	h.Set("Cache-Control", "no-store")
 }
 
-// hostAllowed reports whether the Host header is exactly "127.0.0.1:<port>" or
-// "localhost:<port>", where <port> is the port of the connection, and the
-// connection came in on a loopback address. A page of an attacker that uses
-// DNS rebinding (a name of the attacker that points to 127.0.0.1) sends its
-// own name, so it is refused. Any other spelling is refused too, such as
-// "[::1]", upper case, a final dot or a port with a leading zero: the server
-// listens only on 127.0.0.1.
+// hostAllowed reports whether the Host header is exactly
+// "email-mcp.localhost:<port>", "127.0.0.1:<port>" or "localhost:<port>", where
+// <port> is the port of the connection, and the connection came in on a loopback
+// address. A page of an attacker that uses DNS rebinding (a name of the attacker
+// that points to 127.0.0.1) sends its own name, so it is refused. Any other
+// spelling is refused too, such as "[::1]", upper case, a final dot or a port
+// with a leading zero: the server listens only on 127.0.0.1.
 func hostAllowed(r *http.Request) bool {
 	port, ok := httpserve.LoopbackPort(r)
 	if !ok {
 		return false
 	}
-	return r.Host == "127.0.0.1:"+port || r.Host == "localhost:"+port
+	return r.Host == uiHost+":"+port || r.Host == fallbackHost+":"+port || r.Host == "localhost:"+port
+}
+
+// onUIHost reports whether the request uses the name of the web interface. It
+// runs after hostAllowed, so the Host header is one of the exact forms above.
+func onUIHost(r *http.Request) bool {
+	name, _, _ := strings.Cut(r.Host, ":")
+	return name == uiHost
+}
+
+// useNamePage is the data of the page that useName shows.
+type useNamePage struct {
+	// Link is the first page on the name of the web interface.
+	Link string
+	// HostsLine is the line for the hosts file of the computer.
+	HostsLine string
+}
+
+// useName answers a request on 127.0.0.1 or localhost with a page that says how
+// to reach the web interface. It reads no cookie, it does not use a setup token
+// and it shows nothing of the request. The link has the port of the connection
+// and no token, so a browser that cannot find the name loses nothing.
+func (s *Server) useName(w http.ResponseWriter, r *http.Request) {
+	port, ok := httpserve.LoopbackPort(r)
+	if !ok {
+		s.refuse(w, http.StatusForbidden, codeBadHost)
+		return
+	}
+	s.log.Info("web request refused", "code", codeUseName, "status", http.StatusForbidden)
+	s.render(w, r, http.StatusForbidden, pageUseName, useNamePage{
+		Link:      "http://" + uiHost + ":" + port + "/",
+		HostsLine: fallbackHost + " " + uiHost,
+	})
 }
 
 // checkForm checks the CSRF token of a request that is not GET or HEAD, and

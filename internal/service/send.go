@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,6 +59,9 @@ const (
 	maxForwardChars = 100000
 	// previewChars is the most characters of the body in a preview.
 	previewChars = 500
+	// previewRecipientNameChars is the most characters of the display name of one
+	// recipient in a preview.
+	previewRecipientNameChars = 100
 	// sendPayloadVersion is the version of the send payload format.
 	sendPayloadVersion = 1
 	// maxSendPayloadBytes is the largest send payload: 15 MB, the largest HTTP
@@ -115,6 +119,17 @@ var (
 	// address. Such a message is not sent. It matches ErrInvalidRequest.
 	ErrHiddenAddress = fmt.Errorf("%w: an address has a character that is hidden or changes how text is shown, "+
 		"so the user could not see the exact address. Use the plain address", ErrInvalidRequest)
+
+	// ErrInexactDomain means that an envelope recipient has a domain outside
+	// ASCII with no exact ASCII form: it has none, or IDNA would change the
+	// domain first (mime.HasExactASCIIDomain). The ASCII form next to an address
+	// is how the user tells it from a look-alike, and it must be the form of the
+	// domain that the message goes to. Such a message is not sent. This also
+	// stops a reply to all with one such address: leaving the address out would
+	// change who the message goes to without a word. It matches
+	// ErrInvalidRequest.
+	ErrInexactDomain = fmt.Errorf("%w: an address has a domain with no exact ASCII form, "+
+		"so the user could not check where the message goes", ErrInvalidRequest)
 )
 
 // sendDeps checks that every part that a send needs is set up (see confirmDeps).
@@ -141,8 +156,10 @@ func (s *Service) sendDeps() error {
 //  3. The limits that can never allow it: more recipients than the account
 //     allows in one message (counted on the final envelope, after a reply to all
 //     adds people), or a send limit of 0.
-//  4. The confirmation: when the account has ConfirmSends, or when it has the
-//     new-recipient check and a recipient was never sent to. A first call stores
+//  4. The confirmation: when the account has ConfirmSends, when a recipient has
+//     a character outside printable ASCII (it can look like another address),
+//     or when the account has the new-recipient check and a recipient was
+//     never sent to. A first call stores
 //     the request and returns a NeedsConfirmation (in band) or
 //     "pending_approval" with a link (fallback). A second call with an answer
 //     acts only when the user accepted.
@@ -157,6 +174,10 @@ func (s *Service) sendDeps() error {
 // comes, the message is built again from the payload, and it is sent only if it
 // still matches the preview that the user saw. Otherwise the error wraps
 // confirm.ErrPayloadChanged.
+//
+// A message built from c holds only what a preview can show: mime.Build cleans
+// its HTML and refuses text with hidden characters (mime.ErrHiddenText). A draft
+// goes out as it was saved (see draftContent).
 //
 // While the program stops (see Stop), Send returns ErrStopping before step 1
 // and changes nothing.
@@ -199,6 +220,10 @@ func (s *Service) Send(ctx context.Context, id account.AccountID, c *mail.Compos
 	switch {
 	case acc.Decision.NeedsConfirmation:
 		reason = "confirm_sends"
+	case mime.HasNonASCIIAddress(msg.Recipients):
+		// Such an address can look like one that the user knows, so it counts
+		// as new every time, with the new-recipient check on or off.
+		reason = "new_recipient"
 	case lim.NewRecipientCheck:
 		unknown, err := s.hasNewRecipient(ctx, acc, msg.Recipients)
 		if err != nil {
@@ -457,12 +482,17 @@ func (s *Service) buildForConfirmation(ctx context.Context, b mail.Backend, a *a
 }
 
 // checkShownAddresses returns ErrHiddenAddress when an envelope recipient of the
-// message is not exactly the text that a confirmation shows of it. The sender
-// is the address of the account, which the agent cannot choose.
+// message has a character that a reader cannot see, so a confirmation could not
+// show the exact address. It returns ErrInexactDomain when the recipient has no
+// ASCII form of its domain to show next to it. The errors never hold the address.
+// The sender is the address of the account, which the agent cannot choose.
 func checkShownAddresses(msg *mail.RawMessage) error {
 	for _, r := range msg.Recipients {
-		if mime.CleanUntrusted(r) != r {
+		if mime.MarkInvisible(r) != r {
 			return ErrHiddenAddress
+		}
+		if !mime.HasExactASCIIDomain(r) {
+			return ErrInexactDomain
 		}
 	}
 	return nil
@@ -470,14 +500,23 @@ func checkShownAddresses(msg *mail.RawMessage) error {
 
 // sendContent is what the preview shows of the content of a message.
 type sendContent struct {
-	// body is the whole cleaned text that the recipient sees: the text of the
-	// HTML when the message has HTML, the text part otherwise. It is cleaned as
-	// a whole, never cut first, so no hidden characters before the text can push
-	// the text out of the preview.
+	// body is the whole cleaned text that the recipient sees: the text of every
+	// part that a mail client shows (see mime.LayoutOf), with the HTML turned
+	// into text. It is cleaned as a whole, never cut first, so no hidden
+	// characters before the text can push the text out of the preview.
 	body string
+	// hidden is how many characters of what is sent cleaning removed. A new
+	// message has none, because it cannot hold them. A draft can.
+	hidden int
+	// padding is how many characters of white space a preview takes away from
+	// body (see paddingRunes).
+	padding int
+	// hash covers what goes out, not only what the preview shows (see
+	// confirm.Preview.BodyHash).
+	hash string
 	// attachments are the file names of the attachments, in the order of the
-	// message.
-	attachments []string
+	// message, and types are their media types, by position.
+	attachments, types []string
 }
 
 // buildSend builds the message to send: from the Compose of the request, or from
@@ -487,11 +526,11 @@ type sendContent struct {
 // (ErrDraftUnreadable).
 func (s *Service) buildSend(ctx context.Context, b mail.Backend, a *account.Account, req *sendRequest) (*mail.RawMessage, sendContent, error) {
 	if req.compose != nil {
-		msg, names, err := s.buildMessage(ctx, b, a, *req.compose, false)
+		msg, atts, err := s.buildMessage(ctx, b, a, *req.compose, false)
 		if err != nil {
 			return nil, sendContent{}, err
 		}
-		return msg, sendContent{body: composedBody(msg.Data), attachments: names}, nil
+		return msg, composedContent(msg.Data, atts), nil
 	}
 	// Only a real draft is sent as it is. A received message with a From forged
 	// to the user's own address, or an old message in Sent, is not one. The
@@ -521,21 +560,61 @@ func (s *Service) buildSend(ctx context.Context, b mail.Backend, a *account.Acco
 	return msg, content, nil
 }
 
-// composedBody returns the whole cleaned text part of a message that mime.Build
-// made. Build makes that part from the whole HTML when the request has HTML (a
-// request with both a body and HTML is refused), so it is the text that the
+// composedContent reads a message that mime.Build made for the preview. Build
+// makes the text part from the whole HTML when the request has HTML (a request
+// with both a body and HTML is refused), so the text part is the text that the
 // recipient sees, with the block of a forward.
 //
-// The text is read in full and cleaned before anything is cut. A cut before the
-// clean would let 21000 zero width spaces fill the part that is read, and the
-// preview would show nothing of the text that is sent.
-func composedBody(data []byte) string {
-	return composedText(data)
+// The text is read in full and cleaned before anything is cut, as for a draft.
+// atts are the attachments that the message holds. The hash holds the text, the
+// HTML and the attachments, and no header: mime.Build makes a new Message-ID, a
+// new date and a new boundary each time, so the same request would give another
+// hash of the whole message.
+func composedContent(data []byte, atts []mail.OutgoingAttachment) sendContent {
+	var names, types, sums []string
+	for _, att := range atts {
+		names = append(names, att.Filename)
+		types = append(types, mime.AttachmentType(att))
+		sums = append(sums, fmt.Sprintf("%s %x", att.ContentType, sha256.Sum256(att.Data)))
+	}
+	parsed, _ := mime.ParseMessage(bytes.NewReader(data), 0)
+	if parsed == nil {
+		return sendContent{hash: contentHash(string(data)), attachments: names, types: types}
+	}
+	clean, hidden := mime.CleanAndCount(parsed.Text)
+	return sendContent{
+		body:        clean,
+		hidden:      hidden,
+		padding:     paddingRunes(clean),
+		hash:        contentHash(append([]string{parsed.Text, parsed.HTML}, sums...)...),
+		attachments: names,
+		types:       types,
+	}
 }
 
-// draftContent reads a whole draft for the preview: the text of its whole HTML
-// part (or its text part when it has no HTML), and the file names of its
-// attachments.
+// paddingRunes returns how many characters of white space collapseSpace takes
+// away from clean, a cleaned text. The preview adds them to the count of
+// characters that it leaves out, so padding does not leave unseen.
+//
+// The line breaks at the two ends of the text do not count. Nearly every text
+// ends with one, and the user would see a count for nothing. Their number holds
+// almost no data.
+func paddingRunes(clean string) int {
+	return utf8.RuneCountInString(strings.Trim(clean, "\n")) - utf8.RuneCountInString(collapseSpace(clean))
+}
+
+// contentHash returns the SHA-256 of the parts in hex. The length of each part
+// goes in first, so that text cannot move from one part to the next.
+func contentHash(parts ...string) string {
+	h := sha256.New()
+	for _, part := range parts {
+		_, _ = fmt.Fprintf(h, "%d:%s", len(part), part)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// draftContent reads a whole draft for the preview: all the text that a mail
+// client shows (see mime.LayoutOf), and the file names of its attachments.
 //
 // It gives ErrDraftUnreadable when the parser cannot read the draft in full (a
 // part that it skipped could be an attachment that the user would not see; the
@@ -543,36 +622,80 @@ func composedBody(data []byte) string {
 // that create_draft saved stays far below these), and when the HTML cannot be
 // turned into text (mime.ErrHTMLTooComplex). In that case the text part is not
 // shown instead, because it can say something else than the HTML.
+//
+// A draft goes out as it was saved, so what a person wrote in another mail
+// program keeps its styles and images. An agent cannot put such parts in a
+// draft: create_draft goes through mime.Build. The hash covers every byte of the
+// draft, and the count of characters holds the hidden characters of every text
+// part and HTML part that goes out, because all of them go out. The markup of
+// the HTML is not counted: it is not text that the user could read, and a draft
+// with styles would always say that much is not shown.
+//
+// In a multipart/alternative the preview shows the last part that can be shown,
+// as most mail clients do, also when that is a text part after the HTML part. Such
+// a draft cannot come from the agent: create_draft always writes the text part
+// first, and the agent cannot set the draft flag on another message.
 func draftContent(data []byte) (sendContent, error) {
 	parsed, err := mime.ParseMessage(bytes.NewReader(data), 0)
 	if err != nil || parsed == nil || parsed.Incomplete {
 		return sendContent{}, ErrDraftUnreadable
 	}
-	body := parsed.Text
-	if parsed.HTML != "" {
-		if body, err = mime.HTMLToText(parsed.HTML); err != nil {
-			return sendContent{}, ErrDraftUnreadable
-		}
+	body, err := parsed.ShownText()
+	if err != nil {
+		return sendContent{}, ErrDraftUnreadable
 	}
-	var names []string
+	content := sendContent{
+		body: mime.CleanUntrusted(body),
+		hash: contentHash(string(data)),
+	}
+	content.hidden, content.padding = draftUnseen(parsed)
 	for _, att := range parsed.Attachments {
-		names = append(names, att.Filename)
+		content.attachments = append(content.attachments, att.Filename)
+		content.types = append(content.types, att.ContentType)
 	}
-	return sendContent{body: mime.CleanUntrusted(body), attachments: names}, nil
+	return content, nil
+}
+
+// draftUnseen counts what the preview of a draft does not show of the text that
+// goes out. hidden is the number of hidden characters in the text parts and the
+// HTML parts. padding is the white space that the preview takes away from the
+// text parts that it shows.
+//
+// A mail client shows only some of the parts (see mime.LayoutOf), but all of
+// them go out, so the hidden characters of the part that the client does not
+// show count too. The first text part and the first HTML part of the message are
+// counted once, also when they are shown.
+func draftUnseen(parsed *mime.Parsed) (hidden, padding int) {
+	textShown, htmlShown := false, false
+	for _, part := range parsed.Shown {
+		hidden += mime.HiddenRunes(part.Text)
+		if part.HTML {
+			htmlShown = htmlShown || part.Text == parsed.HTML
+			continue
+		}
+		textShown = textShown || part.Text == parsed.Text
+		padding += paddingRunes(mime.CleanUntrusted(part.Text))
+	}
+	if !textShown {
+		hidden += mime.HiddenRunes(parsed.Text)
+	}
+	if !htmlShown {
+		hidden += mime.HiddenRunes(parsed.HTML)
+	}
+	return hidden, padding
 }
 
 // buildMessage builds a new message, a reply or a forward from c. A reply reads
 // the headers of the original. A forward reads its text, and its attachments
 // when c asks for them. forDraft keeps the Bcc header, for a draft.
 //
-// It also returns the file names of the attachments, in the order of the
-// message: those of the original of a forward first, then those of c. A name
-// that is empty is "attachment", as mime.Build names it.
+// It also returns the attachments of the message, as mime.Build writes them, so
+// a preview shows the names that are sent.
 //
 // A message with both a body and an HTML body is refused with ErrBodyAndHTML.
 //
 // The sender is the account: its address, with its display name.
-func (s *Service) buildMessage(ctx context.Context, b mail.Backend, a *account.Account, c mail.Compose, forDraft bool) (*mail.RawMessage, []string, error) {
+func (s *Service) buildMessage(ctx context.Context, b mail.Backend, a *account.Account, c mail.Compose, forDraft bool) (*mail.RawMessage, []mail.OutgoingAttachment, error) {
 	if c.Body != "" && c.HTMLBody != "" {
 		return nil, nil, ErrBodyAndHTML
 	}
@@ -608,23 +731,7 @@ func (s *Service) buildMessage(ctx context.Context, b mail.Backend, a *account.A
 	if err != nil {
 		return nil, nil, err
 	}
-	var names []string
-	for _, att := range bc.OriginalAttachments {
-		names = append(names, attachmentName(att.Filename))
-	}
-	for _, att := range c.Attachments {
-		names = append(names, attachmentName(att.Filename))
-	}
-	return msg, names, nil
-}
-
-// attachmentName returns the name of an attachment as the preview shows it:
-// cleaned, and "attachment" for an empty name, as mime.Build names it.
-func attachmentName(name string) string {
-	if name == "" {
-		return "attachment"
-	}
-	return mime.CleanUntrusted(name)
+	return msg, mime.OutgoingAttachments(c, bc), nil
 }
 
 // originalAttachments reads the attachments of the original of a forward. All
@@ -842,31 +949,84 @@ func (p *composePayload) compose() mail.Compose {
 // sender, every envelope recipient (so a Reply-To that a stranger set, the people
 // that a reply to all adds, and the Bcc are all visible), the subject, the file
 // names of the attachments and the start of the text (see previewBody). The
-// subject and the text are cleaned of characters that a reader cannot see.
+// subject and the text are cleaned of characters that a reader cannot see. The
+// count of characters that are not shown and the hash cover the raw text that
+// is sent, so what the cleaning takes away is counted, and a change in it is a
+// changed message.
 // Every value is valid UTF-8, so the stored preview reads back the same, and the
 // preview of the same message built again is equal to it. The first call and
 // the answer (and the approval page) all build it here, so samePreview compares
 // two previews that were made in the same way.
 func previewOf(a *account.Account, msg *mail.RawMessage, content sendContent) confirm.Preview {
 	to := make([]string, len(msg.Recipients))
+	var warnings []string
 	for i, r := range msg.Recipients {
 		to[i] = validText(r)
+		if w := mime.AddressWarning(r); w != "" {
+			warnings = append(warnings, validText(w))
+		}
 	}
-	var names []string
+	var names, types []string
 	for _, name := range content.attachments {
 		names = append(names, validText(name))
 	}
-	start, more := previewBody(content.body)
-	return confirm.Preview{
-		Account:     validText(a.Address),
-		From:        validText(msg.From),
-		To:          to,
-		Subject:     previewSubject(msg.Data),
-		BodyStart:   start,
-		BodyMore:    more,
-		Count:       1,
-		Attachments: names,
+	for _, mediaType := range content.types {
+		types = append(types, previewAttachmentType(mediaType))
 	}
+	start, more := previewBody(content.body)
+	recipientNames, namesMore := previewNames(msg.Names)
+	return confirm.Preview{
+		Account:         validText(a.Address),
+		From:            validText(msg.From),
+		To:              to,
+		Names:           recipientNames,
+		NamesMore:       namesMore,
+		Subject:         previewSubject(msg.Data),
+		BodyStart:       start,
+		BodyMore:        more + content.hidden + content.padding,
+		BodyHash:        contentHash(append(slices.Clone(msg.Names), content.hash)...),
+		Count:           1,
+		Attachments:     names,
+		AttachmentTypes: types,
+		Warnings:        warnings,
+	}
+}
+
+// previewAttachmentType returns a media type as a preview shows it: cleaned, on
+// one line, and cut to mime.MaxMediaTypeBytes. Only a draft that a person wrote
+// can have a longer type, because mime.Build refuses one. A media type is ASCII,
+// so its bytes and its characters are the same count.
+func previewAttachmentType(mediaType string) string {
+	line := oneLineText(mediaType)
+	if short := firstRunes(line, mime.MaxMediaTypeBytes); len(short) < len(line) {
+		return short + "..."
+	}
+	return line
+}
+
+// previewNames returns the display names of the recipients as a preview shows
+// them, by position: cleaned, on one line, and cut to previewRecipientNameChars.
+// It also returns how many characters they leave out. It returns nil when no
+// recipient has a name.
+//
+// A name of the original of a reply is shown in the same way. What a recipient
+// sees of a name is part of what the user approves.
+func previewNames(names []string) ([]string, int) {
+	if !slices.ContainsFunc(names, func(name string) bool { return name != "" }) {
+		return nil, 0
+	}
+	out := make([]string, len(names))
+	more := 0
+	for i, name := range names {
+		line := oneLineText(name)
+		shown := firstRunes(line, previewRecipientNameChars)
+		more += utf8.RuneCountInString(validText(name)) - utf8.RuneCountInString(shown)
+		if len(shown) < len(line) {
+			shown += "..."
+		}
+		out[i] = shown
+	}
+	return out, more
 }
 
 // previewBody returns what a preview shows of the cleaned text of a message: the
@@ -930,19 +1090,42 @@ func previewSubject(data []byte) string {
 }
 
 // samePreview reports whether a message built again is the message of the
-// stored preview: the same sender, the same recipients (compared without case
-// and order), the same subject, the same attachments (in order), the same start
-// of the text and the same count of characters after it.
+// stored preview: the same sender, the same recipients with the same display
+// names (compared without case of the address, and without order), the same
+// subject, the same attachments with the same types (in order), the same start
+// of the text, the same counts of what is not shown, the same warnings about the
+// recipients (without order), and the same hash of what goes out. A preview
+// stored without a hash does not match: the user is asked again.
 func samePreview(stored, rebuilt confirm.Preview) bool {
 	return stored.From == rebuilt.From &&
 		stored.Subject == rebuilt.Subject &&
 		stored.BodyStart == rebuilt.BodyStart &&
 		stored.BodyMore == rebuilt.BodyMore &&
-		slices.Equal(addressSet(stored.To), addressSet(rebuilt.To)) &&
-		slices.Equal(stored.Attachments, rebuilt.Attachments)
+		stored.NamesMore == rebuilt.NamesMore &&
+		stored.BodyHash == rebuilt.BodyHash &&
+		slices.Equal(recipientSet(stored), recipientSet(rebuilt)) &&
+		slices.Equal(stored.Attachments, rebuilt.Attachments) &&
+		slices.Equal(stored.AttachmentTypes, rebuilt.AttachmentTypes) &&
+		slices.Equal(addressSet(stored.Warnings), addressSet(rebuilt.Warnings))
 }
 
-// addressSet returns the addresses in lower case, sorted.
+// recipientSet returns each recipient of a preview as its address in lower case
+// and its display name, sorted. A NUL cannot be in either, so the pair is exact.
+func recipientSet(p confirm.Preview) []string {
+	out := make([]string, len(p.To))
+	for i, a := range p.To {
+		out[i] = strings.ToLower(strings.TrimSpace(a))
+		if i < len(p.Names) {
+			out[i] += "\x00" + p.Names[i]
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// addressSet returns the strings in lower case, sorted. A warning about a
+// recipient holds the address, so the warnings are compared in the same way as
+// the addresses.
 func addressSet(list []string) []string {
 	out := make([]string, len(list))
 	for i, a := range list {
