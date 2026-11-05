@@ -106,7 +106,7 @@ func TestEveryToolCallIsInTheActivityLog(t *testing.T) {
 	ask("search_messages", "search_messages", map[string]any{"account": acct})
 	ask("get_message", "get_message", map[string]any{"account": acct, "ref": ref(0)})
 	require.Equal(t, 2, count(t, db, `SELECT COUNT(*) FROM audit_log WHERE kind = 'call' AND account_id = ?
-		AND outcome = 'refused' AND detail = 'permission'`, acct))
+		AND outcome = 'refused' AND detail = 'level_too_low'`, acct))
 
 	// A request with a wrong token has no tenant, so only the program log has it.
 	before := calls()

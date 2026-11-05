@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -115,9 +116,38 @@ func TestARefusedReadHasACallEntry(t *testing.T) {
 	require.True(t, res.IsError)
 	got := e.lastCall()
 	require.Equal(t, audit.OutcomeRefused, got.Outcome)
-	require.Equal(t, "permission", got.Detail)
+	require.Equal(t, "level_too_low", got.Detail)
 	require.Equal(t, a.ID, got.Account)
 	require.JSONEq(t, fmt.Sprintf(`{"account":%q,"ref":"r1"}`, a.ID), string(got.Arguments))
+}
+
+// One refusal must read the same in the two rows of a call.
+func TestARequestAndItsActionUseTheSameCode(t *testing.T) {
+	e := stubEnv(t, &stubBackend{})
+	a := e.offlineAccount(levelOf(account.MailRead))
+
+	e.call("set_flags", map[string]any{"account": string(a.ID), "refs": []any{"r1"}, "seen": true})
+
+	entries, err := audit.New(e.store, e.vault, nil).List(context.Background(), e.tenant, audit.Filter{Tool: "set_flags"})
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	require.Equal(t, audit.OutcomeRefused, entries[0].Outcome)
+	require.Equal(t, audit.OutcomeRefused, entries[1].Outcome)
+	require.Equal(t, "level_too_low", entries[0].Detail)
+	require.Equal(t, "level_too_low", entries[1].Detail)
+}
+
+// The tool answers without an error, and yet nothing was sent.
+func TestASendThatWaitsForTheUserIsNotOK(t *testing.T) {
+	m := newMailSetup(t, envOptions{})
+
+	res := m.e.call("send_message", sendArgs(m.a))
+
+	require.False(t, res.IsError, textOf(t, res))
+	require.Equal(t, "pending_approval", structured(t, res)["status"])
+	got := m.e.lastCall()
+	require.Equal(t, audit.OutcomePendingApproval, got.Outcome)
+	require.Equal(t, "approval_required", got.Detail)
 }
 
 func TestACallForAnAccountThatIsNotThereHasACallEntry(t *testing.T) {
@@ -208,6 +238,26 @@ func TestACallThatFailsTheSchemaKeepsTheNamesAndTheSizes(t *testing.T) {
 		"to": "[omitted: 19 bytes]",
 		"content": "[omitted: 21 bytes]"
 	}`, string(e.lastCall().Arguments))
+}
+
+// Only names and sizes stay of such a call, so it needs little room. An agent must
+// not be able to fill the log with calls that do nothing.
+func TestACallThatFailsTheSchemaIsSmallInTheLog(t *testing.T) {
+	e := stubEnv(t, &stubBackend{})
+	args := map[string]any{"account": "a1"}
+	for i := range 500 {
+		args[fmt.Sprintf("%0100d", i)] = "x"
+	}
+
+	e.call("send_message", args)
+
+	got := e.lastCall().Arguments
+	require.LessOrEqual(t, len(got), 4<<10)
+	var mark struct {
+		Omitted string `json:"omitted"`
+	}
+	require.NoError(t, json.Unmarshal(got, &mark))
+	require.Equal(t, "too_large", mark.Omitted)
 }
 
 // Arguments that are not an object have no names to keep.
@@ -306,6 +356,22 @@ func TestAMailServerFailureHasACallEntry(t *testing.T) {
 	require.Equal(t, "timeout", got.Detail)
 }
 
+func TestATrashThatWaitsForTheUserIsNotOK(t *testing.T) {
+	m := newMailSetup(t, envOptions{}, levelOf(account.MailDelete))
+	m.imap.Append("INBOX", []byte("From: a@example.com\r\nSubject: Hi\r\n\r\nHello\r\n"))
+	found := structured(t, m.e.call("search_messages", map[string]any{"account": string(m.a.ID), "folder": "@inbox"}))
+	msgs, _ := found["messages"].([]any)
+	require.Len(t, msgs, 1)
+
+	res := m.e.call("trash_messages", map[string]any{"account": string(m.a.ID), "refs": []any{msgs[0].(map[string]any)["ref"]}})
+
+	require.False(t, res.IsError, textOf(t, res))
+	require.Equal(t, "pending_approval", structured(t, res)["status"])
+	got := m.e.lastCall()
+	require.Equal(t, audit.OutcomePendingApproval, got.Outcome)
+	require.Equal(t, "approval_required", got.Detail)
+}
+
 // A confirmation in band is two requests, so it has two call entries.
 func TestAFirstCallThatAsksForInputHasACallEntry(t *testing.T) {
 	m := newMailSetup(t, envOptions{})
@@ -323,6 +389,9 @@ func TestAFirstCallThatAsksForInputHasACallEntry(t *testing.T) {
 	}, state)
 
 	require.Len(t, m.e.callEntries(), 2)
+	got = m.e.lastCall()
+	require.Equal(t, audit.OutcomeDeclined, got.Outcome, "the user said no, so the request did not end well")
+	require.Equal(t, "declined", got.Detail)
 }
 
 // The table needs a tenant, so a call without a caller has no row. The refusal is
@@ -417,6 +486,48 @@ func TestCleanArguments(t *testing.T) {
 	}
 }
 
+// The scan works on raw JSON, so these are the cases that could fool it.
+func TestStripOmitted(t *testing.T) {
+	cases := map[string]struct{ in, want string }{
+		"nothing to do":          {`{"subject":"hi"}`, `{"subject":"hi"}`},
+		"a body":                 {`{"body":"hello"}`, `{"body":5}`},
+		"space around the colon": {`{ "body" : "hello" }`, `{ "body" : 5 }`},
+		"a nested argument":      {`{"a":[{"data_base64":"QUJD"}]}`, `{"a":[{"data_base64":4}]}`},
+		"two arguments":          {`{"body":"a","html_body":"bc"}`, `{"body":1,"html_body":2}`},
+		"an escaped quote":       {`{"body":"a\"b","to":"x"}`, `{"body":4,"to":"x"}`},
+		"a backslash at the end": {`{"subject":"a\\","body":"hello"}`, `{"subject":"a\\","body":5}`},
+		"a name inside a text":   {`{"subject":"\"body\":\"x\""}`, `{"subject":"\"body\":\"x\""}`},
+		"a body that is no text": {`{"body":{"text":"hi"}}`, `{"body":{"text":"hi"}}`},
+		"text that ends early":   {`{"body":"hello`, `{"body":"hello`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, string(stripOmitted([]byte(tc.in))))
+		})
+	}
+}
+
+// A name that the scan does not see is still left out by cleanValue.
+func TestCleanArgumentsLeavesOutAnEscapedName(t *testing.T) {
+	got := cleanArguments(decodeArguments(json.RawMessage(`{"b\u006fdy":"hello"}`)))
+	require.Equal(t, `{"body":"[omitted: 5 bytes]"}`, string(got))
+}
+
+// Reading the arguments must not make a second copy of the attachments.
+func TestDecodeArgumentsDoesNotCopyAttachmentData(t *testing.T) {
+	const size = 10 << 20
+	raw := []byte(`{"to":["bob@example.org"],"attachments":[{"filename":"a.bin","data_base64":"` +
+		strings.Repeat("A", size) + `"}]}`)
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	got := cleanArguments(decodeArguments(raw))
+	runtime.ReadMemStats(&after)
+
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(1<<20))
+	require.Equal(t, `{"attachments":[{"data_base64":"[omitted: 10485760 bytes]","filename":"a.bin"}],"to":["bob@example.org"]}`, string(got))
+}
+
 func TestCleanArgumentsCutsLongText(t *testing.T) {
 	long := strings.Repeat("a", 3000)
 	got := cleanArguments(decodeArguments(json.RawMessage(`{"subject":"` + long + `"}`)))
@@ -465,10 +576,10 @@ func TestCleanArgumentsNeverPassesTheLimitOfTheLog(t *testing.T) {
 
 func TestOutcomeOfACode(t *testing.T) {
 	cases := map[string]audit.Outcome{
-		"permission":     audit.OutcomeRefused,
-		"token_scope":    audit.OutcomeRefused,
-		"rate_limit":     audit.OutcomeRefused,
+		"not_authorized": audit.OutcomeRefused,
 		"bad_argument":   audit.OutcomeRefused,
+		"bad_token":      audit.OutcomeRefused,
+		"confirmation":   audit.OutcomeRefused,
 		"internal_error": audit.OutcomeError,
 		"timeout":        audit.OutcomeError,
 		"partial":        audit.OutcomeError,

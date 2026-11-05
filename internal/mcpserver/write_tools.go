@@ -510,6 +510,7 @@ func (d *deps) sendMessage(ctx context.Context, req *mcp.CallToolRequest, in sen
 	if res == nil {
 		return nil, nil, errors.New("mcpserver: the send result is empty")
 	}
+	traceFrom(ctx).noteStatus(res.Status)
 	out := SendResultOut{Status: res.Status, SendID: res.SendID, ApprovalLink: res.ApprovalLink}
 	if res.SendAt != nil {
 		out.SendAt = formatTime(*res.SendAt)
@@ -559,6 +560,7 @@ func (d *deps) trashMessages(ctx context.Context, req *mcp.CallToolRequest, in t
 	if res == nil {
 		return nil, nil, errors.New("mcpserver: the trash result is empty")
 	}
+	traceFrom(ctx).noteStatus(res.Status)
 	return success[any](TrashResultOut{Status: res.Status, Count: res.Count, ApprovalLink: res.ApprovalLink})
 }
 

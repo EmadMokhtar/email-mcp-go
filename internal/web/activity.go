@@ -16,6 +16,7 @@ package web
 // they are not trusted either, and they are cleaned too.
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -44,6 +45,13 @@ const (
 
 // blankName is shown for a client name that is only blank characters.
 const blankName = "(blank name)"
+
+// maxArgumentsShown is the most bytes of the arguments of one entry that the page
+// shows. A page has up to 200 entries, and the arguments of one can be 256 KB.
+const maxArgumentsShown = 4 << 10
+
+// unreadableArguments is shown for arguments that cannot be decrypted.
+const unreadableArguments = "These arguments cannot be read."
 
 // activityPage is the data of the activity page.
 type activityPage struct {
@@ -130,7 +138,7 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 			Count:     e.Count,
 			Outcome:   plainWords(string(e.Outcome)),
 			Detail:    plainWords(e.Detail),
-			Arguments: mime.CleanUntrusted(string(e.Arguments)),
+			Arguments: argumentsText(e),
 		}
 		if e.Account != "" {
 			row.Account = addresses[e.Account]
@@ -165,6 +173,23 @@ func activityLimit(values []string) int {
 		return defaultActivityLimit
 	}
 	return min(max(n, 1), maxActivityLimit)
+}
+
+// argumentsText returns the arguments of an entry for the page: cleaned of hidden
+// characters, and cut at the end of a character when they are long.
+func argumentsText(e audit.Entry) string {
+	if e.ArgumentsUnreadable {
+		return unreadableArguments
+	}
+	text := mime.CleanUntrusted(string(e.Arguments))
+	if len(text) <= maxArgumentsShown {
+		return text
+	}
+	cut := maxArgumentsShown
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s\u2026 (%d bytes in all)", text[:cut], len(text))
 }
 
 // kindLabel returns the name of a kind for the page.

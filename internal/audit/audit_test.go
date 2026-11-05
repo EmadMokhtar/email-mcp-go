@@ -944,29 +944,33 @@ func TestACallWithoutArgumentsStoresNull(t *testing.T) {
 	require.Nil(t, f.list(Filter{})[0].Arguments)
 }
 
-func TestListFailsWhenArgumentsCannotBeRead(t *testing.T) {
-	ctx := context.Background()
+// One damaged row must not hide the whole log. The entry stays, with a sign.
+func TestListMarksArgumentsThatCannotBeRead(t *testing.T) {
 	cases := map[string]func(f *fixture){
 		"a changed byte": func(f *fixture) {
-			f.exec(`UPDATE audit_log SET arguments = zeroblob(length(arguments))`)
+			f.exec(`UPDATE audit_log SET arguments = zeroblob(length(arguments)) WHERE id = 1`)
 		},
 		"a key version that does not exist": func(f *fixture) {
-			f.exec(`UPDATE audit_log SET arguments_key_version = 99`)
+			f.exec(`UPDATE audit_log SET arguments_key_version = 99 WHERE id = 1`)
 		},
 		"arguments of another account": func(f *fixture) {
-			f.exec(`UPDATE audit_log SET account_id = ?`, string(f.addAccount(f.tenant, "other@example.com")))
+			f.exec(`UPDATE audit_log SET account_id = ? WHERE id = 1`, string(f.addAccount(f.tenant, "other@example.com")))
 		},
 	}
 	for name, damage := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
 			f.record(f.callEntry(`{"folder":"@inbox"}`))
+			f.record(f.callEntry(`{"folder":"@sent"}`))
 			damage(f)
 
-			got, err := f.log.List(ctx, f.tenant, Filter{})
-			require.Error(t, err)
-			require.Nil(t, got, "no entries without a sign")
-			require.NotContains(t, err.Error(), "@inbox")
+			got := f.list(Filter{})
+
+			require.Len(t, got, 2)
+			require.False(t, got[0].ArgumentsUnreadable)
+			require.JSONEq(t, `{"folder":"@sent"}`, string(got[0].Arguments))
+			require.True(t, got[1].ArgumentsUnreadable)
+			require.Nil(t, got[1].Arguments)
 		})
 	}
 }
@@ -1010,4 +1014,32 @@ func TestRecordAcceptsArgumentsAtTheLimit(t *testing.T) {
 	f := newFixture(t)
 	f.record(f.callEntry(`"` + manyR(MaxArgumentBytes-2) + `"`))
 	require.Equal(t, 1, f.rows())
+}
+
+// deadlineStore keeps the deadline of the context of the last write.
+type deadlineStore struct {
+	*store.Store
+	left time.Duration
+}
+
+func (d *deadlineStore) CreateAudit(ctx context.Context, row *store.AuditRow) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		d.left = time.Until(deadline)
+	}
+	return d.Store.CreateAudit(ctx, row)
+}
+
+// A call entry is written while the agent waits for its answer, so a slow database
+// must not hold that answer for long.
+func TestACallEntryHasAShortTimeLimit(t *testing.T) {
+	f := newFixture(t)
+	st := &deadlineStore{Store: f.store}
+	log := New(st, f.vault, f.clock.Now)
+
+	require.NoError(t, log.Record(context.Background(), f.callEntry(`{}`)))
+	require.Positive(t, st.left)
+	require.LessOrEqual(t, st.left, 5*time.Second)
+
+	require.NoError(t, log.Record(context.Background(), f.entry()))
+	require.Greater(t, st.left, 20*time.Second, "an action happened already, so its entry may wait longer")
 }

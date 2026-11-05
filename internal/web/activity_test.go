@@ -162,3 +162,25 @@ func TestActivityOffersTheKindFilter(t *testing.T) {
 	require.Contains(t, body, `<option value="call" selected>`)
 	require.Contains(t, body, `<option value="action">`)
 }
+
+// A page has up to 200 entries, so it must not hold all of their arguments.
+func TestActivityCutsLongArguments(t *testing.T) {
+	long := `"` + strings.Repeat("r", 10000) + `"`
+	p := newPageFixture(t)
+	p.record(audit.Entry{Kind: audit.KindCall, Tool: "move_messages", Arguments: []byte(long)})
+
+	_, body := p.get("/activity")
+
+	text := visibleText(t, body)
+	require.Contains(t, text, "(10002 bytes in all)")
+	require.NotContains(t, body, strings.Repeat("r", 4097))
+	require.Contains(t, body, strings.Repeat("r", 4000))
+}
+
+func TestArgumentsTextOfAnEntry(t *testing.T) {
+	require.Empty(t, argumentsText(audit.Entry{}))
+	require.Equal(t, "These arguments cannot be read.", argumentsText(audit.Entry{ArgumentsUnreadable: true}))
+	// The cut must not fall inside a character: byte 4096 is inside one here.
+	text := "x" + strings.Repeat("\u00e9", 3000)
+	require.Equal(t, "x"+strings.Repeat("\u00e9", 2047)+"\u2026 (6001 bytes in all)", argumentsText(audit.Entry{Arguments: []byte(text)}))
+}

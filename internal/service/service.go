@@ -263,6 +263,7 @@ func (s *Service) authorize(ctx context.Context, id account.AccountID, act polic
 	if err != nil {
 		return access{}, fmt.Errorf("service: look up account: %w", err)
 	}
+	noteAccount(ctx, a.ID)
 
 	d := policy.Decide(a, act, p.Scopes)
 	if !d.Allowed {

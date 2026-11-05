@@ -292,7 +292,8 @@ never stored: the row shows only their size. A call whose arguments do not fit
 the tool, or a call of a tool that does not exist, keeps only the names and the
 sizes of its arguments, because the text of a message could be in any of them.
 A request with a wrong access token has no row, because nothing says whose log
-it belongs to. The program log has it instead. Rows are kept for 90 days.
+it belongs to. The program log has it instead. Rows are kept for 90 days, and
+the page shows at most the first 4 KB of the arguments of a row.
 
 ## Security: what local mode protects against
 

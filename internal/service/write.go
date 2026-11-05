@@ -295,6 +295,17 @@ func (s *Service) recordRefusal(ctx context.Context, id account.AccountID, tool 
 	s.record(ctx, p, e)
 }
 
+// detailFailed is the code of an error that auditCode does not know.
+const detailFailed = "failed"
+
+// AuditCode returns what the audit log says about an error of a use case, so that
+// a layer above gives one failure the same words. The bool is false for an error
+// that the service does not know.
+func AuditCode(err error) (audit.Outcome, string, bool) {
+	outcome, detail := auditCode(err)
+	return outcome, detail, detail != detailFailed
+}
+
 // auditCode returns the outcome and the code of an error for the audit log. A
 // refusal by the server is "refused". A failure is "error".
 func auditCode(err error) (audit.Outcome, string) {
@@ -361,7 +372,7 @@ func auditCode(err error) (audit.Outcome, string) {
 	case errors.Is(err, mail.ErrUnsupported):
 		return failed("unsupported")
 	default:
-		return failed("failed")
+		return failed(detailFailed)
 	}
 }
 

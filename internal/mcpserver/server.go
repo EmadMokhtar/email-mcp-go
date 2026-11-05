@@ -124,7 +124,7 @@ func safe[In, Out any](d *deps, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFo
 		defer func() {
 			if r := recover(); r != nil {
 				d.log.Error("tool call failed", "tool", tool, "code", codePanic, "panic_type", fmt.Sprintf("%T", r))
-				trace.fail(codePanic)
+				trace.end(outcomeOfCode(codePanic), codePanic)
 				res, out, err = nil, zero, errInternal
 			}
 		}()
@@ -144,7 +144,7 @@ func safe[In, Out any](d *deps, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFo
 		if err != nil {
 			fail := toolError(tool, err)
 			d.logFailure(tool, fail, err)
-			trace.fail(fail.code)
+			trace.end(failureOutcome(err, fail.code))
 			return nil, zero, fail
 		}
 		return res, out, nil

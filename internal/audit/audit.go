@@ -96,6 +96,10 @@ const (
 	// storeTimeout is the time that Record gives to its database work. Record
 	// does not use the context of the caller for it. See detached.
 	storeTimeout = 30 * time.Second
+	// callStoreTimeout is storeTimeout for a call entry. The agent waits for the
+	// answer of its call while the entry is written, so a slow database must not
+	// hold that answer for long.
+	callStoreTimeout = 5 * time.Second
 )
 
 // ErrInvalidEntry means that Record refused an entry because the entry is not
@@ -162,6 +166,9 @@ type Entry struct {
 	// none. It is at most MaxArgumentBytes of valid JSON, and Record refuses an
 	// entry with more.
 	Arguments json.RawMessage
+	// ArgumentsUnreadable is true on an entry from List when its arguments could
+	// not be decrypted. Arguments is empty then.
+	ArgumentsUnreadable bool
 }
 
 // Filter selects entries. A field that is empty means "any". Account, Area, Tool
@@ -219,7 +226,8 @@ func New(st AuditStore, v *secrets.Vault, now func() time.Time) *Log {
 // The entry is for an action that happened already, so the write does not use
 // the cancellation of ctx. If the caller leaves while the tool runs, the entry is
 // still written, and the call does not report an error for a write that
-// happened. The write has a time limit of 30 seconds.
+// happened. The write has a time limit of 30 seconds, and 5 seconds for a call
+// entry.
 func (l *Log) Record(ctx context.Context, e Entry) error {
 	if err := validate(e); err != nil {
 		return err
@@ -241,7 +249,11 @@ func (l *Log) Record(ctx context.Context, e Entry) error {
 		Detail:  e.Detail,
 	}
 
-	wctx, cancel := detached(ctx)
+	timeout := storeTimeout
+	if e.Kind == KindCall {
+		timeout = callStoreTimeout
+	}
+	wctx, cancel := detached(ctx, timeout)
 	defer cancel()
 	// A call without recipients keeps NULL in the table: nothing to seal.
 	if len(e.Recipients) > 0 {
@@ -273,9 +285,10 @@ func (l *Log) Record(ctx context.Context, e Entry) error {
 // List returns the entries of a tenant that match the filter, newest first.
 // Entries with the same time come in the order of their IDs, largest first.
 //
-// If the recipients or the arguments of any entry in the result cannot be
-// decrypted, List returns an error and no entries. It never leaves them out
-// without a sign.
+// If the recipients of any entry in the result cannot be decrypted, List returns
+// an error and no entries. It never leaves them out without a sign. Arguments that
+// cannot be decrypted do not stop the list: one bad row must not hide what the
+// agents did, so the entry stays with ArgumentsUnreadable set.
 func (l *Log) List(ctx context.Context, tenant account.TenantID, f Filter) ([]Entry, error) {
 	limit := f.Limit
 	switch {
@@ -322,7 +335,10 @@ func (l *Log) List(ctx context.Context, tenant account.TenantID, f Filter) ([]En
 			e.Arguments, err = l.vault.Decrypt(ctx, row.Tenant, row.ArgumentsKeyVersion,
 				argumentsAAD(row.Tenant, row.Account), row.Arguments)
 			if err != nil {
-				return nil, fmt.Errorf("audit: decrypt the arguments of entry %d: %w", row.ID, err)
+				if ctx.Err() != nil {
+					return nil, fmt.Errorf("audit: list entries: %w", ctx.Err())
+				}
+				e.Arguments, e.ArgumentsUnreadable = nil, true
 			}
 		}
 		entries = append(entries, e)
@@ -476,10 +492,10 @@ func cleanClient(s string) string {
 	return b.String()
 }
 
-// detached returns a context that ctx cannot cancel, with a time limit. It keeps
+// detached returns a context that ctx cannot cancel, with the time limit. It keeps
 // the values of ctx. The driver of the database can commit a statement and still
 // return the error of a context that ended just then. For a write that must not
 // be lost, or reported as lost, the caller uses this context.
-func detached(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
+func detached(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
 }

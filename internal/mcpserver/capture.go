@@ -20,6 +20,10 @@ package mcpserver
 //     under any name, so the log keeps only its names and sizes (see
 //     argumentSizes). The service seals both.
 //   - The arguments go nowhere else: never to the program log.
+//   - There is no limit on the number of entries, on purpose: a limit would let a
+//     flood of calls hide what an agent did. A write has its own short time limit
+//     (see audit.Record), and a call that did not pass the schema needs little
+//     room (see maxRejectedArgumentBytes).
 //   - The table needs a tenant, so a call without a caller has no entry. The
 //     refusal is in the program log, with a fixed code.
 
@@ -28,6 +32,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -42,6 +47,8 @@ const methodCallTool = "tools/call"
 
 // The details of a call that has no failure code, because safe did not see it.
 const (
+	detailApprovalRequired = "approval_required"
+	detailDeclined         = "declined"
 	detailInputRequired    = "input_required"
 	detailInvalidArguments = "invalid_arguments"
 	detailProtocolError    = "protocol_error"
@@ -52,6 +59,11 @@ const (
 // arguments. A ref, a cursor and a page token are all shorter.
 const maxArgumentText = 2 << 10
 
+// maxRejectedArgumentBytes is the most bytes that the log keeps of the arguments
+// of a call that did not pass the schema. Only names and sizes stay of such a
+// call, and it costs an agent nothing to make one.
+const maxRejectedArgumentBytes = 4 << 10
+
 // omittedArguments are the arguments of the tools that the log never keeps: the
 // content of a message. A test makes sure that every argument of every tool is
 // either here or on purpose not here.
@@ -61,33 +73,24 @@ var omittedArguments = map[string]bool{
 	"data_base64": true,
 }
 
-// refusedCodes are the failure codes that mean that the server refused the
-// request. Every other code means that the tool failed. It is the same split as
-// the entries of the service: see service.auditCode.
+// refusedCodes are the failure codes of this layer that mean that the server
+// refused the request. Every other code means that the tool failed. A failure of
+// the service gets its outcome from service.AuditCode, not from here.
 var refusedCodes = map[string]bool{
-	codeNotAuthorized:       true,
-	codePermission:          true,
-	codeTokenScope:          true,
-	codeRateLimit:           true,
-	codeNeedsReauth:         true,
-	codeAccountNotFound:     true,
-	codeBadArgument:         true,
-	codeInvalidRequest:      true,
-	codeSendNotFound:        true,
-	codeBadToken:            true,
-	codeStopping:            true,
-	codeConfirmation:        true,
-	codeConfirmationExpired: true,
-	codePayloadChanged:      true,
-	codeNotPending:          true,
-	codeLimit:               true,
-	codeMoveToTrash:         true,
-	codeDraftFrom:           true,
-	codeBadMessage:          true,
-	codeBodyAndHTML:         true,
-	codeDraftUnreadable:     true,
-	codeHiddenAddress:       true,
-	codeNotADraft:           true,
+	codeNotAuthorized: true,
+	codeBadArgument:   true,
+	codeBadToken:      true,
+	codeConfirmation:  true,
+}
+
+// failureOutcome returns the outcome and the detail of a failure. A failure of the
+// service has the words of its own entry, so one refusal reads the same in the two
+// rows of a call. code is the code of the failure in this layer.
+func failureOutcome(err error, code string) (audit.Outcome, string) {
+	if outcome, detail, known := service.AuditCode(err); known {
+		return outcome, detail
+	}
+	return outcomeOfCode(code), code
 }
 
 // outcomeOfCode returns the outcome of a failure code.
@@ -105,8 +108,10 @@ type callTrace struct {
 	caller *service.Principal
 	// noCaller is true when safe refused the caller.
 	noCaller bool
-	// code is the code of the failure of the call.
-	code string
+	// outcome and detail say how the call ended, when that is not a plain success.
+	// detail is empty otherwise.
+	outcome audit.Outcome
+	detail  string
 }
 
 // setCaller remembers the caller of the call.
@@ -123,10 +128,23 @@ func (t *callTrace) refuseCaller() {
 	}
 }
 
-// fail remembers the code of the failure of the call.
-func (t *callTrace) fail(code string) {
+// end remembers how the call ended.
+func (t *callTrace) end(outcome audit.Outcome, detail string) {
 	if t != nil {
-		t.code = code
+		t.outcome, t.detail = outcome, detail
+	}
+}
+
+// noteStatus remembers the status of a send or a move to Trash. The tool answers
+// without an error when the action waits for the user or was declined, and yet
+// nothing happened, so such a call must not read as a success. The send and the
+// move use the same words for these two states.
+func (t *callTrace) noteStatus(status string) {
+	switch status {
+	case service.SendPendingApproval:
+		t.end(audit.OutcomePendingApproval, detailApprovalRequired)
+	case service.SendDeclined:
+		t.end(audit.OutcomeDeclined, detailDeclined)
 	}
 }
 
@@ -148,14 +166,16 @@ func (d *deps) capture(next mcp.MethodHandler) mcp.MethodHandler {
 			return next(ctx, method, req)
 		}
 		trace := &callTrace{}
-		res, err := next(context.WithValue(ctx, traceKey{}, trace), method, req)
-		d.recordCall(ctx, call, trace, res, err)
+		traced, found := service.WithAccountNote(context.WithValue(ctx, traceKey{}, trace))
+		res, err := next(traced, method, req)
+		d.recordCall(ctx, call, trace, *found, res, err)
 		return res, err
 	}
 }
 
-// recordCall writes the call entry of a finished tool call.
-func (d *deps) recordCall(ctx context.Context, req *mcp.CallToolRequest, trace *callTrace, res mcp.Result, err error) {
+// recordCall writes the call entry of a finished tool call. found is the account
+// that a use case found, if any.
+func (d *deps) recordCall(ctx context.Context, req *mcp.CallToolRequest, trace *callTrace, found account.AccountID, res mcp.Result, err error) {
 	name := toolName(req)
 	known := d.tools[name]
 	tool := name
@@ -173,16 +193,20 @@ func (d *deps) recordCall(ctx context.Context, req *mcp.CallToolRequest, trace *
 	}
 	args := decodeArguments(raw)
 	c := service.ToolCall{Tool: tool, Account: accountArgument(args)}
+	if found != "" {
+		c.Account, c.AccountFound = found, true
+	}
 	c.Outcome, c.Detail = callOutcome(known, trace, res, err)
 	switch {
 	case trace.caller != nil:
 		// safe ran, and the SDK calls it only after the schema check.
 		c.Arguments = cleanArguments(args)
 	case known:
-		c.Arguments = encodeKept(argumentSizes(args))
+		c.Arguments = encodeKept(argumentSizes(args), maxRejectedArgumentBytes)
 	default:
 		// The name is text from the agent, so it goes in the sealed arguments.
-		c.Arguments = encodeKept(map[string]any{"requested_tool": cutText(name), "arguments": argumentSizes(args)})
+		kept := map[string]any{"requested_tool": cutText(name), "arguments": argumentSizes(args)}
+		c.Arguments = encodeKept(kept, maxRejectedArgumentBytes)
 	}
 	d.svc.RecordToolCall(ctx, caller, c)
 }
@@ -218,8 +242,8 @@ func callOutcome(known bool, trace *callTrace, res mcp.Result, err error) (audit
 	if !known {
 		return audit.OutcomeRefused, detailUnknownTool
 	}
-	if trace.code != "" {
-		return outcomeOfCode(trace.code), trace.code
+	if trace.detail != "" {
+		return trace.outcome, trace.detail
 	}
 	result, ok := res.(*mcp.CallToolResult)
 	switch {
@@ -236,13 +260,76 @@ func callOutcome(known bool, trace *callTrace, res mcp.Result, err error) (audit
 	return audit.OutcomeOK, ""
 }
 
+// stripOmitted returns raw with the text of each argument in omittedArguments
+// replaced by its size, as a number. It keeps the JSON decoder from copying
+// megabytes of attachment data that the log drops anyway.
+//
+// It is only a saving, and the log does not depend on it: cleanValue leaves out an
+// argument that this scan does not see, such as a name that is written with an
+// escape. In valid JSON only a name has a colon after it, so a text that looks like
+// a name is not touched. For invalid JSON the result does not matter, because the
+// decoder refuses it.
+func stripOmitted(raw []byte) []byte {
+	var out []byte
+	copied := 0
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '"' {
+			continue
+		}
+		end := stringEnd(raw, i)
+		if end < 0 {
+			break
+		}
+		colon := skipSpace(raw, end+1)
+		value := skipSpace(raw, colon+1)
+		if colon < len(raw) && raw[colon] == ':' && value < len(raw) && raw[value] == '"' && omittedArguments[string(raw[i+1:end])] {
+			valueEnd := stringEnd(raw, value)
+			if valueEnd < 0 {
+				break
+			}
+			out = append(out, raw[copied:value]...)
+			out = strconv.AppendInt(out, int64(valueEnd-value-1), 10)
+			copied = valueEnd + 1
+			end = valueEnd
+		}
+		i = end
+	}
+	if out == nil {
+		return raw
+	}
+	return append(out, raw[copied:]...)
+}
+
+// stringEnd returns the index of the quote that ends the JSON text that starts at
+// raw[start], or -1 when it does not end.
+func stringEnd(raw []byte, start int) int {
+	for i := start + 1; i < len(raw); i++ {
+		switch raw[i] {
+		case '\\':
+			i++
+		case '"':
+			return i
+		}
+	}
+	return -1
+}
+
+// skipSpace returns the index of the first byte at or after i that is not JSON
+// white space.
+func skipSpace(raw []byte, i int) int {
+	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t' || raw[i] == '\n' || raw[i] == '\r') {
+		i++
+	}
+	return i
+}
+
 // decodeArguments reads the JSON of the arguments of a call. It returns nil when
 // there are none. Numbers stay as they are written.
 func decodeArguments(raw json.RawMessage) any {
 	if len(raw) == 0 {
 		return nil
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec := json.NewDecoder(bytes.NewReader(stripOmitted(raw)))
 	dec.UseNumber()
 	var v any
 	if err := dec.Decode(&v); err != nil {
@@ -267,7 +354,7 @@ func cleanArguments(args any) json.RawMessage {
 	if noArguments(args) {
 		return nil
 	}
-	return encodeKept(cleanValue(args))
+	return encodeKept(cleanValue(args), audit.MaxArgumentBytes)
 }
 
 // argumentSizes returns what the log keeps of the decoded arguments of a call that
@@ -283,7 +370,7 @@ func argumentSizes(args any) any {
 	}
 	out := make(map[string]any, len(m))
 	for name, value := range m {
-		out[cutText(name)] = omittedNote(value)
+		out[cutText(name)] = omittedNote(name, value)
 	}
 	return out
 }
@@ -295,9 +382,9 @@ func noArguments(args any) bool {
 }
 
 // encodeKept returns the JSON of v, or nil when v is nil. The result is at most
-// audit.MaxArgumentBytes. When it would be more, only a mark with the size is
-// left, because an entry must never be lost for its arguments.
-func encodeKept(v any) json.RawMessage {
+// limit bytes. When it would be more, only a mark with the size is left, because
+// an entry must never be lost for its arguments.
+func encodeKept(v any, limit int) json.RawMessage {
 	if v == nil {
 		return nil
 	}
@@ -306,7 +393,7 @@ func encodeKept(v any) json.RawMessage {
 		// Decoded JSON always encodes, so this does not happen.
 		out, _ = encodeArguments(omittedMark("unreadable", 0))
 	}
-	if len(out) > audit.MaxArgumentBytes {
+	if len(out) > limit {
 		out, _ = encodeArguments(omittedMark("too_large", len(out)))
 	}
 	return out
@@ -336,7 +423,7 @@ func cleanValue(v any) any {
 		out := make(map[string]any, len(t))
 		for name, value := range t {
 			if omittedArguments[name] {
-				out[name] = omittedNote(value)
+				out[name] = omittedNote(name, value)
 				continue
 			}
 			out[name] = cleanValue(value)
@@ -355,8 +442,13 @@ func cleanValue(v any) any {
 	}
 }
 
-// omittedNote is what stays of one value that the log does not keep.
-func omittedNote(v any) string {
+// omittedNote is what stays of the value of one argument that the log does not
+// keep. A number under a name of omittedArguments is the size that stripOmitted
+// left there.
+func omittedNote(name string, v any) string {
+	if size, ok := v.(json.Number); ok && omittedArguments[name] {
+		return fmt.Sprintf("[omitted: %s bytes]", size)
+	}
 	return fmt.Sprintf("[omitted: %d bytes]", sizeOf(v))
 }
 
