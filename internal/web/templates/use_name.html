@@ -1,0 +1,14 @@
+{{/*
+  The page for a request on 127.0.0.1 or localhost (see Server.useName). A
+  session works only on the name of the web interface, so this page says how to
+  get there. It holds no token, and nothing of the request.
+*/}}
+{{define "title"}}Open email-mcp at its own address{{end}}
+{{define "content"}}
+<h1>Open email-mcp at its own address</h1>
+<p><a href="{{.Data.Link}}">{{.Data.Link}}</a></p>
+<p>You can sign in only at this address. A browser sends what it keeps for 127.0.0.1 to every program on your computer, so email-mcp does not sign you in here.</p>
+<p>To sign in, open the first link that <code>email-mcp setup</code> printed, or run that command again.</p>
+<p>Does your browser not find the address? Use a current version of Chrome, Edge or Firefox, or add this line to your hosts file (<code>/etc/hosts</code> on macOS and Linux, <code>C:\Windows\System32\drivers\etc\hosts</code> on Windows):</p>
+<p><code>{{.Data.HostsLine}}</code></p>
+{{end}}

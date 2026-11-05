@@ -103,10 +103,11 @@ func TestApprovalPageShowsTheWholeMessage(t *testing.T) {
 }
 
 // requireButtons checks that the page has the Approve and Reject forms of the
-// action, each a POST with the CSRF token.
+// action, each a POST with the CSRF token, and no other form in its content. The
+// menu of every page has the sign-out form.
 func requireButtons(t *testing.T, page, id string) {
 	t.Helper()
-	doc, err := html.Parse(strings.NewReader(page))
+	doc, err := html.Parse(strings.NewReader(mainOf(t, page)))
 	require.NoError(t, err)
 	actions := map[string]bool{}
 	for n := range doc.Descendants() {
@@ -235,6 +236,7 @@ func TestExpiredApprovalCannotBeApproved(t *testing.T) {
 	a := p.account()
 	id := p.fallbackSend(p.tenant, a, plainCompose())
 	p.clock.Set(t0.Add(confirm.ApprovalLifetime + time.Millisecond))
+	p.signInAgain()
 
 	resp, body := p.post(approvalPath(id)+"/approve", nil)
 	require.Equal(t, http.StatusConflict, resp.StatusCode)
@@ -308,6 +310,85 @@ func requireOnlyReject(t *testing.T, page, id string) {
 // a reply), the page shows the stored start and a note, and offers only
 // Reject. Approve is refused on the server too. When the server answers again,
 // the page shows all of it and offers Approve.
+func TestApprovalPageShowsTheDisplayNames(t *testing.T) {
+	c := plainCompose()
+	c.To = []string{"Bob Smith <bob@example.com>", strings.Repeat("n", 104) + " <ann@example.com>"}
+	c.Cc = []string{"Carol <carol@example.com>"}
+	c.Bcc = []string{"Dan <dan@example.com>"}
+
+	t.Run("the page of the whole message", func(t *testing.T) {
+		p := newPageFixture(t)
+		id := p.fallbackSend(p.tenant, p.account(), c)
+
+		_, body := p.get(approvalPath(id))
+
+		text := visibleText(t, body)
+		require.Contains(t, text, `bob@example.com ("Bob Smith")`)
+		require.Contains(t, text, `ann@example.com ("`+strings.Repeat("n", 100)+`...")`)
+		require.Contains(t, text, `carol@example.com ("Carol")`)
+		require.Contains(t, text, `dan@example.com ("Dan")`)
+		require.Contains(t, text, "… and 4 more characters of display names not shown")
+		requireButtons(t, body, id)
+	})
+
+	t.Run("the page when the message cannot be built", func(t *testing.T) {
+		p := newPageFixture(t)
+		reply := mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Cc: c.To, Body: "Yes."}
+		id := p.fallbackSend(p.tenant, p.account(), reply)
+		p.backends.backend.setGetErr(fmt.Errorf("imap: read: %w", imapsmtp.ErrConnectionLost))
+
+		_, body := p.get(approvalPath(id))
+
+		text := visibleText(t, body)
+		require.Contains(t, text, textCannotShow)
+		require.Contains(t, text, `bob@example.com ("Bob Smith")`)
+		require.Contains(t, text, "… and 4 more characters of display names not shown")
+		requireOnlyReject(t, body, id)
+	})
+}
+
+func TestApprovalPageShowsTheTypeOfEachAttachment(t *testing.T) {
+	c := plainCompose()
+	c.Attachments = []mail.OutgoingAttachment{{Filename: "report.pdf", ContentType: "application/pdf", Data: []byte("%PDF")}}
+
+	t.Run("the page of the whole message", func(t *testing.T) {
+		p := newPageFixture(t)
+		id := p.fallbackSend(p.tenant, p.account(), c)
+
+		_, body := p.get(approvalPath(id))
+
+		require.Contains(t, visibleText(t, body), "report.pdf (application/pdf)")
+	})
+
+	t.Run("the page when the message cannot be built", func(t *testing.T) {
+		p := newPageFixture(t)
+		reply := mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Body: "Yes.", Attachments: c.Attachments}
+		id := p.fallbackSend(p.tenant, p.account(), reply)
+		p.backends.backend.setGetErr(fmt.Errorf("imap: read: %w", imapsmtp.ErrConnectionLost))
+
+		_, body := p.get(approvalPath(id))
+
+		text := visibleText(t, body)
+		require.Contains(t, text, textCannotShow)
+		require.Contains(t, text, "report.pdf (application/pdf)")
+	})
+}
+
+// The whole text is on the page, but a hidden character is not. The page says
+// that it left some out.
+func TestApprovalPageCountsWhatItCannotShow(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.backends.backend.addDraft("d1", "From: "+a.Address+"\r\nTo: bob@example.com\r\nSubject: S\r\n\r\nHello\U0000200B there\r\n")
+	draft := mail.Ref("d1")
+	res, _, err := p.svc.Send(agent(p.tenant), a.ID, nil, &draft, service.ConfirmFallback, nil)
+	require.NoError(t, err)
+
+	_, body := p.get(approvalPath(res.SendID))
+
+	require.Contains(t, visibleText(t, body), "… and 1 more character not shown")
+}
+
 func TestApprovalPageWithoutTheWholeMessageOffersOnlyReject(t *testing.T) {
 	p := newPageFixture(t)
 	a := p.account()
@@ -340,6 +421,42 @@ func TestApprovalPageWithoutTheWholeMessageOffersOnlyReject(t *testing.T) {
 	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
 	require.Len(t, p.sender.sent(), 1)
 	require.Contains(t, string(p.sender.sent()[0].Data), "THE-END")
+}
+
+// The page shows the ASCII form next to a look-alike domain, with a warning.
+func TestApprovalPageWarnsAboutALookAlikeDomain(t *testing.T) {
+	const lookAlike = "bob@ex\u0430mple.com"
+	p := newPageFixture(t)
+	a := p.account()
+	c := mail.Compose{To: []string{lookAlike}, Subject: "Plans", Body: "See you."}
+	id := p.fallbackSend(p.tenant, a, c)
+
+	resp, body := p.get(approvalPath(id))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	text := visibleText(t, body)
+	require.Contains(t, text, lookAlike+" (xn--exmple-4nf.com)")
+	require.Contains(t, text, "mixes Cyrillic and Latin letters")
+	requireButtons(t, body, id)
+}
+
+// The page shows what PR 37 and PR 34 both add to a recipient: the ASCII form of
+// a domain outside ASCII, then the display name in quotes, and the warning. A
+// name cannot end its quotes.
+func TestApprovalPageShowsTheASCIIFormTheNameAndTheWarning(t *testing.T) {
+	const lookAlike = "bob@ex\u0430mple.com"
+	p := newPageFixture(t)
+	a := p.account()
+	c := mail.Compose{To: []string{`"Bob \"x\", evil@corp.example" <` + lookAlike + `>`}, Subject: "Plans", Body: "See you."}
+	id := p.fallbackSend(p.tenant, a, c)
+
+	resp, body := p.get(approvalPath(id))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	text := visibleText(t, body)
+	require.Contains(t, text, lookAlike+` (xn--exmple-4nf.com) ("Bob 'x', evil@corp.example")`)
+	require.Contains(t, text, "mixes Cyrillic and Latin letters")
+	requireButtons(t, body, id)
 }
 
 // trashApproval asks to move messages to Trash for the web page, and returns
@@ -435,7 +552,7 @@ func TestApprovalsPageWithNothingToAnswer(t *testing.T) {
 	resp, body := p.get("/approvals")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, visibleText(t, body), "Nothing waits for you")
-	require.NotContains(t, body, "<form")
+	require.NotContains(t, mainOf(t, body), "<form")
 }
 
 // The Approve button of the page shows at once that it works.
@@ -661,5 +778,5 @@ func TestDamagedActionDoesNotHideTheList(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, 2, queueRows(t, body))
 	require.Contains(t, visibleText(t, body), "This action cannot be shown now.")
-	require.NotContains(t, body, "<form", "an action that cannot be read has no buttons")
+	require.NotContains(t, mainOf(t, body), "<form", "an action that cannot be read has no buttons")
 }

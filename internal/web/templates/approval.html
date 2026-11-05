@@ -59,13 +59,14 @@
 <h2>{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</h2>
 {{if .Waiting}}<dl class="meta">
 <div><dt>From</dt><dd>{{.From}}</dd></div>
-<div><dt>To, every recipient (Bcc included)</dt><dd><ul>{{range .Recipients}}<li>{{.}}</li>{{end}}</ul></dd></div>
+<div><dt>To, every recipient (Bcc included)</dt><dd><ul>{{range .Recipients}}<li>{{.}}</li>{{end}}{{with .MoreNames}}<li>{{.}}</li>{{end}}</ul></dd></div>
 <div><dt>Attachments</dt><dd>{{if .Attachments}}<ul>{{range .Attachments}}<li>{{.}}</li>{{end}}</ul>{{else}}None{{end}}</dd></div>
 <div><dt>Asked</dt><dd>{{.Asked}}</dd></div>
 <div><dt>Expires</dt><dd>{{.Expires}}</dd></div>
 </dl>{{end}}
 </header>
 {{if .Waiting}}
+{{range .Warnings}}<div class="notice warn">{{.}}</div>{{end}}
 {{if .BodyNote}}<div class="notice warn">{{.BodyNote}}</div>{{end}}
 <pre class="message-body">{{.Body}}</pre>
 {{end}}

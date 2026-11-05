@@ -29,6 +29,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/webtest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/web"
 )
 
@@ -262,7 +263,7 @@ func TestOpenWiresEverything(t *testing.T) {
 	// The connect link points at the local web server and has no token.
 	link, err := a.Service.ConnectLink(localCtx())
 	require.NoError(t, err)
-	require.Regexp(t, `^http://127\.0\.0\.1:\d+/connect$`, link)
+	require.Regexp(t, `^http://email-mcp\.localhost:\d+/connect$`, link)
 	require.NotContains(t, logs.String(), link, "the log never has a link")
 }
 
@@ -758,6 +759,71 @@ func TestSenderDoesNotMarkAnAccountThatWasReconnectedDuringTheSend(t *testing.T)
 	require.Equal(t, account.StatusNeedsReauth, got.Status)
 }
 
+// A send that waits in the outbox is checked again when it goes out. The user
+// lowered the level below Send after the send was queued, so the item fails for
+// good, with a fixed text, and nothing reaches the mail server (M-4).
+func TestOutboxFailsAQueuedSendWhenTheLevelNoLongerAllowsIt(t *testing.T) {
+	for name, level := range map[string]account.Level{
+		"draft":         account.MailDraft,
+		"off":           account.MailOff,
+		"damaged value": account.Level(99),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ta := openTest(t)
+			acct := ta.addAccount(t)
+			ctx := context.Background()
+
+			item, err := ta.Outbox.Enqueue(ctx, store.LocalTenantID, acct.ID, testMessage(), time.Second, "draft-ref")
+			require.NoError(t, err)
+			acct.Levels[account.AreaMail] = level
+			require.NoError(t, ta.store.UpdateAccount(ctx, acct))
+
+			require.NoError(t, ta.Close(ctx))
+
+			require.Zero(t, ta.factory.backend.sentCount(), "nothing was sent")
+			require.Empty(t, ta.factory.backend.discardedRefs(), "the draft stays: the message was not sent")
+			status, errText := outboxStatus(t, ta.dir, item.ID)
+			require.Equal(t, "failed", status)
+			require.Equal(t, "the level of the account no longer allows sending", errText)
+		})
+	}
+}
+
+// The refusal is permanent, so a retry cannot send the message later. A level
+// at which sending is allowed changes nothing.
+func TestSenderChecksTheLevelOfTheAccountNow(t *testing.T) {
+	ta := openTest(t)
+	low := ta.addAccount(t, func(a *account.Account) { a.Levels[account.AreaMail] = account.MailDraft })
+	send := ta.addAccount(t, func(a *account.Account) { a.Address = "send@example.com" })
+	all := ta.addAccount(t, func(a *account.Account) {
+		a.Address = "all@example.com"
+		a.Levels[account.AreaMail] = account.MailDelete
+	})
+	ctx := context.Background()
+
+	err := ta.sender(ctx, store.LocalTenantID, low.ID, testMessage(), "")
+	require.True(t, outbox.IsPermanent(err))
+	require.Zero(t, ta.factory.backend.sentCount())
+
+	require.NoError(t, ta.sender(ctx, store.LocalTenantID, send.ID, testMessage(), ""))
+	require.NoError(t, ta.sender(ctx, store.LocalTenantID, all.ID, testMessage(), ""))
+	require.Equal(t, 2, ta.factory.backend.sentCount())
+}
+
+// A level that does not allow a send is final, also for an account that needs a
+// reconnect: a reconnect would not make the send allowed again.
+func TestSenderChecksTheLevelBeforeTheStatusOfTheAccount(t *testing.T) {
+	ta := openTest(t)
+	acct := ta.addAccount(t, func(a *account.Account) {
+		a.Levels[account.AreaMail] = account.MailOff
+		a.Status = account.StatusNeedsReauth
+	})
+
+	err := ta.sender(context.Background(), store.LocalTenantID, acct.ID, testMessage(), "")
+
+	require.True(t, outbox.IsPermanent(err))
+}
+
 // ---------------------------------------------------------------- Run
 
 // A program that stopped in the middle of a send left its item in "sending".
@@ -1063,7 +1129,8 @@ func TestCloseShutsDownTheWebServer(t *testing.T) {
 	ta := openTest(t)
 	base, err := ta.Web.EnsureStarted(context.Background())
 	require.NoError(t, err)
-	addr := strings.TrimPrefix(base, "http://")
+	addr, err := webtest.Addr(base)
+	require.NoError(t, err)
 	conn, err := net.Dial("tcp", addr)
 	require.NoError(t, err)
 	require.NoError(t, conn.Close())
@@ -1130,7 +1197,8 @@ func TestCloseSendsWhatARunningToolCallQueued(t *testing.T) {
 	acct := ta.addAccount(t)
 	base, err := ta.Web.EnsureStarted(context.Background())
 	require.NoError(t, err)
-	addr := strings.TrimPrefix(base, "http://")
+	addr, err := webtest.Addr(base)
+	require.NoError(t, err)
 	var webUpWhileSending atomic.Bool
 	ta.factory.backend.onSend = func(int) {
 		if conn, err := net.DialTimeout("tcp", addr, time.Second); err == nil {

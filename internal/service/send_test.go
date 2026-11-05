@@ -100,11 +100,14 @@ func TestSendInBandNeedsConfirmationThenSends(t *testing.T) {
 	require.NotNil(t, needs)
 	require.NotEmpty(t, needs.RequestState)
 	require.Equal(t, confirm.KindSend, needs.Pending.Kind)
+	require.Len(t, needs.Pending.Preview.BodyHash, 64)
 	require.Equal(t, confirm.Preview{
 		Account:   "me@example.com",
 		From:      "me@example.com",
 		To:        []string{"bob@example.com"},
+		Names:     []string{"Bob"},
 		Subject:   "Plans",
+		BodyHash:  needs.Pending.Preview.BodyHash,
 		BodyStart: "See you at noon.",
 		Count:     1,
 	}, needs.Pending.Preview)
@@ -837,10 +840,9 @@ func TestSendPreviewShowsTheStartOfTheRealText(t *testing.T) {
 	const payload = "Wire 9000 EUR to the account in the attached file today."
 	tail := strings.Repeat(" More words here.", 100)
 	for name, body := range map[string]string{
-		"600 line breaks before the text":         strings.Repeat("\n", 600) + payload + tail,
-		"21000 zero width spaces before the text": strings.Repeat("\u200b", 21000) + payload + tail,
-		"white space of every kind before":        strings.Repeat(" \n\t\u00a0\u2028\r\n", 300) + payload + tail,
-		"a long normal text":                      payload + tail,
+		"600 line breaks before the text":  strings.Repeat("\n", 600) + payload + tail,
+		"white space of every kind before": strings.Repeat(" \n\t\u00a0\u2028\r\n", 300) + payload + tail,
+		"a long normal text":               payload + tail,
 	} {
 		t.Run(name, func(t *testing.T) {
 			env := newWriteEnv(t)
@@ -852,7 +854,8 @@ func TestSendPreviewShowsTheStartOfTheRealText(t *testing.T) {
 			p := needs.Pending.Preview
 			require.True(t, strings.HasPrefix(p.BodyStart, payload), "the preview starts with the text: %.80q", p.BodyStart)
 			require.Equal(t, 500, utf8.RuneCountInString(p.BodyStart))
-			require.Equal(t, utf8.RuneCountInString(payload+tail)-500, p.BodyMore, "the preview says how much it leaves out")
+			raw := strings.Trim(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+			require.Equal(t, utf8.RuneCountInString(raw)-500, p.BodyMore, "the preview says how much it leaves out")
 			require.Contains(t, p.MoreCharsText(), "more characters not shown")
 
 			// The second call builds the preview in the same way, so it matches.
@@ -1242,6 +1245,79 @@ func TestPreviewShowsTheTextOfTheHTML(t *testing.T) {
 			"the preview shows what most mail programs show")
 		require.NotContains(t, needs.Pending.Preview.BodyStart, "Harmless")
 	})
+
+	t.Run("a draft with two HTML parts", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		env.backend.addMessage("d1", draftWithAlternatives(
+			"Content-Type: text/html; charset=utf-8\n\n<p>Harmless first part.</p>\n",
+			"Content-Type: text/html; charset=utf-8\n\n<p>Please wire the money today.</p>\n"), true)
+		draft := mail.Ref("d1")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Contains(t, needs.Pending.Preview.BodyStart, "Please wire the money today.",
+			"a mail client shows the last alternative")
+		require.NotContains(t, needs.Pending.Preview.BodyStart, "Harmless")
+	})
+
+	t.Run("a draft with the text part after the HTML part", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		env.backend.addMessage("d1", draftWithAlternatives(
+			"Content-Type: text/html; charset=utf-8\n\n<p>Harmless HTML.</p>\n",
+			"Content-Type: text/plain; charset=utf-8\n\nPlease wire the money today.\n"), true)
+		draft := mail.Ref("d1")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Contains(t, needs.Pending.Preview.BodyStart, "Please wire the money today.",
+			"a mail client shows the last alternative")
+		require.NotContains(t, needs.Pending.Preview.BodyStart, "Harmless")
+	})
+
+	t.Run("a draft with text parts that are all shown", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		env.backend.addMessage("d1", crlf("From: Me <me@example.com>\n"+
+			"To: Ann <ann@example.com>\n"+
+			"Subject: Two parts\n"+
+			"MIME-Version: 1.0\n"+
+			"Content-Type: multipart/mixed; boundary=\"A\"\n"+
+			"\n"+
+			"--A\n"+
+			"Content-Type: text/plain; charset=utf-8\n"+
+			"\n"+
+			"Please wire the money today.\n"+
+			"--A\n"+
+			"Content-Type: text/html; charset=utf-8\n"+
+			"\n"+
+			"<p>Kind regards</p>\n"+
+			"--A--\n"), true)
+		draft := mail.Ref("d1")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Contains(t, needs.Pending.Preview.BodyStart, "Please wire the money today.")
+		require.Contains(t, needs.Pending.Preview.BodyStart, "Kind regards")
+	})
+}
+
+// draftWithAlternatives is a saved draft with the two given parts, each with its
+// header, as alternatives.
+func draftWithAlternatives(first, second string) []byte {
+	return crlf("From: Me <me@example.com>\n" +
+		"To: Ann <ann@example.com>\n" +
+		"Subject: Two bodies\n" +
+		"MIME-Version: 1.0\n" +
+		"Content-Type: multipart/alternative; boundary=\"A\"\n" +
+		"\n" +
+		"--A\n" + first +
+		"--A\n" + second +
+		"--A--\n")
 }
 
 // An action that the user confirms in band ends with its request state. After

@@ -1,7 +1,7 @@
 {{/*
-  The connections page: the access tokens of the local HTTP server (see
-  connections.go). A new token is shown once, on the answer to the POST that
-  made it. The list never holds a token.
+  The connections page: the access tokens of the local HTTP server and the
+  signed-in browsers (see connections.go). A new token is shown once, on the
+  answer to the POST that made it. No list holds a token or a session id.
 */}}
 {{define "title"}}Connections · email-mcp{{end}}
 {{define "content"}}
@@ -54,6 +54,21 @@
 </fieldset>
 <button class="button primary" type="submit">Make a token</button>
 </form>
+
+<h2>Signed-in browsers</h2>
+<p class="soft">A browser stays signed in for 24 hours at most, and for 2 hours without use. Sign out a browser that you do not use.</p>
+<div class="table-scroll">
+<table class="table">
+<thead>
+<tr><th scope="col">Browser</th><th scope="col">Signed in</th><th scope="col">Last used</th><th scope="col">Ends</th><th scope="col"><span class="sr-only">Action</span></th></tr>
+</thead>
+<tbody>
+{{range .Sessions}}<tr><td class="strong">{{if .Current}}This browser{{else}}Another browser{{end}}</td><td class="nowrap">{{.Created}}</td><td class="nowrap">{{.LastUsed}}</td><td class="nowrap">{{.Ends}}</td><td class="nowrap">
+<form method="post" action="/sessions/{{.ID}}/revoke">{{template "csrf_field" $csrf}}<button class="button danger-quiet" type="submit">Sign out</button></form></td></tr>
+{{end}}
+</tbody>
+</table>
+</div>
 {{end}}
 </div>
 {{end}}

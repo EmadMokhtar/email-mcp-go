@@ -3,18 +3,39 @@
   agent, changes the permissions here.
 
   The box "accept_autonomy_risk" is never ticked by the page: the user ticks it
-  in each save that turns off both confirmations. Its label is the warning of
-  spec section 7.3. A level that a link asks for is only selected in the form.
+  in each save that turns off Confirm sends, in each save that raises the level
+  to Send or above while it is off, and in each save with both confirmations
+  off. Its label is the warning of spec section 7.3.
+
+  A level that a link asks for is never selected in the form, so a Save for
+  another reason cannot raise it. It has its own form with one button, and
+  that form holds the box when a save needs it.
 */}}
 {{define "title"}}Settings · email-mcp{{end}}
 {{define "content"}}
 {{$csrf := .CSRFToken}}
 {{with .Data}}
+{{$page := .}}
 <div class="sheet">
 {{template "back" "/accounts"}}
 <header class="sheet-head"><h1 class="break">{{.Address}}</h1></header>
 {{if .Error}}<div class="notice bad" role="alert"><strong>{{.Error}}</strong></div>{{end}}
-{{with .Requested}}<div class="notice warn" role="status"><strong>A request asks to set mail to level {{.Value}} ({{.Name}}). Nothing has changed yet. Check the level below, and save only if you agree.</strong></div>{{end}}
+{{with .Requested}}
+<section class="notice warn" aria-label="Requested level">
+<p><strong>A request asks to set mail to level {{.Value}} ({{.Name}}). Nothing has changed yet.</strong></p>
+{{if .AlreadySet}}<p>Mail is already at this level.</p>{{else}}
+<p>Level {{.Value}} {{.Allows}}. Apply it only if you agree.</p>
+{{if .SendsUnasked}}<p>Confirm sends is off, so the agent will send mail without asking you.</p>{{end}}
+{{if .TrashUnasked}}<p>Confirm deletes is off, so the agent will move mail to Trash without asking you.</p>{{end}}
+<form method="post" action="/accounts/{{$page.ID}}/level">
+{{template "csrf_field" $csrf}}
+<input type="hidden" id="apply_mail_level" name="mail_level" value="{{.Value}}">
+{{if .NeedsAcceptance}}<label class="check" for="apply_accept_autonomy_risk"><input type="checkbox" id="apply_accept_autonomy_risk" name="accept_autonomy_risk" value="1"> <span>{{$page.AutonomyWarning}}</span></label>{{end}}
+<button class="button primary" type="submit">Apply requested level {{.Value}}</button>
+</form>
+{{end}}
+</section>
+{{end}}
 
 <form method="post" action="/accounts/{{.ID}}/settings">
 {{template "csrf_field" $csrf}}
@@ -28,14 +49,13 @@
 {{end}}</select>
 </div>
 <label class="check" for="confirm_sends"><input type="checkbox" id="confirm_sends" name="confirm_sends" value="1"{{if .ConfirmSends}} checked{{end}}> <span>Confirm sends: ask me before the agent sends a message</span></label>
-<label class="check" for="confirm_deletes"><input type="checkbox" id="confirm_deletes" name="confirm_deletes" value="1"{{if .ConfirmDeletes}} checked{{end}}> <span>Confirm deletes: ask me before the agent moves mail to Trash</span></label>
-</fieldset>
-
 <fieldset class="notice warn">
-<legend>Full autonomy</legend>
-<p>With both confirmations off, the agent acts without asking you. A save that turns off both needs this box, every time.</p>
+<legend>Turning off Confirm sends</legend>
+<p>With Confirm sends off, the agent sends mail without asking you. A save that turns it off needs this box, and so does a save that raises the level to Send or above while it is off. With both confirmations off, every save needs it.</p>
 {{if .AcceptedAt}}<p>You last accepted this risk on {{.AcceptedAt}}.</p>{{end}}
 <label class="check" for="accept_autonomy_risk"><input type="checkbox" id="accept_autonomy_risk" name="accept_autonomy_risk" value="1"> <span>{{.AutonomyWarning}}</span></label>
+</fieldset>
+<label class="check" for="confirm_deletes"><input type="checkbox" id="confirm_deletes" name="confirm_deletes" value="1"{{if .ConfirmDeletes}} checked{{end}}> <span>Confirm deletes: ask me before the agent moves mail to Trash</span></label>
 </fieldset>
 
 {{with .Limits}}

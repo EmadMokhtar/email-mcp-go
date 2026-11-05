@@ -53,6 +53,7 @@
 <a class="menu-link" href="/accounts"{{if eq .Section "/accounts"}} aria-current="page"{{end}}>Accounts</a>
 <a class="menu-link" href="/activity"{{if eq .Section "/activity"}} aria-current="page"{{end}}>Activity</a>
 <a class="menu-link" href="/connections"{{if eq .Section "/connections"}} aria-current="page"{{end}}>Connections</a>
+<form class="signout" method="post" action="/signout">{{template "csrf_field" .CSRFToken}}<button class="menu-link" type="submit">Sign out</button></form>
 </nav>
 <main class="page">
 {{block "content" .}}{{end}}

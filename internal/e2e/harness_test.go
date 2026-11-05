@@ -46,6 +46,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/imaptest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/smtptest"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/webtest"
 )
 
 // The test secrets. Each one is long and unusual, so a match in a log or a file
@@ -566,7 +567,7 @@ type browser struct {
 // newClient returns an HTTP client that does not follow redirects and keeps no
 // cookies by itself.
 func newClient(t *testing.T) *http.Client {
-	transport := &http.Transport{}
+	transport := webtest.Transport()
 	t.Cleanup(transport.CloseIdleConnections)
 	return &http.Client{
 		Transport: transport,
@@ -688,7 +689,7 @@ func pathOf(t *testing.T, link string) string {
 	t.Helper()
 	u, err := url.Parse(link)
 	require.NoError(t, err)
-	require.Equal(t, "127.0.0.1", u.Hostname(), "a link points at the loopback address")
+	require.Equal(t, "email-mcp.localhost", u.Hostname(), "a link points at the name of the web interface")
 	return u.RequestURI()
 }
 

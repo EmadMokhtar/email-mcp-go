@@ -358,6 +358,36 @@ func TestCancelWithinWindow(t *testing.T) {
 	require.Equal(t, StatusCancelled, f.status(item.ID))
 }
 
+// The list holds the items that can still be cancelled, with the time of the
+// next try. It says how many tries failed, and it never holds the message.
+func TestListQueued(t *testing.T) {
+	f := newFixture(t)
+	first := f.enqueue("first", 30*time.Second)
+	second := f.enqueue("second", 5*time.Minute)
+	cancelled := f.enqueue("cancelled", time.Minute)
+	require.NoError(t, f.ob.Cancel(context.Background(), f.tenant, cancelled.ID))
+
+	list, err := f.ob.ListQueued(context.Background(), f.tenant, 10)
+	require.NoError(t, err)
+	require.Len(t, list, 2)
+	require.Equal(t, first.ID, list[0].ID)
+	require.Equal(t, second.ID, list[1].ID)
+	require.Equal(t, StatusQueued, list[0].Status)
+	require.Equal(t, testStart.Add(30*time.Second), list[0].NextTry)
+	require.Zero(t, list[0].Attempts)
+
+	// A transient failure moves the next try later.
+	f.sender.setFn(func(context.Context, int) error { return errors.New("server busy") })
+	f.clock.Advance(30 * time.Second)
+	f.pass()
+	list, err = f.ob.ListQueued(context.Background(), f.tenant, 1)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	require.Equal(t, first.ID, list[0].ID)
+	require.Equal(t, 1, list[0].Attempts)
+	require.Equal(t, f.clock.Now().Add(30*time.Second), list[0].NextTry)
+}
+
 func TestCancelAfterSendTooLate(t *testing.T) {
 	f := newFixture(t)
 	item := f.enqueue("gone", 0)

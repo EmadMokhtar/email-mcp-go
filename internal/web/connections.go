@@ -13,16 +13,23 @@ package web
 // confirmation in its own window only when the user ticks that box, which is off
 // by default. Revoking is a POST with the CSRF token, for a token of the
 // tenant of the session only.
+//
+// The page also lists the browsers that are signed in, so the user can sign out
+// one that is not in use. The list never holds a session id or its hash: a row
+// is named by its number, and every use of that number is limited to the tenant
+// of the session.
 
 import (
 	"errors"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
+	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 	"github.com/EmadMokhtar/email-mcp-go/internal/tokens"
 )
 
@@ -39,6 +46,8 @@ const scopeAll = "all"
 const (
 	titleTokenAbsent = "Token not found"
 	msgNoToken       = "This token was not found."
+	titleNoSession   = "Browser not found"
+	msgNoBrowser     = "This browser was not found. It may already be signed out."
 	msgNoScope       = "Choose at least one permission for the token."
 	msgBadTokenName  = "The name must be 1 to 128 characters of text."
 	msgCopyOnce      = "Copy this token now. It is shown only once."
@@ -59,6 +68,8 @@ type connectionsPage struct {
 	Tokens        []tokenRow
 	// NewTokenDays is how many days a new token stays valid.
 	NewTokenDays int
+	// Sessions are the browsers that are signed in.
+	Sessions []sessionRow
 }
 
 // tokenRow is one token in the list. It never holds the token.
@@ -77,6 +88,17 @@ type tokenRow struct {
 	Revoked  string
 	// Expired is true when the end date of the token has passed.
 	Expired bool
+}
+
+// sessionRow is one signed-in browser in the list. It never holds the session
+// id or its hash.
+type sessionRow struct {
+	ID       int64
+	Created  string
+	LastUsed string
+	Ends     string
+	// Current is true for the browser that shows the page.
+	Current bool
 }
 
 // handleConnections lists the tokens of the tenant of the session. It changes
@@ -148,7 +170,37 @@ func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// renderConnections adds the list of the tokens to the page and renders it.
+// handleRevokeSession signs out one browser of the tenant of the session, and
+// redirects to the page. A session of another tenant is not found. When the
+// session is the one of this request, the cookie is cleared too, and the browser
+// goes to the no-session page.
+func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
+	sess, ok := sessionFrom(r.Context())
+	if !ok {
+		s.fail(w, r, codeConnectionsFailed, errNoService)
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		s.message(w, r, http.StatusNotFound, titleNoSession, msgNoBrowser)
+		return
+	}
+	err = s.d.Store.DeleteWebSessionByID(r.Context(), sess.tenant, id)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		s.message(w, r, http.StatusNotFound, titleNoSession, msgNoBrowser)
+	case err != nil:
+		s.fail(w, r, codeConnectionsFailed, err)
+	case id == sess.id:
+		setSessionCookie(w, "", -1)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	default:
+		http.Redirect(w, r, "/connections", http.StatusSeeOther)
+	}
+}
+
+// renderConnections adds the lists of the tokens and the browsers to the page
+// and renders it.
 func (s *Server) renderConnections(w http.ResponseWriter, r *http.Request, status int, page connectionsPage) {
 	sess, ok := sessionFrom(r.Context())
 	if !ok || s.d.Tokens == nil {
@@ -181,6 +233,21 @@ func (s *Server) renderConnections(w http.ResponseWriter, r *http.Request, statu
 			row.LastUsed = formatTime(t.LastUsedAt)
 		}
 		page.Tokens = append(page.Tokens, row)
+	}
+	now := s.now()
+	sessions, err := s.d.Store.ListWebSessions(r.Context(), sess.tenant, now, now.Add(-sessionIdleTTL))
+	if err != nil {
+		s.fail(w, r, codeConnectionsFailed, err)
+		return
+	}
+	for _, row := range sessions {
+		page.Sessions = append(page.Sessions, sessionRow{
+			ID:       row.ID,
+			Created:  formatTime(row.CreatedAt),
+			LastUsed: formatTime(row.LastSeenAt),
+			Ends:     formatTime(row.ExpiresAt),
+			Current:  row.ID == sess.id,
+		})
 	}
 	s.render(w, r, status, pageConnections, page)
 }

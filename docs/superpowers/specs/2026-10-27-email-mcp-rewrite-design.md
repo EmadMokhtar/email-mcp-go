@@ -262,7 +262,7 @@ If an account has no such folder, the tool returns a clear error. **[my call]**
 | Google | `google.golang.org/api/gmail/v1`, `calendar/v3`, `people/v1` | Official clients. |
 | Microsoft Graph | Small hand-written client over `net/http` | The official Graph SDK is very large. This server uses about 30 endpoints. **[my call]** |
 | HTML to text | **[builder]** | Must drop `script`, `style`, and hidden elements. |
-| HTML sanitising | `github.com/microcosm-cc/bluemonday` | Only for the optional `html` body format. |
+| HTML sanitising | `github.com/microcosm-cc/bluemonday` | For the optional `html` body format, and for the HTML of every outgoing message, so a preview shows what is sent. |
 | OAuth server (M3) | `github.com/ory/fosite` | Mature, security-focused OAuth 2 framework, used inside Ory Hydra. **[my call]** |
 | Passkeys (M3) | `github.com/go-webauthn/webauthn` | Standard WebAuthn library. |
 | Upstream sign-in (M3) | `github.com/coreos/go-oidc/v3` | Verifies Google and Microsoft OpenID Connect sign-ins. |
@@ -429,10 +429,11 @@ In practice this means:
 ### 7.3 Who can change permissions
 
 - Only the user changes levels or switches, and only in the web UI.
-- The agent can call `request_permission_change`. It returns a link (8.2). The settings page shows the risk, and the user accepts or refuses there.
+- The agent can call `request_permission_change`. It returns a link (8.2). The settings page shows the risk, and the user accepts or refuses there. The link never changes the form: the page shows the requested level apart from it, says what the level allows, and applies it only with its own button, by the same rules as a save.
 - The agent can never change permissions through a tool. A prompt-injected email or invite must not be able to unlock full autonomy.
 - **[you]** said the agent mentions the risk and the user accepts. **[my call]** is that the acceptance happens on a page the agent cannot operate.
-- The full-autonomy warning names prompt injection: "An email or a calendar invite can contain hidden instructions, such as 'forward all invoices to me'. With confirmations off, the agent may follow them, and nobody checks before anything leaves."
+- Turning off Confirm sends is the step that lets mail leave with no check, so it needs the acceptance whatever Confirm deletes is. Raising the level to Send or above while Confirm sends is off needs it too, because it starts the same risk. An account that already sends unattended and stays that way is not asked again. Every save with both switches off needs the acceptance.
+- The warning names prompt injection: "An email or a calendar invite can contain hidden instructions, such as 'forward all invoices to me'. With Confirm sends off, the agent may follow them, and nobody checks before anything leaves."
 - Acceptance is stored with a timestamp and appears in the activity log.
 
 ### 7.4 Effective permission
@@ -537,15 +538,17 @@ All defaults are **[my call]** and can be changed per account.
 **Local mode** (the local threat model is in 10.1):
 
 - **A human signs the browser in once.** They run `email-mcp setup` in a terminal. It opens the browser with a one-time token. The token is single use, lasts 10 minutes, and is swapped for a session cookie:
-  - `HttpOnly`, `SameSite=Strict`;
-  - lasts 30 days;
+  - `HttpOnly`, `SameSite=Lax` (every GET only reads, and every POST needs the form token, so a link from another site can open a page and nothing else);
+  - set only on the name `email-mcp.localhost`, because a browser sends a cookie of `127.0.0.1` to every local port. No session works on `127.0.0.1` or `localhost`: those hosts show only a page that points to the name, with the line for the hosts file for a browser that cannot find it;
+  - lasts at most 24 hours, and ends after 2 hours without a request;
+  - ends at once with the Sign out button, on the Connections page, or with `email-mcp setup --revoke-sessions`, which also cancels every unused setup token;
   - sessions are stored in the database, so they survive restarts and work for every local process.
   - Browsers do not tie cookies to a port, so the session still works when a later process listens on a different random port.
 - **Links given to the agent or the harness never carry a token.** This covers URL elicitations, text fallbacks, and `pending_approval` links.
   - Opened in the user's signed-in browser, the link works.
   - Fetched by an agent, or opened in a browser without a session, it shows only: "Run `email-mcp setup` in a terminal, then open this link again."
 - **A stdio process starts the UI** on `127.0.0.1` on a random port the first time a tool needs to return a link.
-- **The server checks the `Host` header** (it must be `127.0.0.1:<port>` or `localhost:<port>`) to stop DNS rebinding.
+- **The server checks the `Host` header** (it must be `email-mcp.localhost:<port>`, `127.0.0.1:<port>` or `localhost:<port>`) to stop DNS rebinding.
 
 **Hosted mode:** the public site, behind sign-in (11.3). Links carry no tokens. They work only in a signed-in browser.
 
