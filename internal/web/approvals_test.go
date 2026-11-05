@@ -103,10 +103,11 @@ func TestApprovalPageShowsTheWholeMessage(t *testing.T) {
 }
 
 // requireButtons checks that the page has the Approve and Reject forms of the
-// action, each a POST with the CSRF token.
+// action, each a POST with the CSRF token, and no other form in its content. The
+// menu of every page has the sign-out form.
 func requireButtons(t *testing.T, page, id string) {
 	t.Helper()
-	doc, err := html.Parse(strings.NewReader(page))
+	doc, err := html.Parse(strings.NewReader(mainOf(t, page)))
 	require.NoError(t, err)
 	actions := map[string]bool{}
 	for n := range doc.Descendants() {
@@ -235,6 +236,7 @@ func TestExpiredApprovalCannotBeApproved(t *testing.T) {
 	a := p.account()
 	id := p.fallbackSend(p.tenant, a, plainCompose())
 	p.clock.Set(t0.Add(confirm.ApprovalLifetime + time.Millisecond))
+	p.signInAgain()
 
 	resp, body := p.post(approvalPath(id)+"/approve", nil)
 	require.Equal(t, http.StatusConflict, resp.StatusCode)
@@ -514,7 +516,7 @@ func TestApprovalsPageWithNothingToAnswer(t *testing.T) {
 	resp, body := p.get("/approvals")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, visibleText(t, body), "Nothing waits for you")
-	require.NotContains(t, body, "<form")
+	require.NotContains(t, mainOf(t, body), "<form")
 }
 
 // The Approve button of the page shows at once that it works.
@@ -740,5 +742,5 @@ func TestDamagedActionDoesNotHideTheList(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, 2, queueRows(t, body))
 	require.Contains(t, visibleText(t, body), "This action cannot be shown now.")
-	require.NotContains(t, body, "<form", "an action that cannot be read has no buttons")
+	require.NotContains(t, mainOf(t, body), "<form", "an action that cannot be read has no buttons")
 }
