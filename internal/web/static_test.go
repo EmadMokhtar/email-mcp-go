@@ -107,11 +107,12 @@ func TestPagesLoadTheStaticFiles(t *testing.T) {
 }
 
 // Every form works without the script: the script never posts anything by
-// itself, so it has no address and no request of its own.
+// itself, so it has no address and no request of its own. It also never moves
+// or reloads the page: a reload could post a form again.
 func TestScriptOnlyShowsThatAFormWorks(t *testing.T) {
 	body, err := staticFS.ReadFile("static/app.js")
 	require.NoError(t, err)
-	require.NotRegexp(t, regexp.MustCompile(`fetch\(|XMLHttpRequest|sendBeacon|WebSocket|\.submit\(\)|\.click\(\)|innerHTML|eval\(`), string(body))
+	require.NotRegexp(t, regexp.MustCompile(`fetch\(|XMLHttpRequest|sendBeacon|WebSocket|\.submit\(\)|\.click\(\)|innerHTML|eval\(|location\.`), string(body))
 }
 
 // The Content-Security-Policy runs no inline style and no inline script, so a

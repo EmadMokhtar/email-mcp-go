@@ -27,6 +27,7 @@
 <button class="button primary" type="submit" data-busy="Finding the settings…">Find the server settings</button>
 <button class="button" type="submit" formaction="/connect/settings" formnovalidate>Enter the settings yourself</button>
 </div>
+<p class="form-note" data-note></p>
 </form>
 
 {{else if eq .Step "choose"}}
@@ -153,6 +154,7 @@
 </fieldset>
 {{end}}
 <button class="button primary" type="submit" data-busy="Testing the connection…">Test the connection and save</button>
+<p class="form-note" data-note></p>
 </form>
 {{end}}
 {{end}}

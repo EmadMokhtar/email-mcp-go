@@ -2,11 +2,13 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -604,4 +606,60 @@ func TestAnswerErrorTextMailServerConnection(t *testing.T) {
 
 		require.False(t, known)
 	})
+}
+
+// The agent withdrew the send, so the page does not say that the user rejected
+// it.
+func TestSendThatTheAgentCancelledIsNotShownAsRejected(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	id := p.fallbackSend(p.tenant, a, plainCompose())
+	require.NoError(t, p.svc.CancelSend(agent(p.tenant), a.ID, id))
+
+	resp, body := p.get(approvalPath(id))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	text := visibleText(t, body)
+	require.Contains(t, text, "Cancelled")
+	require.NotContains(t, text, "Rejected")
+}
+
+// The mail server cannot hold back the list: the first action gets a time
+// limit, and past it the page offers only Reject. An action that the user opened
+// has no such limit, so its Approve button does not depend on a short wait.
+func TestSlowMailServerDoesNotHoldBackTheList(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	id := p.fallbackSend(p.tenant, a, mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Body: "Thanks."})
+
+	p.backends.backend.setGetErr(context.DeadlineExceeded)
+	resp, body := p.get("/approvals")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.True(t, p.backends.backend.hadDeadline())
+	require.Equal(t, 1, queueRows(t, body))
+	require.Contains(t, body, approvalPath(id)+"/reject")
+	require.NotContains(t, body, approvalPath(id)+"/approve")
+
+	p.backends.backend.setGetErr(nil)
+	_, body = p.get(approvalPath(id))
+	require.False(t, p.backends.backend.hadDeadline())
+	requireButtons(t, body, id)
+}
+
+// One action that cannot be read does not hide the list.
+func TestDamagedActionDoesNotHideTheList(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.fallbackSend(p.tenant, a, plainCompose())
+	p.fallbackSend(p.tenant, a, plainCompose())
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(p.dir, "email-mcp.db"))+"?_pragma=busy_timeout(5000)")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+	_, err = db.ExecContext(context.Background(), `UPDATE pending_actions SET payload = x'00'`)
+	require.NoError(t, err)
+
+	resp, body := p.get("/approvals")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 2, queueRows(t, body))
+	require.Contains(t, visibleText(t, body), "This action cannot be shown now.")
+	require.NotContains(t, body, "<form", "an action that cannot be read has no buttons")
 }

@@ -29,6 +29,7 @@ import (
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/confirm"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
+	"github.com/EmadMokhtar/email-mcp-go/internal/errtype"
 	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
@@ -43,6 +44,12 @@ const (
 
 // pathApprovals is the address of the list of the actions that wait.
 const pathApprovals = "/approvals"
+
+// approvalOpenTimeout limits how long the list of the actions waits for the
+// first action. A reply or a forward reads its original from the mail server,
+// which must not hold back the list. Past the limit, the action shows what was
+// stored when the agent asked, and only Reject.
+const approvalOpenTimeout = 3 * time.Second
 
 // Fixed codes for the log.
 const (
@@ -66,6 +73,7 @@ const (
 	msgInvalidRequest    = "The stored request cannot be carried out. Reject it, and ask the agent again."
 	msgPartial           = "Some of the change was made before an error. Check the mailbox."
 	msgMailServer        = "The mail server could not do this. Try again later."
+	msgActionUnavailable = "This action cannot be shown now. Try again later."
 	msgDetailUnavailable = "The whole message cannot be shown now, so it cannot be approved. This is the start of the message " +
 		"that was stored when the agent asked. Reload this page when the mail server answers, or reject the action."
 	textNoSubject = "(no subject)"
@@ -276,12 +284,16 @@ func (s *Server) handleApprovals(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusOK, pageApprovals, nil)
 		return
 	}
-	page, found, err := approvalOf(svc, ctx, queue[0].ID)
-	if err != nil {
-		s.fail(w, r, codeApprovalsFailed, err)
-		return
-	}
-	if !found {
+	openCtx, cancel := context.WithTimeout(ctx, approvalOpenTimeout)
+	defer cancel()
+	page, found, err := approvalOf(svc, openCtx, queue[0].ID)
+	switch {
+	case err != nil:
+		// One action that cannot be read must not hide the others.
+		s.log.Warn("web approval not shown", "route", r.Pattern, "code", codeApprovalsFailed,
+			"error_types", errtype.Chain(err))
+		page = approvalPage{ID: queue[0].ID, Error: msgActionUnavailable}
+	case !found:
 		// The action ended after the list was read.
 		page = approvalPage{}
 	}
@@ -516,7 +528,7 @@ func outcomeOf(svc *service.Service, ctx context.Context, p *confirm.Pending) *o
 	case p.State == confirm.StateApproved:
 		result = outcomeRunning
 	case p.State == confirm.StateRejected:
-		result = outcomeRejected
+		result = rejectedOutcome(svc, ctx, p)
 	case p.State == confirm.StateExpired:
 		result = outcomeExpired
 	case p.Kind != confirm.KindSend:
@@ -525,6 +537,18 @@ func outcomeOf(svc *service.Service, ctx context.Context, p *confirm.Pending) *o
 		result = sendOutcome(svc, ctx, p)
 	}
 	return &result
+}
+
+// rejectedOutcome returns the result of an action that will not run. The agent
+// can withdraw a send that waits, and then the user did not reject it.
+func rejectedOutcome(svc *service.Service, ctx context.Context, p *confirm.Pending) outcome {
+	if p.Kind == confirm.KindSend {
+		res, err := svc.SendStatus(ctx, p.Account, p.ID)
+		if err == nil && res.Status == service.SendCancelled {
+			return outcomeCanceled
+		}
+	}
+	return outcomeRejected
 }
 
 // sendOutcome returns the result of a send that the outbox took.

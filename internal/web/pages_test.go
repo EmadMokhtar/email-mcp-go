@@ -43,14 +43,16 @@ const autonomyText = "An email or a calendar invite can contain hidden instructi
 type pageBackend struct {
 	mail.Backend
 
-	mu      sync.Mutex
-	getErr  error
-	trashed [][]mail.Ref
+	mu       sync.Mutex
+	getErr   error
+	deadline bool // the last GetMessage had a time limit
+	trashed  [][]mail.Ref
 }
 
-func (b *pageBackend) GetMessage(_ context.Context, ref mail.Ref, _ mail.BodyOptions) (*mail.Message, error) {
+func (b *pageBackend) GetMessage(ctx context.Context, ref mail.Ref, _ mail.BodyOptions) (*mail.Message, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	_, b.deadline = ctx.Deadline()
 	if b.getErr != nil {
 		return nil, b.getErr
 	}
@@ -65,6 +67,12 @@ func (b *pageBackend) Trash(_ context.Context, refs []mail.Ref) error {
 	defer b.mu.Unlock()
 	b.trashed = append(b.trashed, slices.Clone(refs))
 	return nil
+}
+
+func (b *pageBackend) hadDeadline() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.deadline
 }
 
 func (b *pageBackend) setGetErr(err error) {

@@ -770,6 +770,16 @@ strong {
   margin-top: 20px;
 }
 
+.form-note {
+  margin: 10px 0 0;
+  color: var(--soft);
+  font-size: 0.9375rem;
+}
+
+.form-note:empty {
+  display: none;
+}
+
 /* Forms. */
 
 .field {
