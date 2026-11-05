@@ -215,7 +215,7 @@ func (s *Server) handleSaveReconnect(w http.ResponseWriter, r *http.Request) {
 
 	_, err := svc.ReconnectIMAPAccount(ctx, a.ID, req)
 	if err == nil {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, pathAccounts, http.StatusSeeOther)
 		return
 	}
 	var certErr *service.ReconnectCertificateError

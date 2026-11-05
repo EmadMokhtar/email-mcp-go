@@ -1,67 +1,1227 @@
 /*
-  The rules of email-mcp that Bulma has no class for. The pages may not have
-  inline style (the Content-Security-Policy blocks it), so every rule of this
-  project is here. It loads after Bulma, so a variable set here wins.
+  Every style of the pages. The pages may not have inline style (the
+  Content-Security-Policy blocks it), so all of it is here.
+
+  The look is a small mail app: a menu, a list of what waits, and a reading
+  pane. One green marks the primary action and the current place. Red and amber
+  appear only for real risk. The file loads nothing from another site, so the
+  fonts are the fonts of the computer.
 */
 
-/* The accent colour: dark blue (#1e3a8a) for the menu bar, the buttons and
-   the links. Bulma makes its light and dark shades from these three values.
-   The text is 18 px instead of 16 px; every size of Bulma follows it. */
 :root {
-  --bulma-link-h: 224deg;
-  --bulma-link-s: 64%;
-  --bulma-link-l: 33%;
-  --bulma-link-on-scheme-l: 33%;
-  --bulma-body-size: 1.125em;
+  color-scheme: light dark;
+
+  --ground: #f4f6f3;
+  --pane: #ffffff;
+  --hover: #edf1ed;
+  --ink: #16201c;
+  --soft: #55615b;
+  --line: #dde2de;
+  --line-strong: #8a958f;
+
+  --go: #0b6b4f;
+  --go-hover: #085a42;
+  --go-ink: #ffffff;
+  --go-text: #0b6b4f;
+  --go-soft: #e2eee8;
+
+  --warn-soft: #fbf1d9;
+  --warn-ink: #5c4300;
+  --warn-line: #e6d29d;
+  --bad: #b3261e;
+  --bad-hover: #93201a;
+  --bad-ink: #ffffff;
+  --bad-text: #a4231c;
+  --bad-soft: #fbe9e7;
+  --bad-line: #f0c6c2;
+  --info-soft: #e9eef0;
+
+  --radius: 8px;
+  --radius-large: 12px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-/* In dark mode a link is a lighter blue, so it is easy to read on the dark
-   background. This repeats the dark value of Bulma, because the rule above
-   would win over it. */
 @media (prefers-color-scheme: dark) {
   :root {
-    --bulma-link-on-scheme-l: 73%;
+    --ground: #131414;
+    --pane: #1a1b1b;
+    --hover: #252626;
+    --ink: #e9eaea;
+    --soft: #a9adab;
+    --line: #2e3030;
+    --line-strong: #6f7371;
+
+    --go: #39b98f;
+    --go-hover: #4fcaa1;
+    --go-ink: #06140f;
+    --go-text: #5fd0aa;
+    --go-soft: #17322a;
+
+    --warn-soft: #2e2613;
+    --warn-ink: #eed594;
+    --warn-line: #54462a;
+    --bad: #e5675e;
+    --bad-hover: #ee8078;
+    --bad-ink: #1c0705;
+    --bad-text: #f19a93;
+    --bad-soft: #351b19;
+    --bad-line: #5a2f2b;
+    --info-soft: #262727;
   }
 }
 
-/* The menu bar is dark blue, so the link of the current page is white, bold
-   and underlined in white. Bulma would draw it in dark blue, which does not
-   show on the bar. */
-.navbar.is-link {
-  --bulma-navbar-tab-active-color: var(--bulma-link-invert);
-  --bulma-navbar-tab-active-border-bottom-color: var(--bulma-link-invert);
-  --bulma-navbar-tab-hover-border-bottom-color: var(--bulma-link-invert);
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
-.navbar.is-link .navbar-item.is-active {
+html {
+  -webkit-text-size-adjust: 100%;
+  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-width: thin;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 1rem/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--go-soft);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--go);
+  outline-offset: 2px;
+}
+
+[tabindex="-1"]:focus {
+  outline: none;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: 1.625rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+p {
+  margin: 0 0 0.75rem;
+}
+
+a {
+  color: var(--go-text);
+  text-underline-offset: 0.18em;
+}
+
+code {
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--hover);
+  font: 0.875em/1.5 var(--mono);
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+strong {
   font-weight: 600;
 }
 
-/* A check box and its text: a long text wraps beside the box, not under it.
-   The box is a little larger than the browser's default, to match the 18 px
-   text, and it is in the accent colour when ticked. */
-.checkbox {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.6em;
+.sr-only {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
-.checkbox input[type="checkbox"] {
-  flex-shrink: 0;
-  width: 1.1em;
-  height: 1.1em;
-  accent-color: var(--bulma-link-text);
+.soft {
+  color: var(--soft);
+  font-size: 0.9375rem;
 }
 
-/* Long words without spaces, such as a token, a certificate fingerprint or an
-   email address, break at any point instead of making the page wider. */
-.is-break-anywhere {
+.break {
   overflow-wrap: anywhere;
 }
 
-/* The text of a message keeps its own lines, and a long line wraps, even
-   inside a long word, so the text never makes the page wider. */
-.is-pre-wrap {
+.spaced {
+  margin-top: 2rem;
+}
+
+/* The frame: the menu at the left, the page beside it. */
+
+.shell {
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+.menu {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100dvh;
+  padding: 18px 12px;
+  border-right: 1px solid var(--line);
+}
+
+.brand {
+  padding: 4px 10px 18px;
+  color: var(--ink);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+}
+
+.menu-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  color: var(--soft);
+  text-decoration: none;
+  transition: background-color 150ms var(--ease), color 150ms var(--ease);
+}
+
+.menu-link:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.menu-link[aria-current] {
+  background: var(--go-soft);
+  color: var(--go-text);
+  font-weight: 600;
+}
+
+.count {
+  min-width: 1.5em;
+  border-radius: 999px;
+  background: var(--go);
+  color: var(--go-ink);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5em;
+  text-align: center;
+}
+
+.page {
+  min-width: 0;
+  background: var(--pane);
+}
+
+.signin {
+  display: grid;
+  min-height: 100dvh;
+  padding: 24px;
+  place-content: center;
+  text-align: center;
+}
+
+/* The mail view: the list of what waits, and the open action. */
+
+.mail {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  height: 100dvh;
+}
+
+.queue-pane {
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+}
+
+.queue-pane h1 {
+  padding: 22px 20px 14px;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.queue-item {
+  display: block;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  color: var(--ink);
+  text-decoration: none;
+  transition: background-color 150ms var(--ease);
+}
+
+.queue-item:hover {
+  background: var(--hover);
+}
+
+.queue-item:focus-visible {
+  outline-offset: -2px;
+}
+
+.queue-item[aria-current] {
+  background: var(--go-soft);
+}
+
+.queue-title,
+.queue-line {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-title {
+  font-weight: 600;
+}
+
+.queue-line {
+  color: var(--soft);
+  font-size: 0.875rem;
+}
+
+.queue-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 2px;
+  color: var(--soft);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-account {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-left {
+  flex: none;
+}
+
+.queue-empty {
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+  color: var(--soft);
+}
+
+.reader {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 0 44px 44px;
+}
+
+.reader-back {
+  display: none;
+}
+
+.reader > .notice {
+  margin-top: 20px;
+  margin-bottom: 0;
+}
+
+.actionbar {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 20px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--pane);
+}
+
+.actionbar-note {
+  flex: 1 1 12rem;
+  margin: 0;
+  color: var(--soft);
+  font-size: 0.9375rem;
+}
+
+.actionbar-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.message-head {
+  max-width: 44rem;
+  padding: 26px 0 0;
+}
+
+.message-head h2 {
+  margin-bottom: 14px;
+  font-size: 1.625rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.message-body {
+  max-width: 34rem;
+  margin: 24px 0 0;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+  font: inherit;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.list-title {
+  margin-bottom: 8px;
+  color: var(--soft);
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.lines {
+  max-width: 44rem;
   overflow-wrap: anywhere;
+}
+
+.lines li {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.lines + .soft {
+  margin-top: 10px;
+}
+
+/* A list of labels and values. */
+
+.meta {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.meta > div {
+  display: grid;
+  grid-template-columns: 15rem minmax(0, 1fr);
+  gap: 0 16px;
+  padding: 3px 0;
+}
+
+.meta dt {
+  color: var(--soft);
+}
+
+.meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The result of an action. The mark is the one moment of the design: it comes
+   in when the answer of the server arrives. */
+
+.outcome {
+  max-width: 44rem;
+  padding: 32px 0;
+}
+
+.outcome-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.outcome h2 {
+  font-size: 1.625rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.outcome-mark {
+  display: inline-grid;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  place-items: center;
+  animation: mark-in 320ms var(--ease);
+}
+
+.outcome-mark .icon {
+  width: 24px;
+  height: 24px;
+  stroke-width: 2.5;
+}
+
+.outcome.good .outcome-mark {
+  background: var(--go);
+  color: var(--go-ink);
+}
+
+.outcome.bad .outcome-mark {
+  background: var(--bad);
+  color: var(--bad-ink);
+}
+
+.outcome.info .outcome-mark {
+  background: var(--info-soft);
+  color: var(--ink);
+}
+
+.outcome.bad h2 {
+  color: var(--bad-text);
+}
+
+.outcome p {
+  max-width: 34rem;
+}
+
+.outcome-what {
+  margin-bottom: 12px;
+  overflow-wrap: anywhere;
+}
+
+.outcome-next {
+  margin: 22px 0 0;
+}
+
+.outcome-next .button {
+  max-width: 100%;
+}
+
+@keyframes mark-in {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+}
+
+/* Pages other than the mail view. */
+
+.sheet {
+  max-width: 44rem;
+  padding: 36px 44px 56px;
+}
+
+.sheet.medium {
+  max-width: 60rem;
+}
+
+.sheet-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.sheet h2 {
+  margin-bottom: 10px;
+}
+
+.sheet p {
+  max-width: 34rem;
+}
+
+.lead {
+  margin-bottom: 24px;
+  color: var(--soft);
+}
+
+.back {
+  margin-bottom: 14px;
+  font-size: 0.9375rem;
+}
+
+.back a {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -6px;
+  color: var(--soft);
+  text-decoration: none;
+}
+
+.back a:hover {
+  color: var(--ink);
+}
+
+.empty {
+  max-width: 30rem;
+  margin: 0 auto;
+  padding: 18vh 24px 48px;
+  text-align: center;
+}
+
+.sheet .empty {
+  padding-top: 12vh;
+}
+
+.empty h1,
+.empty h2 {
+  margin-bottom: 10px;
+  font-size: 1.375rem;
+  font-weight: 650;
+}
+
+.empty p {
+  color: var(--soft);
+}
+
+.empty .button {
+  margin-top: 8px;
+}
+
+.icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+/* Rows of accounts. */
+
+.rows {
+  border-bottom: 1px solid var(--line);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+
+.row-main {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.sheet .row-title {
+  margin-bottom: 2px;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.row-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 0;
+  color: var(--soft);
+  font-size: 0.875rem;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentcolor;
+  content: "";
+}
+
+.status.ok {
+  color: var(--go-text);
+}
+
+.status.attention {
+  color: var(--warn-ink);
+  font-weight: 600;
+}
+
+/* Buttons. */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--pane);
+  color: var(--ink);
+  cursor: pointer;
+  font: 500 0.9375rem/1.25 var(--sans);
+  text-decoration: none;
+  transition: background-color 150ms var(--ease), border-color 150ms var(--ease), transform 100ms var(--ease);
+}
+
+.button:hover {
+  background: var(--hover);
+}
+
+.button:active {
+  transform: scale(0.98);
+}
+
+.button.primary {
+  border-color: var(--go);
+  background: var(--go);
+  color: var(--go-ink);
+  font-weight: 600;
+}
+
+.button.primary:hover {
+  border-color: var(--go-hover);
+  background: var(--go-hover);
+}
+
+.button.danger {
+  border-color: var(--bad);
+  background: var(--bad);
+  color: var(--bad-ink);
+  font-weight: 600;
+}
+
+.button.danger:hover {
+  border-color: var(--bad-hover);
+  background: var(--bad-hover);
+}
+
+.button.danger-quiet {
+  min-height: 34px;
+  padding: 4px 12px;
+  color: var(--bad-text);
+}
+
+/* A form that is working (see app.js). */
+
+.button.is-locked {
+  cursor: progress;
+  opacity: 0.55;
+  transform: none;
+}
+
+.button.is-busy {
+  opacity: 1;
+}
+
+.button.is-busy::before {
+  width: 15px;
+  height: 15px;
+  border: 2px solid currentcolor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+  content: "";
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.form-note {
+  margin: 10px 0 0;
+  color: var(--soft);
+  font-size: 0.9375rem;
+}
+
+.form-note:empty {
+  display: none;
+}
+
+/* Forms. */
+
+.field {
+  margin-bottom: 16px;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.input,
+select {
+  width: 100%;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--pane);
+  color: var(--ink);
+  font: inherit;
+  transition: border-color 150ms var(--ease);
+}
+
+.input:hover,
+select:hover {
+  border-color: var(--soft);
+}
+
+.input:focus-visible,
+select:focus-visible {
+  border-color: var(--go);
+  outline-offset: 0;
+}
+
+.field-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 7rem;
+  gap: 0 12px;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+  align-items: end;
+}
+
+.check {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.check input {
+  flex: none;
+  width: 1.05em;
+  height: 1.05em;
+  margin: 0;
+  accent-color: var(--go);
+  translate: 0 0.14em;
+}
+
+/* A group of a form or a page, set off by a rule and not by a box. */
+
+.group,
+.notice {
+  min-width: 0;
+  margin: 0 0 20px;
+}
+
+.group {
+  padding: 20px 0 4px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+fieldset.group legend,
+fieldset.notice legend,
+.choices legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+fieldset.group legend + *,
+fieldset.notice legend + *,
+.choices legend + * {
+  clear: both;
+}
+
+.choices {
+  margin: 0 0 16px;
+  padding: 0;
+  border: 0;
+}
+
+.choices legend {
+  margin-bottom: 6px;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.danger-title {
+  color: var(--bad-text);
+}
+
+.group.spaced {
+  margin-top: 2rem;
+}
+
+/* Messages to the user. Colour here always means something. */
+
+.notice {
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-large);
+  background: var(--info-soft);
+  overflow-wrap: anywhere;
+}
+
+.notice > p:last-child,
+.notice > label:last-child {
+  margin-bottom: 0;
+}
+
+.notice.warn {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+}
+
+.notice.bad {
+  border-color: var(--bad-line);
+  background: var(--bad-soft);
+  color: var(--bad-text);
+}
+
+.notice.good {
+  border-color: transparent;
+  background: var(--go-soft);
+}
+
+fieldset.notice {
+  padding: 16px;
+}
+
+fieldset.notice .check input {
+  accent-color: currentcolor;
+}
+
+.cert {
+  margin-bottom: 16px;
+}
+
+.notice .cert h2 {
+  margin-bottom: 4px;
+  font-size: 1rem;
+}
+
+/* The log of what the agent did, in the same form as the waiting list. */
+
+.log {
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--line);
+  list-style: none;
+}
+
+.log-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px 24px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.log-main {
+  min-width: 0;
+}
+
+.sheet .log-title {
+  margin-bottom: 0;
+  font-size: 1rem;
+}
+
+.sheet .log-line {
+  margin: 0;
+  color: var(--soft);
+  font-size: 0.9375rem;
+}
+
+.log .row-line {
+  margin-top: 2px;
+}
+
+.log-time {
+  flex: none;
+  color: var(--soft);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tables, only for lists with many columns. */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+  margin-bottom: 20px;
+}
+
+.filters .field {
+  flex: 0 1 15rem;
+  margin: 0;
+}
+
+.filters .field-short {
+  flex-basis: 6rem;
+}
+
+.table-scroll {
+  margin-bottom: 24px;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th {
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--soft);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table th,
+.table td {
+  padding: 8px 16px 8px 0;
+  vertical-align: top;
+}
+
+.table th:last-child,
+.table td:last-child {
+  padding-right: 0;
+}
+
+.table td {
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: break-word;
+}
+
+.table form {
+  margin: 0;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.number {
+  text-align: right;
+}
+
+.strong {
+  font-weight: 600;
+}
+
+/* A narrow reading pane gives the values of a list more room. */
+
+@media (max-width: 1100px) {
+  .meta > div {
+    grid-template-columns: 9rem minmax(0, 1fr);
+  }
+}
+
+/* Smaller screens. The menu moves to the top. On a phone the list and the open
+   action are separate steps, and the buttons stay at the bottom of the screen. */
+
+@media (max-width: 900px) {
+  .shell {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .page {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+  }
+
+  .menu {
+    position: static;
+    flex-flow: row wrap;
+    align-items: center;
+    height: auto;
+    padding: 8px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .brand {
+    padding: 4px 10px;
+  }
+
+  .menu-link {
+    padding: 6px 10px;
+  }
+
+  .mail {
+    flex: 1;
+    height: auto;
+  }
+
+  .queue-pane,
+  .reader {
+    overflow-y: visible;
+  }
+}
+
+@media (max-width: 680px) {
+  .menu {
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    gap: 0;
+    padding: 6px 8px;
+  }
+
+  .brand {
+    display: none;
+  }
+
+  .menu-link {
+    gap: 6px;
+    padding: 6px 8px;
+    white-space: nowrap;
+  }
+
+  .menu-more {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  /* An open action fills the screen, and its back link is the way out. */
+  .shell:has(.mail.is-open) .menu {
+    display: none;
+  }
+
+  .mail {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mail:not(.is-open) .queue-item[aria-current] {
+    background: none;
+  }
+
+  .queue-pane {
+    border-right: 0;
+  }
+
+  .mail:not(.is-open) .reader,
+  .mail.is-open .queue-pane {
+    display: none;
+  }
+
+  .reader {
+    flex: 1;
+    padding: 0 16px 16px;
+  }
+
+  .reader-back {
+    display: block;
+    margin: 12px 0 0;
+  }
+
+  .actionbar {
+    position: sticky;
+    order: 10;
+    top: auto;
+    bottom: 0;
+    margin: auto -16px -16px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--line);
+    border-bottom: 0;
+  }
+
+  .actionbar-buttons,
+  .actionbar-buttons form {
+    flex: 1 1 auto;
+  }
+
+  .actionbar-buttons .button {
+    width: 100%;
+  }
+
+  .message-head {
+    padding-top: 12px;
+  }
+
+  .meta > div {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 5px 0;
+  }
+
+  .sheet {
+    padding: 22px 16px 40px;
+  }
+
+  .log-row {
+    flex-direction: column;
+  }
+
+  .field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
 }

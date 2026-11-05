@@ -22,11 +22,11 @@
 //     Refused with 403.
 //  3. Origin: http.CrossOriginProtection refuses a cross-origin request that is
 //     not GET, HEAD or OPTIONS. Refused with 403.
-//  4. Session: every path except /setup and the stylesheets under /static/
+//  4. Session: every path except /setup and the static files under /static/
 //     needs a valid session cookie. Without one, the answer is the no-session
 //     page with 401. /setup and /static/ take only GET and HEAD, and the guard
 //     answers them itself, never through the routes: any other method on them
-//     is refused with 405. A stylesheet is the same for every user and holds
+//     is refused with 405. A static file is the same for every user and holds
 //     nothing private (see static.go).
 //  5. Form token: every request that is not GET or HEAD needs the CSRF token of
 //     its session in the url-encoded form body. Refused with 403. HEAD is a
@@ -36,9 +36,10 @@
 //     session cookie, so a HEAD request on the link signs the browser in like a
 //     GET does. The link goes only to the browser of the user (NewSetupURL).
 //
-// The pages are plain HTML forms, with no JavaScript. The log gets the route
-// pattern, the status and a fixed code, never a token, a cookie, a session id,
-// a CSRF token, a path or a query string.
+// The pages are plain HTML forms that work without JavaScript. A small script
+// of the binary (static/app.js) only shows that a form is working. The log gets
+// the route pattern, the status and a fixed code, never a token, a cookie, a
+// session id, a CSRF token, a path or a query string.
 package web
 
 import (
@@ -127,6 +128,9 @@ type Server struct {
 	baseURL string // empty until the server listens
 	srv     *http.Server
 	closed  bool
+
+	// notes are the actions that the user just answered (see answerNote).
+	notes answerNotes
 }
 
 // New returns a server that does not listen yet. EnsureStarted starts it.
@@ -144,6 +148,7 @@ func New(d Deps) *Server {
 		cop: http.NewCrossOriginProtection(),
 		mux: http.NewServeMux(),
 	}
+	s.notes.items = make(map[string]answerNote)
 	var lc net.ListenConfig
 	s.listen = lc.Listen
 	if s.now == nil {
@@ -178,7 +183,8 @@ type route struct {
 // alone, not every path. The tests go through this list, so a new page is
 // checked for both rules.
 var routes = []route{
-	{"GET /{$}", (*Server).handleAccounts},
+	{"GET /{$}", (*Server).handleHome},
+	{"GET /accounts", (*Server).handleAccounts},
 	{"GET /connect", (*Server).handleConnect},
 	{"POST /connect/discover", (*Server).handleDiscover},
 	{"POST /connect/settings", (*Server).handleSettings},
@@ -310,15 +316,17 @@ type view struct {
 	// "/approvals". The menu marks it as the current one. It is empty for a
 	// page of no section, such as a message.
 	Section string
+	// Waiting is the number of actions that wait for the user. The menu shows it.
+	Waiting int
 }
 
 // sectionOf is the Section of each page. Every page with the menu is here:
 // TestEveryMenuPageHasASection checks it.
 var sectionOf = map[string]string{
-	pageAccounts:    "/",
-	pageConnect:     "/",
-	pageSettings:    "/",
-	pageReconnect:   "/",
+	pageAccounts:    "/accounts",
+	pageConnect:     "/accounts",
+	pageSettings:    "/accounts",
+	pageReconnect:   "/accounts",
 	pageApprovals:   "/approvals",
 	pageApproval:    "/approvals",
 	pageActivity:    "/activity",
@@ -342,6 +350,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page
 			return
 		}
 		v.CSRFToken = token
+		v.Waiting = s.waitingCount(r)
 	}
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, "layout", v); err != nil {

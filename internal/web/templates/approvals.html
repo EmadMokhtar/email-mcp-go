@@ -1,29 +1,12 @@
 {{/*
-  The list of the actions that wait for the user on this page (see
-  approvals.go). An action that the user answers in the chat is not here. Every
-  text is cleaned by the service and written as text.
+  The page when nothing waits for the user. When an action waits, /approvals
+  shows approval.html with the first action open (see approvals.go).
 */}}
-{{define "title"}}Approvals · email-mcp{{end}}
+{{define "title"}}Waiting for you · email-mcp{{end}}
 {{define "content"}}
-<h1 class="title">Approvals</h1>
-<p class="mb-5">These actions wait for you. The agent asked for them, and nothing happens until you approve one.</p>
-{{with .Data}}
-{{if .Items}}
-<div class="table-container">
-<table class="table is-fullwidth is-hoverable">
-<thead>
-<tr><th scope="col">Account</th><th scope="col">Action</th><th scope="col">To</th><th class="is-narrow" scope="col">Asked</th><th class="is-narrow" scope="col">Expires</th><th class="is-narrow" scope="col">Details</th></tr>
-</thead>
-<tbody>
-{{range .Items}}<tr><td>{{.Account}}</td><td class="has-text-weight-semibold">{{.What}}</td><td>{{.To}}</td><td class="is-narrow">{{.Created}}</td><td class="is-narrow">{{.Expires}}</td><td class="is-narrow"><a class="button is-link" href="/approvals/{{.ID}}">Review</a></td></tr>
-{{end}}
-</tbody>
-</table>
+<div class="empty">
+<h1>Nothing waits for you</h1>
+<p>When an action needs your approval, it appears here.</p>
+<p><a class="button" href="/activity">See the activity</a></p>
 </div>
-{{else}}
-<div class="box p-5 has-text-centered">
-<p>Nothing waits for your approval.</p>
-</div>
-{{end}}
-{{end}}
 {{end}}

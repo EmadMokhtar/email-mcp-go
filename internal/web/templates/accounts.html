@@ -1,40 +1,38 @@
 {{/*
-  The accounts page: the accounts of the tenant of the session, one card each.
+  The accounts page: the accounts of the tenant of the session, one row each.
   It shows no secret, no server setting and no user name. Every account has a
   link to its reconnect page: a changed certificate does not mark the account,
   and the user may know that the password changed before anything fails.
 */}}
 {{define "title"}}Accounts · email-mcp{{end}}
 {{define "content"}}
-<div class="level is-mobile mb-5">
-<div class="level-left"><h1 class="title level-item">Accounts</h1></div>
-<div class="level-right"><a class="button is-link level-item" href="/connect">Connect account</a></div>
-</div>
+<div class="sheet medium">
+<header class="sheet-head">
+<h1>Accounts</h1>
+<a class="button primary" href="/connect">Connect account</a>
+</header>
 {{with .Data}}
 {{if .Accounts}}
-<ul>
-{{range .Accounts}}<li class="box p-5">
-<div class="is-flex is-flex-wrap-wrap is-align-items-center is-justify-content-space-between is-gap-3">
-<div>
-<h2 class="title is-5 mb-3 is-break-anywhere">{{.Address}}</h2>
-<div class="tags">
-<span class="tag is-medium">{{.Provider}}</span>
-<span class="tag is-medium is-link is-light">Mail level: {{.MailLevel}}</span>
-<span class="tag is-medium {{if .Connected}}is-success{{else}}is-warning{{end}} is-light">{{.Status}}</span>
+<ul class="rows">
+{{range .Accounts}}<li class="row">
+<div class="row-main">
+<h2 class="row-title">{{.Address}}</h2>
+<p class="row-line"><span class="status{{if .Connected}} ok{{else}} attention{{end}}">{{.Status}}</span><span>Mail level: {{.MailLevel}}</span><span>{{.Provider}}</span></p>
 </div>
-</div>
-<div class="buttons">
+<div class="row-actions">
 <a class="button" href="/accounts/{{.ID}}/settings">Permissions and settings</a>
-<a class="button{{if not .Connected}} is-warning{{end}}" href="/accounts/{{.ID}}/reconnect">Reconnect</a>
-</div>
+<a class="button{{if not .Connected}} primary{{end}}" href="/accounts/{{.ID}}/reconnect">Reconnect</a>
 </div>
 </li>
 {{end}}
 </ul>
 {{else}}
-<div class="box p-5 has-text-centered">
-<p>No account is connected yet.</p>
+<div class="empty">
+<h2>No account is connected yet</h2>
+<p>Connect a mail account so that your agent can read and send mail. You choose what it may do.</p>
+<p><a class="button primary" href="/connect">Connect your first account</a></p>
 </div>
 {{end}}
 {{end}}
+</div>
 {{end}}

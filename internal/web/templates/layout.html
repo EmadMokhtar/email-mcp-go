@@ -1,54 +1,76 @@
 {{/*
   The frame of every page. A page file defines "content", and may define
   "title". Each page runs with a view: .CSRFToken is the form token of the
-  session, and .Data is the data of the page. The links to the pages are shown
-  only with a session: the page for a browser without one shows nothing else.
+  session, .Data is the data of the page, and .Waiting is the number of actions
+  that wait. The menu is shown only with a session: the page for a browser
+  without one shows nothing else.
 
-  The pages use Bulma for their look (see static.go). They have no script and
-  no inline style: the Content-Security-Policy runs neither. A rule that Bulma
-  has no class for goes in static/app.css. Every form posts to the same origin
+  The pages have no inline script and no inline style: the
+  Content-Security-Policy runs neither. Every style is in static/app.css. Every
+  form works without static/app.js. A button with data-busy shows that text
+  while its form is working (see app.js). Every form posts to the same origin
   and has the form token as its first field:
 
     <form method="post" action="...">
       {{template "csrf_field" $.CSRFToken}}
       ...
     </form>
+
+  The design contract of the pages. html/template removes HTML comments, so it
+  is here.
+  THESIS: the portal is a small mail app with one folder, the actions that the
+  agent wants, held until the person decides. It refuses the admin panel of a
+  top bar, tables and setup pages first.
+  OWN-WORLD: a quiet neutral ground, white reading panes, hairline rules, one
+  green for the primary action and the current place, system faces.
+  STORY: the person sees what waits, reads the whole action, decides, sees at
+  once that it works, and then sees the true result.
+  FIRST VIEWPORT: menu at the left, waiting actions in the middle, the open
+  action at the right with Reject and Approve at the top of its pane.
+  FORM: The Held Mail, a mail app reading pane (seed key 65e3ff61). Code-led: no
+  image generation. Signature interaction: Approve turns to Sending at once,
+  then the pane becomes the result with the next action one click away.
+  FINISH: unreviewed and undocumented is unfinished; this build ends with the
+  finish review, the verdict, DESIGN.md, and every shipping raster carrying its
+  provenance.
 */}}
 {{define "layout"}}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{block "title" .}}email-mcp{{end}}</title>
-<link rel="stylesheet" href="{{static "bulma.min.css"}}">
+<meta name="color-scheme" content="light dark">
+<title>{{if .Waiting}}({{.Waiting}}) {{end}}{{block "title" .}}email-mcp{{end}}</title>
+<link rel="icon" href="{{static "icon.svg"}}" type="image/svg+xml">
 <link rel="stylesheet" href="{{static "app.css"}}">
+<script src="{{static "app.js"}}" defer></script>
 </head>
 <body>
-{{if .CSRFToken}}<nav class="navbar is-link" aria-label="Main menu">
-<div class="container is-max-widescreen">
-<div class="navbar-brand">
-<a class="navbar-item has-text-weight-bold" href="/">email-mcp</a>
-</div>
-<div class="navbar-tabs">
-<a class="navbar-item is-tab{{if eq .Section "/"}} is-active{{end}}" href="/"{{if eq .Section "/"}} aria-current="page"{{end}}>Accounts</a>
-<a class="navbar-item is-tab{{if eq .Section "/approvals"}} is-active{{end}}" href="/approvals"{{if eq .Section "/approvals"}} aria-current="page"{{end}}>Approvals</a>
-<a class="navbar-item is-tab{{if eq .Section "/activity"}} is-active{{end}}" href="/activity"{{if eq .Section "/activity"}} aria-current="page"{{end}}>Activity</a>
-<a class="navbar-item is-tab{{if eq .Section "/connections"}} is-active{{end}}" href="/connections"{{if eq .Section "/connections"}} aria-current="page"{{end}}>Connections</a>
-</div>
-</div>
+{{if .CSRFToken}}<div class="shell">
+<nav class="menu" aria-label="Main menu">
+<a class="brand" href="/">email-mcp</a>
+<a class="menu-link" href="/approvals"{{if eq .Section "/approvals"}} aria-current="page"{{end}}><span>Waiting<span class="menu-more"> for you</span></span>{{if .Waiting}}<span class="count">{{.Waiting}}</span>{{end}}</a>
+<a class="menu-link" href="/accounts"{{if eq .Section "/accounts"}} aria-current="page"{{end}}>Accounts</a>
+<a class="menu-link" href="/activity"{{if eq .Section "/activity"}} aria-current="page"{{end}}>Activity</a>
+<a class="menu-link" href="/connections"{{if eq .Section "/connections"}} aria-current="page"{{end}}>Connections</a>
 </nav>
-{{end}}<main class="section">
-<div class="container is-max-widescreen">
+<main class="page">
 {{block "content" .}}{{end}}
-</div>
 </main>
-{{if .CSRFToken}}<footer class="footer py-5">
-<div class="container is-max-widescreen has-text-centered is-size-7">
-<p>Styled with Bulma, under the <a href="{{static "LICENSE-bulma.txt"}}">MIT license</a>.</p>
 </div>
-</footer>
+<div class="sr-only" role="status" data-live></div>
+{{else}}<main class="signin">
+{{template "content" .}}
+</main>
 {{end}}</body>
 </html>
 {{end}}
 
 {{define "csrf_field"}}<input type="hidden" name="csrf_token" value="{{.}}">{{end}}
+
+{{define "icon-check"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>{{end}}
+{{define "icon-cross"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>{{end}}
+{{define "icon-info"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 11v6M12 7.5v.01"/></svg>{{end}}
+{{define "icon-back"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"/></svg>{{end}}
+
+{{define "back"}}<p class="back"><a href="{{.}}">{{template "icon-back"}}Accounts</a></p>{{end}}

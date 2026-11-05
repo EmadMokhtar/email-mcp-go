@@ -184,7 +184,7 @@ func (s *Server) handleRemoveAccount(w http.ResponseWriter, r *http.Request) {
 	err := svc.RemoveAccount(ctx, a.ID)
 	switch {
 	case err == nil:
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, pathAccounts, http.StatusSeeOther)
 	case errors.Is(err, service.ErrAccountNotFound):
 		s.message(w, r, http.StatusNotFound, titleAccountAbsent, msgNoAccount)
 	default:

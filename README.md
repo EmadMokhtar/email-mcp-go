@@ -249,7 +249,7 @@ message (up to 20, and how many more). It asks in one of two ways:
   version. Over HTTP it works only for apps that use the MCP protocol version
   2026-07-28 or newer.
 - **With an approval link.** Otherwise the tool answers `pending_approval` with
-  a link to the **Approvals** page. Open it in the browser that `email-mcp
+  a link to the **Waiting for you** page. Open it in the browser that `email-mcp
   setup` signed in, and click **Approve** or **Reject**. The link expires after
   24 hours. The agent can check the result with `get_send_status`.
 

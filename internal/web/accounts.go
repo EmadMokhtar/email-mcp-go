@@ -35,6 +35,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -53,6 +54,9 @@ const (
 	pageAccounts = "accounts"
 	pageConnect  = "connect"
 )
+
+// pathAccounts is the address of the accounts page.
+const pathAccounts = "/accounts"
 
 // The steps of the connect page.
 const (
@@ -273,6 +277,26 @@ var protocols = []protocol{
 	},
 }
 
+// handleHome sends the browser to the page that the user needs first: the
+// actions that wait, or the accounts page while no account is connected.
+func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
+	sess, ok := sessionFrom(r.Context())
+	if !ok {
+		s.fail(w, r, codeAccountsFailed, errNoSession)
+		return
+	}
+	accounts, err := s.d.Store.ListAccounts(r.Context(), sess.tenant)
+	if err != nil {
+		s.fail(w, r, codeAccountsFailed, err)
+		return
+	}
+	target := pathApprovals
+	if len(accounts) == 0 {
+		target = pathAccounts
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
 // handleAccounts shows the accounts of the tenant of the session.
 func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 	sess, ok := sessionFrom(r.Context())
@@ -296,6 +320,16 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 			Connected: a.Status == account.StatusOK,
 		})
 	}
+	// An account that needs the user comes first.
+	slices.SortStableFunc(page.Accounts, func(a, b accountRow) int {
+		switch {
+		case a.Connected == b.Connected:
+			return strings.Compare(a.Address, b.Address)
+		case b.Connected:
+			return -1
+		}
+		return 1
+	})
 	s.render(w, r, http.StatusOK, pageAccounts, page)
 }
 
@@ -449,7 +483,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 
 	_, err := svc.CreateIMAPAccount(ctx, page.Email, server, secrets.Secret(password))
 	if err == nil {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, pathAccounts, http.StatusSeeOther)
 		return
 	}
 

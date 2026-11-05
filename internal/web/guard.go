@@ -14,10 +14,11 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 )
 
-// contentSecurityPolicy lets a page load only from its own origin, runs no
-// script at all, sends forms only to its own origin, and cannot be put in a
-// frame.
-const contentSecurityPolicy = "default-src 'self'; script-src 'none'; form-action 'self'; " +
+// contentSecurityPolicy lets a page load only from its own origin, sends forms
+// only to its own origin, and cannot be put in a frame. The only script that
+// can run is a file of this origin, which is static/app.js of the binary (see
+// static.go). No inline script runs, and no inline style.
+const contentSecurityPolicy = "default-src 'self'; script-src 'self'; form-action 'self'; " +
 	"frame-ancestors 'none'; base-uri 'none'"
 
 // csrfField is the name of the hidden form field with the CSRF token.
