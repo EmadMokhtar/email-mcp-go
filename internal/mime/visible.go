@@ -32,7 +32,8 @@ import (
 //
 // A link that cannot be seen loses its href. As in HTMLToText, an element
 // inside a hidden parent is still shown when it sets its own font size or
-// visibility.
+// visibility. The details and summary elements become plain blocks, because
+// their open attribute goes too, and a browser would fold what is left.
 //
 // The whole document is needed. A style rule at the end can hide an element at
 // the start, so the caller must not pass the start of a document alone. A
@@ -40,6 +41,12 @@ import (
 // wraps ErrHTMLTooComplex (see HTMLToText). So does a document whose HTML
 // would be larger than maxVisibleHTMLBytes, before or after it is cleaned.
 func VisibleHTML(markup string) (string, error) {
+	out, _, err := ReadableHTML(markup)
+	return out, err
+}
+
+// ReadableHTML is VisibleHTML, and it also returns the report on what was hidden.
+func ReadableHTML(markup string) (string, HiddenReport, error) {
 	return prunedHTML(markup, false)
 }
 
@@ -48,15 +55,16 @@ func VisibleHTML(markup string) (string, error) {
 //
 // So it has no comment, no style, no image, no other element that loads from a
 // url, no attribute but href, no text that a style hides, and no character that
-// CleanUntrusted removes. The href of a link is exactly the url that the text
-// shows (see setShownLink). A link without a url that the text shows loses its
-// href, and its text stays. Because the styles are gone, text that a style hides
+// CleanUntrusted removes. The href of a link is exactly the whole url, and only
+// when the text shows that whole url (see setShownLink). A link without such a
+// url loses its href, and its text stays. A url that linkURL cuts or does not
+// show counts as not shown. Because the styles are gone, text that a style hides
 // in a way that this package does not detect is shown: to the recipient and to
 // the user.
 //
 // It returns "" when only white space is left. Such a message has no HTML part.
 func outgoingHTML(markup string) (string, error) {
-	out, err := prunedHTML(markup, true)
+	out, _, err := prunedHTML(markup, true)
 	if err != nil {
 		return "", err
 	}
@@ -67,12 +75,12 @@ func outgoingHTML(markup string) (string, error) {
 	return out, nil
 }
 
-// prunedHTML is VisibleHTML. With shownLinksOnly, a link keeps its href only
-// when HTMLToText writes it out.
-func prunedHTML(markup string, shownLinksOnly bool) (string, error) {
+// prunedHTML is ReadableHTML. With shownLinksOnly, a link keeps its href only
+// when the text shows its whole url.
+func prunedHTML(markup string, shownLinksOnly bool) (string, HiddenReport, error) {
 	doc, err := parseHTML(markup)
 	if err != nil {
-		return "", err
+		return "", HiddenReport{}, err
 	}
 	v := newVisibility(doc)
 	v.shownLinksOnly = shownLinksOnly
@@ -80,14 +88,14 @@ func prunedHTML(markup string, shownLinksOnly bool) (string, error) {
 
 	rendered := &limitedBuilder{max: maxVisibleHTMLBytes}
 	if err := xhtml.Render(rendered, doc); err != nil {
-		return "", convertError("render", err)
+		return "", HiddenReport{}, convertError("render", err)
 	}
 	// The same policy as SanitizeHTML, written to a limited builder too.
 	clean := &limitedBuilder{max: maxVisibleHTMLBytes}
 	if err := sanitizePolicy.SanitizeReaderToWriter(strings.NewReader(rendered.String()), clean); err != nil {
-		return "", convertError("sanitize", err)
+		return "", HiddenReport{}, convertError("sanitize", err)
 	}
-	return clean.String(), nil
+	return clean.String(), v.result(), nil
 }
 
 // maxVisibleHTMLBytes is the most HTML that VisibleHTML writes, in bytes. It
@@ -161,7 +169,7 @@ func (v *visibility) prune(parent *xhtml.Node) {
 		next := c.NextSibling // c may leave the tree
 		switch c.Type {
 		case xhtml.TextNode:
-			if v.state().textHidden() {
+			if !v.textShown(c) {
 				parent.RemoveChild(c)
 			}
 		case xhtml.ElementNode:
@@ -203,11 +211,35 @@ func (v *visibility) pruneElement(parent, n *xhtml.Node) {
 		} else {
 			n.Data, n.DataAtom = "pre", atom.Pre
 		}
+	case "details", "summary":
+		// The open attribute goes below, so a browser would fold what is left.
+		// What stays is what a reader sees, so these become plain blocks.
+		if n.Namespace == "" {
+			v.foldDetails(n)
+			n.Data, n.DataAtom = "div", atom.Div
+		}
 	}
 	// The styles and the other attributes were read above (here and for the
 	// elements below, which read their own). Nothing but the link stays.
 	keepOnly(n, "href")
 	v.prune(n)
+}
+
+// foldDetails removes what a closed details element hides. It does this before
+// the walk over the children, because the first summary can be removed for its
+// own reasons, and a later summary must not take its place.
+func (v *visibility) foldDetails(n *xhtml.Node) {
+	if !closedDetails(n) {
+		return
+	}
+	for c := n.FirstChild; c != nil; {
+		next := c.NextSibling
+		if !isFirstSummary(c) {
+			v.noteDropped(c, false)
+			n.RemoveChild(c)
+		}
+		c = next
+	}
 }
 
 // keepOnly removes every attribute of the element except the one with the given
@@ -222,18 +254,23 @@ func keepOnly(n *xhtml.Node, key string) {
 	n.Attr = kept
 }
 
-// setShownLink makes the href of a link exactly the url that the text shows. A
-// link whose whole url the text does not show loses its href, so no part of a
-// url goes out that the user cannot read.
+// setShownLink makes the href of a link exactly the whole url, and only when the
+// text shows that whole url. A link whose whole url the text does not show loses
+// its href, so no part of a url goes out that the user cannot read.
+//
+// The text shows the whole url when linkURL returns it as it is. A url that
+// linkURL cuts, or does not show because it is too long, loses its href. So does
+// a url that holds urlCutMark itself, because a reader takes that mark for a cut.
 func setShownLink(n *xhtml.Node) {
-	url := normalizedURL(n)
-	if url == "" || url != linkURL(n) {
+	u, whole := parseLink(n)
+	shown := shownURL(u, whole)
+	if whole == "" || shown != whole || strings.Contains(shown, urlCutMark) {
 		removeAttribute(n, "href")
 		return
 	}
 	for i := range n.Attr {
 		if n.Attr[i].Key == "href" {
-			n.Attr[i].Val = url
+			n.Attr[i].Val = whole
 		}
 	}
 }

@@ -978,6 +978,39 @@ func TestGetMessagePassesTheBodyOptionsAndCleansEverything(t *testing.T) {
 	require.Equal(t, float64(12), att["size"])
 }
 
+func TestGetMessageSaysWhenHiddenContentIsSuspected(t *testing.T) {
+	backend := &stubBackend{message: func(ref mail.Ref, _ mail.BodyOptions) (*mail.Message, error) {
+		return &mail.Message{Summary: mail.Summary{Ref: ref}, HiddenContentSuspected: true, HiddenParts: 3}, nil
+	}}
+	e := newEnv(t, envOptions{backends: &countingFactory{backend: backend}})
+	a := e.offlineAccount()
+
+	res := e.call("get_message", map[string]any{"account": string(a.ID), "ref": "r1"})
+
+	require.False(t, res.IsError, textOf(t, res))
+	out := structured(t, res)
+	require.Equal(t, true, out["hidden_content_suspected"])
+	require.Equal(t, float64(3), out["hidden_parts_dropped"])
+	lines := strings.SplitN(textOf(t, res), "\n", 3)
+	require.Equal(t, untrustedBanner, lines[0])
+	require.Equal(t, hiddenContentNotice, lines[1])
+	require.Contains(t, lines[2], `"hidden_content_suspected":true`)
+}
+
+func TestGetMessageWithoutHiddenContentHasNoNotice(t *testing.T) {
+	backend := &stubBackend{message: func(ref mail.Ref, _ mail.BodyOptions) (*mail.Message, error) {
+		return &mail.Message{Summary: mail.Summary{Ref: ref}}, nil
+	}}
+	e := newEnv(t, envOptions{backends: &countingFactory{backend: backend}})
+	a := e.offlineAccount()
+
+	res := e.call("get_message", map[string]any{"account": string(a.ID), "ref": "r1"})
+
+	require.False(t, res.IsError, textOf(t, res))
+	require.NotContains(t, textOf(t, res), hiddenContentNotice)
+	require.Equal(t, false, structured(t, res)["hidden_content_suspected"])
+}
+
 func TestGetMessageDefaultsToText(t *testing.T) {
 	var got mail.BodyOptions
 	backend := &stubBackend{message: func(ref mail.Ref, opts mail.BodyOptions) (*mail.Message, error) {

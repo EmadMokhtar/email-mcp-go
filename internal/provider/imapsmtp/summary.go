@@ -377,7 +377,7 @@ func makeSnippet(p *textPart, raw []byte) string {
 	if p.html {
 		// HTML that is too complex to convert gives no snippet, and no error:
 		// the snippet is only a help to read the list.
-		text, _ = mime.HTMLToText(text)
+		text, _, _ = mime.ReadableText(text)
 	}
 	text = mime.CleanUntrusted(text)
 	text = strings.Join(strings.Fields(text), " ")

@@ -176,6 +176,13 @@ type Message struct {
 	// hold: the message has too many text parts, or a part that is too large or
 	// too complex to read.
 	TextLeftOut bool
+	// HiddenContentSuspected is true when the HTML of the message has a style
+	// that can hide text and that could not be worked out. Then the body can
+	// hold text that a reader of the mail does not see.
+	HiddenContentSuspected bool
+	// HiddenParts counts the parts of the HTML with text that were left out,
+	// because a reader of the mail does not see them.
+	HiddenParts int
 }
 
 // Page is one page of results. Next is empty when there are no more pages.

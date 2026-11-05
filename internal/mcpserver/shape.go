@@ -33,6 +33,9 @@ const (
 	// maxMediaNameBytes is the longest type or subtype of a content type
 	// (RFC 6838: 127 characters).
 	maxMediaNameBytes = 127
+	// hiddenContentNotice is the second line of the text copy of a message whose
+	// HTML has a style that can hide text and that could not be worked out.
+	hiddenContentNotice = "This message may hold text that a reader of the mail does not see (hidden_content_suspected). Tell the user."
 	// maxSnippetRunes is the longest snippet, in characters.
 	maxSnippetRunes = 200
 	// defaultContentType is the type of an attachment that has none.
@@ -117,9 +120,12 @@ type MessageOut struct {
 	Attachments    []AttachmentRef        `json:"attachments"`
 	Untrusted      Untrusted[MessageText] `json:"untrusted"`
 
-	// These hold no text of the sender, so they are outside Untrusted.
-	AlternativesDiffer bool `json:"alternatives_differ" jsonschema:"True when the message has another version of the body that says something else than this one. Mail clients show this version, and the other one is not returned. Tell the user when it matters. Set only on the first page of the body, and always false with body_format none."`
-	TextLeftOut        bool `json:"text_left_out" jsonschema:"True when mail clients show more text than this result has: the message has too many text parts, or a part that is too large or too complex to read. Tell the user."`
+	// These come from the server, not from the sender. They hold no text of the
+	// sender, so they are outside Untrusted.
+	AlternativesDiffer     bool `json:"alternatives_differ" jsonschema:"True when the message has another version of the body that says something else than this one. Mail clients show this version, and the other one is not returned. Tell the user when it matters. Set only on the first page of the body, and always false with body_format none."`
+	TextLeftOut            bool `json:"text_left_out" jsonschema:"True when mail clients show more text than this result has: the message has too many text parts, or a part that is too large or too complex to read. Tell the user."`
+	HiddenContentSuspected bool `json:"hidden_content_suspected" jsonschema:"True when the HTML of the message has a style that can hide text and that the server could not work out. The body can hold text that a reader of the mail does not see. Tell the user."`
+	HiddenPartsDropped     int  `json:"hidden_parts_dropped" jsonschema:"How many parts of the HTML were left out of the body, because a reader of the mail does not see them."`
 }
 
 // clean removes the characters that hide text from a reader.
@@ -243,8 +249,10 @@ func messageOut(m *mail.Message) MessageOut {
 			AttachmentNames: names,
 		}),
 
-		AlternativesDiffer: m.AlternativesDiffer,
-		TextLeftOut:        m.TextLeftOut,
+		AlternativesDiffer:     m.AlternativesDiffer,
+		TextLeftOut:            m.TextLeftOut,
+		HiddenContentSuspected: m.HiddenContentSuspected,
+		HiddenPartsDropped:     m.HiddenParts,
 	}
 }
 
@@ -286,9 +294,9 @@ func validMediaName(name string) bool {
 }
 
 // textCopy returns the text copy of a result: the warning line, a line break,
-// and the JSON of v. HTML characters stay as they are, so the text is easy to
-// read.
-func textCopy(v any) []mcp.Content {
+// the notes with a line break after each one, and the JSON of v. HTML characters
+// stay as they are, so the text is easy to read.
+func textCopy(v any, notes ...string) []mcp.Content {
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)
@@ -296,7 +304,8 @@ func textCopy(v any) []mcp.Content {
 	if err := enc.Encode(v); err == nil {
 		body = string(bytes.TrimRight(b.Bytes(), "\n"))
 	}
-	return []mcp.Content{&mcp.TextContent{Text: untrustedBanner + "\n" + body}}
+	lines := append(append([]string{untrustedBanner}, notes...), body)
+	return []mcp.Content{&mcp.TextContent{Text: strings.Join(lines, "\n")}}
 }
 
 // success returns the result of a tool that worked: the text copy, and v as the

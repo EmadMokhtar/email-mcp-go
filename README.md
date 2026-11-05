@@ -349,7 +349,10 @@ hold what a confirmation can show:
 - HTML is reduced to text, headings, lists, tables and `http`, `https` or
   `mailto` links, and the text of the message is made from the result. Styles,
   images, comments, other attributes and hidden text are removed, so an HTML
-  mail from an agent looks plain.
+  mail from an agent looks plain. A link keeps its address only when the text
+  of the message shows the whole address. A long address is cut in the text (see
+  the known limitations), so such a link goes out as plain text, without its
+  address.
 - A subject, a plain text body or a display name with a character that a reader
   cannot see is refused. Such characters are zero width characters, direction
   controls, tag characters and the like. Direction marks (LRM, RLM and ALM) are
@@ -658,6 +661,20 @@ After the import:
   [Troubleshooting](#troubleshooting)).
 - In HTML mail, text coloured like its background (for example white text on
   a white background) is not detected as hidden, so the agent can read it.
+- Some styles that can hide text cannot be worked out, such as a selector like
+  `div p`. The text then stays in the body, and `get_message` returns
+  `hidden_content_suspected: true`. The same is true for a rule that holds only
+  in a window wider than 1000 pixels or in dark mode. `hidden_parts_dropped` says
+  how many hidden parts were left out. A rule that holds only on a phone or a
+  tablet (for a window of 768 pixels or less) hides nothing here and gives no
+  warning, so a reader on such a device can see less than the agent.
+- In the text of a message, a long link is cut, and `...[cut]` marks the place.
+  At most 32 characters of the user name and password, the last 64 of the host,
+  64 of the path and 32 of the query stay. The `html` body format has the whole
+  link. The same cut applies to the text part of mail that goes out and to the
+  approval preview. A link in mail that goes out keeps its address only when
+  the text shows the whole address, so a link with a cut address goes out without
+  its address.
 
 ## Troubleshooting
 

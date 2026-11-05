@@ -321,7 +321,11 @@ func (d *deps) getMessage(ctx context.Context, _ *mcp.CallToolRequest, in getMes
 	if msg == nil {
 		return nil, MessageOut{}, mail.ErrNotFound
 	}
-	return success(messageOut(msg))
+	out := messageOut(msg)
+	if out.HiddenContentSuspected {
+		return &mcp.CallToolResult{Content: textCopy(out, hiddenContentNotice)}, out, nil
+	}
+	return success(out)
 }
 
 // bodyOptions turns the arguments of get_message into mail.BodyOptions. The

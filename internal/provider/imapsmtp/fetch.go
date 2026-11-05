@@ -473,11 +473,15 @@ func readSection(c *imapclient.Client, uid imap.UID, section *imap.FetchItemBody
 //
 // The formats:
 //   - text: Text is the text that a client shows. The text of an HTML part comes
-//     from mime.HTMLToText.
+//     from mime.ReadableText.
 //   - html: HTML is what a client shows, without what a reader cannot see and
-//     cleaned (see mime.VisibleHTML). A text part next to an HTML part is escaped.
+//     cleaned (see mime.ReadableHTML). A text part next to an HTML part is escaped.
 //     A message with only text parts gives them in Text.
 //   - none: only the headers and the attachment list.
+//
+// Both body formats set HiddenContentSuspected and HiddenParts from the report
+// of mime.ReadableText or mime.ReadableHTML for the HTML parts that the page
+// reads. The report of all those parts is added up.
 //
 // An empty format means text.
 //
@@ -624,25 +628,47 @@ const bodyAdvice = `use body_format "none" to read the headers and the attachmen
 // page.
 type partRender func(p *textPart) renderFunc
 
-// textRender is the partRender of the text format.
-func textRender(p *textPart) renderFunc {
-	if p.html {
-		return convertible("convert", bodyAdvice, mime.HTMLToText)
+// addReport adds the report on one HTML part to total. A nil total is ignored, for
+// a read whose report nobody uses.
+func addReport(total *mime.HiddenReport, r mime.HiddenReport) {
+	if total == nil {
+		return
 	}
-	return cleanText
+	total.Suspected = total.Suspected || r.Suspected
+	total.Dropped += r.Dropped
 }
 
-// htmlRender is the partRender of the html format. A text part next to an HTML
-// part has to be HTML too, so it is escaped.
-func htmlRender(p *textPart) renderFunc {
-	if p.html {
-		return convertible("clean", bodyAdvice, func(s string) (string, error) {
-			out, err := mime.VisibleHTML(s)
-			return mime.CleanUntrusted(out), err
-		})
+// textRender returns the partRender of the text format. The conversion of each
+// HTML part adds its report on hidden content to found, so the report holds all
+// the HTML parts that the page reads. found can be nil.
+func textRender(found *mime.HiddenReport) partRender {
+	return func(p *textPart) renderFunc {
+		if p.html {
+			return convertible("convert", bodyAdvice, func(s string) (string, error) {
+				out, r, err := mime.ReadableText(s)
+				addReport(found, r)
+				return out, err
+			})
+		}
+		return cleanText
 	}
-	return func(decoded string) (string, error) {
-		return "<pre>" + stdhtml.EscapeString(mime.CleanUntrusted(decoded)) + "</pre>", nil
+}
+
+// htmlRender returns the partRender of the html format. The conversion of each
+// HTML part adds its report on hidden content to found, as textRender does. A text
+// part next to an HTML part has to be HTML too, so it is escaped.
+func htmlRender(found *mime.HiddenReport) partRender {
+	return func(p *textPart) renderFunc {
+		if p.html {
+			return convertible("clean", bodyAdvice, func(s string) (string, error) {
+				out, r, err := mime.ReadableHTML(s)
+				addReport(found, r)
+				return mime.CleanUntrusted(out), err
+			})
+		}
+		return func(decoded string) (string, error) {
+			return "<pre>" + stdhtml.EscapeString(mime.CleanUntrusted(decoded)) + "</pre>", nil
+		}
 	}
 }
 
@@ -652,11 +678,14 @@ func isHTMLPart(p *textPart) bool { return p.html }
 func tooLargeHTML(p *textPart) bool { return p.html && p.size > maxHTMLBytes }
 
 // fillBody fetches the text parts that the page needs and sets the page in msg.
+// It also sets what the check for hidden content found in the HTML parts that
+// the page reads (see mime.HiddenReport).
 func fillBody(c *imapclient.Client, uid imap.UID, st structure, format mail.BodyFormat, offset, maxChars int, msg *mail.Message) error {
+	var report mime.HiddenReport
 	asHTML := format == mail.BodyHTML && slices.ContainsFunc(st.shown, isHTMLPart)
-	render := partRender(textRender)
+	render := textRender(&report)
 	if asHTML {
-		render = htmlRender
+		render = htmlRender(&report)
 	}
 	// One more character than the page tells that more text follows.
 	body, err := fetchBody(c, uid, st.shown, offset+maxChars+1, render)
@@ -665,6 +694,8 @@ func fillBody(c *imapclient.Client, uid imap.UID, st structure, format mail.Body
 	}
 	setPage(msg, body, asHTML, offset, maxChars)
 	msg.TextLeftOut = body.leftOut
+	msg.HiddenContentSuspected = report.Suspected
+	msg.HiddenParts = report.Dropped
 	// The answer does not depend on the page, so one fetch of the other versions
 	// is enough.
 	if offset == 0 {
@@ -717,7 +748,7 @@ func alternativesDiffer(c *imapclient.Client, uid imap.UID, st structure, body b
 	}
 	shown := body.text
 	if asHTML || !body.complete {
-		whole, err := fetchBody(c, uid, st.shown, int(maxTextFetchBytes), textRender)
+		whole, err := fetchBody(c, uid, st.shown, int(maxTextFetchBytes), textRender(nil))
 		switch {
 		case errors.Is(err, mail.ErrTooLarge):
 			return true, nil
@@ -729,7 +760,7 @@ func alternativesDiffer(c *imapclient.Client, uid imap.UID, st structure, body b
 		shown = whole.text
 	}
 	for _, other := range st.others {
-		text, _, err := fetchBodyStart(c, uid, other, int64(other.size), textRender(other))
+		text, _, err := fetchBodyStart(c, uid, other, int64(other.size), textRender(nil)(other))
 		switch {
 		case errors.Is(err, mail.ErrTooLarge):
 			return true, nil

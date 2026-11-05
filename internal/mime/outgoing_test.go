@@ -343,7 +343,8 @@ func TestEveryOutgoingHrefIsInTheTextPart(t *testing.T) {
 		"a user":                "https://someone@example.com/",
 		"a port":                "https://example.com:8443/a",
 		"an empty path":         "https://example.com",
-		"the longest shown":     "https://example.com/" + strings.Repeat("a", maxShownURL-len("https://example.com/")),
+		"the longest not cut":   "https://example.com/" + strings.Repeat("a", maxShortPath-1),
+		"a long query not cut":  "https://example.com/a?" + strings.Repeat("b", maxShortQuery-1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			markup := `<p>before</p><a href="` + strings.ReplaceAll(href, `"`, "&#34;") + `">more</a>`
@@ -360,11 +361,22 @@ func TestEveryOutgoingHrefIsInTheTextPart(t *testing.T) {
 }
 
 func TestOutgoingLinkThatTheTextDoesNotShowLosesItsHref(t *testing.T) {
+	const site = "https://example.com/"
 	for name, href := range map[string]string{
-		"one byte over the limit": "https://example.com/" + strings.Repeat("a", maxShownURL-len("https://example.com/")+1),
-		"a relative link":         "/a/b",
-		"another scheme":          "ftp://example.com/a",
-		"a script":                "javascript:alert(1)",
+		"one byte over the limit":      site + strings.Repeat("a", maxShownURL-len(site)+1),
+		"the longest that fits":        site + strings.Repeat("a", maxShownURL-len(site)),
+		"a relative link":              "/a/b",
+		"another scheme":               "ftp://example.com/a",
+		"a script":                     "javascript:alert(1)",
+		"a path that the text cuts":    site + strings.Repeat("a", maxShortPath),
+		"a query that the text cuts":   site + "a?" + strings.Repeat("b", maxShortQuery),
+		"a host that the text cuts":    "https://" + strings.Repeat("h", maxShortHost+1) + ".example.com/",
+		"a user that the text cuts":    "https://" + strings.Repeat("u", maxShortUser+1) + "@example.com/",
+		"a mailto body that is cut":    "mailto:bob@x?body=" + strings.Repeat("b", maxShortQuery+1),
+		"a mailto address that is cut": "mailto:" + strings.Repeat("a", maxShortPath+1) + "@example.com",
+		// The cut of this path gives the path itself. A reader takes the mark for a
+		// cut, so the text does not count as showing the whole url.
+		"a url that has the cut mark itself": site + strings.Repeat("a", maxShortPath-1) + urlCutMark,
 	} {
 		t.Run(name, func(t *testing.T) {
 			raw := mustBuild(t, mail.Compose{To: []string{"bob@x"}, HTMLBody: `<a href="` + href + `">more</a>`}, newContext())
@@ -372,8 +384,22 @@ func TestOutgoingLinkThatTheTextDoesNotShowLosesItsHref(t *testing.T) {
 			p := parsedOf(t, raw.Data)
 			require.Empty(t, hrefsOf(t, p.HTML), "%q", p.HTML)
 			require.Contains(t, p.Text, "more")
+			requireTextEqualsHTML(t, p)
 		})
 	}
+}
+
+// A link that the text cuts has no href, and the text part does not show a url
+// for it. So the cut of the text (PR 38) and the rule that an href is the whole
+// url shown (PR 37) both hold.
+func TestOutgoingLinkWithACutURLShowsNoURLInTheText(t *testing.T) {
+	href := "https://example.com/" + strings.Repeat("a", 200)
+	raw := mustBuild(t, mail.Compose{To: []string{"bob@x"}, HTMLBody: `<p>See <a href="` + href + `">the report</a></p>`}, newContext())
+
+	p := parsedOf(t, raw.Data)
+
+	require.Empty(t, hrefsOf(t, p.HTML), "%q", p.HTML)
+	require.Equal(t, "See the report", p.Text)
 }
 
 // linkURL is what the text shows, and normalizedURL is the whole url. Outgoing
@@ -385,6 +411,12 @@ func TestLinkURLIsTheNormalizedURLUpToTheLimit(t *testing.T) {
 	short := "https://example.com/a b"
 	require.Equal(t, "https://example.com/a%20b", normalizedURL(link(short)))
 	require.Equal(t, normalizedURL(link(short)), linkURL(link(short)))
+
+	// A url with a long part is cut in the text but whole in normalizedURL.
+	cut := "https://example.com/" + strings.Repeat("a", 2*maxShortPath)
+	require.Equal(t, cut, normalizedURL(link(cut)))
+	require.Equal(t, "https://example.com/"+strings.Repeat("a", maxShortPath-1)+urlCutMark, linkURL(link(cut)))
+	require.NotEqual(t, normalizedURL(link(cut)), linkURL(link(cut)))
 
 	long := "https://example.com/" + strings.Repeat("a", maxShownURL)
 	require.Equal(t, long, normalizedURL(link(long)))
