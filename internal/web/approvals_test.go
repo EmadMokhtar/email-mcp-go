@@ -310,6 +310,85 @@ func requireOnlyReject(t *testing.T, page, id string) {
 // a reply), the page shows the stored start and a note, and offers only
 // Reject. Approve is refused on the server too. When the server answers again,
 // the page shows all of it and offers Approve.
+func TestApprovalPageShowsTheDisplayNames(t *testing.T) {
+	c := plainCompose()
+	c.To = []string{"Bob Smith <bob@example.com>", strings.Repeat("n", 104) + " <ann@example.com>"}
+	c.Cc = []string{"Carol <carol@example.com>"}
+	c.Bcc = []string{"Dan <dan@example.com>"}
+
+	t.Run("the page of the whole message", func(t *testing.T) {
+		p := newPageFixture(t)
+		id := p.fallbackSend(p.tenant, p.account(), c)
+
+		_, body := p.get(approvalPath(id))
+
+		text := visibleText(t, body)
+		require.Contains(t, text, `bob@example.com ("Bob Smith")`)
+		require.Contains(t, text, `ann@example.com ("`+strings.Repeat("n", 100)+`...")`)
+		require.Contains(t, text, `carol@example.com ("Carol")`)
+		require.Contains(t, text, `dan@example.com ("Dan")`)
+		require.Contains(t, text, "… and 4 more characters of display names not shown")
+		requireButtons(t, body, id)
+	})
+
+	t.Run("the page when the message cannot be built", func(t *testing.T) {
+		p := newPageFixture(t)
+		reply := mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Cc: c.To, Body: "Yes."}
+		id := p.fallbackSend(p.tenant, p.account(), reply)
+		p.backends.backend.setGetErr(fmt.Errorf("imap: read: %w", imapsmtp.ErrConnectionLost))
+
+		_, body := p.get(approvalPath(id))
+
+		text := visibleText(t, body)
+		require.Contains(t, text, textCannotShow)
+		require.Contains(t, text, `bob@example.com ("Bob Smith")`)
+		require.Contains(t, text, "… and 4 more characters of display names not shown")
+		requireOnlyReject(t, body, id)
+	})
+}
+
+func TestApprovalPageShowsTheTypeOfEachAttachment(t *testing.T) {
+	c := plainCompose()
+	c.Attachments = []mail.OutgoingAttachment{{Filename: "report.pdf", ContentType: "application/pdf", Data: []byte("%PDF")}}
+
+	t.Run("the page of the whole message", func(t *testing.T) {
+		p := newPageFixture(t)
+		id := p.fallbackSend(p.tenant, p.account(), c)
+
+		_, body := p.get(approvalPath(id))
+
+		require.Contains(t, visibleText(t, body), "report.pdf (application/pdf)")
+	})
+
+	t.Run("the page when the message cannot be built", func(t *testing.T) {
+		p := newPageFixture(t)
+		reply := mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Body: "Yes.", Attachments: c.Attachments}
+		id := p.fallbackSend(p.tenant, p.account(), reply)
+		p.backends.backend.setGetErr(fmt.Errorf("imap: read: %w", imapsmtp.ErrConnectionLost))
+
+		_, body := p.get(approvalPath(id))
+
+		text := visibleText(t, body)
+		require.Contains(t, text, textCannotShow)
+		require.Contains(t, text, "report.pdf (application/pdf)")
+	})
+}
+
+// The whole text is on the page, but a hidden character is not. The page says
+// that it left some out.
+func TestApprovalPageCountsWhatItCannotShow(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.backends.backend.addDraft("d1", "From: "+a.Address+"\r\nTo: bob@example.com\r\nSubject: S\r\n\r\nHello\U0000200B there\r\n")
+	draft := mail.Ref("d1")
+	res, _, err := p.svc.Send(agent(p.tenant), a.ID, nil, &draft, service.ConfirmFallback, nil)
+	require.NoError(t, err)
+
+	_, body := p.get(approvalPath(res.SendID))
+
+	require.Contains(t, visibleText(t, body), "… and 1 more character not shown")
+}
+
 func TestApprovalPageWithoutTheWholeMessageOffersOnlyReject(t *testing.T) {
 	p := newPageFixture(t)
 	a := p.account()

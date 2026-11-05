@@ -5,7 +5,6 @@ package service
 // Approving and rejecting are in write.go.
 
 import (
-	"bytes"
 	"context"
 	"errors"
 
@@ -24,15 +23,22 @@ type SendDetail struct {
 	// From is the envelope sender.
 	From string
 	// Recipients are the envelope recipients: To, Cc and Bcc, and the people
-	// that a reply to all adds.
+	// that a reply to all adds, each with its display name (see
+	// confirm.Preview.Recipients).
 	Recipients []string
-	Subject    string
+	// MoreNames says how much of the display names Recipients leaves out, or is
+	// empty.
+	MoreNames string
+	Subject   string
 	// Attachments are the file names of the attachments, in the order of the
-	// message.
+	// message, each with its media type (see confirm.Preview.AttachmentLines).
 	Attachments []string
 	// Body is the whole text that the recipient sees: the text of the HTML
 	// when the message has HTML.
 	Body string
+	// MoreChars says how many hidden characters of the message Body leaves out,
+	// or is empty. White space is not counted: the page shows all of it.
+	MoreChars string
 }
 
 // PendingApprovals returns the actions of the tenant of the principal that wait
@@ -144,21 +150,13 @@ func detailOf(built *builtSend) *SendDetail {
 	msg := built.msg
 	return &SendDetail{
 		From:        mime.CleanUntrusted(msg.From),
-		Recipients:  cleanAll(msg.Recipients),
+		Recipients:  cleanAll(built.preview.Recipients()),
+		MoreNames:   built.preview.MoreNamesText(),
 		Subject:     previewSubject(msg.Data),
-		Attachments: cleanAll(built.content.attachments),
+		Attachments: cleanAll(built.preview.AttachmentLines()),
 		Body:        mime.CleanUntrusted(built.content.body),
+		MoreChars:   confirm.Preview{BodyMore: built.content.hidden}.MoreCharsText(),
 	}
-}
-
-// composedText returns the whole text part of a message that mime.Build made,
-// cleaned with mime.CleanUntrusted as a whole.
-func composedText(data []byte) string {
-	parsed, _ := mime.ParseMessage(bytes.NewReader(data), 0)
-	if parsed == nil {
-		return ""
-	}
-	return mime.CleanUntrusted(parsed.Text)
 }
 
 // cleanPreview returns the preview with each text cleaned with
@@ -167,9 +165,11 @@ func cleanPreview(p confirm.Preview) confirm.Preview {
 	p.Account = mime.CleanUntrusted(p.Account)
 	p.From = mime.CleanUntrusted(p.From)
 	p.To = cleanAll(p.To)
+	p.Names = cleanAll(p.Names)
 	p.Subject = mime.CleanUntrusted(p.Subject)
 	p.BodyStart = mime.CleanUntrusted(p.BodyStart)
 	p.Attachments = cleanAll(p.Attachments)
+	p.AttachmentTypes = cleanAll(p.AttachmentTypes)
 	p.Messages = cleanAll(p.Messages)
 	return p
 }

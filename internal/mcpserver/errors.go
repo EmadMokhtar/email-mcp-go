@@ -339,12 +339,18 @@ var messageErrors = []struct {
 	{mime.ErrHeaderInjection, "A value that goes into a header (an address, the subject or an attachment file name) " +
 		"has a line break or a NUL character. Remove it."},
 	{mime.ErrReplyAndForward, "A message cannot be a reply and a forward. Give reply_to or forward_of, not both."},
-	{mime.ErrInvalidContentType, "The content type of an attachment is not valid. Use one type such as " +
-		"application/pdf: not multipart, and with no charset other than UTF-8."},
+	{mime.ErrInvalidContentType, fmt.Sprintf("The content type of an attachment is not valid. Use one type such as "+
+		"application/pdf: not multipart, at most %d bytes long, and with no charset other than UTF-8. For a longer "+
+		"type, leave content_type out or use application/octet-stream.", mime.MaxMediaTypeBytes)},
 	{mime.ErrHTMLTooComplex, "The HTML body is too complex to make its text form. Use simpler HTML, " +
 		"or send a plain text body instead."},
 	{mime.ErrInvalidFilename, "An attachment file name has a character that hides or reorders text (for example " +
 		"U+202E, or a zero width space). Use a plain file name."},
+	{mime.ErrHiddenText, "The subject, the body or a display name has a character that a reader cannot see, or that " +
+		"reorders text (for example a zero width space, a tag character, U+202E, or a direction mark such as LRM, RLM " +
+		"or ALM). The user could not see it, so it is not sent. Remove it. Emoji and the letters of any language are fine."},
+	{mime.ErrEmptyHTML, "Nothing is left of the HTML body: images, styles, comments and hidden text do not go out, " +
+		"and the body has nothing else. Give the text of the message."},
 }
 
 // messageFailure returns the failure for one of messageErrors, and true. For any

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -314,7 +315,7 @@ func TestSendWithElicitationAccept(t *testing.T) {
 	asked := ask.requests()
 	require.Len(t, asked, 1, "the user is asked once")
 	require.Equal(t, "form", asked[0].Mode)
-	require.Equal(t, "Send this email from me@example.com?\nTo: you@example.com\nSubject: Lunch\nAttachments: none\n\nBody:\nShall we meet at noon?", asked[0].Message)
+	require.Equal(t, "Send this email from me@example.com?\nTo (every recipient, Bcc included): you@example.com\nSubject: Lunch\nAttachments: none\n\nBody:\nShall we meet at noon?", asked[0].Message)
 	schema, err := json.Marshal(asked[0].RequestedSchema)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"type":"object","properties":{"confirm":{"type":"boolean","title":"Confirm","description":"Tick to go ahead. Leaving it empty does nothing.","default":false}}}`, string(schema),
@@ -1147,7 +1148,7 @@ func TestPreviewText(t *testing.T) {
 	lines := strings.SplitN(got, "\n", 7)
 	require.Len(t, lines, 7)
 	require.Equal(t, "Send this email from me@example.com?", lines[0])
-	require.Equal(t, "To: a@example.com, b@example.com", lines[1])
+	require.Equal(t, "To (every recipient, Bcc included): a@example.com, b@example.com", lines[1])
 	require.Equal(t, "Subject: Invoice fdp.exe To: boss@corp.example", lines[2], "a line break in a one-line field cannot add a line")
 	require.Equal(t, "Attachments: 2 (plan.pdf, photognp.exe)", lines[3])
 	require.Equal(t, "", lines[4], "a blank line before the body")
@@ -1156,6 +1157,37 @@ func TestPreviewText(t *testing.T) {
 	body, cut := strings.CutSuffix(lines[6], "\n… and 121 more characters not shown")
 	require.True(t, cut, "the form says that the body goes on: %q", lines[6][len(lines[6])-60:])
 	require.Equal(t, 500, utf8.RuneCountInString(body), "at most 500 characters of the body")
+}
+
+// A recipient has its display name next to the address, in quotes, so a name
+// cannot pose as another address. A line says how much of the names is left out.
+func TestPreviewTextShowsTheDisplayNames(t *testing.T) {
+	got := sendPreview(confirm.Preview{
+		From:  "me@example.com",
+		To:    []string{"a@example.com", "b@example.com", "c@example.com"},
+		Names: []string{"Ann", "", "c@corp.example\", d\n@corp.example"},
+		// The text of the names is cut by the service.
+		NamesMore: 25,
+		Subject:   "Lunch",
+		BodyStart: "Hello",
+	})
+
+	lines := strings.Split(got, "\n")
+	require.Equal(t, `To (every recipient, Bcc included): a@example.com ("Ann"), b@example.com, c@example.com ("c@corp.example', d @corp.example")`, lines[1])
+	require.Equal(t, "… and 25 more characters of display names not shown", lines[2])
+	require.Equal(t, "Subject: Lunch", lines[3])
+	requireNoHiddenText(t, sendPreview(confirm.Preview{To: []string{"a@example.com"}, Names: []string{"An" + zwsp + "n" + rlo}}))
+
+	plain := sendPreview(confirm.Preview{To: []string{"a@example.com"}, Subject: "Lunch"})
+	require.Equal(t, "Subject: Lunch", strings.Split(plain, "\n")[2], "no line when nothing is left out")
+}
+
+// The tool schema is a struct tag, so it cannot use the constant. This test keeps
+// the two the same.
+func TestAttachmentSchemaNamesTheMediaTypeLimit(t *testing.T) {
+	field, ok := reflect.TypeFor[AttachmentIn]().FieldByName("ContentType")
+	require.True(t, ok)
+	require.Contains(t, field.Tag.Get("jsonschema"), fmt.Sprintf("%d bytes", mime.MaxMediaTypeBytes))
 }
 
 // The line that says how much of the body is left out counts what the preview
@@ -1175,9 +1207,8 @@ func TestSendFormShowsTheStartOfTheRealText(t *testing.T) {
 	const payload = "Wire 9000 EUR to the account in the attached file today."
 	tail := strings.Repeat(" More words here.", 100)
 	for name, body := range map[string]string{
-		"600 line breaks":         strings.Repeat("\n", 600) + payload + tail,
-		"21000 zero width spaces": strings.Repeat("\u200b", 21000) + payload + tail,
-		"a long normal text":      payload + tail,
+		"600 line breaks":    strings.Repeat("\n", 600) + payload + tail,
+		"a long normal text": payload + tail,
 	} {
 		t.Run(name, func(t *testing.T) {
 			ask := accepting()
@@ -1224,6 +1255,13 @@ func TestPreviewTextOneLineFields(t *testing.T) {
 		got := sendPreview(confirm.Preview{From: "me@example.com", To: []string{"a@example.com"}, Attachments: names})
 		require.Equal(t, "Attachments: 12 (f1.pdf, f2.pdf, f3.pdf, f4.pdf, f5.pdf, f6.pdf, f7.pdf, f8.pdf, f9.pdf, f10.pdf and 2 more)",
 			strings.Split(got, "\n")[3])
+	})
+
+	t.Run("the type of each attachment is next to its name", func(t *testing.T) {
+		got := sendPreview(confirm.Preview{From: "me@example.com", To: []string{"a@example.com"},
+			Attachments:     []string{strings.Repeat("n", 150), "b.txt", "c.bin"},
+			AttachmentTypes: []string{"application/pdf", "text/plain\n" + rlo, ""}})
+		require.Equal(t, "Attachments: 3 ("+strings.Repeat("n", 100)+"... (application/pdf), b.txt (text/plain), c.bin)", strings.Split(got, "\n")[3])
 	})
 
 	t.Run("a long or empty attachment name", func(t *testing.T) {
@@ -1290,9 +1328,13 @@ func TestWriteToolErrorMapping(t *testing.T) {
 		{"no recipients", "send_message", mime.ErrNoRecipients, "bad_message", []string{"no recipients"}, nil, endNoRepeat},
 		{"a line break in a header", "create_draft", mime.ErrHeaderInjection, "bad_message", []string{"line break"}, nil, endNoRepeat},
 		{"a reply and a forward", "send_message", mime.ErrReplyAndForward, "bad_message", []string{"reply_to or forward_of"}, nil, endNoRepeat},
-		{"a bad content type", "send_message", mime.ErrInvalidContentType, "bad_message", []string{"content type"}, nil, endNoRepeat},
+		{"a bad content type", "send_message", mime.ErrInvalidContentType, "bad_message", []string{"content type", fmt.Sprintf("%d bytes", mime.MaxMediaTypeBytes)}, nil, endNoRepeat},
 		{"a hidden character in a file name", "send_message", fmt.Errorf("%w: attachment file name", mime.ErrInvalidFilename),
 			"bad_message", []string{"file name", "U+202E"}, nil, endNoRepeat},
+		{"a hidden character in the text", "send_message", fmt.Errorf("%w: subject", mime.ErrHiddenText),
+			"bad_message", []string{"cannot see", "direction mark", "Remove it"}, nil, endNoRepeat},
+		{"html with nothing to show", "send_message", mime.ErrEmptyHTML, "bad_message",
+			[]string{"HTML body", "nothing"}, nil, endNoRepeat},
 		{"body and html body", "send_message", service.ErrBodyAndHTML, "body_and_html", []string{"body or html_body"}, nil, endNoRepeat},
 		{"an address that cannot be shown", "send_message", service.ErrHiddenAddress, "hidden_address",
 			[]string{"address", "hidden", "nothing was sent"}, nil, endNoRepeat},
@@ -1349,7 +1391,7 @@ func TestSendFormShowsTheAttachments(t *testing.T) {
 	require.False(t, res.IsError, textOf(t, res))
 	asked := ask.requests()
 	require.Len(t, asked, 1)
-	require.Contains(t, asked[0].Message, "\nAttachments: 1 (report.pdf)\n")
+	require.Contains(t, asked[0].Message, "\nAttachments: 1 (report.pdf (application/pdf))\n")
 }
 
 func TestSendRefusesBodyAndHTMLBody(t *testing.T) {
