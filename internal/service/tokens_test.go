@@ -111,6 +111,28 @@ func TestCreateTokenPassesTheOptions(t *testing.T) {
 	require.Equal(t, []TokenOptions{want}, toks.options)
 }
 
+// The entry of a new token says with a fixed code whether the token may answer a
+// confirmation in its own window, so the log shows who gave a token that trust.
+func TestTokenCreatedEntryNamesTheInBandChoice(t *testing.T) {
+	for _, tc := range []struct {
+		inBand bool
+		detail string
+	}{
+		{false, "token_created"},
+		{true, "token_created_in_band"},
+	} {
+		toks := &fakeTokens{}
+		env := newWriteEnv(t, func(d *Deps) { d.Tokens = toks })
+
+		_, err := env.svc.CreateToken(env.webCtx(), "my laptop", policy.Scopes{"email:read"}, TokenOptions{InBandConfirm: tc.inBand})
+
+		require.NoError(t, err)
+		last := env.lastEntry()
+		requireEntry(t, last, "create_token", audit.OutcomeOK, tc.detail)
+		requireNoTokenData(t, last, "emcp_secret-token-text", "my laptop")
+	}
+}
+
 // An audit entry of a call with a token names the token by its id.
 func TestEntryHoldsTheTokenID(t *testing.T) {
 	env := newWriteEnv(t)

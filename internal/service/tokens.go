@@ -18,8 +18,11 @@ import (
 const (
 	toolCreateToken    = "create_token"
 	detailTokenCreated = "token_created"
-	toolRevokeToken    = "revoke_token"
-	detailTokenRevoked = "token_revoked"
+	// detailTokenCreatedInBand is detailTokenCreated for a token that may answer a
+	// confirmation in its own window.
+	detailTokenCreatedInBand = "token_created_in_band"
+	toolRevokeToken          = "revoke_token"
+	detailTokenRevoked       = "token_revoked"
 )
 
 // TokenOptions are the choices for a new access token. The zero value is the safe
@@ -52,8 +55,10 @@ var errNoTokens = errors.New("service: the token maker and the audit log must be
 // it. The errors of the TokenMaker (a name or scopes that are not valid) come
 // back as they are.
 //
-// The audit entry "token_created" is an entry of the tenant. It never holds the
-// token or its name. A token that was not made writes no entry.
+// The audit entry is an entry of the tenant. Its code is "token_created", or
+// "token_created_in_band" for a token that may answer a confirmation in its own
+// window, so the log shows who gave a token that trust. It never holds the token
+// or its name. A token that was not made writes no entry.
 func (s *Service) CreateToken(ctx context.Context, name string, scopes policy.Scopes, opts TokenOptions) (string, error) {
 	p, err := PrincipalFrom(ctx)
 	if err != nil {
@@ -66,7 +71,11 @@ func (s *Service) CreateToken(ctx context.Context, name string, scopes policy.Sc
 	if err != nil {
 		return "", err
 	}
-	s.record(ctx, p, entry{tool: toolCreateToken, outcome: audit.OutcomeOK, detail: detailTokenCreated})
+	detail := detailTokenCreated
+	if opts.InBandConfirm {
+		detail = detailTokenCreatedInBand
+	}
+	s.record(ctx, p, entry{tool: toolCreateToken, outcome: audit.OutcomeOK, detail: detail})
 	return token, nil
 }
 

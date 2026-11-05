@@ -126,6 +126,11 @@ func TestTokenFormInBandChoice(t *testing.T) {
 
 	_, body = p.post("/connections", url.Values{"name": {""}, "scope": {"email:read"}, "in_band_confirm": {"1"}})
 	require.Contains(t, body, `value="1" checked`, "a refused form keeps the choice")
+
+	entries := p.entries()
+	require.Len(t, entries, 2)
+	require.Equal(t, "token_created_in_band", entries[0].Detail)
+	require.Equal(t, "token_created", entries[1].Detail)
 }
 
 // An expired token says so and has no revoke button. A token that has no end date
@@ -144,7 +149,11 @@ func TestConnectionsShowsTheEndOfAToken(t *testing.T) {
 
 	_, body := p.get("/connections")
 	require.Contains(t, body, "/connections/"+list[0].ID+"/revoke", "the token is still valid")
-	require.Contains(t, visibleText(t, body), "No end date")
+	text := visibleText(t, body)
+	require.Contains(t, text, "No end date")
+	require.Contains(t, text, "A new token stops working after 90 days.")
+	require.NotContains(t, text, "A token stops working", "an old token has no end date")
+	require.Contains(t, text, "A token with no end date works until you revoke it.")
 
 	p.clock.Set(p.clock.Now().Add(time.Minute))
 	_, body = p.get("/connections")

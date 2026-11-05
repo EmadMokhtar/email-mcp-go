@@ -15,13 +15,13 @@
 // it gives them to this package.
 //
 // The other fields are checked on the way in. Detail is a short code, and Tool
-// is short text without control characters. TokenID is the id of an access token.
-// All three come from the server, so Record refuses an entry with a bad one. Client
-// is the name that the MCP client gave
-// for itself. The client is the party that the log watches, so it can choose a bad
-// name on purpose. Record cleans that name and does not refuse the entry: a bad
-// name must never hide an action. Nothing in this package writes recipients,
-// arguments, details or mail content to a log or into an error.
+// is short text without control characters. TokenID is the id of an access
+// token. All three come from the server, so Record refuses an entry with a bad
+// one. Client is the name that the MCP client gave for itself. The client is the
+// party that the log watches, so it can choose a bad name on purpose. Record
+// cleans that name and does not refuse the entry: a bad name must never hide an
+// action. Nothing in this package writes recipients, arguments, details or mail
+// content to a log or into an error.
 package audit
 
 import (

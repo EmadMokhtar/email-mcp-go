@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
@@ -56,6 +57,8 @@ type connectionsPage struct {
 	InBandConfirm bool
 	Scopes        []choice
 	Tokens        []tokenRow
+	// NewTokenDays is how many days a new token stays valid.
+	NewTokenDays int
 }
 
 // tokenRow is one token in the list. It never holds the token.
@@ -157,6 +160,7 @@ func (s *Server) renderConnections(w http.ResponseWriter, r *http.Request, statu
 		s.fail(w, r, codeConnectionsFailed, err)
 		return
 	}
+	page.NewTokenDays = int(tokens.DefaultLifetime / (24 * time.Hour))
 	for _, t := range list {
 		row := tokenRow{
 			ID:            t.ID,

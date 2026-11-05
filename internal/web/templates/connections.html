@@ -8,7 +8,7 @@
 {{$csrf := .CSRFToken}}
 <div class="sheet">
 <header class="sheet-head"><h1>Connections</h1></header>
-<p class="lead">An MCP client that connects over HTTP needs an access token. Give each client its own token, with only the permissions it needs. Permissions add up: the highest one includes all the ones below it. A token stops working after 90 days.</p>
+<p class="lead">An MCP client that connects over HTTP needs an access token. Give each client its own token, with only the permissions it needs. Permissions add up: the highest one includes all the ones below it. A new token stops working after {{.Data.NewTokenDays}} days. A token with no end date works until you revoke it.</p>
 {{with .Data}}
 {{if .Error}}<div class="notice bad" role="alert"><strong>{{.Error}}</strong></div>{{end}}
 {{if .NewToken}}

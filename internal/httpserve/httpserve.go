@@ -298,10 +298,11 @@ func refuse(w http.ResponseWriter, log *slog.Logger, status int, code string) {
 }
 
 // verifier returns the token check for auth.RequireBearerToken. A valid token
-// becomes a TokenInfo with the tenant as UserID, the scopes of the token, and the
-// id and the in-band choice of the token in Extra. A bad token gives
-// auth.ErrInvalidToken, which the SDK answers with 401. Any other failure gives errTokenCheck, which the SDK answers with 500 and the
-// fixed text "internal error".
+// becomes a TokenInfo with the tenant as UserID, the scopes of the token, and
+// the id and the in-band choice of the token in Extra. A bad token gives
+// auth.ErrInvalidToken, which the SDK answers with 401. Any other failure gives
+// errTokenCheck, which the SDK answers with 500 and the fixed text "internal
+// error".
 func verifier(tm *tokens.Manager, log *slog.Logger) auth.TokenVerifier {
 	return func(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
 		p, err := tm.Verify(ctx, token)
