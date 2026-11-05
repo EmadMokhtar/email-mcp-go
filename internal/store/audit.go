@@ -9,15 +9,18 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 )
 
-// AuditRow is one entry of the audit log: one tool call of an agent. The store
-// does not look inside the sealed recipients and does not know what the outcomes
-// mean. The audit package does. The table checks the rules that do not depend on
-// the meaning, such as the form of Detail. See migration 0005.
+// AuditRow is one entry of the audit log: one tool call of an agent, or one
+// action of a use case. The store does not look inside the sealed recipients and
+// arguments, and does not know what the outcomes mean. The audit package does.
+// The table checks the rules that do not depend on the meaning, such as the form
+// of Detail. See migrations 0005 and 0011.
 type AuditRow struct {
 	// ID is assigned by the database. CreateAudit ignores the ID of the row.
 	ID int64
 	// Time is kept as whole milliseconds.
-	Time   time.Time
+	Time time.Time
+	// Kind is "action" or "call". An empty Kind in CreateAudit means "action".
+	Kind   string
 	Tenant account.TenantID
 	// Account is empty for an entry of the tenant that is not about one account.
 	Account account.AccountID
@@ -33,6 +36,11 @@ type AuditRow struct {
 	// sealed the recipients.
 	Recipients           []byte
 	RecipientsKeyVersion int
+	// Arguments is sealed. It is nil when the call had no arguments, and then
+	// ArgumentsKeyVersion is 0. ArgumentsKeyVersion says which tenant key sealed
+	// the arguments.
+	Arguments           []byte
+	ArgumentsKeyVersion int
 }
 
 // AuditFilter selects entries. A field that is empty means "any". The fields
@@ -42,18 +50,21 @@ type AuditFilter struct {
 	Account account.AccountID
 	Area    account.Area
 	Tool    string
+	Kind    string
 	Limit   int
 }
 
 // auditColumns lists the columns that scanAudit reads.
 const auditColumns = `id, tenant_id, COALESCE(account_id, ''), recorded_at, area, client, tool,
-	item_count, outcome, detail, recipients, COALESCE(recipients_key_version, 0)`
+	item_count, outcome, detail, recipients, COALESCE(recipients_key_version, 0),
+	kind, arguments, COALESCE(arguments_key_version, 0)`
 
 // CreateAudit adds an entry. The ID of the row is ignored.
 //
 // It fails if the tenant does not exist, or if the entry has an account and the
 // tenant has no account with this id. An entry without recipients is stored with
-// NULL for the recipients and for the key version.
+// NULL for the recipients and for the key version, and so is an entry without
+// arguments.
 func (s *Store) CreateAudit(ctx context.Context, row *AuditRow) error {
 	if err := validateID("tenant", string(row.Tenant)); err != nil {
 		return err
@@ -71,12 +82,20 @@ func (s *Store) CreateAudit(ctx context.Context, row *AuditRow) error {
 		}
 		recipients, keyVersion = row.Recipients, row.RecipientsKeyVersion
 	}
+	var arguments, argumentsKeyVersion any
+	if len(row.Arguments) > 0 {
+		if row.ArgumentsKeyVersion < 1 {
+			return errors.New("store: create audit entry: the key version of the arguments must be at least 1")
+		}
+		arguments, argumentsKeyVersion = row.Arguments, row.ArgumentsKeyVersion
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO audit_log (tenant_id, account_id, recorded_at, area, client, tool, item_count,
-			outcome, detail, recipients, recipients_key_version)
-		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			outcome, detail, recipients, recipients_key_version, kind, arguments, arguments_key_version)
+		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), 'action'), ?, ?)`,
 		string(row.Tenant), string(row.Account), row.Time.UnixMilli(), string(row.Area),
-		row.Client, row.Tool, row.Count, row.Outcome, row.Detail, recipients, keyVersion)
+		row.Client, row.Tool, row.Count, row.Outcome, row.Detail, recipients, keyVersion,
+		row.Kind, arguments, argumentsKeyVersion)
 	if err != nil {
 		return fmt.Errorf("store: create audit entry: %w", err)
 	}
@@ -100,10 +119,11 @@ func (s *Store) ListAudit(ctx context.Context, tenant account.TenantID, f AuditF
 			AND (? = '' OR account_id = ?)
 			AND (? = '' OR area = ?)
 			AND (? = '' OR tool = ?)
+			AND (? = '' OR kind = ?)
 		ORDER BY recorded_at DESC, id DESC
 		LIMIT ?`,
 		string(tenant), string(f.Account), string(f.Account), string(f.Area), string(f.Area),
-		f.Tool, f.Tool, f.Limit)
+		f.Tool, f.Tool, f.Kind, f.Kind, f.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: list audit entries: %w", err)
 	}
@@ -149,7 +169,8 @@ func scanAudit(row rowScanner) (*AuditRow, error) {
 		at int64
 	)
 	err := row.Scan(&a.ID, &a.Tenant, &a.Account, &at, &a.Area, &a.Client, &a.Tool,
-		&a.Count, &a.Outcome, &a.Detail, &a.Recipients, &a.RecipientsKeyVersion)
+		&a.Count, &a.Outcome, &a.Detail, &a.Recipients, &a.RecipientsKeyVersion,
+		&a.Kind, &a.Arguments, &a.ArgumentsKeyVersion)
 	if err != nil {
 		return nil, err
 	}

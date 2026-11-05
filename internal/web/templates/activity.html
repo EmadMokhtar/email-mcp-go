@@ -1,6 +1,7 @@
 {{/*
   The activity page: the audit log of the tenant, newest first (see
-  activity.go). Every text is written as text; the client name is not trusted.
+  activity.go). Every text is written as text; the client name and the
+  arguments are not trusted.
 */}}
 {{define "title"}}Activity · email-mcp{{end}}
 {{define "content"}}
@@ -22,6 +23,13 @@
 {{range .Tools}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
 {{end}}</select>
 </div>
+<div class="field">
+<label for="kind">Type</label>
+<select id="kind" name="kind">
+<option value="">Requests and actions</option>
+{{range .Kinds}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
+{{end}}</select>
+</div>
 <div class="field field-short">
 <label for="limit">Entries</label>
 <input class="input" id="limit" name="limit" value="{{.Limit}}" inputmode="numeric" size="6">
@@ -34,7 +42,8 @@
 <div class="log-main">
 <h2 class="log-title">{{.Tool}}{{if gt .Count 1}}, {{.Count}} items{{end}}</h2>
 {{if .Recipients}}<p class="log-line break">To {{.Recipients}}</p>{{end}}
-<p class="row-line"><span{{if eq .Outcome "Error"}} class="danger-title"{{end}}>{{.Outcome}}</span>{{if .Detail}}<span>{{.Detail}}</span>{{end}}{{if .Account}}<span class="break">{{.Account}}</span>{{end}}<span><code class="break">{{.Client}}</code></span></p>
+<p class="row-line"><span>{{.Kind}}</span><span{{if eq .Outcome "Error"}} class="danger-title"{{end}}>{{.Outcome}}</span>{{if .Detail}}<span>{{.Detail}}</span>{{end}}{{if .Account}}<span class="break">{{.Account}}</span>{{end}}<span><code class="break">{{.Client}}</code></span></p>
+{{if .Arguments}}<details class="log-arguments"><summary>Arguments</summary><pre>{{.Arguments}}</pre></details>{{end}}
 </div>
 <time class="log-time" title="{{.FullTime}}">{{.Time}}</time>
 </li>
@@ -42,7 +51,7 @@
 {{else}}
 <div class="empty">
 <h2>No activity yet</h2>
-<p>What your agent sends or changes appears here. Reading mail is not listed.</p>
+<p>Every request of your agent appears here, also when it only reads mail.</p>
 </div>
 {{end}}
 {{end}}

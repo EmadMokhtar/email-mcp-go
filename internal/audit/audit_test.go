@@ -103,6 +103,7 @@ func newFixture(t *testing.T) *fixture {
 // entry returns a valid entry for the fixture account, with two recipients.
 func (f *fixture) entry() Entry {
 	return Entry{
+		Kind:       KindAction,
 		Tenant:     f.tenant,
 		Account:    f.acct,
 		Area:       account.AreaMail,
@@ -888,4 +889,157 @@ func TestSameRecipientsGiveDifferentSealedValues(t *testing.T) {
 	a, _ := f.sealedRecipients(got[0].ID)
 	b, _ := f.sealedRecipients(got[1].ID)
 	require.NotEqual(t, a, b)
+}
+
+// callEntry returns a valid call entry for the fixture account, with arguments
+// and without recipients.
+func (f *fixture) callEntry(arguments string) Entry {
+	return Entry{
+		Kind:      KindCall,
+		Tenant:    f.tenant,
+		Account:   f.acct,
+		Area:      account.AreaMail,
+		Client:    "claude-desktop 1.2",
+		Tool:      "search_messages",
+		Arguments: []byte(arguments),
+		Outcome:   OutcomeOK,
+	}
+}
+
+func TestRecordAndListACall(t *testing.T) {
+	f := newFixture(t)
+	f.record(f.callEntry(`{"subject":"quarterly numbers"}`))
+
+	got := f.list(Filter{})
+	require.Len(t, got, 1)
+	require.Equal(t, KindCall, got[0].Kind)
+	require.JSONEq(t, `{"subject":"quarterly numbers"}`, string(got[0].Arguments))
+}
+
+func TestAnEntryWithoutAKindIsAnAction(t *testing.T) {
+	f := newFixture(t)
+	e := f.entry()
+	e.Kind = ""
+	f.record(e)
+
+	got := f.list(Filter{})
+	require.Len(t, got, 1)
+	require.Equal(t, KindAction, got[0].Kind)
+	require.Nil(t, got[0].Arguments)
+}
+
+func TestArgumentsEncryptedAtRest(t *testing.T) {
+	f := newFixture(t)
+	f.record(f.callEntry(`{"subject":"ArgumentMarkerQ7v3Kp"}`))
+
+	require.Equal(t, 1, f.scalar(`SELECT count(*) FROM audit_log WHERE arguments IS NOT NULL AND arguments_key_version >= 1`))
+	require.NotContains(t, string(f.dataFiles()), "ArgumentMarkerQ7v3Kp")
+}
+
+func TestACallWithoutArgumentsStoresNull(t *testing.T) {
+	f := newFixture(t)
+	f.record(f.callEntry(""))
+
+	require.Equal(t, 1, f.scalar(`SELECT count(*) FROM audit_log WHERE arguments IS NULL AND arguments_key_version IS NULL`))
+	require.Nil(t, f.list(Filter{})[0].Arguments)
+}
+
+// One damaged row must not hide the whole log. The entry stays, with a sign.
+func TestListMarksArgumentsThatCannotBeRead(t *testing.T) {
+	cases := map[string]func(f *fixture){
+		"a changed byte": func(f *fixture) {
+			f.exec(`UPDATE audit_log SET arguments = zeroblob(length(arguments)) WHERE id = 1`)
+		},
+		"a key version that does not exist": func(f *fixture) {
+			f.exec(`UPDATE audit_log SET arguments_key_version = 99 WHERE id = 1`)
+		},
+		"arguments of another account": func(f *fixture) {
+			f.exec(`UPDATE audit_log SET account_id = ? WHERE id = 1`, string(f.addAccount(f.tenant, "other@example.com")))
+		},
+	}
+	for name, damage := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			f.record(f.callEntry(`{"folder":"@inbox"}`))
+			f.record(f.callEntry(`{"folder":"@sent"}`))
+			damage(f)
+
+			got := f.list(Filter{})
+
+			require.Len(t, got, 2)
+			require.False(t, got[0].ArgumentsUnreadable)
+			require.JSONEq(t, `{"folder":"@sent"}`, string(got[0].Arguments))
+			require.True(t, got[1].ArgumentsUnreadable)
+			require.Nil(t, got[1].Arguments)
+		})
+	}
+}
+
+func TestListFilterByKind(t *testing.T) {
+	f := newFixture(t)
+	f.record(f.entry())
+	f.record(f.callEntry(`{}`))
+
+	require.Len(t, f.list(Filter{}), 2)
+	action := f.list(Filter{Kind: string(KindAction)})
+	require.Len(t, action, 1)
+	require.Equal(t, KindAction, action[0].Kind)
+	call := f.list(Filter{Kind: string(KindCall)})
+	require.Len(t, call, 1)
+	require.Equal(t, KindCall, call[0].Kind)
+}
+
+func TestRecordRefusesBadCallEntries(t *testing.T) {
+	cases := map[string]func(e *Entry){
+		"an unknown kind":             func(e *Entry) { e.Kind = "other" },
+		"arguments that are not JSON": func(e *Entry) { e.Arguments = []byte("not json") },
+		"arguments that are too long": func(e *Entry) {
+			e.Arguments = []byte(`"` + manyR(MaxArgumentBytes) + `"`)
+		},
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			e := f.callEntry(`{}`)
+			change(&e)
+
+			err := f.log.Record(context.Background(), e)
+			require.ErrorIs(t, err, ErrInvalidEntry)
+			require.Zero(t, f.rows())
+		})
+	}
+}
+
+func TestRecordAcceptsArgumentsAtTheLimit(t *testing.T) {
+	f := newFixture(t)
+	f.record(f.callEntry(`"` + manyR(MaxArgumentBytes-2) + `"`))
+	require.Equal(t, 1, f.rows())
+}
+
+// deadlineStore keeps the deadline of the context of the last write.
+type deadlineStore struct {
+	*store.Store
+	left time.Duration
+}
+
+func (d *deadlineStore) CreateAudit(ctx context.Context, row *store.AuditRow) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		d.left = time.Until(deadline)
+	}
+	return d.Store.CreateAudit(ctx, row)
+}
+
+// A call entry is written while the agent waits for its answer, so a slow database
+// must not hold that answer for long.
+func TestACallEntryHasAShortTimeLimit(t *testing.T) {
+	f := newFixture(t)
+	st := &deadlineStore{Store: f.store}
+	log := New(st, f.vault, f.clock.Now)
+
+	require.NoError(t, log.Record(context.Background(), f.callEntry(`{}`)))
+	require.Positive(t, st.left)
+	require.LessOrEqual(t, st.left, 5*time.Second)
+
+	require.NoError(t, log.Record(context.Background(), f.entry()))
+	require.Greater(t, st.left, 20*time.Second, "an action happened already, so its entry may wait longer")
 }

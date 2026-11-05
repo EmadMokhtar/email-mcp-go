@@ -104,3 +104,83 @@ func TestActivityLimitIsClamped(t *testing.T) {
 		require.Equal(t, rows, logRows(t, body), query)
 	}
 }
+
+func TestActivityShowsTheArgumentsOfACall(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.record(audit.Entry{Kind: audit.KindCall, Account: a.ID, Client: "Claude", Tool: "search_messages",
+		Arguments: []byte("{\"subject\":\"<b>quarterly</b>\u3164\"}")})
+
+	resp, body := p.get("/activity")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 1, logRows(t, body))
+	require.Contains(t, body, "<span>Request</span>")
+	require.Contains(t, visibleText(t, body), `{"subject":"<b>quarterly</b>"}`)
+	require.NotContains(t, body, "<b>quarterly</b>", "the arguments come from the agent, so they are escaped")
+	require.NotContains(t, body, "\u3164", "hidden characters are removed")
+}
+
+func TestActivityNamesTheKindOfAnAction(t *testing.T) {
+	p := newPageFixture(t)
+	p.record(audit.Entry{Tool: "remove_account", Detail: "account_removed"})
+
+	_, body := p.get("/activity")
+
+	require.Contains(t, body, "<span>Action</span>")
+	require.NotContains(t, body, "<details", "an action has no arguments to show")
+}
+
+// The kind is an exact match from a fixed list, like the other filters.
+func TestActivityFilterByKind(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.record(audit.Entry{Account: a.ID, Tool: "send_message", Count: 1})
+	p.record(audit.Entry{Kind: audit.KindCall, Account: a.ID, Tool: "send_message"})
+	p.record(audit.Entry{Kind: audit.KindCall, Account: a.ID, Tool: "get_message"})
+
+	cases := map[string]int{
+		"":                            3,
+		"?kind=call":                  2,
+		"?kind=action":                1,
+		"?kind=other":                 3,
+		"?kind=call&kind=action":      3,
+		"?kind=call&tool=get_message": 1,
+	}
+	for query, want := range cases {
+		resp, body := p.get("/activity" + query)
+		require.Equal(t, http.StatusOK, resp.StatusCode, query)
+		require.Equal(t, want, logRows(t, body), query)
+	}
+}
+
+func TestActivityOffersTheKindFilter(t *testing.T) {
+	p := newPageFixture(t)
+
+	_, body := p.get("/activity?kind=call")
+
+	require.Contains(t, body, `<option value="call" selected>`)
+	require.Contains(t, body, `<option value="action">`)
+}
+
+// A page has up to 200 entries, so it must not hold all of their arguments.
+func TestActivityCutsLongArguments(t *testing.T) {
+	long := `"` + strings.Repeat("r", 10000) + `"`
+	p := newPageFixture(t)
+	p.record(audit.Entry{Kind: audit.KindCall, Tool: "move_messages", Arguments: []byte(long)})
+
+	_, body := p.get("/activity")
+
+	text := visibleText(t, body)
+	require.Contains(t, text, "(10002 bytes in all)")
+	require.NotContains(t, body, strings.Repeat("r", 4097))
+	require.Contains(t, body, strings.Repeat("r", 4000))
+}
+
+func TestArgumentsTextOfAnEntry(t *testing.T) {
+	require.Empty(t, argumentsText(audit.Entry{}))
+	require.Equal(t, "These arguments cannot be read.", argumentsText(audit.Entry{ArgumentsUnreadable: true}))
+	// The cut must not fall inside a character: byte 4096 is inside one here.
+	text := "x" + strings.Repeat("\u00e9", 3000)
+	require.Equal(t, "x"+strings.Repeat("\u00e9", 2047)+"\u2026 (6001 bytes in all)", argumentsText(audit.Entry{Arguments: []byte(text)}))
+}

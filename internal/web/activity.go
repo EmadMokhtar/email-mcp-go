@@ -1,19 +1,22 @@
 package web
 
 // This file holds the activity page: the audit log of the tenant, newest
-// first, with filters by account and by tool.
+// first, with filters by account, by tool and by kind.
 //
-// Each filter takes a value only from a fixed list: the accounts of the tenant
-// and the tools that the log can hold. A value that is not in the list is
-// ignored, as is a filter that is given twice. The number of entries is clamped
-// to 1 to 200 (50 when it is missing or not a number) before the log is read.
+// Each filter takes a value only from a fixed list: the accounts of the tenant,
+// the tools that the log can hold, and the two kinds. A value that is not in the
+// list is ignored, as is a filter that is given twice. The number of entries is
+// clamped to 1 to 200 (50 when it is missing or not a number) before the log is
+// read.
 //
-// The recipients are decrypted only to show them here. Every text is written as
-// text. The client name is the name that an MCP client gave for itself, so it is
-// not trusted: it is cleaned, and a name that is only blank characters is shown
-// as "(blank name)".
+// The recipients and the arguments are decrypted only to show them here. Every
+// text is written as text. The client name is the name that an MCP client gave
+// for itself, so it is not trusted: it is cleaned, and a name that is only blank
+// characters is shown as "(blank name)". The arguments come from the agent, so
+// they are not trusted either, and they are cleaned too.
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -43,10 +46,18 @@ const (
 // blankName is shown for a client name that is only blank characters.
 const blankName = "(blank name)"
 
+// maxArgumentsShown is the most bytes of the arguments of one entry that the page
+// shows. A page has up to 200 entries, and the arguments of one can be 256 KB.
+const maxArgumentsShown = 4 << 10
+
+// unreadableArguments is shown for arguments that cannot be decrypted.
+const unreadableArguments = "These arguments cannot be read."
+
 // activityPage is the data of the activity page.
 type activityPage struct {
 	Accounts []choice
 	Tools    []choice
+	Kinds    []choice
 	Limit    int
 	Entries  []activityRow
 }
@@ -63,6 +74,7 @@ type activityRow struct {
 	// Time is short, and FullTime has the year and the time zone.
 	Time       string
 	FullTime   string
+	Kind       string
 	Account    string
 	Client     string
 	Tool       string
@@ -70,6 +82,7 @@ type activityRow struct {
 	Outcome    string
 	Detail     string
 	Recipients string
+	Arguments  string
 }
 
 // handleActivity shows the log of the tenant of the session. It changes
@@ -96,6 +109,7 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 	filter := audit.Filter{
 		Account: oneOf(q["account"], ids),
 		Tool:    oneOf(q["tool"], tools),
+		Kind:    oneOf(q["kind"], []string{string(audit.KindCall), string(audit.KindAction)}),
 		Limit:   activityLimit(q["limit"]),
 	}
 	entries, err := s.d.Audit.List(r.Context(), sess.tenant, filter)
@@ -111,15 +125,20 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 	for _, t := range tools {
 		page.Tools = append(page.Tools, choice{Value: t, Label: plainWords(t), Selected: t == filter.Tool})
 	}
+	for _, k := range []audit.Kind{audit.KindCall, audit.KindAction} {
+		page.Kinds = append(page.Kinds, choice{Value: string(k), Label: kindLabel(k) + "s", Selected: string(k) == filter.Kind})
+	}
 	for _, e := range entries {
 		row := activityRow{
-			Time:     logTime(e.Time, s.now()),
-			FullTime: formatTime(e.Time),
-			Client:   clientLabel(e.Client),
-			Tool:     plainWords(e.Tool),
-			Count:    e.Count,
-			Outcome:  plainWords(string(e.Outcome)),
-			Detail:   plainWords(e.Detail),
+			Time:      logTime(e.Time, s.now()),
+			FullTime:  formatTime(e.Time),
+			Kind:      kindLabel(e.Kind),
+			Client:    clientLabel(e.Client),
+			Tool:      plainWords(e.Tool),
+			Count:     e.Count,
+			Outcome:   plainWords(string(e.Outcome)),
+			Detail:    plainWords(e.Detail),
+			Arguments: argumentsText(e),
 		}
 		if e.Account != "" {
 			row.Account = addresses[e.Account]
@@ -154,6 +173,31 @@ func activityLimit(values []string) int {
 		return defaultActivityLimit
 	}
 	return min(max(n, 1), maxActivityLimit)
+}
+
+// argumentsText returns the arguments of an entry for the page: cleaned of hidden
+// characters, and cut at the end of a character when they are long.
+func argumentsText(e audit.Entry) string {
+	if e.ArgumentsUnreadable {
+		return unreadableArguments
+	}
+	text := mime.CleanUntrusted(string(e.Arguments))
+	if len(text) <= maxArgumentsShown {
+		return text
+	}
+	cut := maxArgumentsShown
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s\u2026 (%d bytes in all)", text[:cut], len(text))
+}
+
+// kindLabel returns the name of a kind for the page.
+func kindLabel(k audit.Kind) string {
+	if k == audit.KindCall {
+		return "Request"
+	}
+	return "Action"
 }
 
 // clientLabel returns the client name for the page: cleaned of hidden

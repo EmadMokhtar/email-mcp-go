@@ -740,7 +740,10 @@ func count(t *testing.T, db *sql.DB, query string, args ...any) int {
 }
 
 // dump returns every row of every table of the database as text, in a fixed
-// order. Two dumps are equal when nothing in the database changed.
+// order. Two dumps are equal when nothing in the database changed. It leaves out
+// the call entries of the audit log and the counter of the ids of that table:
+// every tool call writes an entry, also a call that changes nothing, so they would
+// hide the changes that a test looks for.
 func dump(t *testing.T, db *sql.DB) string {
 	t.Helper()
 	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
@@ -758,7 +761,14 @@ func dump(t *testing.T, db *sql.DB) string {
 	for _, table := range tables {
 		fmt.Fprintf(&out, "== %s\n", table)
 		// The table names come from sqlite_master, never from input.
-		rows, err := db.Query(`SELECT * FROM "` + table + `"`) //nolint:gosec // G202: the name is a table of the schema, never input
+		query := `SELECT * FROM "` + table + `"` //nolint:gosec // G202: the name is a table of the schema, never input
+		switch table {
+		case "audit_log":
+			query += ` WHERE kind <> 'call'`
+		case "sqlite_sequence":
+			query += ` WHERE name <> 'audit_log'`
+		}
+		rows, err := db.Query(query)
 		require.NoError(t, err)
 		cols, err := rows.Columns()
 		require.NoError(t, err)

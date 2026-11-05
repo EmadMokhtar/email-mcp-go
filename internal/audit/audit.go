@@ -1,16 +1,26 @@
-// Package audit keeps the log of what agents did: for each tool call, which
-// tool, which account and area, how many items, and the outcome. The Activity
-// page of the web interface reads it.
+// Package audit keeps the log of what agents did: which tool, which account and
+// area, how many items, and the outcome. The Activity page of the web interface
+// reads it.
 //
-// The log holds no mail content. The one personal field is the list of
-// recipients, and it is stored encrypted (sealed) with the key of the tenant.
+// An entry has one of two kinds. A call is one tools/call request of an agent:
+// every tool and every outcome has one, also a read and a call that never reached
+// the service. An action is what a use case of the service did, such as a send, or
+// what the user did on a page. So a call that changes something has a call entry
+// and one or more action entries.
+//
+// The log holds no message body and no attachment data. The two personal fields
+// are the list of recipients and the arguments of a call, such as search text or
+// a subject. Both are stored encrypted (sealed) with the key of the tenant. The
+// MCP layer takes the bodies and the attachment data out of the arguments before
+// it gives them to this package.
+//
 // The other fields are checked on the way in. Detail is a short code, and Tool
 // is short text without control characters. Both come from the server, so Record
 // refuses an entry with a bad one. Client is the name that the MCP client gave
 // for itself. The client is the party that the log watches, so it can choose a bad
 // name on purpose. Record cleans that name and does not refuse the entry: a bad
 // name must never hide an action. Nothing in this package writes recipients,
-// details or mail content to a log or into an error.
+// arguments, details or mail content to a log or into an error.
 package audit
 
 import (
@@ -56,6 +66,20 @@ func (o Outcome) valid() bool {
 	return false
 }
 
+// Kind says what an entry records.
+type Kind string
+
+// The kinds.
+const (
+	// KindAction means that the entry records what a use case or the user did.
+	KindAction Kind = "action"
+	// KindCall means that the entry records one tools/call request of an agent.
+	KindCall Kind = "call"
+)
+
+// MaxArgumentBytes is the most bytes of the Arguments of an entry.
+const MaxArgumentBytes = 256 << 10
+
 // The limits of this package.
 const (
 	// maxText is the most bytes of a Tool or a Client.
@@ -72,6 +96,10 @@ const (
 	// storeTimeout is the time that Record gives to its database work. Record
 	// does not use the context of the caller for it. See detached.
 	storeTimeout = 30 * time.Second
+	// callStoreTimeout is storeTimeout for a call entry. The agent waits for the
+	// answer of its call while the entry is written, so a slow database must not
+	// hold that answer for long.
+	callStoreTimeout = 5 * time.Second
 )
 
 // ErrInvalidEntry means that Record refused an entry because the entry is not
@@ -86,22 +114,26 @@ func invalid(reason string) error {
 	return fmt.Errorf("%w: %s", ErrInvalidEntry, reason)
 }
 
-// recipientsField is the field name of the recipients in the associated data of
-// the encryption.
-const recipientsField = "audit:recipients"
+// The field names in the associated data of the encryption.
+const (
+	recipientsField = "audit:recipients"
+	argumentsField  = "audit:arguments"
+)
 
 // detailPattern is the form of Detail: a code of 0 to 64 characters. In Go, "$"
 // matches only at the end of the text, so a code with a newline at the end does
 // not match.
 var detailPattern = regexp.MustCompile(`^[a-z0-9_]{0,64}$`)
 
-// Entry is one tool call of an agent.
+// Entry is one tool call of an agent, or one action of a use case.
 type Entry struct {
 	// ID is assigned by the log. Record ignores the ID of the entry.
 	ID int64
 	// Time is the time of the call. Record sets it from the clock of the log and
 	// ignores the time of the entry. It is kept as whole milliseconds, in UTC.
-	Time   time.Time
+	Time time.Time
+	// Kind is KindAction or KindCall. An empty Kind means KindAction.
+	Kind   Kind
 	Tenant account.TenantID
 	// Account is empty for an entry that is not about one account. Then Area may
 	// be empty too.
@@ -129,14 +161,23 @@ type Entry struct {
 	// "rate_limited" or "level_too_low". It is 0 to 64 characters from a-z, 0-9
 	// and "_". It is never free text and never holds mail content.
 	Detail string
+	// Arguments is the JSON of the arguments of a call, without message bodies
+	// and attachment data. It is stored encrypted. A call without arguments has
+	// none. It is at most MaxArgumentBytes of valid JSON, and Record refuses an
+	// entry with more.
+	Arguments json.RawMessage
+	// ArgumentsUnreadable is true on an entry from List when its arguments could
+	// not be decrypted. Arguments is empty then.
+	ArgumentsUnreadable bool
 }
 
-// Filter selects entries. A field that is empty means "any". Account, Area and
-// Tool must match exactly when they are set.
+// Filter selects entries. A field that is empty means "any". Account, Area, Tool
+// and Kind must match exactly when they are set.
 type Filter struct {
 	Account string
 	Area    string
 	Tool    string
+	Kind    string
 	// Limit is the most entries to return. 0 means 100. A value above 1000 is
 	// treated as 1000. A negative value is an error.
 	Limit int
@@ -145,7 +186,8 @@ type Filter struct {
 // AuditStore is the part of the store that the Log needs. *store.Store
 // implements it.
 //
-// The rows hold the recipients sealed. The store does not look inside them.
+// The rows hold the recipients and the arguments sealed. The store does not look
+// inside them.
 // PruneAudit works on the entries of all tenants.
 type AuditStore interface {
 	CreateAudit(ctx context.Context, row *store.AuditRow) error
@@ -162,8 +204,8 @@ type Log struct {
 	now   func() time.Time
 }
 
-// New returns a Log. The vault seals the recipients. now is the clock, and a nil
-// now means time.Now.
+// New returns a Log. The vault seals the recipients and the arguments. now is the
+// clock, and a nil now means time.Now.
 func New(st AuditStore, v *secrets.Vault, now func() time.Time) *Log {
 	if now == nil {
 		now = time.Now
@@ -184,13 +226,19 @@ func New(st AuditStore, v *secrets.Vault, now func() time.Time) *Log {
 // The entry is for an action that happened already, so the write does not use
 // the cancellation of ctx. If the caller leaves while the tool runs, the entry is
 // still written, and the call does not report an error for a write that
-// happened. The write has a time limit of 30 seconds.
+// happened. The write has a time limit of 30 seconds, and 5 seconds for a call
+// entry.
 func (l *Log) Record(ctx context.Context, e Entry) error {
 	if err := validate(e); err != nil {
 		return err
 	}
+	kind := e.Kind
+	if kind == "" {
+		kind = KindAction
+	}
 	row := &store.AuditRow{
 		Time:    l.now().UTC().Truncate(time.Millisecond),
+		Kind:    string(kind),
 		Tenant:  e.Tenant,
 		Account: e.Account,
 		Area:    e.Area,
@@ -201,7 +249,11 @@ func (l *Log) Record(ctx context.Context, e Entry) error {
 		Detail:  e.Detail,
 	}
 
-	wctx, cancel := detached(ctx)
+	timeout := storeTimeout
+	if e.Kind == KindCall {
+		timeout = callStoreTimeout
+	}
+	wctx, cancel := detached(ctx, timeout)
 	defer cancel()
 	// A call without recipients keeps NULL in the table: nothing to seal.
 	if len(e.Recipients) > 0 {
@@ -217,6 +269,13 @@ func (l *Log) Record(ctx context.Context, e Entry) error {
 		}
 		row.Recipients, row.RecipientsKeyVersion = sealed, version
 	}
+	if len(e.Arguments) > 0 {
+		version, sealed, err := l.vault.Encrypt(wctx, e.Tenant, argumentsAAD(e.Tenant, e.Account), e.Arguments)
+		if err != nil {
+			return fmt.Errorf("audit: encrypt arguments: %w", err)
+		}
+		row.Arguments, row.ArgumentsKeyVersion = sealed, version
+	}
 	if err := l.st.CreateAudit(wctx, row); err != nil {
 		return fmt.Errorf("audit: save entry: %w", err)
 	}
@@ -227,7 +286,9 @@ func (l *Log) Record(ctx context.Context, e Entry) error {
 // Entries with the same time come in the order of their IDs, largest first.
 //
 // If the recipients of any entry in the result cannot be decrypted, List returns
-// an error and no entries. It never leaves recipients out without a sign.
+// an error and no entries. It never leaves them out without a sign. Arguments that
+// cannot be decrypted do not stop the list: one bad row must not hide what the
+// agents did, so the entry stays with ArgumentsUnreadable set.
 func (l *Log) List(ctx context.Context, tenant account.TenantID, f Filter) ([]Entry, error) {
 	limit := f.Limit
 	switch {
@@ -242,6 +303,7 @@ func (l *Log) List(ctx context.Context, tenant account.TenantID, f Filter) ([]En
 		Account: account.AccountID(f.Account),
 		Area:    account.Area(f.Area),
 		Tool:    f.Tool,
+		Kind:    f.Kind,
 		Limit:   limit,
 	})
 	if err != nil {
@@ -253,6 +315,7 @@ func (l *Log) List(ctx context.Context, tenant account.TenantID, f Filter) ([]En
 		e := Entry{
 			ID:      row.ID,
 			Time:    row.Time,
+			Kind:    Kind(row.Kind),
 			Tenant:  row.Tenant,
 			Account: row.Account,
 			Area:    row.Area,
@@ -266,6 +329,16 @@ func (l *Log) List(ctx context.Context, tenant account.TenantID, f Filter) ([]En
 			e.Recipients, err = l.openRecipients(ctx, row)
 			if err != nil {
 				return nil, err
+			}
+		}
+		if row.Arguments != nil {
+			e.Arguments, err = l.vault.Decrypt(ctx, row.Tenant, row.ArgumentsKeyVersion,
+				argumentsAAD(row.Tenant, row.Account), row.Arguments)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, fmt.Errorf("audit: list entries: %w", ctx.Err())
+				}
+				e.Arguments, e.ArgumentsUnreadable = nil, true
 			}
 		}
 		entries = append(entries, e)
@@ -319,6 +392,12 @@ func recipientsAAD(tenant account.TenantID, acct account.AccountID) string {
 	return secrets.AAD(string(tenant), string(acct), recipientsField)
 }
 
+// argumentsAAD returns the associated data for the arguments of an entry. See
+// recipientsAAD for why the ID of the entry is not part of it.
+func argumentsAAD(tenant account.TenantID, acct account.AccountID) string {
+	return secrets.AAD(string(tenant), string(acct), argumentsField)
+}
+
 // validate checks the fields of an entry that come from the server. The errors
 // match ErrInvalidEntry and do not hold the values of the fields: some of them
 // hold personal data. Client is not checked here, because Record cleans it.
@@ -332,6 +411,9 @@ func validate(e Entry) error {
 	}
 	if e.Account != "" && e.Area == "" {
 		return invalid("the area is required when the entry has an account")
+	}
+	if e.Kind != "" && e.Kind != KindAction && e.Kind != KindCall {
+		return invalid("the kind is not one of the known kinds")
 	}
 	if !e.Outcome.valid() {
 		return invalid("the outcome is not one of the known outcomes")
@@ -354,6 +436,12 @@ func validate(e Entry) error {
 		if len(r) > maxRecipientBytes || !utf8.ValidString(r) {
 			return invalid("a recipient is too long or is not valid UTF-8")
 		}
+	}
+	if len(e.Arguments) > MaxArgumentBytes {
+		return invalid("the arguments are too long")
+	}
+	if len(e.Arguments) > 0 && !json.Valid(e.Arguments) {
+		return invalid("the arguments are not valid JSON")
 	}
 	return nil
 }
@@ -404,10 +492,10 @@ func cleanClient(s string) string {
 	return b.String()
 }
 
-// detached returns a context that ctx cannot cancel, with a time limit. It keeps
+// detached returns a context that ctx cannot cancel, with the time limit. It keeps
 // the values of ctx. The driver of the database can commit a statement and still
 // return the error of a context that ended just then. For a write that must not
 // be lost, or reported as lost, the caller uses this context.
-func detached(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
+func detached(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
 }

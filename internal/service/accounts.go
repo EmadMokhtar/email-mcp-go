@@ -34,12 +34,15 @@ const (
 	detailAccountRemoved   = "account_removed"
 )
 
-// auditTools are the tools that the service writes in the audit log. The
-// activity page offers them as a filter.
+// auditTools are the tools that the audit log can hold: those of the use cases
+// and those that only have call entries. The activity page offers them as a
+// filter.
 var auditTools = []string{
 	toolApprovePending, toolCancelSend, toolConnectAccount, toolCreateDraft, toolCreateFolder,
-	toolCreateTag, toolCreateToken, toolDiscardDraft, toolMove, toolReconnectAccount, toolRejectPending,
-	toolRemoveAccount, toolRevokeToken, toolSend, toolSetFlags, toolTag, toolTrash, toolUpdateSettings,
+	toolCreateTag, toolCreateToken, toolDiscardDraft, toolGetAttachment, toolGetMessage, toolGetSendStatus,
+	toolListAccounts, toolListFolders, toolListNewMessages, toolListTags, toolMove, toolReconnectAccount,
+	toolRejectPending, toolRemoveAccount, toolRequestPermission, toolRevokeToken, toolSearchMessages, toolSend,
+	toolSetFlags, toolTag, toolTrash, toolUpdateSettings, ToolUnknown,
 }
 
 // AuditTools returns the names of the tools that the service writes in the

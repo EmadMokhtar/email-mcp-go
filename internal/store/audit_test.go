@@ -15,6 +15,7 @@ import (
 func testAuditRow(tenant account.TenantID, acct account.AccountID, at time.Time) *AuditRow {
 	return &AuditRow{
 		Time:                 at,
+		Kind:                 "action",
 		Tenant:               tenant,
 		Account:              acct,
 		Area:                 account.AreaMail,
@@ -273,4 +274,81 @@ func TestAuditAccountIndex(t *testing.T) {
 	}
 	require.NoError(t, rows.Err())
 	require.Contains(t, strings.Join(plan, "\n"), "audit_log_by_account")
+}
+
+func TestAuditKeepsAToolCallAndItsSealedArguments(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+
+	row := testAuditRow(tenant, acct, testNow)
+	row.Kind = "call"
+	row.Arguments = []byte("sealed arguments")
+	row.ArgumentsKeyVersion = 3
+	require.NoError(t, s.CreateAudit(ctx, row))
+
+	got, err := s.ListAudit(ctx, tenant, AuditFilter{Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, "call", got[0].Kind)
+	require.Equal(t, []byte("sealed arguments"), got[0].Arguments)
+	require.Equal(t, 3, got[0].ArgumentsKeyVersion)
+}
+
+// A row without a kind is an action: every row from before migration 0011 is
+// one, and so is every row that the service writes for a use case.
+func TestAuditWithoutAKindIsAnAction(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+
+	row := testAuditRow(tenant, acct, testNow)
+	row.Kind = ""
+	require.NoError(t, s.CreateAudit(ctx, row))
+
+	got, err := s.ListAudit(ctx, tenant, AuditFilter{Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, "action", got[0].Kind)
+	require.Nil(t, got[0].Arguments)
+	require.Zero(t, got[0].ArgumentsKeyVersion)
+}
+
+func TestAuditFilterByKind(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+
+	action := testAuditRow(tenant, acct, testNow)
+	call := testAuditRow(tenant, acct, testNow.Add(time.Second))
+	call.Kind = "call"
+	for _, row := range []*AuditRow{action, call} {
+		require.NoError(t, s.CreateAudit(ctx, row))
+	}
+
+	for kind, want := range map[string]int{"": 2, "action": 1, "call": 1} {
+		got, err := s.ListAudit(ctx, tenant, AuditFilter{Kind: kind, Limit: 10})
+		require.NoError(t, err)
+		require.Len(t, got, want, "kind %q", kind)
+	}
+}
+
+func TestAuditTableKeepsItsRulesForArguments(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, acct := newPendingAccount(t, s, "a1")
+
+	insert := func(kind string, arguments any, keyVersion any) error {
+		_, err := s.db.ExecContext(ctx, `INSERT INTO audit_log
+			(tenant_id, account_id, recorded_at, area, tool, outcome, kind, arguments, arguments_key_version)
+			VALUES (?, ?, 1, 'mail', 'get_message', 'ok', ?, ?, ?)`,
+			string(tenant), string(acct), kind, arguments, keyVersion)
+		return err
+	}
+	require.NoError(t, insert("call", []byte("sealed"), 1))
+	require.Error(t, insert("other", nil, nil), "an unknown kind")
+	require.Error(t, insert("call", []byte("sealed"), nil), "arguments without a key version")
+	require.Error(t, insert("call", nil, 1), "a key version without arguments")
+	require.Error(t, insert("call", []byte{}, 1), "empty arguments")
+	require.Error(t, insert("call", []byte("sealed"), 0), "a key version below 1")
 }

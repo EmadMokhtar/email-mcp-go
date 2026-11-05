@@ -694,12 +694,15 @@ func TestHTTPTokenScopesLimitTools(t *testing.T) {
 		"the refusal is the PermissionError with TokenLimited")
 	require.Empty(t, h.smtp.Messages())
 
-	rows, err := h.store.ListAudit(context.Background(), h.tenant, store.AuditFilter{Tool: "send_message", Limit: 10})
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.Equal(t, "refused", rows[0].Outcome)
-	require.Equal(t, "token_scope", rows[0].Detail)
-	require.Equal(t, clientName, rows[0].Client, "the client name comes from the request")
+	// The use case records what it did, and the MCP layer records the request.
+	for _, kind := range []string{"action", "call"} {
+		rows, err := h.store.ListAudit(context.Background(), h.tenant, store.AuditFilter{Tool: "send_message", Kind: kind, Limit: 10})
+		require.NoError(t, err)
+		require.Len(t, rows, 1, kind)
+		require.Equal(t, "refused", rows[0].Outcome, kind)
+		require.Equal(t, "token_scope", rows[0].Detail, kind)
+		require.Equal(t, clientName, rows[0].Client, "the client name comes from the request")
+	}
 
 	res = call(t, cs, &mcp.CallToolParams{Name: "list_accounts"})
 	require.False(t, res.IsError, "the token can still read")

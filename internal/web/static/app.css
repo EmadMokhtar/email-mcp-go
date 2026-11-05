@@ -991,6 +991,30 @@ fieldset.notice .check input {
   font-variant-numeric: tabular-nums;
 }
 
+/* The arguments of an agent request. Long text wraps, and very long text
+   scrolls, because one entry may hold many message refs. */
+
+.log-arguments {
+  margin-top: 4px;
+  color: var(--soft);
+  font-size: 0.875rem;
+}
+
+.log-arguments summary {
+  cursor: pointer;
+}
+
+.log-arguments pre {
+  max-height: 20rem;
+  margin: 6px 0 0;
+  padding: 8px 0;
+  overflow-y: auto;
+  color: var(--ink);
+  font: 0.8125rem/1.5 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Tables, only for lists with many columns. */
 
 .filters {
