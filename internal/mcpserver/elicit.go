@@ -203,9 +203,11 @@ func linkRequest(message, link string) *mcp.CallToolResult {
 // a label, so its first line cannot pose as a header either. When the body is
 // longer than the preview, a last line says how many characters are not shown
 // (confirm.Preview.MoreCharsText), so the person knows that the text goes on.
+// The recipients are the whole envelope, so the label says that Bcc is in the
+// list, as the web page does: other recipients do not see those addresses.
 //
 //	Send this email from <from>?
-//	To: <to, comma-separated>
+//	To (every recipient, Bcc included): <to, comma-separated>
 //	Subject: <subject>
 //	Attachments: <n> (<name>, ... and <n> more) | Attachments: none
 //
@@ -225,7 +227,7 @@ func sendPreview(p confirm.Preview) string {
 	if more := p.MoreCharsText(); more != "" {
 		shown += "\n" + more
 	}
-	return fmt.Sprintf("Send this email from %s?\nTo: %s\nSubject: %s\nAttachments: %s\n\nBody:\n%s",
+	return fmt.Sprintf("Send this email from %s?\nTo (every recipient, Bcc included): %s\nSubject: %s\nAttachments: %s\n\nBody:\n%s",
 		oneLine(p.From), strings.Join(to, ", "), cut(oneLine(p.Subject), previewSubjectChars),
 		attachmentList(p.Attachments), shown)
 }

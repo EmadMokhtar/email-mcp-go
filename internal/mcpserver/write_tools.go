@@ -71,8 +71,8 @@ type ComposeIn struct {
 	Cc                         []string       `json:"cc,omitempty" jsonschema:"Copy addresses."`
 	Bcc                        []string       `json:"bcc,omitempty" jsonschema:"Blind copy addresses. The other recipients do not see them."`
 	Subject                    string         `json:"subject,omitempty"`
-	Body                       string         `json:"body,omitempty" jsonschema:"The plain text body. Give body or html_body, not both."`
-	HTMLBody                   string         `json:"html_body,omitempty" jsonschema:"An HTML body instead of body. The text part is made from it."`
+	Body                       string         `json:"body,omitempty" jsonschema:"The plain text body. Give body or html_body, not both. A character that a reader cannot see is refused."`
+	HTMLBody                   string         `json:"html_body,omitempty" jsonschema:"An HTML body instead of body. The text part is made from it. Only text, headings, lists, tables and http, https or mailto links go out: styles, images, comments, other attributes and hidden text are removed."`
 	ReplyTo                    *ReplyIn       `json:"reply_to,omitempty" jsonschema:"Make the message a reply to this message."`
 	ForwardOf                  string         `json:"forward_of,omitempty" jsonschema:"Ref of a message to forward."`
 	IncludeOriginalAttachments bool           `json:"include_original_attachments,omitempty" jsonschema:"With forward_of: send the attachments of the original too."`

@@ -46,6 +46,12 @@ var (
 	// such as U+202E, which makes "invoice" U+202E "gpj.exe" show as
 	// "invoiceexe.jpg") or a line or paragraph separator (Zl, Zp).
 	ErrInvalidFilename = errors.New("mime: attachment file name has a character that hides or reorders text")
+	// ErrHiddenText means the subject, the plain text body or a display name
+	// has a character that CleanUntrusted removes: one that a reader cannot see
+	// or that reorders text. A preview shows cleaned text, so the user could not
+	// see the character, and it would still go out. Such a value is refused and
+	// not cleaned, because the caller must know that its text is not sent.
+	ErrHiddenText = errors.New("mime: text has a character that a reader cannot see")
 )
 
 // BuildContext is what Build needs besides the Compose request.
@@ -82,12 +88,19 @@ type BuildContext struct {
 // caller gives and that reaches a header is checked, and Build returns
 // ErrHeaderInjection when it has a CR, an LF or a NUL.
 //
+// What goes out is what a preview can show. So the subject, the plain text body
+// and the display names of Compose are refused with ErrHiddenText when they
+// have a character that CleanUntrusted removes. The HTML body is rewritten (see
+// outgoingHTML), and the text part is made from the result. A body in Compose
+// is not used when Compose has HTML: a message has one text.
+//
 // Values that come from the original message are not checked but cleaned,
 // because a third party wrote them and they must not stop a reply. Each run
 // of CR, LF and NUL in the subject and in the display names is replaced with
-// one space. A Message-ID or a References entry with such a character is not
-// used. An address of the original with such a character cannot be cleaned,
-// because that would change the address, so Build refuses it.
+// one space, and the characters that CleanUntrusted removes go. A Message-ID or
+// a References entry with a CR, an LF or a NUL is not used. An address of the
+// original with such a character cannot be cleaned, because that would change
+// the address, so Build refuses it.
 //
 // The recipients are the To, Cc and Bcc addresses, with each address once. The
 // first one is kept, and the order is To, Cc, Bcc. They are all in
@@ -109,10 +122,9 @@ type BuildContext struct {
 //
 // Build returns mail.ErrTooLarge when the attachments, new and forwarded
 // together, are over 10 MB. It returns an error that wraps ErrHTMLTooComplex
-// when Compose has HTML and no text, and the HTML is too complex to make the
-// text form of it. (The HTML of a forwarded original is not an error: the
-// forward then has no text of the original.) Build does not change its
-// arguments.
+// when Compose has HTML that is too complex to clean or to make the text form
+// of. (The HTML of a forwarded original is not an error: the forward then has
+// no text of the original.) Build does not change its arguments.
 func Build(c mail.Compose, bc BuildContext) (*mail.RawMessage, error) {
 	if c.ReplyTo != nil && c.ForwardOf != nil {
 		return nil, ErrReplyAndForward
@@ -183,10 +195,27 @@ func checkValue(field, v string) error {
 	return nil
 }
 
-// cleanOriginal replaces each run of CR, LF and NUL in s with one space. Use
-// it for a value that comes from the original message. A third party wrote
-// that value, so it must not stop a reply, but it also must not add a header.
+// checkVisible returns ErrHiddenText when v has a character that CleanUntrusted
+// removes. field names the value in the error. Use it for text that the caller
+// of Build gives. For values from the original message, use cleanOriginal.
+func checkVisible(field, v string) error {
+	if HiddenRunes(v) > 0 {
+		return fmt.Errorf("%w: %s", ErrHiddenText, field)
+	}
+	return nil
+}
+
+// cleanOriginal replaces each run of CR, LF and NUL in s with one space, and
+// removes the characters that CleanUntrusted removes. Use it for a value that
+// comes from the original message. A third party wrote that value, so it must
+// not stop a reply, but it also must not add a header, and nothing in it may go
+// out that the user cannot see.
 func cleanOriginal(s string) string {
+	return CleanUntrusted(oneLine(s))
+}
+
+// oneLine replaces each run of CR, LF and NUL in s with one space.
+func oneLine(s string) string {
 	if !strings.ContainsAny(s, lineBreaks) {
 		return s
 	}
@@ -212,6 +241,9 @@ func cleanOriginal(s string) string {
 func resolveSubject(c mail.Compose, original *mail.Message) (string, error) {
 	if c.Subject != "" {
 		if err := checkValue("subject", c.Subject); err != nil {
+			return "", err
+		}
+		if err := checkVisible("subject", c.Subject); err != nil {
 			return "", err
 		}
 		return c.Subject, nil

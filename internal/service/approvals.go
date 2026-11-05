@@ -5,7 +5,6 @@ package service
 // Approving and rejecting are in write.go.
 
 import (
-	"bytes"
 	"context"
 	"errors"
 
@@ -149,16 +148,6 @@ func detailOf(built *builtSend) *SendDetail {
 		Attachments: cleanAll(built.content.attachments),
 		Body:        mime.CleanUntrusted(built.content.body),
 	}
-}
-
-// composedText returns the whole text part of a message that mime.Build made,
-// cleaned with mime.CleanUntrusted as a whole.
-func composedText(data []byte) string {
-	parsed, _ := mime.ParseMessage(bytes.NewReader(data), 0)
-	if parsed == nil {
-		return ""
-	}
-	return mime.CleanUntrusted(parsed.Text)
 }
 
 // cleanPreview returns the preview with each text cleaned with

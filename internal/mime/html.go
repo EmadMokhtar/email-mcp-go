@@ -197,6 +197,8 @@ type visibility struct {
 	rules  *styleRules // rules in style elements
 	states []inherited // inherited properties of the open elements, innermost last
 	root   float64     // font size of the html element, in pixels (for rem)
+	// shownLinksOnly makes prune remove an href that the text does not show.
+	shownLinksOnly bool
 }
 
 // newVisibility reads the style rules of the document and returns the state

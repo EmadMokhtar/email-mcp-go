@@ -323,6 +323,27 @@ a human click from an automated one. So run `email-mcp setup`, and use the
 email-mcp web pages, in a browser or a browser profile that no agent controls,
 and do not give browser-control tools access to that profile.
 
+**What you approve is what goes out.** A message that an agent writes can only
+hold what a confirmation can show:
+
+- HTML is reduced to text, headings, lists, tables and `http`, `https` or
+  `mailto` links, and the text of the message is made from the result. Styles,
+  images, comments, other attributes and hidden text are removed, so an HTML
+  mail from an agent looks plain.
+- A subject, a plain text body or a display name with a character that a reader
+  cannot see is refused. Such characters are zero width characters, direction
+  controls, tag characters and the like. Emoji and normal text in any language
+  are fine, also the joiners that Persian, Arabic and Indic text need.
+- The same rules apply to `create_draft`.
+- A confirmation counts every character of the text that it does not show, such
+  as padding, and the approval covers the whole message.
+
+A draft that you write yourself in another mail program goes out as you saved
+it, with its styles and images. The confirmation shows the text of it, and it
+counts hidden characters in that text. It does not list the styles or the
+images. An agent cannot make such a draft, but a draft that it saved with an
+older version of email-mcp can still hold them.
+
 ## Recommended Claude Code deny rules
 
 Claude Code has permission rules. A "deny" rule blocks a tool call. Deny rules

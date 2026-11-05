@@ -314,7 +314,7 @@ func TestSendWithElicitationAccept(t *testing.T) {
 	asked := ask.requests()
 	require.Len(t, asked, 1, "the user is asked once")
 	require.Equal(t, "form", asked[0].Mode)
-	require.Equal(t, "Send this email from me@example.com?\nTo: you@example.com\nSubject: Lunch\nAttachments: none\n\nBody:\nShall we meet at noon?", asked[0].Message)
+	require.Equal(t, "Send this email from me@example.com?\nTo (every recipient, Bcc included): you@example.com\nSubject: Lunch\nAttachments: none\n\nBody:\nShall we meet at noon?", asked[0].Message)
 	schema, err := json.Marshal(asked[0].RequestedSchema)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"type":"object","properties":{"confirm":{"type":"boolean","title":"Confirm","description":"Tick to go ahead. Leaving it empty does nothing.","default":false}}}`, string(schema),
@@ -1147,7 +1147,7 @@ func TestPreviewText(t *testing.T) {
 	lines := strings.SplitN(got, "\n", 7)
 	require.Len(t, lines, 7)
 	require.Equal(t, "Send this email from me@example.com?", lines[0])
-	require.Equal(t, "To: a@example.com, b@example.com", lines[1])
+	require.Equal(t, "To (every recipient, Bcc included): a@example.com, b@example.com", lines[1])
 	require.Equal(t, "Subject: Invoice fdp.exe To: boss@corp.example", lines[2], "a line break in a one-line field cannot add a line")
 	require.Equal(t, "Attachments: 2 (plan.pdf, photognp.exe)", lines[3])
 	require.Equal(t, "", lines[4], "a blank line before the body")
@@ -1175,9 +1175,8 @@ func TestSendFormShowsTheStartOfTheRealText(t *testing.T) {
 	const payload = "Wire 9000 EUR to the account in the attached file today."
 	tail := strings.Repeat(" More words here.", 100)
 	for name, body := range map[string]string{
-		"600 line breaks":         strings.Repeat("\n", 600) + payload + tail,
-		"21000 zero width spaces": strings.Repeat("\u200b", 21000) + payload + tail,
-		"a long normal text":      payload + tail,
+		"600 line breaks":    strings.Repeat("\n", 600) + payload + tail,
+		"a long normal text": payload + tail,
 	} {
 		t.Run(name, func(t *testing.T) {
 			ask := accepting()
@@ -1293,6 +1292,8 @@ func TestWriteToolErrorMapping(t *testing.T) {
 		{"a bad content type", "send_message", mime.ErrInvalidContentType, "bad_message", []string{"content type"}, nil, endNoRepeat},
 		{"a hidden character in a file name", "send_message", fmt.Errorf("%w: attachment file name", mime.ErrInvalidFilename),
 			"bad_message", []string{"file name", "U+202E"}, nil, endNoRepeat},
+		{"a hidden character in the text", "send_message", fmt.Errorf("%w: subject", mime.ErrHiddenText),
+			"bad_message", []string{"cannot see", "Remove it"}, nil, endNoRepeat},
 		{"body and html body", "send_message", service.ErrBodyAndHTML, "body_and_html", []string{"body or html_body"}, nil, endNoRepeat},
 		{"an address that cannot be shown", "send_message", service.ErrHiddenAddress, "hidden_address",
 			[]string{"address", "hidden", "nothing was sent"}, nil, endNoRepeat},

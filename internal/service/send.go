@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -157,6 +158,10 @@ func (s *Service) sendDeps() error {
 // comes, the message is built again from the payload, and it is sent only if it
 // still matches the preview that the user saw. Otherwise the error wraps
 // confirm.ErrPayloadChanged.
+//
+// A message built from c holds only what a preview can show: mime.Build cleans
+// its HTML and refuses text with hidden characters (mime.ErrHiddenText). A draft
+// goes out as it was saved (see draftContent).
 //
 // While the program stops (see Stop), Send returns ErrStopping before step 1
 // and changes nothing.
@@ -475,6 +480,13 @@ type sendContent struct {
 	// a whole, never cut first, so no hidden characters before the text can push
 	// the text out of the preview.
 	body string
+	// unshown is how many characters of the text as it is sent body and its
+	// preview leave out (see unshownRunes). A new message has only the white
+	// space, because it cannot hold a hidden character. A draft can.
+	unshown int
+	// hash covers what goes out, not only what the preview shows (see
+	// confirm.Preview.BodyHash).
+	hash string
 	// attachments are the file names of the attachments, in the order of the
 	// message.
 	attachments []string
@@ -491,7 +503,9 @@ func (s *Service) buildSend(ctx context.Context, b mail.Backend, a *account.Acco
 		if err != nil {
 			return nil, sendContent{}, err
 		}
-		return msg, sendContent{body: composedBody(msg.Data), attachments: names}, nil
+		content := composedContent(msg.Data)
+		content.attachments = names
+		return msg, content, nil
 	}
 	// Only a real draft is sent as it is. A received message with a From forged
 	// to the user's own address, or an old message in Sent, is not one. The
@@ -521,16 +535,49 @@ func (s *Service) buildSend(ctx context.Context, b mail.Backend, a *account.Acco
 	return msg, content, nil
 }
 
-// composedBody returns the whole cleaned text part of a message that mime.Build
-// made. Build makes that part from the whole HTML when the request has HTML (a
-// request with both a body and HTML is refused), so it is the text that the
+// composedContent reads a message that mime.Build made for the preview. Build
+// makes the text part from the whole HTML when the request has HTML (a request
+// with both a body and HTML is refused), so the text part is the text that the
 // recipient sees, with the block of a forward.
 //
-// The text is read in full and cleaned before anything is cut. A cut before the
-// clean would let 21000 zero width spaces fill the part that is read, and the
-// preview would show nothing of the text that is sent.
-func composedBody(data []byte) string {
-	return composedText(data)
+// The text is read in full and cleaned before anything is cut, as for a draft.
+// The hash holds the text and the HTML and no header: mime.Build makes a new
+// Message-ID, a new date and a new boundary each time, so the same request
+// would give another hash of the whole message.
+func composedContent(data []byte) sendContent {
+	parsed, _ := mime.ParseMessage(bytes.NewReader(data), 0)
+	if parsed == nil {
+		return sendContent{hash: contentHash(string(data))}
+	}
+	return sendContent{
+		body:    mime.CleanUntrusted(parsed.Text),
+		unshown: unshownRunes(parsed.Text),
+		hash:    contentHash(parsed.Text, parsed.HTML),
+	}
+}
+
+// unshownRunes returns how many characters of raw, a text as it is sent, no
+// preview shows: the hidden characters and the white space that collapseSpace
+// takes away. The preview adds them to the count of characters that it leaves
+// out, so padding and hidden characters do not leave unseen.
+//
+// The line breaks at the two ends of the text do not count. Nearly every text
+// ends with one, and the user would see a count for nothing. Their number holds
+// almost no data.
+func unshownRunes(raw string) int {
+	clean := mime.CleanUntrusted(raw)
+	padding := utf8.RuneCountInString(strings.Trim(clean, "\n")) - utf8.RuneCountInString(collapseSpace(clean))
+	return mime.HiddenRunes(raw) + padding
+}
+
+// contentHash returns the SHA-256 of the parts in hex. The length of each part
+// goes in first, so that text cannot move from one part to the next.
+func contentHash(parts ...string) string {
+	h := sha256.New()
+	for _, part := range parts {
+		_, _ = fmt.Fprintf(h, "%d:%s", len(part), part)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // draftContent reads a whole draft for the preview: the text of its whole HTML
@@ -543,22 +590,31 @@ func composedBody(data []byte) string {
 // that create_draft saved stays far below these), and when the HTML cannot be
 // turned into text (mime.ErrHTMLTooComplex). In that case the text part is not
 // shown instead, because it can say something else than the HTML.
+//
+// A draft goes out as it was saved, so what a person wrote in another mail
+// program keeps its styles and images. An agent cannot put such parts in a
+// draft: create_draft goes through mime.Build. The hash covers every byte of the
+// draft, and the count of characters holds the hidden characters of its text.
+// The markup of its HTML is not counted: it is not text that the user could
+// read, and a draft with styles would always say that much is not shown.
 func draftContent(data []byte) (sendContent, error) {
 	parsed, err := mime.ParseMessage(bytes.NewReader(data), 0)
 	if err != nil || parsed == nil || parsed.Incomplete {
 		return sendContent{}, ErrDraftUnreadable
 	}
 	body := parsed.Text
+	unshown := unshownRunes(parsed.Text)
 	if parsed.HTML != "" {
 		if body, err = mime.HTMLToText(parsed.HTML); err != nil {
 			return sendContent{}, ErrDraftUnreadable
 		}
+		unshown = mime.HiddenRunes(parsed.HTML)
 	}
 	var names []string
 	for _, att := range parsed.Attachments {
 		names = append(names, att.Filename)
 	}
-	return sendContent{body: mime.CleanUntrusted(body), attachments: names}, nil
+	return sendContent{body: mime.CleanUntrusted(body), unshown: unshown, hash: contentHash(string(data)), attachments: names}, nil
 }
 
 // buildMessage builds a new message, a reply or a forward from c. A reply reads
@@ -842,7 +898,10 @@ func (p *composePayload) compose() mail.Compose {
 // sender, every envelope recipient (so a Reply-To that a stranger set, the people
 // that a reply to all adds, and the Bcc are all visible), the subject, the file
 // names of the attachments and the start of the text (see previewBody). The
-// subject and the text are cleaned of characters that a reader cannot see.
+// subject and the text are cleaned of characters that a reader cannot see. The
+// count of characters that are not shown and the hash cover the raw text that
+// is sent, so what the cleaning takes away is counted, and a change in it is a
+// changed message.
 // Every value is valid UTF-8, so the stored preview reads back the same, and the
 // preview of the same message built again is equal to it. The first call and
 // the answer (and the approval page) all build it here, so samePreview compares
@@ -863,7 +922,8 @@ func previewOf(a *account.Account, msg *mail.RawMessage, content sendContent) co
 		To:          to,
 		Subject:     previewSubject(msg.Data),
 		BodyStart:   start,
-		BodyMore:    more,
+		BodyMore:    more + content.unshown,
+		BodyHash:    content.hash,
 		Count:       1,
 		Attachments: names,
 	}
@@ -932,12 +992,15 @@ func previewSubject(data []byte) string {
 // samePreview reports whether a message built again is the message of the
 // stored preview: the same sender, the same recipients (compared without case
 // and order), the same subject, the same attachments (in order), the same start
-// of the text and the same count of characters after it.
+// of the text, the same count of characters after it, and the same hash of what
+// goes out. A preview stored without a hash does not match: the user is asked
+// again.
 func samePreview(stored, rebuilt confirm.Preview) bool {
 	return stored.From == rebuilt.From &&
 		stored.Subject == rebuilt.Subject &&
 		stored.BodyStart == rebuilt.BodyStart &&
 		stored.BodyMore == rebuilt.BodyMore &&
+		stored.BodyHash == rebuilt.BodyHash &&
 		slices.Equal(addressSet(stored.To), addressSet(rebuilt.To)) &&
 		slices.Equal(stored.Attachments, rebuilt.Attachments)
 }

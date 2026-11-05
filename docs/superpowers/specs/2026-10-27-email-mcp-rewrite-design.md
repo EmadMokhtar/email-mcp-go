@@ -262,7 +262,7 @@ If an account has no such folder, the tool returns a clear error. **[my call]**
 | Google | `google.golang.org/api/gmail/v1`, `calendar/v3`, `people/v1` | Official clients. |
 | Microsoft Graph | Small hand-written client over `net/http` | The official Graph SDK is very large. This server uses about 30 endpoints. **[my call]** |
 | HTML to text | **[builder]** | Must drop `script`, `style`, and hidden elements. |
-| HTML sanitising | `github.com/microcosm-cc/bluemonday` | Only for the optional `html` body format. |
+| HTML sanitising | `github.com/microcosm-cc/bluemonday` | For the optional `html` body format, and for the HTML of every outgoing message, so a preview shows what is sent. |
 | OAuth server (M3) | `github.com/ory/fosite` | Mature, security-focused OAuth 2 framework, used inside Ory Hydra. **[my call]** |
 | Passkeys (M3) | `github.com/go-webauthn/webauthn` | Standard WebAuthn library. |
 | Upstream sign-in (M3) | `github.com/coreos/go-oidc/v3` | Verifies Google and Microsoft OpenID Connect sign-ins. |

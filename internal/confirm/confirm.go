@@ -175,10 +175,15 @@ type Preview struct {
 	// BodyStart is the first part of the body. Create keeps at most 500
 	// characters.
 	BodyStart string `json:"body_start"`
-	// BodyMore is how many characters of the body come after BodyStart and are
-	// not in the preview. Each channel that shows the preview shows
+	// BodyMore is how many characters of the body as it is sent are not in the
+	// preview: those after BodyStart, and the hidden characters and the padding
+	// that the preview leaves out. Each channel that shows the preview shows
 	// MoreCharsText after BodyStart, so the user knows that the body goes on.
 	BodyMore int `json:"body_more,omitempty"`
+	// BodyHash is a hash of what a send puts in the message, in hex. The user
+	// sees the start of the text, so this binds the approval to the rest: a
+	// message built again goes out only with the same hash.
+	BodyHash string `json:"body_hash,omitempty"`
 	// Count is the number of messages the action affects.
 	Count int `json:"count"`
 	// Messages are the lines of the preview of a Trash action, one for each

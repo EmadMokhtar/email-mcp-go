@@ -136,7 +136,9 @@ func originalAddresses(field string, list []mail.Address) ([]*netmail.Address, e
 }
 
 // parseRecipients parses the address strings of one Compose field. Each
-// string must hold one address.
+// string must hold one address, and its display name must have no hidden text
+// (ErrHiddenText). FromDraft does not use this check: it sends a draft as it was
+// saved.
 func parseRecipients(field string, given []string) ([]*netmail.Address, error) {
 	out := make([]*netmail.Address, 0, len(given))
 	for i, s := range given {
@@ -150,6 +152,9 @@ func parseRecipients(field string, given []string) ([]*netmail.Address, error) {
 			return nil, fmt.Errorf("%w: %s", ErrInvalidAddress, name)
 		}
 		if err := checkAddress(name, a); err != nil {
+			return nil, err
+		}
+		if err := checkVisible(name, a.Name); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

@@ -40,11 +40,41 @@ import (
 // wraps ErrHTMLTooComplex (see HTMLToText). So does a document whose HTML
 // would be larger than maxVisibleHTMLBytes, before or after it is cleaned.
 func VisibleHTML(markup string) (string, error) {
+	return prunedHTML(markup, false)
+}
+
+// outgoingHTML returns the HTML that a message sends for HTML from the caller:
+// the HTML of VisibleHTML, with nothing in it that a preview cannot show.
+//
+// So it has no comment, no style, no image, no other element that loads from a
+// url, no attribute but href, no text that a style hides, and no character that
+// CleanUntrusted removes. A link that HTMLToText does not write out (see
+// linkURL) loses its href, because the href would go out unseen. The text of
+// the link stays. Because the styles are gone, text that a style hides in a way
+// that this package does not detect is shown: to the recipient and to the user.
+//
+// It returns "" when only white space is left. Such a message has no HTML part.
+func outgoingHTML(markup string) (string, error) {
+	out, err := prunedHTML(markup, true)
+	if err != nil {
+		return "", err
+	}
+	out = CleanUntrusted(out)
+	if strings.TrimSpace(out) == "" {
+		return "", nil
+	}
+	return out, nil
+}
+
+// prunedHTML is VisibleHTML. With shownLinksOnly, a link keeps its href only
+// when HTMLToText writes it out.
+func prunedHTML(markup string, shownLinksOnly bool) (string, error) {
 	doc, err := parseHTML(markup)
 	if err != nil {
 		return "", err
 	}
 	v := newVisibility(doc)
+	v.shownLinksOnly = shownLinksOnly
 	v.prune(doc)
 
 	rendered := &limitedBuilder{max: maxVisibleHTMLBytes}
@@ -156,7 +186,7 @@ func (v *visibility) pruneElement(parent, n *xhtml.Node) {
 	case "a":
 		// A link that cannot be seen shows nothing, not even its url. Its
 		// children may still be shown, so the element stays.
-		if v.state().textHidden() {
+		if v.state().textHidden() || (v.shownLinksOnly && linkURL(n) == "") {
 			removeAttribute(n, "href")
 		}
 	case "noscript", "xmp", "plaintext":

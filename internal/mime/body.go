@@ -27,28 +27,42 @@ type bodies struct {
 	text, html string
 }
 
-// composeBodies makes the bodies of a message from Compose. A message with
-// HTML and no text gets the text form of its HTML, so that no mail program
-// shows an empty text part. A forward adds the original text.
+// composeBodies makes the bodies of a message from Compose. The plain text body
+// is checked (ErrHiddenText). A message with HTML sends the HTML of outgoingHTML
+// and the text form of that HTML, so the text that a preview shows is the text
+// of what goes out. A forward adds the original.
 //
-// The HTML of Compose comes from the caller. If it is too complex to make
-// text of (see ErrHTMLTooComplex), the error wraps that error. The HTML of the
-// original does not stop a forward: see newForwarded.
+// The HTML of Compose comes from the caller. If it is too complex to clean or
+// to make text of (see ErrHTMLTooComplex), the error wraps that error. The HTML
+// of the original does not stop a forward: see newForwarded.
 func composeBodies(c mail.Compose, original *mail.Message) (bodies, error) {
-	b := bodies{text: c.Body, html: c.HTMLBody}
-	if b.text == "" && b.html != "" {
-		text, err := HTMLToText(b.html)
-		if err != nil {
+	if err := checkVisible("body", c.Body); err != nil {
+		return bodies{}, err
+	}
+	b := bodies{text: c.Body}
+	if c.HTMLBody != "" {
+		var err error
+		if b.html, err = outgoingHTML(c.HTMLBody); err != nil {
 			return bodies{}, fmt.Errorf("mime: html body: %w", err)
 		}
-		b.text = text
+		b.text = ""
 	}
 	if c.ForwardOf != nil {
+		// The text and the HTML of the forward are added apart from the HTML of
+		// the caller, so an element that is not closed cannot swallow them.
 		f := newForwarded(original)
 		b.text += f.plain()
 		if b.html != "" {
 			b.html += f.html()
 		}
+	}
+	if b.html != "" {
+		// Made last, so it also has the block of a forward.
+		text, err := HTMLToText(b.html)
+		if err != nil {
+			return bodies{}, fmt.Errorf("mime: html body: %w", err)
+		}
+		b.text = text
 	}
 	return b, nil
 }
@@ -88,7 +102,7 @@ type forwarded struct {
 }
 
 func newForwarded(o *mail.Message) forwarded {
-	text := o.Text
+	text := CleanUntrusted(o.Text)
 	if text == "" && o.HTML != "" {
 		// Never forward the raw HTML. The text form leaves out what a reader
 		// of the message could not see. The original comes from a third party,
@@ -209,8 +223,8 @@ func cleanOriginalName(s string) string {
 
 // newAttachment checks the file name and the content type. An empty content
 // type is found from the data. An empty file name becomes "attachment". A file
-// name with a character that hides or reorders text is refused with
-// ErrInvalidFilename.
+// name with a character that hides or reorders text, or that CleanUntrusted
+// removes, is refused with ErrInvalidFilename: a preview shows cleaned names.
 //
 // The content type must be one type with a slash and parameters that are
 // valid, it must not be multipart (the writer would treat the data as parts),
@@ -220,7 +234,7 @@ func newAttachment(a mail.OutgoingAttachment) (attachment, error) {
 	if err := checkValue("attachment file name", a.Filename); err != nil {
 		return attachment{}, err
 	}
-	if strings.IndexFunc(a.Filename, hidesText) >= 0 {
+	if strings.IndexFunc(a.Filename, hidesText) >= 0 || HiddenRunes(a.Filename) > 0 {
 		return attachment{}, ErrInvalidFilename
 	}
 	filename := a.Filename

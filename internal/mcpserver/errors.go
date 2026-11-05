@@ -345,6 +345,9 @@ var messageErrors = []struct {
 		"or send a plain text body instead."},
 	{mime.ErrInvalidFilename, "An attachment file name has a character that hides or reorders text (for example " +
 		"U+202E, or a zero width space). Use a plain file name."},
+	{mime.ErrHiddenText, "The subject, the body or a display name has a character that a reader cannot see, or that " +
+		"reorders text (for example a zero width space, a tag character or U+202E). The user could not see it, so " +
+		"it is not sent. Remove it. Emoji and normal text in any language are fine."},
 }
 
 // messageFailure returns the failure for one of messageErrors, and true. For any

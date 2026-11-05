@@ -219,7 +219,8 @@ type Compose struct {
 	// To, Cc and Bcc are recipient addresses.
 	To, Cc, Bcc []string
 	Subject     string
-	// Body is the plain-text body. HTMLBody is the optional HTML body.
+	// Body is the plain-text body. HTMLBody is the optional HTML body. The
+	// message does not send HTMLBody as it is: see mime.Build.
 	Body, HTMLBody string
 	// ReplyTo is set when the message is a reply.
 	ReplyTo *ReplyRef

@@ -25,55 +25,99 @@ import (
 //   - Turns "\r\n" and a lone "\r" into "\n".
 //   - Removes every character of the Unicode category Cf (format characters),
 //     except the zero width non-joiner (U+200C) and the zero width joiner
-//     (U+200D). Cf holds, among others, the zero width space, the direction
-//     marks, the bidi embeddings, overrides and isolates, the word joiner and
-//     invisible operators, the soft hyphen, the Arabic letter mark, the
-//     Mongolian vowel separator, the interlinear annotation marks, the byte
-//     order mark, the tag characters and the musical, shorthand and
-//     hieroglyph format controls. The table is the one of the Go version that
-//     builds the program.
+//     (U+200D), which the last rule handles. Cf holds, among others, the zero
+//     width space, the direction marks, the bidi embeddings, overrides and
+//     isolates, the word joiner and invisible operators, the soft hyphen, the
+//     Arabic letter mark, the Mongolian vowel separator, the interlinear
+//     annotation marks, the byte order mark, the tag characters and the
+//     musical, shorthand and hieroglyph format controls. The table is the one
+//     of the Go version that builds the program.
 //   - Removes these characters, which are not Cf but cannot be seen or are
-//     used to hide text: the variation selectors supplement (U+E0100 to
-//     U+E01EF, used to hide data), the whole tag block (U+E0000 to U+E007F,
-//     also the code points in it that are not assigned), the combining
-//     grapheme joiner (U+034F), the Hangul fillers (U+115F, U+1160, U+3164,
-//     U+FFA0), the Mongolian free variation selectors (U+180B to U+180F), the
-//     Khmer inherent vowels (U+17B4 and U+17B5), the object replacement
-//     character (U+FFFC), and the code points that are not assigned in the
-//     format ranges U+2060 to U+206F and U+FFF0 to U+FFF8.
+//     used to hide text: all of U+E0000 to U+E0FFF (the tag block, the
+//     variation selectors supplement U+E0100 to U+E01EF, which is used to hide
+//     data, and the code points around them, also those that are not
+//     assigned), the variation selectors U+FE00 to U+FE0E, the private use
+//     areas (no mail font draws them), the braille blank (U+2800), the
+//     combining grapheme joiner (U+034F), the Hangul fillers (U+115F, U+1160,
+//     U+3164, U+FFA0), the Mongolian free variation selectors (U+180B to
+//     U+180F), the Khmer inherent vowels (U+17B4 and U+17B5), the object
+//     replacement character (U+FFFC), and the code points that are not
+//     assigned in the format ranges U+2060 to U+206F and U+FFF0 to U+FFF8.
 //   - Removes control characters (Cc), except "\n" and "\t".
+//   - Removes U+200C, U+200D and U+FE0F (variation selector 16) unless they
+//     change what a reader sees (see keepsJoiner). They stay next to a letter
+//     of a script that joins letters, such as Arabic or Devanagari, and inside
+//     an emoji sequence. Elsewhere, for example between Latin letters, they
+//     change nothing on the screen, and text can hide data in them. A run of
+//     them is cut to what an emoji sequence or a word needs, so a run cannot
+//     carry data either.
 //
-// It keeps the zero width non-joiner (U+200C) and the zero width joiner
-// (U+200D), because Persian, Urdu and other Arabic-script text, and emoji
-// sequences, need them. It also keeps the variation selectors U+FE00 to
-// U+FE0F, which choose how an emoji is drawn. Every other character stays.
+// Every other character stays.
 func CleanUntrusted(s string) string {
+	return removeHidden(normalizeText(s))
+}
+
+// HiddenRunes returns how many characters CleanUntrusted removes from s. The
+// line breaks that it rewrites do not count, and neither do bytes that are not
+// valid UTF-8: they become U+FFFD, which a reader sees.
+func HiddenRunes(s string) int {
+	s = normalizeText(s)
+	return utf8.RuneCountInString(s) - utf8.RuneCountInString(removeHidden(s))
+}
+
+// normalizeText returns s as valid UTF-8 with each line break written as "\n".
+func normalizeText(s string) string {
 	s = strings.ToValidUTF8(s, string(utf8.RuneError))
 	s = strings.ReplaceAll(s, "\r\n", "\n")
-	s = strings.ReplaceAll(s, "\r", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
+}
 
+// removeHidden removes the hidden characters of s, which must be valid UTF-8.
+//
+// A joiner is tested against the last character that stayed and the next one
+// that is not always removed. So cleaning the result again changes nothing.
+func removeHidden(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
-	for _, r := range s {
-		if !isHiddenRune(r) {
-			b.WriteRune(r)
+	var prev rune // the last character that stayed; 0 is never one
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+		if isHiddenRune(r) || (isJoiner(r) && !keepsJoiner(prev, r, nextShown(s[i:]))) {
+			continue
 		}
+		b.WriteRune(r)
+		prev = r
 	}
 	return b.String()
 }
 
-// isHiddenRune reports whether CleanUntrusted removes r.
+// nextShown returns the first character of s that is not always removed, or 0.
+// It stops at a joiner, so each hidden character is read at most twice.
+func nextShown(s string) rune {
+	for _, r := range s {
+		if !isHiddenRune(r) {
+			return r
+		}
+	}
+	return 0
+}
+
+// isHiddenRune reports whether CleanUntrusted removes r wherever it is. For a
+// joiner the answer depends on the text around it (see keepsJoiner).
 func isHiddenRune(r rune) bool {
 	switch {
-	case r == '\n' || r == '\t':
-		return false
-	case r == 0x200C || r == 0x200D: // ZWNJ and ZWJ are kept
+	case r == '\n' || r == '\t' || isJoiner(r):
 		return false
 	case isFormatRune(r) || unicode.IsControl(r):
 		return true
-	case r >= 0xE0000 && r <= 0xE007F: // tag characters, also the unassigned ones
+	case r >= 0xE0000 && r <= 0xE0FFF: // tag characters and selectors, also the unassigned ones
 		return true
-	case r >= 0xE0100 && r <= 0xE01EF: // variation selectors supplement
+	case r >= 0xFE00 && r <= 0xFE0E: // variation selectors, except the one for emoji
+		return true
+	case unicode.Is(unicode.Co, r): // private use
+		return true
+	case r == 0x2800: // braille blank
 		return true
 	case r == 0x034F: // combining grapheme joiner
 		return true
@@ -91,6 +135,85 @@ func isHiddenRune(r rune) bool {
 		return isUnassigned(r)
 	}
 	return false
+}
+
+const (
+	zwnj   = 0x200C // zero width non-joiner
+	zwj    = 0x200D // zero width joiner
+	vs16   = 0xFE0F // variation selector 16: draw the character as an emoji
+	keycap = 0x20E3 // combining enclosing keycap
+)
+
+// isJoiner reports whether r is one of the characters that stay only in some
+// places (see keepsJoiner).
+func isJoiner(r rune) bool {
+	return r == zwnj || r == zwj || r == vs16
+}
+
+// keepsJoiner reports whether the joiner r changes what a reader sees. prev is
+// the last character that stayed, and next is the next one that is not always
+// removed.
+//
+// VS16 stays after a character that can be an emoji, and in a keycap such as
+// "1", VS16, U+20E3. ZWJ stays between two emoji. ZWNJ and ZWJ stay next to a
+// letter of a script that joins letters: there they change the shape of the
+// letters. Either side is enough, because such text also has them at the end
+// of a word, as in Malayalam or in a Persian abbreviation. Only one stays in a
+// row. The one case of two is VS16 and then ZWJ in an emoji sequence.
+func keepsJoiner(prev, r, next rune) bool {
+	if r == vs16 {
+		return isEmojiBase(prev) || (isKeycapBase(prev) && next == keycap)
+	}
+	if r == zwj && (isEmojiBase(prev) || prev == vs16) && isEmojiBase(next) {
+		return true
+	}
+	if isJoiner(prev) {
+		return false
+	}
+	return joinsLetters(prev) || joinsLetters(next)
+}
+
+// joiningScripts are the scripts in which ZWNJ and ZWJ change how letters look:
+// the Arabic family, where letters join, and the Brahmic scripts, where they
+// choose the form of a conjunct.
+var joiningScripts = []*unicode.RangeTable{
+	unicode.Arabic, unicode.Syriac, unicode.Mandaic, unicode.Nko, unicode.Mongolian,
+	unicode.Adlam, unicode.Hanifi_Rohingya,
+	unicode.Devanagari, unicode.Bengali, unicode.Gurmukhi, unicode.Gujarati, unicode.Oriya,
+	unicode.Tamil, unicode.Telugu, unicode.Kannada, unicode.Malayalam, unicode.Sinhala,
+	unicode.Khmer, unicode.Myanmar, unicode.Tibetan, unicode.Balinese, unicode.Javanese,
+}
+
+// joinsLetters reports whether r is in one of joiningScripts. The first test
+// spares Latin text the search: the first of the scripts starts at U+0600.
+func joinsLetters(r rune) bool {
+	return r >= 0x0600 && unicode.In(r, joiningScripts...)
+}
+
+// isEmojiBase reports whether r can be drawn as an emoji. The unicode package
+// has no table of emoji, so this is the blocks that hold them, and the few that
+// are outside these blocks. It is wider than the list of Unicode. That does no
+// harm: it only says where one joiner may stay.
+func isEmojiBase(r rune) bool {
+	switch {
+	case r >= 0x1F000 && r <= 0x1FAFF, // pictographs, flags and skin tones
+		r >= 0x2190 && r <= 0x21FF, // arrows
+		r >= 0x2300 && r <= 0x23FF, // technical symbols, such as the watch
+		r >= 0x25A0 && r <= 0x27BF, // shapes, symbols and dingbats
+		r >= 0x2900 && r <= 0x297F, // more arrows
+		r >= 0x2B00 && r <= 0x2BFF: // more symbols, such as the star
+		return true
+	}
+	switch r {
+	case 0x00A9, 0x00AE, 0x203C, 0x2049, 0x2122, 0x2139, 0x24C2, 0x3030, 0x303D, 0x3297, 0x3299:
+		return true
+	}
+	return false
+}
+
+// isKeycapBase reports whether r can start a keycap sequence.
+func isKeycapBase(r rune) bool {
+	return (r >= '0' && r <= '9') || r == '#' || r == '*'
 }
 
 // isFormatRune reports whether r is in the Unicode category Cf (format
