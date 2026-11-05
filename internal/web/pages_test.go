@@ -43,14 +43,16 @@ const autonomyText = "An email or a calendar invite can contain hidden instructi
 type pageBackend struct {
 	mail.Backend
 
-	mu      sync.Mutex
-	getErr  error
-	trashed [][]mail.Ref
+	mu       sync.Mutex
+	getErr   error
+	deadline bool // the last GetMessage had a time limit
+	trashed  [][]mail.Ref
 }
 
-func (b *pageBackend) GetMessage(_ context.Context, ref mail.Ref, _ mail.BodyOptions) (*mail.Message, error) {
+func (b *pageBackend) GetMessage(ctx context.Context, ref mail.Ref, _ mail.BodyOptions) (*mail.Message, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	_, b.deadline = ctx.Deadline()
 	if b.getErr != nil {
 		return nil, b.getErr
 	}
@@ -65,6 +67,12 @@ func (b *pageBackend) Trash(_ context.Context, refs []mail.Ref) error {
 	defer b.mu.Unlock()
 	b.trashed = append(b.trashed, slices.Clone(refs))
 	return nil
+}
+
+func (b *pageBackend) hadDeadline() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.deadline
 }
 
 func (b *pageBackend) setGetErr(err error) {
@@ -108,13 +116,24 @@ func (b *fakeBackends) forgot() []account.AccountID {
 type recSender struct {
 	mu   sync.Mutex
 	msgs []*mail.RawMessage
+	err  error
 }
 
 func (s *recSender) send(_ context.Context, _ account.TenantID, _ account.AccountID, msg *mail.RawMessage, _ mail.Ref) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.err != nil {
+		return s.err
+	}
 	s.msgs = append(s.msgs, msg)
 	return nil
+}
+
+// setErr makes every later send fail with err.
+func (s *recSender) setErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.err = err
 }
 
 func (s *recSender) sent() []*mail.RawMessage {
@@ -370,14 +389,28 @@ func hasAttr(n *html.Node, name string) bool {
 	return false
 }
 
-// tableRows returns the number of rows in the <tbody> of the page.
-func tableRows(t *testing.T, page string) int {
+// queueRows returns the number of actions in the list of the actions that wait.
+func queueRows(t *testing.T, page string) int {
 	t.Helper()
 	doc, err := html.Parse(strings.NewReader(page))
 	require.NoError(t, err)
 	rows := 0
 	for n := range doc.Descendants() {
-		if n.Type == html.ElementNode && n.DataAtom == atom.Tr && n.Parent != nil && n.Parent.DataAtom == atom.Tbody {
+		if n.Type == html.ElementNode && n.DataAtom == atom.A && attr(n, "class") == "queue-item" {
+			rows++
+		}
+	}
+	return rows
+}
+
+// logRows returns the number of entries of the activity page.
+func logRows(t *testing.T, page string) int {
+	t.Helper()
+	doc, err := html.Parse(strings.NewReader(page))
+	require.NoError(t, err)
+	rows := 0
+	for n := range doc.Descendants() {
+		if n.Type == html.ElementNode && n.DataAtom == atom.Li && attr(n, "class") == "log-row" {
 			rows++
 		}
 	}

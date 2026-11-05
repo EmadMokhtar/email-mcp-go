@@ -129,7 +129,7 @@ func TestAccountsPageLinksToReconnect(t *testing.T) {
 	broken := c.storedAccount("alice@example.org", server, marker, account.StatusNeedsReauth)
 	fine := c.storedAccount("bob@example.org", server, marker, account.StatusOK)
 
-	resp, body := do(t, c.browser, newRequest(t, http.MethodGet, c.base+"/", nil))
+	resp, body := do(t, c.browser, newRequest(t, http.MethodGet, c.base+"/accounts", nil))
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, body, `href="`+reconnectPath(broken)+`"`)
@@ -150,7 +150,7 @@ func TestReconnectSavesTheNewPassword(t *testing.T) {
 	resp, body := c.post(reconnectPath(a), url.Values{"password": {imapSrv.Pass}})
 
 	require.Equal(t, http.StatusSeeOther, resp.StatusCode, body)
-	require.Equal(t, "/", resp.Header.Get("Location"))
+	require.Equal(t, pathAccounts, resp.Header.Get("Location"))
 	c.requireNoLeak(resp, body, imapSrv.Pass)
 	got := c.reload(a)
 	require.Equal(t, a.ID, got.ID)

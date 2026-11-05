@@ -412,14 +412,14 @@ func TestAccountsPageListsAccounts(t *testing.T) {
 	c := newConnectFixture(t)
 
 	// Without a session: the no-session page.
-	resp, body := do(t, newBrowser(t), newRequest(t, http.MethodGet, c.base+"/", nil))
+	resp, body := do(t, newBrowser(t), newRequest(t, http.MethodGet, c.base+"/accounts", nil))
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	require.Equal(t, instruction, visibleText(t, body))
 
 	// No account yet.
-	resp, body = do(t, c.browser, newRequest(t, http.MethodGet, c.base+"/", nil))
+	resp, body = do(t, c.browser, newRequest(t, http.MethodGet, c.base+"/accounts", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Contains(t, visibleText(t, body), "No account is connected yet.")
+	require.Contains(t, visibleText(t, body), "No account is connected yet")
 	require.Contains(t, body, `href="/connect"`)
 
 	// An account of the tenant, with a sealed password and pins, and an account
@@ -441,7 +441,7 @@ func TestAccountsPageListsAccounts(t *testing.T) {
 	b := account.NewIMAPAccount("other", "bob@other.example", server, t0)
 	require.NoError(t, c.store.CreateAccount(ctx, b))
 
-	resp, body = do(t, c.browser, newRequest(t, http.MethodGet, c.base+"/", nil))
+	resp, body = do(t, c.browser, newRequest(t, http.MethodGet, c.base+"/accounts", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	text := visibleText(t, body)
 	require.Contains(t, text, "alice@example.org")
@@ -520,7 +520,7 @@ func TestConnectSavesEncryptedPassword(t *testing.T) {
 		"trust_imap", "1", "imap_offer", imapOffer,
 		"trust_smtp", "1", "smtp_offer", smtpOffer))
 	require.Equal(t, http.StatusSeeOther, resp.StatusCode, body)
-	require.Equal(t, "/", resp.Header.Get("Location"))
+	require.Equal(t, pathAccounts, resp.Header.Get("Location"))
 	c.requireNoLeak(resp, body, imapSrv.Pass)
 
 	accounts := c.accounts()
@@ -545,7 +545,7 @@ func TestConnectSavesEncryptedPassword(t *testing.T) {
 	require.Equal(t, a.ID, entries[0].Account)
 
 	// The list shows the new account.
-	resp, body = do(t, c.browser, newRequest(t, http.MethodGet, c.base+"/", nil))
+	resp, body = do(t, c.browser, newRequest(t, http.MethodGet, c.base+"/accounts", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, visibleText(t, body), "alice@example.org")
 	require.NotContains(t, c.logs.String(), "alice@example.org", "the log holds no address")
@@ -1006,14 +1006,14 @@ func TestPasswordNeverRendered(t *testing.T) {
 		c.requireNoLeak(resp, body, marker)
 		requireSafePasswordFields(t, body)
 		if tc.status == http.StatusSeeOther {
-			require.Equal(t, "/", resp.Header.Get("Location"), tc.name)
+			require.Equal(t, pathAccounts, resp.Header.Get("Location"), tc.name)
 		} else {
 			require.Empty(t, resp.Header.Get("Location"), tc.name)
 			require.Contains(t, visibleText(t, body), tc.text, tc.name)
 		}
 	}
 	// The pages without a form post.
-	for _, path := range []string{"/", "/connect"} {
+	for _, path := range []string{"/accounts", "/connect"} {
 		resp, body := do(t, c.browser, newRequest(t, http.MethodGet, c.base+path, nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		c.requireNoLeak(resp, body, marker)
@@ -1030,11 +1030,11 @@ func TestConnectRoutesNeedTheirMethod(t *testing.T) {
 		resp, _ := do(t, c.browser, newRequest(t, http.MethodGet, c.base+path, nil))
 		require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode, path)
 	}
-	for _, path := range []string{"/", "/connect"} {
+	for _, path := range []string{"/accounts", "/connect"} {
 		resp, _ := c.post(path, url.Values{})
 		require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode, path)
 	}
-	// "/" is only the accounts page, not every path.
+	// "/" is only the first page, not every path.
 	resp, _ := do(t, c.browser, newRequest(t, http.MethodGet, c.base+"/nothing", nil))
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 
@@ -1044,4 +1044,45 @@ func TestConnectRoutesNeedTheirMethod(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, resp.StatusCode)
 	require.Zero(t, c.probe.count())
 	require.Empty(t, c.accounts())
+}
+
+// The first page is what the user needs first: the actions that wait, or the
+// accounts page while no account is connected.
+func TestHomeOpensWhatTheUserNeedsFirst(t *testing.T) {
+	p := newPageFixture(t)
+	resp, _ := p.get("/")
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	require.Equal(t, pathAccounts, resp.Header.Get("Location"))
+
+	p.account()
+	resp, _ = p.get("/")
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	require.Equal(t, pathApprovals, resp.Header.Get("Location"))
+}
+
+// An account that needs the user comes first, whatever its address is.
+func TestAccountsPageShowsTheAccountThatNeedsTheUserFirst(t *testing.T) {
+	p := newPageFixture(t)
+	p.addAccount(p.tenant, "a@example.com")
+	p.addAccount(p.tenant, "z@example.com", func(a *account.Account) { a.Status = account.StatusNeedsReauth })
+	p.addAccount(p.tenant, "m@example.com")
+
+	_, body := p.get(pathAccounts)
+	z, a, m := strings.Index(body, "z@example.com"), strings.Index(body, "a@example.com"), strings.Index(body, "m@example.com")
+	require.Less(t, z, a)
+	require.Less(t, a, m)
+}
+
+func TestLogTimeHasTheYearOfAnOldEntry(t *testing.T) {
+	require.Equal(t, t0.Local().Format("2 Jan at 15:04"), logTime(t0, t0.Add(time.Hour)))
+	old := t0.AddDate(-1, 0, 0)
+	require.Equal(t, old.Local().Format("2 Jan 2006 at 15:04"), logTime(old, t0))
+}
+
+func TestPlainWords(t *testing.T) {
+	for code, want := range map[string]string{
+		"send_message": "Send message", "ok": "OK", "": "", "approved_on_web": "Approved on web",
+	} {
+		require.Equal(t, want, plainWords(code))
+	}
 }

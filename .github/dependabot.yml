@@ -19,11 +19,7 @@
 #   - the release-please version in the "$schema" URL of
 #     release-please-config.json. Keep it the same as the release-please
 #     version inside googleapis/release-please-action (release-please.yml).
-#     Dependabot updates the action, not this URL;
-#   - Bulma, the stylesheet of the web pages (internal/web/static/). Copy
-#     css/bulma.min.css and LICENSE of the new npm package, check the package
-#     against the integrity value of the npm registry, and change the version
-#     in internal/web/static.go and the SHA-256 in internal/web/static_test.go.
+#     Dependabot updates the action, not this URL.
 version: 2
 updates:
   - package-ecosystem: gomod

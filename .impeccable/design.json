@@ -1,0 +1,939 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-04T15:47:37Z",
+  "title": "Design System: email-mcp portal",
+  "extensions": {
+    "colorMeta": {
+      "ground": {
+        "role": "neutral",
+        "displayName": "Quiet Ground",
+        "canonical": "#f4f6f3",
+        "tonalRamp": [
+          "#0a0c0a",
+          "#232422",
+          "#3f403e",
+          "#5f615e",
+          "#7f817e",
+          "#a3a5a2",
+          "#c6c8c5",
+          "#edefec"
+        ]
+      },
+      "pane": {
+        "role": "neutral",
+        "displayName": "White Pane",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#606060",
+          "#808080",
+          "#a4a4a4",
+          "#c7c7c7",
+          "#eeeeee"
+        ]
+      },
+      "hover": {
+        "role": "neutral",
+        "displayName": "Pale Wash",
+        "canonical": "#edf1ed",
+        "tonalRamp": [
+          "#090c09",
+          "#222522",
+          "#3e413e",
+          "#5e615e",
+          "#7e817e",
+          "#a2a6a2",
+          "#c5c8c5",
+          "#ecf0ec"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Green-Black Ink",
+        "canonical": "#16201c",
+        "tonalRamp": [
+          "#050d0a",
+          "#1c2723",
+          "#38433e",
+          "#58645f",
+          "#77837e",
+          "#9ba8a3",
+          "#becbc5",
+          "#e5f2ec"
+        ]
+      },
+      "soft": {
+        "role": "neutral",
+        "displayName": "Soft Text",
+        "canonical": "#55615b",
+        "tonalRamp": [
+          "#050e09",
+          "#1c2722",
+          "#37433d",
+          "#58645e",
+          "#77847d",
+          "#9ba8a2",
+          "#bdcbc4",
+          "#e4f2eb"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#dde2de",
+        "tonalRamp": [
+          "#090c0a",
+          "#212522",
+          "#3d413e",
+          "#5d625e",
+          "#7d827e",
+          "#a1a6a2",
+          "#c4c9c5",
+          "#ebf0ec"
+        ]
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Control Edge",
+        "canonical": "#8a958f",
+        "tonalRamp": [
+          "#060d09",
+          "#1d2622",
+          "#39423d",
+          "#59635e",
+          "#78837d",
+          "#9da8a2",
+          "#bfcbc4",
+          "#e6f2eb"
+        ]
+      },
+      "go": {
+        "role": "primary",
+        "displayName": "Deep Go Green",
+        "canonical": "#0b6b4f",
+        "tonalRamp": [
+          "#001008",
+          "#002c1e",
+          "#004c37",
+          "#167155",
+          "#409274",
+          "#66b898",
+          "#89dbba",
+          "#c0ffe4"
+        ]
+      },
+      "go-hover": {
+        "role": "primary",
+        "displayName": "Darker Go Green",
+        "canonical": "#085a42",
+        "tonalRamp": [
+          "#001008",
+          "#002c1e",
+          "#004c37",
+          "#276f56",
+          "#4a9075",
+          "#6fb599",
+          "#92d9bc",
+          "#c0ffe4"
+        ]
+      },
+      "go-ink": {
+        "role": "primary",
+        "displayName": "Go Ink",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#606060",
+          "#808080",
+          "#a4a4a4",
+          "#c7c7c7",
+          "#eeeeee"
+        ]
+      },
+      "go-text": {
+        "role": "primary",
+        "displayName": "Green Text",
+        "canonical": "#0b6b4f",
+        "tonalRamp": [
+          "#001008",
+          "#002c1e",
+          "#004c37",
+          "#167155",
+          "#409274",
+          "#66b898",
+          "#89dbba",
+          "#c0ffe4"
+        ]
+      },
+      "go-soft": {
+        "role": "primary",
+        "displayName": "Green Wash",
+        "canonical": "#e2eee8",
+        "tonalRamp": [
+          "#060d0a",
+          "#1d2622",
+          "#39423e",
+          "#59635e",
+          "#78837e",
+          "#9ca8a2",
+          "#bfcbc5",
+          "#e6f2ec"
+        ]
+      },
+      "warn-soft": {
+        "role": "risk",
+        "displayName": "Warning Wash",
+        "canonical": "#fbf1d9",
+        "tonalRamp": [
+          "#110a00",
+          "#2b2310",
+          "#473f2b",
+          "#68604b",
+          "#887f6a",
+          "#ada48d",
+          "#d0c7af",
+          "#f8eed6"
+        ]
+      },
+      "warn-ink": {
+        "role": "risk",
+        "displayName": "Warning Ink",
+        "canonical": "#5c4300",
+        "tonalRamp": [
+          "#120900",
+          "#302100",
+          "#523c01",
+          "#765c22",
+          "#977c44",
+          "#bda168",
+          "#e0c489",
+          "#ffecc9"
+        ]
+      },
+      "warn-line": {
+        "role": "risk",
+        "displayName": "Warning Edge",
+        "canonical": "#e6d29d",
+        "tonalRamp": [
+          "#110a00",
+          "#2e2200",
+          "#4f3d05",
+          "#705e2c",
+          "#917e4c",
+          "#b6a370",
+          "#dac691",
+          "#ffedbf"
+        ]
+      },
+      "bad": {
+        "role": "risk",
+        "displayName": "Stop Red",
+        "canonical": "#b3261e",
+        "tonalRamp": [
+          "#210000",
+          "#4b0001",
+          "#7c0203",
+          "#af211a",
+          "#d64a3d",
+          "#fd7464",
+          "#feb1a5",
+          "#ffe9e5"
+        ]
+      },
+      "bad-hover": {
+        "role": "risk",
+        "displayName": "Darker Stop Red",
+        "canonical": "#93201a",
+        "tonalRamp": [
+          "#200000",
+          "#4b0001",
+          "#7d0003",
+          "#a5332a",
+          "#cb564a",
+          "#f57b6d",
+          "#ffb0a5",
+          "#ffe9e5"
+        ]
+      },
+      "bad-ink": {
+        "role": "risk",
+        "displayName": "Stop Ink",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#606060",
+          "#808080",
+          "#a4a4a4",
+          "#c7c7c7",
+          "#eeeeee"
+        ]
+      },
+      "bad-text": {
+        "role": "risk",
+        "displayName": "Red Text",
+        "canonical": "#a4231c",
+        "tonalRamp": [
+          "#200000",
+          "#4b0001",
+          "#7c0304",
+          "#ab2a22",
+          "#d14f43",
+          "#fb7666",
+          "#feb1a5",
+          "#fee9e6"
+        ]
+      },
+      "bad-soft": {
+        "role": "risk",
+        "displayName": "Red Wash",
+        "canonical": "#fbe9e7",
+        "tonalRamp": [
+          "#130807",
+          "#2d201f",
+          "#4a3c3a",
+          "#6b5c5b",
+          "#8c7c7a",
+          "#b1a09e",
+          "#d4c3c1",
+          "#fceae8"
+        ]
+      },
+      "bad-line": {
+        "role": "risk",
+        "displayName": "Red Edge",
+        "canonical": "#f0c6c2",
+        "tonalRamp": [
+          "#1b0303",
+          "#381a18",
+          "#573533",
+          "#7a5653",
+          "#9b7572",
+          "#c19996",
+          "#e5bcb8",
+          "#ffe9e6"
+        ]
+      },
+      "info-soft": {
+        "role": "neutral",
+        "displayName": "Neutral Mark",
+        "canonical": "#e9eef0",
+        "tonalRamp": [
+          "#090c0d",
+          "#212526",
+          "#3c4042",
+          "#5d6163",
+          "#7d8183",
+          "#a1a5a7",
+          "#c3c8ca",
+          "#eaeff1"
+        ]
+      },
+      "ground-dark": {
+        "role": "neutral",
+        "displayName": "Quiet Ground (night)",
+        "canonical": "#131414",
+        "tonalRamp": [
+          "#0a0b0b",
+          "#232424",
+          "#3f4040",
+          "#5f6161",
+          "#7f8080",
+          "#a3a5a5",
+          "#c6c7c7",
+          "#edefef"
+        ]
+      },
+      "pane-dark": {
+        "role": "neutral",
+        "displayName": "White Pane (night)",
+        "canonical": "#1a1b1b",
+        "tonalRamp": [
+          "#0a0b0b",
+          "#232424",
+          "#3f4040",
+          "#5f6161",
+          "#7f8080",
+          "#a3a5a5",
+          "#c6c7c7",
+          "#edefef"
+        ]
+      },
+      "hover-dark": {
+        "role": "neutral",
+        "displayName": "Pale Wash (night)",
+        "canonical": "#252626",
+        "tonalRamp": [
+          "#0a0b0b",
+          "#232424",
+          "#3f4040",
+          "#5f6161",
+          "#7f8080",
+          "#a3a5a5",
+          "#c6c7c7",
+          "#edefef"
+        ]
+      },
+      "ink-dark": {
+        "role": "neutral",
+        "displayName": "Green-Black Ink (night)",
+        "canonical": "#e9eaea",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#232424",
+          "#3f4040",
+          "#606060",
+          "#7f8080",
+          "#a4a5a5",
+          "#c6c7c7",
+          "#eeefef"
+        ]
+      },
+      "soft-dark": {
+        "role": "neutral",
+        "displayName": "Soft Text (night)",
+        "canonical": "#a9adab",
+        "tonalRamp": [
+          "#090c0b",
+          "#222523",
+          "#3d413f",
+          "#5e6160",
+          "#7d817f",
+          "#a2a6a4",
+          "#c4c8c6",
+          "#ebf0ed"
+        ]
+      },
+      "line-dark": {
+        "role": "neutral",
+        "displayName": "Hairline (night)",
+        "canonical": "#2e3030",
+        "tonalRamp": [
+          "#0a0c0c",
+          "#222424",
+          "#3e4040",
+          "#5f6161",
+          "#7e8181",
+          "#a3a5a5",
+          "#c5c8c8",
+          "#ecefef"
+        ]
+      },
+      "line-strong-dark": {
+        "role": "neutral",
+        "displayName": "Control Edge (night)",
+        "canonical": "#6f7371",
+        "tonalRamp": [
+          "#090c0a",
+          "#222523",
+          "#3d413f",
+          "#5e615f",
+          "#7d817f",
+          "#a1a6a4",
+          "#c4c8c6",
+          "#ebf0ed"
+        ]
+      },
+      "go-dark": {
+        "role": "primary",
+        "displayName": "Deep Go Green (night)",
+        "canonical": "#39b98f",
+        "tonalRamp": [
+          "#001008",
+          "#002c1e",
+          "#004c37",
+          "#057254",
+          "#069770",
+          "#3fbe93",
+          "#68e2b6",
+          "#c1ffe4"
+        ]
+      },
+      "go-hover-dark": {
+        "role": "primary",
+        "displayName": "Darker Go Green (night)",
+        "canonical": "#4fcaa1",
+        "tonalRamp": [
+          "#001008",
+          "#002c1f",
+          "#004c38",
+          "#077255",
+          "#099772",
+          "#40bd95",
+          "#69e1b7",
+          "#bfffe5"
+        ]
+      },
+      "go-ink-dark": {
+        "role": "primary",
+        "displayName": "Go Ink (night)",
+        "canonical": "#06140f",
+        "tonalRamp": [
+          "#020e09",
+          "#192822",
+          "#34443e",
+          "#54655e",
+          "#73857e",
+          "#97aaa2",
+          "#baccc5",
+          "#e0f4ec"
+        ]
+      },
+      "go-text-dark": {
+        "role": "primary",
+        "displayName": "Green Text (night)",
+        "canonical": "#5fd0aa",
+        "tonalRamp": [
+          "#000f09",
+          "#002c1f",
+          "#034c39",
+          "#007256",
+          "#0f9673",
+          "#49bc97",
+          "#70e0b9",
+          "#bfffe6"
+        ]
+      },
+      "go-soft-dark": {
+        "role": "primary",
+        "displayName": "Green Wash (night)",
+        "canonical": "#17322a",
+        "tonalRamp": [
+          "#000f0a",
+          "#0f2a22",
+          "#2b463e",
+          "#4b675e",
+          "#6a887e",
+          "#8eaca2",
+          "#b0cfc5",
+          "#d7f7ec"
+        ]
+      },
+      "warn-soft-dark": {
+        "role": "risk",
+        "displayName": "Warning Wash (night)",
+        "canonical": "#2e2613",
+        "tonalRamp": [
+          "#110a00",
+          "#2b2310",
+          "#473f2b",
+          "#69604b",
+          "#897f6a",
+          "#aea48d",
+          "#d1c6af",
+          "#f8eed6"
+        ]
+      },
+      "warn-ink-dark": {
+        "role": "risk",
+        "displayName": "Warning Ink (night)",
+        "canonical": "#eed594",
+        "tonalRamp": [
+          "#110a00",
+          "#2e2200",
+          "#4f3d01",
+          "#745d1b",
+          "#957e3e",
+          "#baa263",
+          "#dec585",
+          "#ffedc0"
+        ]
+      },
+      "warn-line-dark": {
+        "role": "risk",
+        "displayName": "Warning Edge (night)",
+        "canonical": "#54462a",
+        "tonalRamp": [
+          "#120900",
+          "#2f2205",
+          "#4b3e22",
+          "#6d5e42",
+          "#8e7e60",
+          "#b3a384",
+          "#d6c5a6",
+          "#feedcc"
+        ]
+      },
+      "bad-dark": {
+        "role": "risk",
+        "displayName": "Stop Red (night)",
+        "canonical": "#e5675e",
+        "tonalRamp": [
+          "#200000",
+          "#4c0003",
+          "#7c020c",
+          "#a82e2b",
+          "#ce524b",
+          "#f8786e",
+          "#feb0a8",
+          "#fde9e7"
+        ]
+      },
+      "bad-hover-dark": {
+        "role": "risk",
+        "displayName": "Darker Stop Red (night)",
+        "canonical": "#ee8078",
+        "tonalRamp": [
+          "#210000",
+          "#4b0005",
+          "#781015",
+          "#9f3936",
+          "#c45b55",
+          "#ee8078",
+          "#feb0a9",
+          "#ffe9e6"
+        ]
+      },
+      "bad-ink-dark": {
+        "role": "risk",
+        "displayName": "Stop Ink (night)",
+        "canonical": "#1c0705",
+        "tonalRamp": [
+          "#180503",
+          "#341d19",
+          "#523834",
+          "#755854",
+          "#967873",
+          "#bc9c97",
+          "#dfbfb9",
+          "#ffe9e5"
+        ]
+      },
+      "bad-text-dark": {
+        "role": "risk",
+        "displayName": "Red Text (night)",
+        "canonical": "#f19a93",
+        "tonalRamp": [
+          "#210000",
+          "#4b0006",
+          "#6d2322",
+          "#934541",
+          "#b76660",
+          "#df8a83",
+          "#feb0a9",
+          "#fee9e7"
+        ]
+      },
+      "bad-soft-dark": {
+        "role": "risk",
+        "displayName": "Red Wash (night)",
+        "canonical": "#351b19",
+        "tonalRamp": [
+          "#190404",
+          "#361c1a",
+          "#543735",
+          "#775754",
+          "#987774",
+          "#be9b97",
+          "#e1beba",
+          "#ffe9e6"
+        ]
+      },
+      "bad-line-dark": {
+        "role": "risk",
+        "displayName": "Red Edge (night)",
+        "canonical": "#5a2f2b",
+        "tonalRamp": [
+          "#1f0000",
+          "#3e1613",
+          "#5d322e",
+          "#81524d",
+          "#a3726c",
+          "#ca9690",
+          "#eeb8b2",
+          "#ffe9e6"
+        ]
+      },
+      "info-soft-dark": {
+        "role": "neutral",
+        "displayName": "Neutral Mark (night)",
+        "canonical": "#262727",
+        "tonalRamp": [
+          "#0a0b0b",
+          "#232424",
+          "#3f4040",
+          "#5f6161",
+          "#7f8080",
+          "#a3a5a5",
+          "#c6c7c7",
+          "#edefef"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page headings, the subject of the open action, and result headings."
+      },
+      "empty-title": {
+        "displayName": "Empty Title",
+        "purpose": "Headings of empty states."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Section headings, form group legends, and the heading above the waiting list."
+      },
+      "row-title": {
+        "displayName": "Row Title",
+        "purpose": "The name in an account row or log row."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Reading text and input values."
+      },
+      "body-small": {
+        "displayName": "Body Small",
+        "purpose": "Secondary sentences, label and value lists, and table cells."
+      },
+      "control": {
+        "displayName": "Control",
+        "purpose": "Neutral and quiet buttons."
+      },
+      "control-strong": {
+        "displayName": "Control Strong",
+        "purpose": "Primary and danger buttons."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Second lines in lists, and log times."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "The foot of a waiting item, and the count."
+      },
+      "code": {
+        "displayName": "Code",
+        "purpose": "Tokens, fingerprints, and commands."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "ease",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "The easing of every state change and of the result mark."
+      },
+      {
+        "name": "state-change",
+        "value": "150ms",
+        "purpose": "Background, border, and text colour changes on hover."
+      },
+      {
+        "name": "press",
+        "value": "100ms",
+        "purpose": "The 0.98 scale of a pressed button."
+      },
+      {
+        "name": "mark-in",
+        "value": "320ms",
+        "purpose": "The result mark comes in with a fade and a scale from 0.7. This is the only entrance animation."
+      },
+      {
+        "name": "spin",
+        "value": "700ms linear infinite",
+        "purpose": "The spinner of a working button."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "1ms",
+        "purpose": "With reduced motion, animations and transitions take 1ms and run once."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "reader-narrow",
+        "value": "1100px"
+      },
+      {
+        "name": "menu-top",
+        "value": "900px"
+      },
+      {
+        "name": "phone",
+        "value": "680px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Neutral Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "The default button. Reject uses it.",
+      "html": "<button class=\"ds-btn\" type=\"button\">Reject</button>",
+      "css": ".ds-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:8px 16px;border-radius:var(--radius,8px);cursor:pointer;font:500 0.9375rem/1.25 system-ui,sans-serif;transition:background-color 150ms cubic-bezier(0.16,1,0.3,1),border-color 150ms cubic-bezier(0.16,1,0.3,1),transform 100ms cubic-bezier(0.16,1,0.3,1);border:1px solid var(--line-strong,#8a958f);background:var(--pane,#fff);color:var(--ink,#16201c);}.ds-btn:active{transform:scale(0.98);}.ds-btn:focus-visible{outline:2px solid var(--go,#0b6b4f);outline-offset:2px;}.ds-btn:hover{background:var(--hover,#edf1ed);}"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The action the person most likely wants next.",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\">Approve and send</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:8px 16px;border-radius:var(--radius,8px);cursor:pointer;font:500 0.9375rem/1.25 system-ui,sans-serif;transition:background-color 150ms cubic-bezier(0.16,1,0.3,1),border-color 150ms cubic-bezier(0.16,1,0.3,1),transform 100ms cubic-bezier(0.16,1,0.3,1);border:1px solid var(--go,#0b6b4f);background:var(--go,#0b6b4f);color:var(--go-ink,#fff);font-weight:600;}.ds-btn-primary:active{transform:scale(0.98);}.ds-btn-primary:focus-visible{outline:2px solid var(--go,#0b6b4f);outline-offset:2px;}.ds-btn-primary:hover{border-color:var(--go-hover,#085a42);background:var(--go-hover,#085a42);}"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "The final destructive button, after a confirmation tick box.",
+      "html": "<button class=\"ds-btn-danger\" type=\"button\">Remove account</button>",
+      "css": ".ds-btn-danger{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:8px 16px;border-radius:var(--radius,8px);cursor:pointer;font:500 0.9375rem/1.25 system-ui,sans-serif;transition:background-color 150ms cubic-bezier(0.16,1,0.3,1),border-color 150ms cubic-bezier(0.16,1,0.3,1),transform 100ms cubic-bezier(0.16,1,0.3,1);border:1px solid var(--bad,#b3261e);background:var(--bad,#b3261e);color:var(--bad-ink,#fff);font-weight:600;}.ds-btn-danger:active{transform:scale(0.98);}.ds-btn-danger:focus-visible{outline:2px solid var(--go,#0b6b4f);outline-offset:2px;}.ds-btn-danger:hover{border-color:var(--bad-hover,#93201a);background:var(--bad-hover,#93201a);}"
+    },
+    {
+      "name": "Quiet Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger-quiet",
+      "description": "A destructive action in a table row.",
+      "html": "<button class=\"ds-btn-quiet\" type=\"button\">Revoke</button>",
+      "css": ".ds-btn-quiet{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:8px 16px;border-radius:var(--radius,8px);cursor:pointer;font:500 0.9375rem/1.25 system-ui,sans-serif;transition:background-color 150ms cubic-bezier(0.16,1,0.3,1),border-color 150ms cubic-bezier(0.16,1,0.3,1),transform 100ms cubic-bezier(0.16,1,0.3,1);min-height:34px;padding:4px 12px;border:1px solid var(--line-strong,#8a958f);background:var(--pane,#fff);color:var(--bad-text,#a4231c);}.ds-btn-quiet:active{transform:scale(0.98);}.ds-btn-quiet:focus-visible{outline:2px solid var(--go,#0b6b4f);outline-offset:2px;}.ds-btn-quiet:hover{background:var(--hover,#edf1ed);}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A labelled input. The label sits above it.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-label\" for=\"ds-name\">Name</label><input class=\"ds-input\" id=\"ds-name\" value=\"Laptop agent\"></div>",
+      "css": ".ds-label{display:block;margin-bottom:4px;font:500 0.9375rem/1.55 system-ui,sans-serif;color:var(--ink,#16201c);}.ds-input{width:100%;min-height:40px;padding:7px 10px;border:1px solid var(--line-strong,#8a958f);border-radius:var(--radius,8px);background:var(--pane,#fff);color:var(--ink,#16201c);font:400 1rem/1.55 system-ui,sans-serif;transition:border-color 150ms cubic-bezier(0.16,1,0.3,1);}.ds-input:hover{border-color:var(--soft,#55615b);}.ds-input:focus-visible{border-color:var(--go,#0b6b4f);outline:2px solid var(--go,#0b6b4f);outline-offset:0;}"
+    },
+    {
+      "name": "Main Menu",
+      "kind": "nav",
+      "refersTo": "menu-link",
+      "description": "The left menu, with the current place and the waiting count.",
+      "html": "<nav class=\"ds-menu\" aria-label=\"Main menu\"><a class=\"ds-menu-link\" href=\"#\" aria-current=\"page\"><span>Waiting for you</span><span class=\"ds-count\">5</span></a><a class=\"ds-menu-link\" href=\"#\">Accounts</a><a class=\"ds-menu-link\" href=\"#\">Activity</a></nav>",
+      "css": ".ds-menu{display:flex;flex-direction:column;gap:2px;width:224px;padding:12px;background:var(--ground,#f4f6f3);}.ds-menu-link{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:var(--radius,8px);color:var(--soft,#55615b);font:400 1rem/1.55 system-ui,sans-serif;text-decoration:none;transition:background-color 150ms cubic-bezier(0.16,1,0.3,1),color 150ms cubic-bezier(0.16,1,0.3,1);}.ds-menu-link:hover{background:var(--hover,#edf1ed);color:var(--ink,#16201c);}.ds-menu-link:focus-visible{outline:2px solid var(--go,#0b6b4f);outline-offset:2px;}.ds-menu-link[aria-current]{background:var(--go-soft,#e2eee8);color:var(--go-text,#0b6b4f);font-weight:600;}.ds-count{min-width:1.5em;border-radius:999px;background:var(--go,#0b6b4f);color:var(--go-ink,#fff);font-size:0.8125rem;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.5em;text-align:center;}"
+    },
+    {
+      "name": "Waiting Item",
+      "kind": "custom",
+      "refersTo": "queue-item",
+      "description": "One held action in the waiting list. It is a row, not a card.",
+      "html": "<a class=\"ds-queue\" href=\"#\" aria-current=\"true\"><span class=\"ds-queue-title\">Invoice 4471 for October</span><span class=\"ds-queue-line\">To 3 people</span><span class=\"ds-queue-foot\"><span>person@mail.example</span><span>23 h left</span></span></a>",
+      "css": ".ds-queue{display:block;width:340px;max-width:100%;padding:12px 20px;border-top:1px solid var(--line,#dde2de);color:var(--ink,#16201c);font:400 1rem/1.55 system-ui,sans-serif;text-decoration:none;transition:background-color 150ms cubic-bezier(0.16,1,0.3,1);}.ds-queue:hover{background:var(--hover,#edf1ed);}.ds-queue:focus-visible{outline:2px solid var(--go,#0b6b4f);outline-offset:-2px;}.ds-queue[aria-current]{background:var(--go-soft,#e2eee8);}.ds-queue-title,.ds-queue-line{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.ds-queue-title{font-weight:600;}.ds-queue-line{color:var(--soft,#55615b);font-size:0.875rem;}.ds-queue-foot{display:flex;justify-content:space-between;gap:12px;margin-top:2px;color:var(--soft,#55615b);font-size:0.8125rem;font-variant-numeric:tabular-nums;}"
+    },
+    {
+      "name": "Approval Bar",
+      "kind": "custom",
+      "refersTo": "action-bar",
+      "description": "The signature decision bar, with its note and buttons, shown while the send is working.",
+      "html": "<div class=\"ds-bar\"><p class=\"ds-bar-note\"></p><div class=\"ds-bar-buttons\"><button class=\"ds-bar-btn ds-locked\" type=\"button\" aria-disabled=\"true\">Reject</button><button class=\"ds-bar-btn ds-bar-go ds-busy\" type=\"button\" aria-disabled=\"true\">Sending…</button></div></div>",
+      "css": ".ds-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 20px;padding:14px 0;border-bottom:1px solid var(--line,#dde2de);background:var(--pane,#fff);}.ds-bar-note{flex:1 1 12rem;margin:0;color:var(--soft,#55615b);font:400 0.9375rem/1.55 system-ui,sans-serif;}.ds-bar-buttons{display:flex;flex-wrap:wrap;gap:8px;}.ds-bar-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:8px 16px;border:1px solid var(--line-strong,#8a958f);border-radius:var(--radius,8px);background:var(--pane,#fff);color:var(--ink,#16201c);cursor:progress;font:500 0.9375rem/1.25 system-ui,sans-serif;}.ds-bar-go{border-color:var(--go,#0b6b4f);background:var(--go,#0b6b4f);color:var(--go-ink,#fff);font-weight:600;}.ds-locked{opacity:0.55;}.ds-busy::before{width:15px;height:15px;border:2px solid currentcolor;border-top-color:transparent;border-radius:50%;animation:ds-spin 700ms linear infinite;content:\"\";}@keyframes ds-spin{to{transform:rotate(360deg);}}"
+    },
+    {
+      "name": "Result",
+      "kind": "custom",
+      "refersTo": "outcome-mark-good",
+      "description": "The signature result: a mark that comes in with the answer, the true headline, and the next action.",
+      "html": "<section class=\"ds-out\"><div class=\"ds-out-head\"><span class=\"ds-out-mark\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M5 12.5l4.5 4.5L19 7.5\"/></svg></span><h2 class=\"ds-out-title\">Sent</h2></div><p class=\"ds-out-text\">The mail server accepted the message.</p></section>",
+      "css": ".ds-out{max-width:34rem;padding:32px 0;color:var(--ink,#16201c);font:400 1rem/1.55 system-ui,sans-serif;}.ds-out-head{display:flex;align-items:center;gap:14px;margin-bottom:16px;}.ds-out-title{margin:0;font-size:1.625rem;font-weight:650;line-height:1.25;letter-spacing:-0.02em;}.ds-out-mark{display:inline-grid;flex:none;width:44px;height:44px;border-radius:50%;background:var(--go,#0b6b4f);color:var(--go-ink,#fff);place-items:center;animation:ds-mark-in 320ms cubic-bezier(0.16,1,0.3,1);}.ds-out-mark svg{width:24px;height:24px;fill:none;stroke:currentcolor;stroke-linecap:round;stroke-linejoin:round;stroke-width:2.5;}.ds-out-text{margin:0;}@keyframes ds-mark-in{from{opacity:0;transform:scale(0.7);}}"
+    },
+    {
+      "name": "Neutral Notice",
+      "kind": "card",
+      "refersTo": "notice",
+      "description": "An ordinary message with no risk.",
+      "html": "<div class=\"ds-notice-plain\">No server settings were found for this address. Enter them yourself.</div>",
+      "css": ".ds-notice-plain{padding:12px 16px;border:1px solid var(--line,#dde2de);border-radius:var(--radius-large,12px);background:var(--info-soft,#e9eef0);color:var(--ink,#16201c);font:400 1rem/1.55 system-ui,sans-serif;}"
+    },
+    {
+      "name": "Warning Notice",
+      "kind": "card",
+      "refersTo": "notice-warn",
+      "description": "An amber notice for real risk. Its text stays exact.",
+      "html": "<div class=\"ds-notice\"><strong>Full autonomy</strong><p>With both confirmations off, the agent acts without asking you.</p></div>",
+      "css": ".ds-notice{padding:12px 16px;border:1px solid var(--warn-line,#e6d29d);border-radius:var(--radius-large,12px);background:var(--warn-soft,#fbf1d9);color:var(--warn-ink,#5c4300);font:400 1rem/1.55 system-ui,sans-serif;}.ds-notice p{margin:0;}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Held Mail",
+    "overview": "The portal is a small mail app with one folder. That folder holds the actions the agent wants, and each one stays held until the person decides. The person sees what waits, reads the whole action, decides, sees at once that the click works, and then sees the true result. Every surface serves that sequence, and setup comes second.\n\nThe look is calm and dense in the way a mail client is dense: a slightly tinted ground, white reading panes, thin rules between things, and very little colour. Colour carries meaning here and never decoration. Green says where you are and what to do next. Red and amber appear for real risk. Everything else is ink on a pane.\n\nThe system rejects the admin panel: on a desktop screen there is no top bar, and no table or setup page comes first. It is also flat, with no shadow anywhere, and it is self-contained. All of it ships inside the binary, so what you see depends on nothing from another site.",
+    "keyCharacteristics": [
+      "Three panes on a wide screen: menu, waiting list, open action.",
+      "The decision buttons stay at the top of the open action, and at the bottom of the screen on a phone.",
+      "One green, and a closed list of places where it may appear.",
+      "Thin rules separate content. Boxes are for notices.",
+      "No shadows, no gradients, no uppercase labels.",
+      "Light and dark follow the setting of the computer."
+    ],
+    "rules": [
+      {
+        "name": "The One Green Rule",
+        "body": "Green marks the primary action and the current place. Other uses are a closed list: the waiting count that leads to the primary action, proof that something worked (the good result mark, the connected status, the new-token notice), and the standard controls of the page (links, focus ring, checkbox tick, text selection). Do not add to this list. Green is never decoration, and it is never a section tint.",
+        "section": "colors"
+      },
+      {
+        "name": "The Real Risk Rule",
+        "body": "Red and amber mark real risk only: a destructive action, a failed result or error, a missing part of a message, an unencrypted connection, a certificate problem, suggested server settings that need checking, a request to change a permission, an account that needs attention, or full autonomy. Only real risk looks alarming, so a normal screen has no red and no amber. An ordinary message uses the neutral notice.",
+        "section": "colors"
+      },
+      {
+        "name": "The Quiet Failure Rule",
+        "body": "A failed result has a neutral Next button, never a green one. The Next button is green only after a result that did not fail, because a failure must not push the person on. A failed result is never styled like a success.",
+        "section": "colors"
+      },
+      {
+        "name": "The Computer's Own Fonts Rule",
+        "body": "The portal uses system fonts only. There are no web fonts, no font files, and no CDN (content delivery network, a set of external file servers). Everything is inside the binary.",
+        "section": "typography"
+      },
+      {
+        "name": "The 34rem Rule",
+        "body": "Reading text is limited to 34rem wide, not a number of `ch` units, because `ch` is too wide in this font. Message bodies, sheet paragraphs, and the sentences of a result follow it. Headers and lists may run to 44rem, because their lines are short.",
+        "section": "typography"
+      },
+      {
+        "name": "The Decision Stays Reachable Rule",
+        "body": "While an action waits, its Reject and Approve buttons stay on screen at every length of message: fixed to the top of the reader, or to the bottom of a phone screen.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat Pane Rule",
+        "body": "Nothing floats. If a surface needs to stand apart, it gets a tone change or a hairline.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Rule, Not a Box Rule",
+        "body": "A group in a form or a page is set off by a hairline above it, never by a card. A box with a background means a notice, so a box always carries a message to the person.",
+        "section": "shapes"
+      },
+      {
+        "name": "The True Result Rule",
+        "body": "Text claims only what is always true. A busy label says what is being attempted, and only the result says what happened. Safety wording stays exact: never rephrase, shorten, or restyle away the full autonomy, certificate, or no encryption warnings.",
+        "section": "components"
+      },
+      {
+        "name": "The Plain Form Rule",
+        "body": "Every form works without app.js. The script only shows that a form is working, and it never reads or sends anything by itself. No inline script and no inline style in the pages: all style lives in the one stylesheet, and the Content Security Policy blocks the rest.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do put what waits for the person first, and setup second.",
+      "Do show the whole action before asking for a decision, and show Approve only when the page shows the whole action.",
+      "Do keep green to The One Green Rule's closed list, and use each token with its night value.",
+      "Do limit reading text to 34rem, and do not measure it in `ch`.",
+      "Do separate groups with a hairline, and keep boxes for notices.",
+      "Do give a button a busy label when its action can take time: the approval decisions and the connection tests have one.",
+      "Do make the next action one click away after a result, in a neutral button if the result failed.",
+      "Do say a state in words as well as in colour.",
+      "Do use the 150ms curve of `cubic-bezier(0.16, 1, 0.3, 1)` for state changes."
+    ],
+    "donts": [
+      "Don't add a top bar above 900px, or open with a table or a setup page. Below 900px the menu row at the top is the correct layout, and a table remains correct for a list with many columns.",
+      "Don't use red for Reject. Rejecting is an ordinary decision, so its button stays neutral.",
+      "Don't use amber or red to add emphasis, and don't use green to decorate.",
+      "Don't give a failed result a green button or a success mark.",
+      "Don't write a sentence that is only sometimes true, and don't change the wording of a safety warning.",
+      "Don't add web fonts, font files, a CDN, or anything from another site.",
+      "Don't add inline script or inline style, or a form that needs app.js to work.",
+      "Don't add shadows, gradients, or backdrop blur.",
+      "Don't add uppercase labels, eyebrow text above headings, or icon characters from a font. Icons are inline line drawings.",
+      "Don't wrap groups or list rows in cards."
+    ]
+  }
+}

@@ -2,10 +2,13 @@ package web
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -19,6 +22,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/confirm"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
+	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 )
@@ -28,8 +32,10 @@ const (
 	textApprovalNotFound = "This approval was not found."
 	textNotWaiting       = "This action is no longer waiting for approval: it was approved, rejected, or it expired."
 	textAnswerInChat     = "This action waits for an answer in the chat where the agent asked. It cannot be approved or rejected here."
-	textApproved         = "Approved and done."
-	textRejected         = "Rejected. Nothing was done."
+	textSent             = "The mail server accepted the message."
+	textTrashed          = "Moved to Trash"
+	textRejected         = "Nothing was done."
+	textNotSent          = "Not sent"
 )
 
 // plainCompose is a short new message.
@@ -51,7 +57,7 @@ func TestApprovalsListShowsOnlyWhatWaitsHere(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, body, `href="/approvals/`+send+`"`)
 	require.NotContains(t, body, inBand, "an in-band action is answered in the chat")
-	require.Equal(t, 2, tableRows(t, body))
+	require.Equal(t, 2, queueRows(t, body))
 	text := visibleText(t, body)
 	require.Contains(t, text, "Lunch")
 	require.Contains(t, text, "bob@example.com")
@@ -59,7 +65,7 @@ func TestApprovalsListShowsOnlyWhatWaitsHere(t *testing.T) {
 
 	resp, body = p.get("/approvals")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, 2, tableRows(t, body), "showing the list changes nothing")
+	require.Equal(t, 2, queueRows(t, body), "showing the list changes nothing")
 	require.Empty(t, p.sender.sent())
 }
 
@@ -133,7 +139,11 @@ func requireNoMarkup(t *testing.T, page string) {
 			continue
 		}
 		switch n.DataAtom {
-		case atom.Script, atom.Img, atom.Iframe, atom.Style, atom.Object, atom.Embed, atom.B:
+		case atom.Script:
+			// The only script is the file of the binary, with nothing inside it.
+			require.True(t, strings.HasSuffix(attr(n, "src"), "/app.js"), "a script that is not the script of the binary")
+			require.Nil(t, n.FirstChild, "a script with text")
+		case atom.Img, atom.Iframe, atom.Style, atom.Object, atom.Embed, atom.B:
 			t.Fatalf("the page has a <%s> element", n.Data)
 		case atom.A:
 			require.True(t, strings.HasPrefix(attr(n, "href"), "/"), "a link leaves the page: %s", attr(n, "href"))
@@ -184,7 +194,7 @@ func TestApproveSendsQueuedMessage(t *testing.T) {
 
 	resp, body := p.get(approvalPath(id))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Contains(t, visibleText(t, body), textApproved)
+	require.Contains(t, visibleText(t, body), textSent)
 	require.NotContains(t, body, "/approve", "a done action has no buttons")
 
 	// A second approval sends nothing.
@@ -234,10 +244,10 @@ func TestExpiredApprovalCannotBeApproved(t *testing.T) {
 
 	resp, body = p.get("/approvals")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Zero(t, tableRows(t, body), "an expired action is not listed")
+	require.Zero(t, queueRows(t, body), "an expired action is not listed")
 	resp, body = p.get(approvalPath(id))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Contains(t, visibleText(t, body), "Expired.")
+	require.Contains(t, visibleText(t, body), "It can no longer be approved.")
 	require.NotContains(t, body, "/approve")
 }
 
@@ -389,7 +399,7 @@ func TestTrashApprovalPage(t *testing.T) {
 	require.Equal(t, "approved_on_web", last.Detail)
 	require.Equal(t, a.ID, last.Account)
 	_, body = p.get(approvalPath(id))
-	require.Contains(t, visibleText(t, body), textApproved)
+	require.Contains(t, visibleText(t, body), textTrashed)
 	require.NotContains(t, body, "/approve")
 
 	other := p.trashApproval(a, "r3")
@@ -403,6 +413,178 @@ func TestTrashApprovalPage(t *testing.T) {
 	require.Len(t, p.backends.backend.trashCalls(), 1, "a rejected action moves nothing")
 	_, body = p.get(approvalPath(other))
 	require.Contains(t, visibleText(t, body), textRejected)
+}
+
+// The first action opens beside the list, so the user can answer it at once.
+func TestApprovalsPageOpensTheFirstAction(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	id := p.fallbackSend(p.tenant, a, plainCompose())
+
+	resp, body := p.get("/approvals")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), "See you at noon.")
+	requireButtons(t, body, id)
+	require.Contains(t, body, `aria-current="true"`)
+	require.Empty(t, p.sender.sent())
+}
+
+// A page says so when nothing waits, and it has no buttons.
+func TestApprovalsPageWithNothingToAnswer(t *testing.T) {
+	p := newPageFixture(t)
+	resp, body := p.get("/approvals")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), "Nothing waits for you")
+	require.NotContains(t, body, "<form")
+}
+
+// The Approve button of the page shows at once that it works.
+func TestApprovalButtonsShowThatTheyWork(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	id := p.fallbackSend(p.tenant, a, plainCompose())
+
+	_, body := p.get(approvalPath(id))
+	require.Contains(t, body, `data-busy="Sending…">Approve and send</button>`)
+	require.Contains(t, body, `data-busy="Rejecting…">Reject</button>`)
+	require.Contains(t, body, "data-busy-group")
+}
+
+// The menu counts the actions that wait, on every page.
+func TestMenuCountsWhatWaits(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	_, body := p.get("/accounts")
+	require.NotContains(t, body, `class="count"`)
+
+	id := p.fallbackSend(p.tenant, a, plainCompose())
+	_, body = p.get("/accounts")
+	require.Contains(t, body, `<span class="count">1</span>`)
+
+	p.post(approvalPath(id)+"/reject", nil)
+	_, body = p.get("/accounts")
+	require.NotContains(t, body, `class="count"`)
+}
+
+// A send that the mail server refuses for good never looks like a success, even
+// though the service has finished the action.
+func TestFailedSendIsShownAsNotSent(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	id := p.fallbackSend(p.tenant, a, plainCompose())
+	p.sender.setErr(outbox.Permanent(errors.New("550 refused")))
+
+	resp, _ := p.post(approvalPath(id)+"/approve", nil)
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	require.Equal(t, confirm.StateDone, p.pending(id).State)
+
+	resp, body := p.get(approvalPath(id))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	text := visibleText(t, body)
+	require.Contains(t, text, textNotSent)
+	require.NotContains(t, text, textSent)
+	require.Contains(t, body, `class="outcome bad"`)
+	require.NotContains(t, body, "550 refused", "the text of the mail server is not shown")
+}
+
+// A send that waits for its undo window is not called sent.
+func TestQueuedSendSaysWhenItGoesOut(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account(func(a *account.Account) { a.Limits.UndoWindowConfirmed = time.Minute })
+	id := p.fallbackSend(p.tenant, a, plainCompose())
+
+	resp, _ := p.post(approvalPath(id)+"/approve", nil)
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	require.Empty(t, p.sender.sent())
+
+	_, body := p.get(approvalPath(id))
+	text := visibleText(t, body)
+	require.Contains(t, text, "It goes out at "+t0.Add(time.Minute).Local().Format("15:04:05")+".")
+	require.NotContains(t, text, textSent)
+}
+
+// The result says what was answered, and leads to the next action.
+func TestResultShowsTheActionAndTheNextOne(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	next := p.fallbackSend(p.tenant, a, mail.Compose{To: []string{"carol@example.com"}, Subject: "Later", Body: "Hi."})
+	id := p.fallbackSend(p.tenant, a, plainCompose())
+
+	p.post(approvalPath(id)+"/approve", nil)
+	_, body := p.get(approvalPath(id))
+	outcome := element(t, strings.ReplaceAll(body, `class="outcome good"`, `id="result"`), atom.Section, "result")
+	require.NotNil(t, outcome)
+	text := textOf(outcome)
+	require.Contains(t, text, "Lunch")
+	require.Contains(t, text, "To bob@example.com")
+	require.Contains(t, renderNode(t, outcome), `href="/approvals/`+next+`"`)
+	require.Contains(t, text, "Next: Later")
+}
+
+// A note lives for a short time, and their number has a limit.
+func TestAnswerNotesAreShortLived(t *testing.T) {
+	notes := answerNotes{items: make(map[string]answerNote)}
+	notes.put("a", answerNote{What: "Lunch", at: t0})
+	require.Equal(t, "Lunch", notes.get("a", t0.Add(answerNoteTTL-time.Second)).What)
+	require.Nil(t, notes.get("a", t0.Add(answerNoteTTL)))
+	require.Nil(t, notes.get("b", t0))
+
+	notes.put("b", answerNote{at: t0.Add(answerNoteTTL)})
+	require.NotContains(t, notes.items, "a", "a new note drops the old notes")
+
+	for i := range 2 * maxAnswerNotes {
+		notes.put(fmt.Sprint(i), answerNote{at: t0.Add(answerNoteTTL)})
+	}
+	require.LessOrEqual(t, len(notes.items), maxAnswerNotes)
+}
+
+func TestTimeLeft(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		30 * time.Second:              "Under 1 min left",
+		5 * time.Minute:               "5 min left",
+		23*time.Hour + 59*time.Minute: "23 h left",
+	} {
+		require.Equal(t, want, timeLeft(d))
+	}
+}
+
+// The list names one recipient, and counts many. The page of the action shows
+// every one.
+func TestListCountsManyRecipients(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	id := p.fallbackSend(p.tenant, a, mail.Compose{
+		To: []string{"bob@example.com", "carol@example.com"}, Subject: "Lunch", Body: "Hi.",
+	})
+
+	_, body := p.get(approvalPath(id))
+	require.Contains(t, visibleText(t, body), "To 2 people")
+	require.Contains(t, visibleText(t, body), "carol@example.com")
+}
+
+// On a failed send only the mark and the title are loud: the way on is quiet.
+func TestFailedSendHasAQuietNextButton(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	id := p.fallbackSend(p.tenant, a, plainCompose())
+	next := p.fallbackSend(p.tenant, a, plainCompose())
+	p.sender.setErr(outbox.Permanent(errors.New("550 refused")))
+
+	p.post(approvalPath(id)+"/approve", nil)
+	_, body := p.get(approvalPath(id))
+	require.Contains(t, body, `<a class="button" href="/approvals/`+next+`">`)
+}
+
+// The title of the tab counts what waits, as in a mail app.
+func TestTabTitleCountsWhatWaits(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	_, body := p.get("/accounts")
+	require.Contains(t, body, "<title>Accounts · email-mcp</title>")
+
+	p.fallbackSend(p.tenant, a, plainCompose())
+	_, body = p.get("/accounts")
+	require.Contains(t, body, "<title>(1) Accounts · email-mcp</title>")
 }
 
 func TestAnswerErrorTextMailServerConnection(t *testing.T) {
@@ -424,4 +606,60 @@ func TestAnswerErrorTextMailServerConnection(t *testing.T) {
 
 		require.False(t, known)
 	})
+}
+
+// The agent withdrew the send, so the page does not say that the user rejected
+// it.
+func TestSendThatTheAgentCancelledIsNotShownAsRejected(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	id := p.fallbackSend(p.tenant, a, plainCompose())
+	require.NoError(t, p.svc.CancelSend(agent(p.tenant), a.ID, id))
+
+	resp, body := p.get(approvalPath(id))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	text := visibleText(t, body)
+	require.Contains(t, text, "Cancelled")
+	require.NotContains(t, text, "Rejected")
+}
+
+// The mail server cannot hold back the list: the first action gets a time
+// limit, and past it the page offers only Reject. An action that the user opened
+// has no such limit, so its Approve button does not depend on a short wait.
+func TestSlowMailServerDoesNotHoldBackTheList(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	id := p.fallbackSend(p.tenant, a, mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Body: "Thanks."})
+
+	p.backends.backend.setGetErr(context.DeadlineExceeded)
+	resp, body := p.get("/approvals")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.True(t, p.backends.backend.hadDeadline())
+	require.Equal(t, 1, queueRows(t, body))
+	require.Contains(t, body, approvalPath(id)+"/reject")
+	require.NotContains(t, body, approvalPath(id)+"/approve")
+
+	p.backends.backend.setGetErr(nil)
+	_, body = p.get(approvalPath(id))
+	require.False(t, p.backends.backend.hadDeadline())
+	requireButtons(t, body, id)
+}
+
+// One action that cannot be read does not hide the list.
+func TestDamagedActionDoesNotHideTheList(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.fallbackSend(p.tenant, a, plainCompose())
+	p.fallbackSend(p.tenant, a, plainCompose())
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(p.dir, "email-mcp.db"))+"?_pragma=busy_timeout(5000)")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+	_, err = db.ExecContext(context.Background(), `UPDATE pending_actions SET payload = x'00'`)
+	require.NoError(t, err)
+
+	resp, body := p.get("/approvals")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 2, queueRows(t, body))
+	require.Contains(t, visibleText(t, body), "This action cannot be shown now.")
+	require.NotContains(t, body, "<form", "an action that cannot be read has no buttons")
 }

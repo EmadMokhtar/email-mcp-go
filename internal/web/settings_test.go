@@ -277,7 +277,7 @@ func TestRemoveAccount(t *testing.T) {
 
 	resp, _ = p.post(removePath, url.Values{"confirm_remove": {"1"}})
 	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
-	require.Equal(t, "/", resp.Header.Get("Location"))
+	require.Equal(t, pathAccounts, resp.Header.Get("Location"))
 	_, ok = p.reload(a)
 	require.False(t, ok)
 	_, _, err = p.store.GetAccountSecret(t.Context(), p.tenant, a.ID, "password")
@@ -294,6 +294,6 @@ func TestRemoveAccount(t *testing.T) {
 	require.Empty(t, last.Recipients)
 	require.Empty(t, p.sender.sent(), "the queued message is never sent")
 
-	resp, _ = p.get("/")
+	resp, _ = p.get("/accounts")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }

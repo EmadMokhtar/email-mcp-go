@@ -20,6 +20,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/audit"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
@@ -60,7 +63,9 @@ type choice struct {
 
 // activityRow is one entry of the log.
 type activityRow struct {
+	// Time is short, and FullTime has the year and the time zone.
 	Time       string
+	FullTime   string
 	Kind       string
 	Account    string
 	Client     string
@@ -110,20 +115,21 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 		page.Accounts = append(page.Accounts, choice{Value: string(a.ID), Label: a.Address, Selected: string(a.ID) == filter.Account})
 	}
 	for _, t := range tools {
-		page.Tools = append(page.Tools, choice{Value: t, Label: t, Selected: t == filter.Tool})
+		page.Tools = append(page.Tools, choice{Value: t, Label: plainWords(t), Selected: t == filter.Tool})
 	}
 	for _, k := range []audit.Kind{audit.KindCall, audit.KindAction} {
 		page.Kinds = append(page.Kinds, choice{Value: string(k), Label: kindLabel(k) + "s", Selected: string(k) == filter.Kind})
 	}
 	for _, e := range entries {
 		row := activityRow{
-			Time:      formatTime(e.Time),
+			Time:      logTime(e.Time, s.now()),
+			FullTime:  formatTime(e.Time),
 			Kind:      kindLabel(e.Kind),
 			Client:    clientLabel(e.Client),
-			Tool:      e.Tool,
+			Tool:      plainWords(e.Tool),
 			Count:     e.Count,
-			Outcome:   string(e.Outcome),
-			Detail:    e.Detail,
+			Outcome:   plainWords(string(e.Outcome)),
+			Detail:    plainWords(e.Detail),
 			Arguments: mime.CleanUntrusted(string(e.Arguments)),
 		}
 		if e.Account != "" {
@@ -177,4 +183,27 @@ func clientLabel(name string) string {
 		return blankName
 	}
 	return clean
+}
+
+// logTime writes the time of an entry for a person. An entry of another year
+// has its year.
+func logTime(t, now time.Time) string {
+	if t.Local().Year() == now.Local().Year() {
+		return friendlyTime(t)
+	}
+	return t.Local().Format("2 Jan 2006 at 15:04")
+}
+
+// plainWords writes a fixed code of the log as words: "send_message" gives
+// "Send message". The log keeps the code.
+func plainWords(code string) string {
+	if code == "ok" {
+		return "OK"
+	}
+	text := strings.ReplaceAll(code, "_", " ")
+	first, size := utf8.DecodeRuneInString(text)
+	if size == 0 {
+		return ""
+	}
+	return string(unicode.ToUpper(first)) + text[size:]
 }

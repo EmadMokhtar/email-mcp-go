@@ -379,7 +379,7 @@ func TestNoSecretsInLogs(t *testing.T) {
 	require.Equal(t, http.StatusSeeOther, status)
 
 	// The user looks at the activity and the approvals.
-	for _, p := range []string{"/", "/activity", "/approvals", "/connections"} {
+	for _, p := range []string{"/accounts", "/activity", "/approvals", "/connections"} {
 		status, _ = b.get(p)
 		require.Equal(t, http.StatusOK, status, p)
 	}

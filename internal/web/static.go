@@ -1,17 +1,12 @@
 package web
 
-// This file serves the static files of the pages: the stylesheets and the
-// license of Bulma. They are embedded in the binary, so a page loads nothing
-// from another site: the Content-Security-Policy allows only this origin, and
-// no inline style.
+// This file serves the static files of the pages: the stylesheet, the script
+// and the icon. They are embedded in the binary, so a page loads nothing from
+// another site: the Content-Security-Policy allows only this origin, and no
+// inline script or style.
 //
-// static/bulma.min.css is Bulma 1.0.4 (https://bulma.io), copied unchanged
-// from css/bulma.min.css of the npm package bulma@1.0.4.
-// TestBulmaIsTheReleasedFile checks its SHA-256. Its MIT license is
-// static/LICENSE-bulma.txt: the license must go with every copy of the file,
-// so it is served too, and every page with the menu links to it.
-// static/app.css has the few rules of this project that Bulma has no class
-// for.
+// static/app.css has every style of the pages. static/app.js only makes a form
+// answer at once while its request runs. Every form works without it.
 
 import (
 	"crypto/sha256"
@@ -24,7 +19,7 @@ import (
 	"strconv"
 )
 
-//go:embed static/*.css static/*.txt
+//go:embed static/*.css static/*.js static/*.svg
 var staticFS embed.FS
 
 // staticPrefix starts the address of every static file.
@@ -44,7 +39,8 @@ const codeNoStatic = "no_static"
 // type: the browser refuses a stylesheet of another type (nosniff).
 var staticTypes = map[string]string{
 	".css": "text/css; charset=utf-8",
-	".txt": "text/plain; charset=utf-8",
+	".js":  "text/javascript; charset=utf-8",
+	".svg": "image/svg+xml",
 }
 
 // staticFile is one static file: its content and its Content-Type.
@@ -86,7 +82,7 @@ func loadStatic() (staticFiles, error) {
 }
 
 // path returns the address of the static file with this name. The templates
-// call it as {{static "bulma.min.css"}}.
+// call it as {{static "app.css"}}.
 func (sf staticFiles) path(name string) (string, error) {
 	addr, ok := sf.paths[name]
 	if !ok {

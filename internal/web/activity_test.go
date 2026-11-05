@@ -34,11 +34,11 @@ func TestActivityShowsTheLog(t *testing.T) {
 
 	resp, body := p.get("/activity")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, 2, tableRows(t, body))
+	require.Equal(t, 2, logRows(t, body))
 	text := visibleText(t, body)
 	for _, want := range []string{
-		"send_message", "me@example.com", "bob@example.com", "carol@example.com", "pending_approval",
-		"confirm_sends", "<b>Claude</b>", "remove_account", "(blank name)",
+		"Send message", "me@example.com", "bob@example.com", "carol@example.com", "Pending approval",
+		"Confirm sends", "<b>Claude</b>", "Remove account", "(blank name)",
 	} {
 		require.Contains(t, text, want)
 	}
@@ -71,7 +71,7 @@ func TestActivityFilters(t *testing.T) {
 	for query, rows := range cases {
 		resp, body := p.get("/activity" + query)
 		require.Equal(t, http.StatusOK, resp.StatusCode, query)
-		require.Equal(t, rows, tableRows(t, body), query)
+		require.Equal(t, rows, logRows(t, body), query)
 	}
 
 	// The filter form offers the accounts of the tenant and the known tools.
@@ -101,7 +101,7 @@ func TestActivityLimitIsClamped(t *testing.T) {
 	for query, rows := range cases {
 		resp, body := p.get("/activity" + query)
 		require.Equal(t, http.StatusOK, resp.StatusCode, query)
-		require.Equal(t, rows, tableRows(t, body), query)
+		require.Equal(t, rows, logRows(t, body), query)
 	}
 }
 
@@ -109,17 +109,16 @@ func TestActivityShowsTheArgumentsOfACall(t *testing.T) {
 	p := newPageFixture(t)
 	a := p.account()
 	p.record(audit.Entry{Kind: audit.KindCall, Account: a.ID, Client: "Claude", Tool: "search_messages",
-		Arguments: []byte("{\"subject\":\"<b>quarterly</b>ㅤ\"}")})
+		Arguments: []byte("{\"subject\":\"<b>quarterly</b>\u3164\"}")})
 
 	resp, body := p.get("/activity")
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, 1, tableRows(t, body))
-	text := visibleText(t, body)
-	require.Contains(t, text, "Request")
-	require.Contains(t, text, `{"subject":"<b>quarterly</b>"}`)
+	require.Equal(t, 1, logRows(t, body))
+	require.Contains(t, body, "<span>Request</span>")
+	require.Contains(t, visibleText(t, body), `{"subject":"<b>quarterly</b>"}`)
 	require.NotContains(t, body, "<b>quarterly</b>", "the arguments come from the agent, so they are escaped")
-	require.NotContains(t, body, "ㅤ", "hidden characters are removed")
+	require.NotContains(t, body, "\u3164", "hidden characters are removed")
 }
 
 func TestActivityNamesTheKindOfAnAction(t *testing.T) {
@@ -128,7 +127,7 @@ func TestActivityNamesTheKindOfAnAction(t *testing.T) {
 
 	_, body := p.get("/activity")
 
-	require.Contains(t, visibleText(t, body), "Action")
+	require.Contains(t, body, "<span>Action</span>")
 	require.NotContains(t, body, "<details", "an action has no arguments to show")
 }
 
@@ -151,7 +150,7 @@ func TestActivityFilterByKind(t *testing.T) {
 	for query, want := range cases {
 		resp, body := p.get("/activity" + query)
 		require.Equal(t, http.StatusOK, resp.StatusCode, query)
-		require.Equal(t, want, tableRows(t, body), query)
+		require.Equal(t, want, logRows(t, body), query)
 	}
 }
 

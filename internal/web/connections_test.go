@@ -156,6 +156,6 @@ func TestTokenChangesAreAudited(t *testing.T) {
 
 	// The activity page offers both as a filter.
 	_, body = p.get("/activity?tool=create_token")
-	require.Equal(t, 1, tableRows(t, body))
+	require.Equal(t, 1, logRows(t, body))
 	require.Contains(t, body, `value="revoke_token"`)
 }

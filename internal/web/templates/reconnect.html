@@ -11,53 +11,48 @@
 {{define "content"}}
 {{$csrf := .CSRFToken}}
 {{with .Data}}
-<div class="columns">
-<div class="column is-10-desktop is-8-widescreen">
-<p class="mb-3"><a href="/">← Back to the accounts</a></p>
-<h1 class="title is-break-anywhere">Reconnect {{.Address}}</h1>
-{{if .Error}}<div class="notification is-danger is-light" role="alert"><strong>{{.Error}}</strong></div>{{end}}
-<p class="mb-3">Status: {{.Status}}.</p>
-<p class="mb-3">Reconnect the account after you changed its password, or after its mail server got a new certificate. The account keeps its id, its server settings, its permissions, its queued messages and its activity. To change the server settings (the hosts, the ports or the security), remove the account and add it again.</p>
-<p class="mb-5">On a computer without a browser, run <code class="is-break-anywhere">{{.Command}}</code>.</p>
+<div class="sheet">
+{{template "back" "/accounts"}}
+<header class="sheet-head"><h1 class="break">Reconnect {{.Address}}</h1></header>
+{{if .Error}}<div class="notice bad" role="alert"><strong>{{.Error}}</strong></div>{{end}}
+<p>Status: {{.Status}}.</p>
+<p>Reconnect the account after you changed its password, or after its mail server got a new certificate. The account keeps its id, its server settings, its permissions, its queued messages and its activity. To change the server settings (the hosts, the ports or the security), remove the account and add it again.</p>
+<p>On a computer without a browser, run <code class="break">{{.Command}}</code>.</p>
 
 <form method="post" action="/accounts/{{.ID}}/reconnect">
 {{template "csrf_field" $csrf}}
-<div class="box p-5">
+<div class="group">
 <div class="field">
-<label class="label" for="password">New password or app password</label>
-<div class="control"><input class="input" id="password" name="password" type="password" autocomplete="new-password"></div>
+<label for="password">New password or app password</label>
+<input class="input" id="password" name="password" type="password" autocomplete="new-password">
 </div>
-<p>Leave it empty to keep the stored password. The new password is saved, encrypted, only after the test passes. This page never keeps it, so type it again each time you test.</p>
+<p class="soft">Leave it empty to keep the stored password. The new password is saved, encrypted, only after the test passes. This page never keeps it, so type it again each time you test.</p>
 </div>
 {{if .Certs}}
-<div class="message is-warning">
-<div class="message-body">
-<fieldset>
-<legend class="has-text-weight-bold is-size-5 mb-2">Certificates</legend>
+<fieldset class="notice warn">
+<legend>Certificates</legend>
 {{range .Certs}}
-<section class="mb-4">
-<h2 class="has-text-weight-bold mb-1 is-break-anywhere">{{.Name}} server {{.Host}}:{{.Port}}</h2>
-<p class="mb-2">{{.Problem}}</p>
-{{if .OldFingerprint}}<p class="mb-2">Trusted until now, SHA-256 fingerprint: <code class="is-break-anywhere">{{.OldFingerprint}}</code></p>{{end}}
-{{if .Fingerprint}}<p class="mb-2">Shown now, SHA-256 fingerprint: <code class="is-break-anywhere">{{.Fingerprint}}</code></p>{{end}}
+<section class="cert">
+<h2 class="break">{{.Name}} server {{.Host}}:{{.Port}}</h2>
+<p>{{.Problem}}</p>
+{{if .OldFingerprint}}<p>Trusted until now, SHA-256 fingerprint: <code class="break">{{.OldFingerprint}}</code></p>{{end}}
+{{if .Fingerprint}}<p>Shown now, SHA-256 fingerprint: <code class="break">{{.Fingerprint}}</code></p>{{end}}
 {{if .CanChange}}
-{{if .Warning}}<p class="mb-2"><strong>{{.Warning}}</strong></p>{{end}}
+{{if .Warning}}<p><strong>{{.Warning}}</strong></p>{{end}}
 <input type="hidden" name="{{.Field}}_offer" value="{{.Offer}}">
-<label class="checkbox"><input type="checkbox" name="trust_{{.Field}}" value="1"{{if .Checked}} checked{{end}}> {{.Label}}</label>
+<label class="check"><input type="checkbox" name="trust_{{.Field}}" value="1"{{if .Checked}} checked{{end}}> <span>{{.Label}}</span></label>
 {{end}}
 </section>
 {{end}}
 {{if .Understand}}
-<p class="mb-3">A server that is not on this computer should have a certificate that an authority signed. A certificate that no authority signed can mean that someone on the network reads your mail and your password. Trust it only if your provider gave you this fingerprint.</p>
-<label class="checkbox"><input type="checkbox" name="understand" value="1"{{if .UnderstandChecked}} checked{{end}}> I understand the risk</label>
+<p>A server that is not on this computer should have a certificate that an authority signed. A certificate that no authority signed can mean that someone on the network reads your mail and your password. Trust it only if your provider gave you this fingerprint.</p>
+<label class="check"><input type="checkbox" name="understand" value="1"{{if .UnderstandChecked}} checked{{end}}> <span>I understand the risk</span></label>
 {{end}}
 </fieldset>
-</div>
-</div>
 {{end}}
-<button class="button is-link" type="submit">Test the connection and save</button>
+<button class="button primary" type="submit" data-busy="Testing the connection…">Test the connection and save</button>
+<p class="form-note" data-note></p>
 </form>
-</div>
 </div>
 {{end}}
 {{end}}

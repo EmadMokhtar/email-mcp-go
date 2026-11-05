@@ -4,7 +4,9 @@
 */}}
 {{define "title"}}{{.Data.Title}} · email-mcp{{end}}
 {{define "content"}}
-<h1 class="title">{{.Data.Title}}</h1>
-<div class="notification is-warning is-light" role="alert">{{.Data.Text}}</div>
-<p><a href="/">← Back to the accounts</a></p>
+<div class="sheet">
+<header class="sheet-head"><h1>{{.Data.Title}}</h1></header>
+<div class="notice" role="alert">{{.Data.Text}}</div>
+<p><a class="button" href="/">Back to the portal</a></p>
+</div>
 {{end}}
