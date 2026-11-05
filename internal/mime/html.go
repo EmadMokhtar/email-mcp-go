@@ -239,6 +239,9 @@ type visibility struct {
 	root   float64      // font size of the html element, in pixels (for rem)
 	report HiddenReport // what the walk found until now
 
+	// shownLinksOnly makes prune remove an href that the text does not show.
+	shownLinksOnly bool
+
 	// closed holds the answer of closedDetails for the details elements that
 	// the walk has met. Each child asks about its parent, and the answer reads
 	// the attributes of the parent.
@@ -616,20 +619,47 @@ func tidyLines(s string) string {
 // maxShownURL is the longest url that is shown, in characters.
 const maxShownURL = 2048
 
-// linkURL returns the url to show for an a element, or "" when none is shown.
+// linkURL returns the url that the text shows for an a element, or "" when it
+// shows none. A url that is longer than maxShownURL is not shown, and a long one
+// that fits is cut (see shortenURL). The result is exactly what the text shows,
+// so it has urlCutMark when the text does not show the whole url.
+//
+// This is the url of normalizedURL, cut. Code that must know whether the text
+// shows the whole url compares the two (see setShownLink).
+func linkURL(n *xhtml.Node) string {
+	return shownURL(parseLink(n))
+}
+
+// normalizedURL returns the whole url of an a element in one form, or "" when
+// the element has no url that may be shown. It is not cut and not limited in
+// length.
+func normalizedURL(n *xhtml.Node) string {
+	_, whole := parseLink(n)
+	return whole
+}
+
+// shownURL returns what the text shows for a url that parseLink returned. It is
+// "" for a url that is longer than maxShownURL, and the cut form of a long one.
+func shownURL(u *url.URL, whole string) string {
+	if whole == "" || len(whole) > maxShownURL {
+		return ""
+	}
+	return shortenURL(u, whole)
+}
+
+// parseLink returns the parsed url of an a element and the whole url in one
+// form. Both are empty when the element has no url that may be shown.
 //
 // The href is parsed. If it does not parse, or its scheme is not http, https
-// or mailto, nothing is shown. What is shown is the parsed url written out
-// again, with every character that is not safe in one word written as %XX.
-// That includes spaces and round brackets. Without this, a sender could write
-// an href that ends the url early and goes on with a sentence that looks like
-// text of the mail. A url that is longer than maxShownURL is not shown, and a
-// long one that fits is cut (see shortenURL). The result is exactly what the text
-// shows, so it has urlCutMark when the text does not show the whole url.
-func linkURL(n *xhtml.Node) string {
+// or mailto, nothing is shown. The form is the parsed url written out again,
+// with every character that is not safe in one word written as %XX. That
+// includes spaces and round brackets. Without this, a sender could write an
+// href that ends the url early and goes on with a sentence that looks like text
+// of the mail.
+func parseLink(n *xhtml.Node) (*url.URL, string) {
 	href, ok := attributeValue(n, "href")
 	if !ok {
-		return ""
+		return nil, ""
 	}
 	href = CleanUntrusted(href)
 	// Browsers ignore tabs and line breaks inside a url, and white space at its
@@ -644,18 +674,14 @@ func linkURL(n *xhtml.Node) string {
 
 	u, err := url.Parse(href)
 	if err != nil {
-		return ""
+		return nil, ""
 	}
 	switch u.Scheme { // url.Parse writes the scheme in lower case
 	case "http", "https", "mailto":
 	default:
-		return "" // includes a relative url, which has no meaning in a mail
+		return nil, "" // includes a relative url, which has no meaning in a mail
 	}
-	shown := escapeURL(u.String())
-	if len(shown) > maxShownURL {
-		return ""
-	}
-	return shortenURL(u, shown)
+	return u, escapeURL(u.String())
 }
 
 const (

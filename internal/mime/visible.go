@@ -47,11 +47,43 @@ func VisibleHTML(markup string) (string, error) {
 
 // ReadableHTML is VisibleHTML, and it also returns the report on what was hidden.
 func ReadableHTML(markup string) (string, HiddenReport, error) {
+	return prunedHTML(markup, false)
+}
+
+// outgoingHTML returns the HTML that a message sends for HTML from the caller:
+// the HTML of VisibleHTML, with nothing in it that a preview cannot show.
+//
+// So it has no comment, no style, no image, no other element that loads from a
+// url, no attribute but href, no text that a style hides, and no character that
+// CleanUntrusted removes. The href of a link is exactly the whole url, and only
+// when the text shows that whole url (see setShownLink). A link without such a
+// url loses its href, and its text stays. A url that linkURL cuts or does not
+// show counts as not shown. Because the styles are gone, text that a style hides
+// in a way that this package does not detect is shown: to the recipient and to
+// the user.
+//
+// It returns "" when only white space is left. Such a message has no HTML part.
+func outgoingHTML(markup string) (string, error) {
+	out, _, err := prunedHTML(markup, true)
+	if err != nil {
+		return "", err
+	}
+	out = CleanUntrusted(out)
+	if strings.TrimSpace(out) == "" {
+		return "", nil
+	}
+	return out, nil
+}
+
+// prunedHTML is ReadableHTML. With shownLinksOnly, a link keeps its href only
+// when the text shows its whole url.
+func prunedHTML(markup string, shownLinksOnly bool) (string, HiddenReport, error) {
 	doc, err := parseHTML(markup)
 	if err != nil {
 		return "", HiddenReport{}, err
 	}
 	v := newVisibility(doc)
+	v.shownLinksOnly = shownLinksOnly
 	v.prune(doc)
 
 	rendered := &limitedBuilder{max: maxVisibleHTMLBytes}
@@ -163,8 +195,11 @@ func (v *visibility) pruneElement(parent, n *xhtml.Node) {
 	case "a":
 		// A link that cannot be seen shows nothing, not even its url. Its
 		// children may still be shown, so the element stays.
-		if v.state().textHidden() {
+		switch {
+		case v.state().textHidden():
 			removeAttribute(n, "href")
+		case v.shownLinksOnly:
+			setShownLink(n)
 		}
 	case "noscript", "xmp", "plaintext":
 		// xhtml.Render writes the text of these elements as it is, without
@@ -217,6 +252,27 @@ func keepOnly(n *xhtml.Node, key string) {
 		}
 	}
 	n.Attr = kept
+}
+
+// setShownLink makes the href of a link exactly the whole url, and only when the
+// text shows that whole url. A link whose whole url the text does not show loses
+// its href, so no part of a url goes out that the user cannot read.
+//
+// The text shows the whole url when linkURL returns it as it is. A url that
+// linkURL cuts, or does not show because it is too long, loses its href. So does
+// a url that holds urlCutMark itself, because a reader takes that mark for a cut.
+func setShownLink(n *xhtml.Node) {
+	u, whole := parseLink(n)
+	shown := shownURL(u, whole)
+	if whole == "" || shown != whole || strings.Contains(shown, urlCutMark) {
+		removeAttribute(n, "href")
+		return
+	}
+	for i := range n.Attr {
+		if n.Attr[i].Key == "href" {
+			n.Attr[i].Val = whole
+		}
+	}
 }
 
 // removeAttribute removes the attributes with the given key.

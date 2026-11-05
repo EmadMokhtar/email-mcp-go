@@ -36,7 +36,7 @@ func (s *Server) Links() Links {
 }
 
 // Connect returns the address of the page where the user connects an account:
-// "http://127.0.0.1:<port>/connect".
+// "http://email-mcp.localhost:<port>/connect".
 func (l Links) Connect(ctx context.Context) (string, error) {
 	base, err := l.s.EnsureStarted(ctx)
 	if err != nil {
@@ -47,8 +47,8 @@ func (l Links) Connect(ctx context.Context) (string, error) {
 
 // Settings returns the address of the settings page of an account, with the
 // area and the level to show first:
-// "http://127.0.0.1:<port>/accounts/<id>/settings?area=mail&level=4". The page
-// changes nothing until the user submits it.
+// "http://email-mcp.localhost:<port>/accounts/<id>/settings?area=mail&level=4".
+// The page changes nothing until the user submits it.
 func (l Links) Settings(ctx context.Context, id account.AccountID, area account.Area, level account.Level) (string, error) {
 	if id == "" {
 		return "", errEmptyID
@@ -62,7 +62,7 @@ func (l Links) Settings(ctx context.Context, id account.AccountID, area account.
 }
 
 // Approval returns the address of the page where the user approves or rejects
-// a pending action: "http://127.0.0.1:<port>/approvals/<id>".
+// a pending action: "http://email-mcp.localhost:<port>/approvals/<id>".
 func (l Links) Approval(ctx context.Context, pendingID string) (string, error) {
 	if pendingID == "" {
 		return "", errEmptyID

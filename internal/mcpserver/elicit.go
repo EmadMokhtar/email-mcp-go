@@ -203,19 +203,28 @@ func linkRequest(message, link string) *mcp.CallToolResult {
 // a label, so its first line cannot pose as a header either. When the body is
 // longer than the preview, a last line says how many characters are not shown
 // (confirm.Preview.MoreCharsText), so the person knows that the text goes on.
+// The recipients are the whole envelope, so the label says that Bcc is in the
+// list, as the web page does: other recipients do not see those addresses. Each
+// recipient has its display name next to the address (confirm.Preview.Recipients).
+// When the preview cut a name, a line says how much it left out.
 //
 //	Send this email from <from>?
-//	To: <to, comma-separated>
+//	To (every recipient, Bcc included): <address ("name"), comma-separated>
+//	… and <n> more characters of display names not shown
 //	Subject: <subject>
-//	Attachments: <n> (<name>, ... and <n> more) | Attachments: none
+//	Attachments: <n> (<name> (<type>), ... and <n> more) | Attachments: none
 //
 //	Body:
 //	<first 500 chars of body>
 //	… and <n> more characters not shown
 func sendPreview(p confirm.Preview) string {
 	to := make([]string, 0, len(p.To))
-	for _, addr := range p.To {
-		to = append(to, oneLine(addr))
+	for _, recipient := range p.Recipients() {
+		to = append(to, oneLine(recipient))
+	}
+	recipients := strings.Join(to, ", ")
+	if more := p.MoreNamesText(); more != "" {
+		recipients += "\n" + more
 	}
 	body := clean(p.BodyStart)
 	shown := firstChars(body, previewBodyChars)
@@ -225,22 +234,29 @@ func sendPreview(p confirm.Preview) string {
 	if more := p.MoreCharsText(); more != "" {
 		shown += "\n" + more
 	}
-	return fmt.Sprintf("Send this email from %s?\nTo: %s\nSubject: %s\nAttachments: %s\n\nBody:\n%s",
-		oneLine(p.From), strings.Join(to, ", "), cut(oneLine(p.Subject), previewSubjectChars),
-		attachmentList(p.Attachments), shown)
+	return fmt.Sprintf("Send this email from %s?\nTo (every recipient, Bcc included): %s\nSubject: %s\nAttachments: %s\n\nBody:\n%s",
+		oneLine(p.From), recipients, cut(oneLine(p.Subject), previewSubjectChars),
+		attachmentList(p), shown)
 }
 
 // attachmentList is the attachments part of a send preview: the number of
-// attachments and at most ten of their names, or "none".
-func attachmentList(names []string) string {
+// attachments and at most ten of their names, each with its media type, or
+// "none".
+func attachmentList(p confirm.Preview) string {
+	names := p.Attachments
 	if len(names) == 0 {
 		return "none"
 	}
 	shown := make([]string, 0, min(len(names), previewNames))
-	for _, name := range names[:min(len(names), previewNames)] {
+	for i, name := range names[:min(len(names), previewNames)] {
 		name = cut(oneLine(name), previewNameChars)
 		if name == "" {
 			name = "(no name)"
+		}
+		if i < len(p.AttachmentTypes) {
+			if mediaType := oneLine(p.AttachmentTypes[i]); mediaType != "" {
+				name += " (" + mediaType + ")"
+			}
 		}
 		shown = append(shown, name)
 	}

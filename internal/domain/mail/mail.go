@@ -167,6 +167,15 @@ type Message struct {
 	// NextOffset is the offset to use in BodyOptions to read the next part of
 	// a truncated body.
 	NextOffset int
+	// AlternativesDiffer is true when the message has another version of the
+	// body that says something else than Text or HTML. Mail clients do not show
+	// that version, and it is not in this message. It is set only for the first
+	// page of the body.
+	AlternativesDiffer bool
+	// TextLeftOut is true when mail clients show more text than Text or HTML can
+	// hold: the message has too many text parts, or a part that is too large or
+	// too complex to read.
+	TextLeftOut bool
 	// HiddenContentSuspected is true when the HTML of the message has a style
 	// that can hide text and that could not be worked out. Then the body can
 	// hold text that a reader of the mail does not see.
@@ -216,6 +225,9 @@ type RawMessage struct {
 	// Recipients are the envelope recipient addresses. They include Cc and Bcc
 	// recipients.
 	Recipients []string
+	// Names are the display names of Recipients, by position. A recipient with
+	// no display name has "". It is for a confirmation: delivery does not use it.
+	Names []string
 	// Data is the message in RFC 5322 format (the internet message format).
 	Data []byte
 }
@@ -226,7 +238,8 @@ type Compose struct {
 	// To, Cc and Bcc are recipient addresses.
 	To, Cc, Bcc []string
 	Subject     string
-	// Body is the plain-text body. HTMLBody is the optional HTML body.
+	// Body is the plain-text body. HTMLBody is the optional HTML body. The
+	// message does not send HTMLBody as it is: see mime.Build.
 	Body, HTMLBody string
 	// ReplyTo is set when the message is a reply.
 	ReplyTo *ReplyRef

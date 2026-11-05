@@ -120,7 +120,10 @@ type MessageOut struct {
 	Attachments    []AttachmentRef        `json:"attachments"`
 	Untrusted      Untrusted[MessageText] `json:"untrusted"`
 
-	// These two fields come from the server, not from the sender.
+	// These come from the server, not from the sender. They hold no text of the
+	// sender, so they are outside Untrusted.
+	AlternativesDiffer     bool `json:"alternatives_differ" jsonschema:"True when the message has another version of the body that says something else than this one. Mail clients show this version, and the other one is not returned. Tell the user when it matters. Set only on the first page of the body, and always false with body_format none."`
+	TextLeftOut            bool `json:"text_left_out" jsonschema:"True when mail clients show more text than this result has: the message has too many text parts, or a part that is too large or too complex to read. Tell the user."`
 	HiddenContentSuspected bool `json:"hidden_content_suspected" jsonschema:"True when the HTML of the message has a style that can hide text and that the server could not work out. The body can hold text that a reader of the mail does not see. Tell the user."`
 	HiddenPartsDropped     int  `json:"hidden_parts_dropped" jsonschema:"How many parts of the HTML were left out of the body, because a reader of the mail does not see them."`
 }
@@ -246,6 +249,8 @@ func messageOut(m *mail.Message) MessageOut {
 			AttachmentNames: names,
 		}),
 
+		AlternativesDiffer:     m.AlternativesDiffer,
+		TextLeftOut:            m.TextLeftOut,
 		HiddenContentSuspected: m.HiddenContentSuspected,
 		HiddenPartsDropped:     m.HiddenParts,
 	}
