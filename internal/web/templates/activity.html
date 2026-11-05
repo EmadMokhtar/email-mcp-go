@@ -42,7 +42,7 @@
 <div class="log-main">
 <h2 class="log-title">{{.Tool}}{{if gt .Count 1}}, {{.Count}} items{{end}}</h2>
 {{if .Recipients}}<p class="log-line break">To {{.Recipients}}</p>{{end}}
-<p class="row-line"><span>{{.Kind}}</span><span{{if eq .Outcome "Error"}} class="danger-title"{{end}}>{{.Outcome}}</span>{{if .Detail}}<span>{{.Detail}}</span>{{end}}{{if .Account}}<span class="break">{{.Account}}</span>{{end}}<span><code class="break">{{.Client}}</code></span></p>
+<p class="row-line"><span>{{.Kind}}</span><span{{if eq .Outcome "Error"}} class="danger-title"{{end}}>{{.Outcome}}</span>{{if .Detail}}<span>{{.Detail}}</span>{{end}}{{if .Account}}<span class="break">{{.Account}}</span>{{end}}<span><code class="break">{{.Client}}</code></span>{{if .TokenID}}<span>token <code class="break">{{.TokenID}}</code></span>{{end}}</p>
 {{if .Arguments}}<details class="log-arguments"><summary>Arguments</summary><pre>{{.Arguments}}</pre></details>{{end}}
 </div>
 <time class="log-time" title="{{.FullTime}}">{{.Time}}</time>

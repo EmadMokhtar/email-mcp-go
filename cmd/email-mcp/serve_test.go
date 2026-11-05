@@ -26,6 +26,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
+	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 )
 
@@ -348,7 +349,7 @@ func (h *httpServe) connect(t *testing.T, token string, opts *mcp.ClientOptions,
 
 func (h *httpServe) token(t *testing.T, scopes ...string) string {
 	t.Helper()
-	token, err := h.app.Tokens.Create(context.Background(), store.LocalTenantID, "test", policy.Scopes(scopes))
+	token, err := h.app.Tokens.Create(context.Background(), store.LocalTenantID, "test", policy.Scopes(scopes), service.TokenOptions{})
 	require.NoError(t, err)
 	return token
 }

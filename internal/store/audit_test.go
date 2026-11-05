@@ -352,3 +352,28 @@ func TestAuditTableKeepsItsRulesForArguments(t *testing.T) {
 	require.Error(t, insert("call", []byte{}, 1), "empty arguments")
 	require.Error(t, insert("call", []byte("sealed"), 0), "a key version below 1")
 }
+
+// The token id comes back as it went in. An entry without a token has NULL in the
+// table and an empty id in the row.
+func TestAuditTokenID(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tenant, err := s.EnsureLocalTenant(ctx)
+	require.NoError(t, err)
+
+	withToken := testAuditRow(tenant, "", testNow)
+	withToken.TokenID = "tok1"
+	require.NoError(t, s.CreateAudit(ctx, withToken))
+	without := testAuditRow(tenant, "", testNow.Add(time.Second))
+	require.NoError(t, s.CreateAudit(ctx, without))
+
+	rows, err := s.ListAudit(ctx, tenant, AuditFilter{Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	require.Empty(t, rows[0].TokenID)
+	require.Equal(t, "tok1", rows[1].TokenID)
+
+	var nulls int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM audit_log WHERE token_id IS NULL`).Scan(&nulls))
+	require.Equal(t, 1, nulls)
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
+	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/tokens"
 )
 
@@ -59,7 +60,7 @@ func newRouteFixture(t *testing.T) *routeFixture {
 	p := newPageFixture(t)
 	a := p.account()
 	send := p.fallbackSend(p.tenant, a, mail.Compose{To: []string{"bob@example.com"}, Subject: "Hi", Body: "Hello"})
-	_, err := p.tokens.Create(context.Background(), p.tenant, "laptop", policy.Scopes{"email:read"})
+	_, err := p.tokens.Create(context.Background(), p.tenant, "laptop", policy.Scopes{"email:read"}, service.TokenOptions{})
 	require.NoError(t, err)
 	list, err := p.tokens.List(context.Background(), p.tenant)
 	require.NoError(t, err)

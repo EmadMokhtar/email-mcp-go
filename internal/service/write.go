@@ -67,11 +67,13 @@ type ConfirmMode int
 const (
 	// ConfirmInBand means that the client can ask the user itself, in a channel
 	// that the agent cannot answer (an elicitation). The first call returns a
-	// NeedsConfirmation, and the client calls again with the answer.
+	// NeedsConfirmation, and the client calls again with the answer. The service
+	// uses this mode only for a caller with Principal.InBandConfirm (see
+	// confirmChannel).
 	ConfirmInBand ConfirmMode = iota
-	// ConfirmFallback means that the client cannot ask the user. The first call
-	// returns "pending_approval" and a link to the web page where the user
-	// approves or rejects the action.
+	// ConfirmFallback means that the client cannot ask the user, or that the
+	// caller may not. The first call returns "pending_approval" and a link to the
+	// web page where the user approves or rejects the action.
 	ConfirmFallback
 )
 
@@ -204,6 +206,30 @@ func checkLimit(kind policy.CounterKind, lim account.Limits, n int) error {
 	return nil
 }
 
+// confirmChannel returns the confirmation mode that the call may use, for a
+// caller that sent mode and the answer ans (nil on a first call). It refuses a mode
+// that the service does not know.
+//
+// Only a caller with Principal.InBandConfirm may use the in-band way. Any other
+// caller gets ConfirmFallback, so the action waits on the approval page, whatever
+// the client says that it can do. The answer of such a caller is refused with
+// confirm.ErrStateInvalid before anything looks at it, so a request state from
+// somewhere else (another token, an old log) cannot give it the in-band way, and
+// the action stays as it was.
+func confirmChannel(p Principal, mode ConfirmMode, ans *ConfirmAnswer) (ConfirmMode, error) {
+	if err := checkMode(mode); err != nil {
+		return mode, err
+	}
+	switch {
+	case p.InBandConfirm:
+		return mode, nil
+	case ans != nil:
+		return mode, confirm.ErrStateInvalid
+	default:
+		return ConfirmFallback, nil
+	}
+}
+
 // checkMode refuses a confirmation mode that the service does not know.
 func checkMode(mode ConfirmMode) error {
 	if mode != ConfirmInBand && mode != ConfirmFallback {
@@ -239,6 +265,7 @@ func (s *Service) record(ctx context.Context, p Principal, e entry) {
 		Tenant:     p.Tenant,
 		Account:    e.account,
 		Client:     p.Client,
+		TokenID:    p.TokenID,
 		Tool:       e.tool,
 		Count:      e.count,
 		Recipients: e.recipients,
@@ -901,7 +928,7 @@ func (s *Service) Trash(ctx context.Context, id account.AccountID, refs []mail.R
 	}
 	refs, payload, err := trashRequest(refs)
 	if err == nil {
-		err = checkMode(mode)
+		mode, err = confirmChannel(acc.Principal, mode, ans)
 	}
 	if err == nil {
 		err = checkLimit(policy.CountTrash, acc.Account.Limits, len(refs))

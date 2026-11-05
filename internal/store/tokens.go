@@ -13,7 +13,7 @@ import (
 
 // APITokenRow is one access token of the local HTTP server. The store keeps only
 // the hash of a token, never the token. The tokens package makes the tokens and
-// the hashes, and checks the scope names. See migration 0007.
+// the hashes, and checks the scope names. See migrations 0007 and 0013.
 type APITokenRow struct {
 	ID     string
 	Tenant account.TenantID
@@ -24,17 +24,25 @@ type APITokenRow struct {
 	Hash []byte
 	// Scopes is never empty.
 	Scopes []string
-	// CreatedAt and RevokedAt are kept as whole milliseconds. RevokedAt is zero
-	// while the token is valid.
-	CreatedAt time.Time
-	RevokedAt time.Time
+	// InBandConfirm says that the client of the token may answer a confirmation
+	// in its own window. See migration 0013.
+	InBandConfirm bool
+	// CreatedAt, RevokedAt, ExpiresAt and LastUsedAt are kept as whole
+	// milliseconds. RevokedAt is zero while the token is not revoked. ExpiresAt
+	// is zero only on a token from before migration 0013, which does not expire.
+	// LastUsedAt is zero until the token is used.
+	CreatedAt  time.Time
+	RevokedAt  time.Time
+	ExpiresAt  time.Time
+	LastUsedAt time.Time
 }
 
 // apiTokenColumns lists the columns that scanAPIToken reads, without the hash.
-const apiTokenColumns = `id, tenant_id, name, scopes, created_at, revoked_at` //nolint:gosec // G101: column names, not a credential
+const apiTokenColumns = `id, tenant_id, name, scopes, created_at, revoked_at, ` + //nolint:gosec // G101: column names, not a credential
+	`in_band_confirm, expires_at, last_used_at`
 
-// CreateAPIToken adds a token. RevokedAt of the row is ignored: a new token is
-// valid.
+// CreateAPIToken adds a token. RevokedAt and LastUsedAt of the row are ignored: a
+// new token is valid and was never used.
 //
 // It fails if the tenant does not exist, if the tenant already has a token with
 // this id, if any token has the same hash, or if a value breaks a rule of the
@@ -53,9 +61,15 @@ func (s *Store) CreateAPIToken(ctx context.Context, row *APITokenRow) error {
 	if err != nil {
 		return fmt.Errorf("store: create api token: encode scopes: %w", err)
 	}
+	var expiresAt any
+	if !row.ExpiresAt.IsZero() {
+		expiresAt = row.ExpiresAt.UnixMilli()
+	}
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO api_tokens (tenant_id, id, name, hash, scopes, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		string(row.Tenant), row.ID, row.Name, row.Hash, string(scopes), row.CreatedAt.UnixMilli())
+		`INSERT INTO api_tokens (tenant_id, id, name, hash, scopes, created_at, in_band_confirm, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		string(row.Tenant), row.ID, row.Name, row.Hash, string(scopes), row.CreatedAt.UnixMilli(),
+		row.InBandConfirm, expiresAt)
 	if err != nil {
 		return fmt.Errorf("store: create api token: %w", err)
 	}
@@ -135,6 +149,24 @@ func (s *Store) RevokeAPIToken(ctx context.Context, tenant account.TenantID, id 
 	return nil
 }
 
+// NoteAPITokenUse sets the last use of the token to at. It changes nothing when
+// the stored time is less than gap before at, or when the tenant has no token with
+// this id, so a token that many calls use is not written each time, and two calls
+// at the same moment write once.
+func (s *Store) NoteAPITokenUse(ctx context.Context, tenant account.TenantID, id string, at time.Time, gap time.Duration) error {
+	if err := validateID("tenant", string(tenant)); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE api_tokens SET last_used_at = ?
+		WHERE tenant_id = ? AND id = ? AND (last_used_at IS NULL OR last_used_at <= ?)`,
+		at.UnixMilli(), string(tenant), id, at.Add(-gap).UnixMilli())
+	if err != nil {
+		return fmt.Errorf("store: note api token use: %w", err)
+	}
+	return nil
+}
+
 // scanAPIToken reads one row with the columns of apiTokenColumns, and the hash
 // after them when withHash is true. Times are returned in UTC.
 func scanAPIToken(row rowScanner, withHash bool) (*APITokenRow, error) {
@@ -143,8 +175,10 @@ func scanAPIToken(row rowScanner, withHash bool) (*APITokenRow, error) {
 		scopes    string
 		created   int64
 		revokedAt sql.NullInt64
+		expiresAt sql.NullInt64
+		lastUsed  sql.NullInt64
 	)
-	dest := []any{&t.ID, &t.Tenant, &t.Name, &scopes, &created, &revokedAt}
+	dest := []any{&t.ID, &t.Tenant, &t.Name, &scopes, &created, &revokedAt, &t.InBandConfirm, &expiresAt, &lastUsed}
 	if withHash {
 		dest = append(dest, &t.Hash)
 	}
@@ -157,6 +191,12 @@ func scanAPIToken(row rowScanner, withHash bool) (*APITokenRow, error) {
 	t.CreatedAt = time.UnixMilli(created).UTC()
 	if revokedAt.Valid {
 		t.RevokedAt = time.UnixMilli(revokedAt.Int64).UTC()
+	}
+	if expiresAt.Valid {
+		t.ExpiresAt = time.UnixMilli(expiresAt.Int64).UTC()
+	}
+	if lastUsed.Valid {
+		t.LastUsedAt = time.UnixMilli(lastUsed.Int64).UTC()
 	}
 	return &t, nil
 }

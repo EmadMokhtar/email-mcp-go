@@ -441,7 +441,7 @@ func TestNoPlaintextSecretsInDB(t *testing.T) {
 	b, setupURL := h.signIn()
 	unused, err := h.app.Web.NewSetupURL(context.Background())
 	require.NoError(t, err)
-	token, err := h.app.Service.CreateToken(localCtx(), "e2e", policy.Scopes{"email:read"})
+	token, err := h.app.Service.CreateToken(localCtx(), "e2e", policy.Scopes{"email:read"}, service.TokenOptions{})
 	require.NoError(t, err)
 	secretsToFind["used setup token"] = setupTokenOf(t, setupURL)
 	secretsToFind["unused setup token"] = setupTokenOf(t, unused)
@@ -853,7 +853,7 @@ func TestConfirmationCannotBeSkipped(t *testing.T) {
 		// mode will, and connects an account in it.
 		_, err := h.sqlDB().Exec(`INSERT INTO tenants (id, created_at) VALUES ('tenant-b', 0)`)
 		require.NoError(t, err)
-		tenantB := service.Principal{Tenant: "tenant-b", Client: "e2e-b"}
+		tenantB := service.Principal{Tenant: "tenant-b", Client: "e2e-b", InBandConfirm: true}
 		accountB := h.connect(service.WithPrincipal(context.Background(), tenantB), "tenant-b-k3v7@example.net", m)
 		serverB := h.app.MCPServer(mcpserver.Options{
 			InBandLegacyElicitation: true,
@@ -1547,7 +1547,7 @@ func TestLocalUIRefusesWrongHost(t *testing.T) {
 
 	t.Run("the HTTP MCP endpoint", func(t *testing.T) {
 		ts := h.httpEndpoint()
-		token, err := h.app.Service.CreateToken(localCtx(), "e2e", policy.Scopes{"email:read", "email:send"})
+		token, err := h.app.Service.CreateToken(localCtx(), "e2e", policy.Scopes{"email:read", "email:send"}, service.TokenOptions{})
 		require.NoError(t, err)
 		u, err := url.Parse(ts.URL)
 		require.NoError(t, err)
@@ -1627,7 +1627,7 @@ func TestLocalUIRefusesCrossOriginPost(t *testing.T) {
 
 	t.Run("the HTTP MCP endpoint", func(t *testing.T) {
 		ts := h.httpEndpoint()
-		token, err := h.app.Service.CreateToken(localCtx(), "e2e", policy.Scopes{"email:read", "email:send"})
+		token, err := h.app.Service.CreateToken(localCtx(), "e2e", policy.Scopes{"email:read", "email:send"}, service.TokenOptions{})
 		require.NoError(t, err)
 		sendBody := toolCallBody(t, "send_message", map[string]any{
 			"account": string(f.a.ID), "to": []any{rcptAddress}, "subject": outSubject, "body": outBody,

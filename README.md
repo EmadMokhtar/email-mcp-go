@@ -247,7 +247,8 @@ message (up to 20, and how many more). It asks in one of two ways:
   "Confirm". The app must support MCP elicitation (a way for a server to ask the
   person a question through the app). Over stdio this works for every protocol
   version. Over HTTP it works only for apps that use the MCP protocol version
-  2026-07-28 or newer.
+  2026-07-28 or newer, and only with a token that you made with
+  `--in-band-confirm` (see [Local HTTP mode](#local-http-mode)).
 - **With an approval link.** Otherwise the tool answers `pending_approval` with
   a link to the **Waiting for you** page. Open it in the browser that `email-mcp
   setup` signed in, and click **Approve** or **Reject**. The link expires after
@@ -256,7 +257,10 @@ message (up to 20, and how many more). It asks in one of two ways:
 The confirmation is only as good as the AI app. The server trusts the app to
 show the form to a person. It does not trust the model. An app that answers the
 form by itself defeats the confirmation. For example, do not set up a Claude
-Code `Elicitation` hook that answers it automatically.
+Code `Elicitation` hook that answers it automatically. Over stdio, this trust
+goes to the app that you started. Over HTTP, the server gives this trust only
+to a token where you chose it, because any program with a token can claim to
+show a form. Every other token uses the approval link.
 
 **Full autonomy** means both switches are off. The agent then sends and moves
 mail to the Trash without asking. You can turn it on only on the settings page,
@@ -522,6 +526,33 @@ the scopes that the app needs.
   `email:organize`, `email:draft`, `email:send` and `email:delete`, or `all`. A
   token with fewer scopes allows less, even when the account level allows
   more.
+- **Scopes add up. They are not separate permissions.** Each scope stands for a
+  [permission level](#permission-levels), and a level includes every level
+  under it. So `email:send` alone also allows reading, organizing and drafting.
+  `email:delete` allows everything. A token works on every account of the
+  install. The level that applies to an account is the lower of the account
+  level and the highest level of the token. `token create` and `token list`
+  print it, for example
+  `effective maximum level: 4 (Send), includes read, organize, draft`.
+- **A token ends.** A new token stops working after 90 days. Choose another
+  time with `--expires-in`, such as `--expires-in 30d` or `--expires-in 12h`
+  (from 1 minute to 3650 days). A token from before this rule has no end date
+  and works until you revoke it. `token list` shows the end date and about when
+  the token was last used. To replace a token, make a new one and revoke the
+  old one.
+- **Confirmations go to the approval link by default.** A send or a move to the
+  Trash that needs a confirmation waits on the **Waiting for you** page, even
+  when the app says that it can show a form. To let the app ask you in its own
+  window, make the token with `--in-band-confirm`:
+
+  ```sh
+  email-mcp token create --name my-app --scopes email:send --in-band-confirm
+  ```
+
+  Do this only for an app that shows you the form. With this flag, any program
+  with the token can answer the form for you. A token from before this rule
+  does not have the flag. Make a new token to get it. The **Connections** page
+  has the same choice.
 - Some apps keep the token in plain text in their config file.
   [docs/harnesses.md](docs/harnesses.md) shows how to keep it out of the file
   where the app allows it.
@@ -536,7 +567,8 @@ the scopes that the app needs.
   one.
 
 Over HTTP, an app that uses an MCP protocol version older than 2026-07-28 gets
-the approval link for every confirmation, not the in-band form. See
+the approval link for every confirmation, not the in-band form, also with
+`--in-band-confirm`. See
 [Confirmations and full autonomy](#confirmations-and-full-autonomy).
 
 ## Moving from the old email-mcp
@@ -676,7 +708,7 @@ More help:
 | `email-mcp serve --http 127.0.0.1:8765` | Serves MCP over local HTTP at `/mcp`. |
 | `email-mcp setup` | Signs your browser in to the local web pages, and serves them until Ctrl-C. |
 | `email-mcp account add\|list\|reconnect\|remove\|test` | Manages accounts without a browser. `reconnect <id>` gives an account a new password or trusts its new certificate, and keeps the account. `remove <id>` asks first; add `--yes` without a terminal. |
-| `email-mcp token create\|list\|revoke` | Manages the tokens of local HTTP mode. |
+| `email-mcp token create\|list\|revoke` | Manages the tokens of local HTTP mode. `create` takes `--expires-in` and `--in-band-confirm`. |
 | `email-mcp import-env [path]` | Imports the account of an old `.env` file. |
 | `email-mcp key rotate --to file:<path>\|keychain` | Changes the master key. |
 | `email-mcp doctor` | Checks the install. |

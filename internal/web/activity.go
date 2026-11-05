@@ -72,11 +72,13 @@ type choice struct {
 // activityRow is one entry of the log.
 type activityRow struct {
 	// Time is short, and FullTime has the year and the time zone.
-	Time       string
-	FullTime   string
-	Kind       string
-	Account    string
-	Client     string
+	Time     string
+	FullTime string
+	Kind     string
+	Account  string
+	Client   string
+	// TokenID is the id of the access token of the call, or empty.
+	TokenID    string
 	Tool       string
 	Count      int
 	Outcome    string
@@ -134,6 +136,7 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 			FullTime:  formatTime(e.Time),
 			Kind:      kindLabel(e.Kind),
 			Client:    clientLabel(e.Client),
+			TokenID:   e.TokenID,
 			Tool:      plainWords(e.Tool),
 			Count:     e.Count,
 			Outcome:   plainWords(string(e.Outcome)),

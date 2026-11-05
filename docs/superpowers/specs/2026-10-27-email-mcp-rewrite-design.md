@@ -457,7 +457,7 @@ The design uses the MRTR pattern ("multi round-trip request"): the tool returns 
 
 On stdio, the SDK turns this into the old `elicitation/create` call for pre-`2026-07-28` clients, so the same handler serves every version. Over stateless HTTP, older clients cannot receive that call (6.1) and take the fallback below.
 
-**Fallback for clients without elicitation, and for older clients over HTTP:**
+**Fallback for clients without elicitation, for older clients over HTTP, and for HTTP tokens without `--in-band-confirm`:**
 
 - The tool returns `pending_approval` with a link to the Approvals page (8.2).
 - The agent can poll `get_send_status`. The equivalent status tool covers calendar and contact actions. **[builder]**
@@ -468,6 +468,7 @@ On stdio, the SDK turns this into the old `elicitation/create` call for pre-`202
 
 - The design trusts the harness to show the elicitation to a person. It does not trust the model.
 - A harness that answers elicitations automatically defeats confirmation. The docs say so.
+- Over HTTP, the server does not take a client's word for it. Any program with a token can claim form elicitation and answer its own form. So a token gets the in-band path only when the user made it with `--in-band-confirm`. Every other token uses the fallback below. On stdio, the user started the client, so it gets the in-band path.
 
 ### 7.6 Guardrails that stay on in full autonomy
 
@@ -1189,7 +1190,7 @@ Remove these completely:
 | CalDAV/CardDAV servers differ (group format, scheduling support, vCard version) | Features that work on one server and fail on another | Detect capabilities at connect time. Fall back as described in 12.4, 12.5, and 13.2. Test against two servers. |
 | Google verification (CASA for Gmail, the sensitive review for calendar and contacts) | Hosted use is capped at 100 users until it passes | Local mode works without it. Plan verification before the public hosted launch. |
 | Elicitation support differs between harnesses, and pre-2026 clients over HTTP get none | Confirmation falls back to web approval | The Approvals page is a main path (7.5). Document which harness gets which flow. |
-| A harness auto-answers elicitations | Confirmation becomes meaningless | Document it. The guardrails still apply. |
+| A harness auto-answers elicitations | Confirmation becomes meaningless | Document it. Over HTTP, in-band confirmation is opt-in per token. The guardrails still apply. |
 | Shell-capable agents in local mode | They can bypass local protections | Out of scope by decision (10.1). Documented, with deny rules. |
 | The MCP spec changes again | Rework | Rely on the SDK for protocol details. Keep tool logic version-independent. |
 | Microsoft consent policies in work tenants | Users blocked at consent | Admin-consent docs. Publisher verification for hosted. |

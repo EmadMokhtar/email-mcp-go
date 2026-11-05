@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -18,17 +19,19 @@ import (
 type fakeTokens struct {
 	mu      sync.Mutex
 	created []string
+	options []TokenOptions
 	revoked []string
 	err     error
 }
 
-func (f *fakeTokens) Create(_ context.Context, tenant account.TenantID, name string, _ policy.Scopes) (string, error) {
+func (f *fakeTokens) Create(_ context.Context, tenant account.TenantID, name string, _ policy.Scopes, opts TokenOptions) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return "", f.err
 	}
 	f.created = append(f.created, string(tenant)+"/"+name)
+	f.options = append(f.options, opts)
 	return "emcp_secret-token-text", nil
 }
 
@@ -58,7 +61,7 @@ func TestTokenChangesAreAudited(t *testing.T) {
 	toks := &fakeTokens{}
 	env := newWriteEnv(t, func(d *Deps) { d.Tokens = toks })
 
-	token, err := env.svc.CreateToken(env.webCtx(), "my laptop", policy.Scopes{"email:read"})
+	token, err := env.svc.CreateToken(env.webCtx(), "my laptop", policy.Scopes{"email:read"}, TokenOptions{})
 	require.NoError(t, err)
 	require.Equal(t, "emcp_secret-token-text", token)
 	require.Equal(t, []string{string(env.f.tenant) + "/my laptop"}, toks.created, "the token is made for the tenant of the caller")
@@ -83,15 +86,40 @@ func TestFailedTokenChangesAreNotAudited(t *testing.T) {
 	toks := &fakeTokens{err: errors.New("the database failed")}
 	env := newWriteEnv(t, func(d *Deps) { d.Tokens = toks })
 
-	_, err := env.svc.CreateToken(env.webCtx(), "x", policy.Scopes{"email:read"})
+	_, err := env.svc.CreateToken(env.webCtx(), "x", policy.Scopes{"email:read"}, TokenOptions{})
 	require.Error(t, err)
 	require.Error(t, env.svc.RevokeToken(env.webCtx(), "tok-1"))
 	require.Empty(t, env.entries())
 
 	toks.err = nil
-	_, err = env.svc.CreateToken(context.Background(), "x", policy.Scopes{"email:read"})
+	_, err = env.svc.CreateToken(context.Background(), "x", policy.Scopes{"email:read"}, TokenOptions{})
 	require.ErrorIs(t, err, ErrNoPrincipal)
 	require.ErrorIs(t, env.svc.RevokeToken(context.Background(), "tok-1"), ErrNoPrincipal)
 	require.Empty(t, toks.created)
 	require.Empty(t, toks.revoked)
+}
+
+// The choices of the user reach the TokenMaker as they are.
+func TestCreateTokenPassesTheOptions(t *testing.T) {
+	toks := &fakeTokens{}
+	env := newWriteEnv(t, func(d *Deps) { d.Tokens = toks })
+	want := TokenOptions{InBandConfirm: true, ExpiresIn: time.Hour}
+
+	_, err := env.svc.CreateToken(env.webCtx(), "my laptop", policy.Scopes{"email:read"}, want)
+
+	require.NoError(t, err)
+	require.Equal(t, []TokenOptions{want}, toks.options)
+}
+
+// An audit entry of a call with a token names the token by its id.
+func TestEntryHoldsTheTokenID(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	ctx := WithPrincipal(context.Background(), Principal{Tenant: env.f.tenant, Client: "token-client", TokenID: "tok1"})
+	c := compose("bob@example.com")
+
+	_, _, err := env.svc.Send(ctx, a.ID, &c, nil, ConfirmFallback, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "tok1", env.lastEntry().TokenID)
 }

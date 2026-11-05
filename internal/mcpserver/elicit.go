@@ -18,12 +18,15 @@ package mcpserver
 // result.
 //
 // A client that cannot show a form gets the fallback of the service:
-// "pending_approval" and a link to the approval page.
+// "pending_approval" and a link to the approval page. So does a caller that may
+// not confirm in band (service.Principal.InBandConfirm): over HTTP, any program
+// with a token can say that it shows a form, and then answer the form by itself.
 //
 // The links of request_permission_change and connect_account can go the same
 // way, as a URL elicitation, when the client can open a link for the person.
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -76,13 +79,18 @@ var errBadAnswer = failure(codeConfirmation, `The confirmation answer is incompl
 
 // canElicitInBand reports whether the client can show the confirmation form to
 // the person in this call. It needs:
+//   - a caller that may confirm in band (service.Principal.InBandConfirm). What a
+//     client says about itself does not count for this;
 //   - form elicitation in the capabilities of the client. An elicitation
 //     capability with neither form nor url counts as form, as the protocol says
 //     for older clients;
 //   - and a way to ask: the protocol version 2026-07-28 or later (input
 //     requests in the result), or opts.InBandLegacyElicitation (stdio, where the
 //     SDK asks an older client with elicitation/create in the same session).
-func canElicitInBand(req *mcp.CallToolRequest, opts Options) bool {
+func canElicitInBand(ctx context.Context, req *mcp.CallToolRequest, opts Options) bool {
+	if p, err := service.PrincipalFrom(ctx); err != nil || !p.InBandConfirm {
+		return false
+	}
 	caps := req.ClientCapabilities()
 	if caps == nil || caps.Elicitation == nil {
 		return false
@@ -111,8 +119,8 @@ func canAsk(req *mcp.CallToolRequest, opts Options) bool {
 }
 
 // confirmMode returns the confirmation mode of a first call.
-func confirmMode(req *mcp.CallToolRequest, opts Options) service.ConfirmMode {
-	if canElicitInBand(req, opts) {
+func confirmMode(ctx context.Context, req *mcp.CallToolRequest, opts Options) service.ConfirmMode {
+	if canElicitInBand(ctx, req, opts) {
 		return service.ConfirmInBand
 	}
 	return service.ConfirmFallback

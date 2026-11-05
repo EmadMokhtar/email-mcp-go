@@ -278,7 +278,7 @@ func (p *pageFixture) reload(a *account.Account) (*account.Account, bool) {
 
 // agent returns the context of a tool call of an agent of the tenant.
 func agent(tenant account.TenantID) context.Context {
-	return service.WithPrincipal(context.Background(), service.Principal{Tenant: tenant, Client: "test-agent"})
+	return service.WithPrincipal(context.Background(), service.Principal{Tenant: tenant, Client: "test-agent", InBandConfirm: true})
 }
 
 // addTenant adds another tenant. The store has no call for it, so the test

@@ -116,7 +116,7 @@ func localPrincipal(_ context.Context, req *mcp.CallToolRequest) (service.Princi
 			client = info.Name
 		}
 	}
-	return service.Principal{Tenant: store.LocalTenantID, Client: client}, nil
+	return service.Principal{Tenant: store.LocalTenantID, Client: client, InBandConfirm: true}, nil
 }
 
 // localCtx returns a context with the local user as the caller, as the web

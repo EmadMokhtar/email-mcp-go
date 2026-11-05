@@ -7,6 +7,7 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/audit"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
@@ -21,13 +22,24 @@ const (
 	detailTokenRevoked = "token_revoked"
 )
 
+// TokenOptions are the choices for a new access token. The zero value is the safe
+// one: no in-band confirmation, and the default lifetime.
+type TokenOptions struct {
+	// InBandConfirm lets the client of the token answer a confirmation in its own
+	// window. See Principal.InBandConfirm.
+	InBandConfirm bool
+	// ExpiresIn is how long the token stays valid. Zero means the default of the
+	// TokenMaker.
+	ExpiresIn time.Duration
+}
+
 // TokenMaker makes and revokes the access tokens of the local HTTP server.
 // *tokens.Manager implements it. The tokens package uses this package, so this
 // package names only the calls that it needs.
 type TokenMaker interface {
 	// Create makes a token for the tenant and returns it. This is the only time
 	// the token is seen.
-	Create(ctx context.Context, tenant account.TenantID, name string, scopes policy.Scopes) (string, error)
+	Create(ctx context.Context, tenant account.TenantID, name string, scopes policy.Scopes, opts TokenOptions) (string, error)
 	// Revoke revokes the token of the tenant with the id.
 	Revoke(ctx context.Context, tenant account.TenantID, id string) error
 }
@@ -42,7 +54,7 @@ var errNoTokens = errors.New("service: the token maker and the audit log must be
 //
 // The audit entry "token_created" is an entry of the tenant. It never holds the
 // token or its name. A token that was not made writes no entry.
-func (s *Service) CreateToken(ctx context.Context, name string, scopes policy.Scopes) (string, error) {
+func (s *Service) CreateToken(ctx context.Context, name string, scopes policy.Scopes, opts TokenOptions) (string, error) {
 	p, err := PrincipalFrom(ctx)
 	if err != nil {
 		return "", err
@@ -50,7 +62,7 @@ func (s *Service) CreateToken(ctx context.Context, name string, scopes policy.Sc
 	if s.d.Tokens == nil || s.d.Audit == nil {
 		return "", errNoTokens
 	}
-	token, err := s.d.Tokens.Create(ctx, p.Tenant, name, scopes)
+	token, err := s.d.Tokens.Create(ctx, p.Tenant, name, scopes, opts)
 	if err != nil {
 		return "", err
 	}

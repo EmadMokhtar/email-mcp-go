@@ -48,6 +48,18 @@ func TestActivityShowsTheLog(t *testing.T) {
 
 // The filters are exact matches from fixed lists. A value that is not in the
 // list is ignored.
+// An entry of a call with an access token shows the id of the token.
+func TestActivityShowsTheTokenID(t *testing.T) {
+	p := newPageFixture(t)
+	p.record(audit.Entry{Client: "app", Tool: "send_message", TokenID: "ab2c3d"})
+	p.record(audit.Entry{Client: "stdio-app", Tool: "list_accounts"})
+
+	_, body := p.get("/activity")
+
+	require.Contains(t, visibleText(t, body), "ab2c3d")
+	require.Equal(t, 1, strings.Count(body, "<span>token <code"), "the entry without a token shows none")
+}
+
 func TestActivityFilters(t *testing.T) {
 	p := newPageFixture(t)
 	a := p.account()

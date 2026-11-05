@@ -497,7 +497,7 @@ func (d *deps) sendMessage(ctx context.Context, req *mcp.CallToolRequest, in sen
 		c = &built
 	}
 
-	res, nc, err := d.svc.Send(ctx, account.AccountID(in.Account), c, draft, d.modeFor(req, ans), ans)
+	res, nc, err := d.svc.Send(ctx, account.AccountID(in.Account), c, draft, d.modeFor(ctx, req, ans), ans)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -519,12 +519,13 @@ func (d *deps) sendMessage(ctx context.Context, req *mcp.CallToolRequest, in sen
 }
 
 // modeFor returns the confirmation mode of a call. A second call carries the
-// answer, so its mode is in band.
-func (d *deps) modeFor(req *mcp.CallToolRequest, ans *service.ConfirmAnswer) service.ConfirmMode {
+// answer, so its mode is in band. The service refuses the answer of a caller that
+// may not confirm in band (see service.Principal.InBandConfirm).
+func (d *deps) modeFor(ctx context.Context, req *mcp.CallToolRequest, ans *service.ConfirmAnswer) service.ConfirmMode {
 	if ans != nil {
 		return service.ConfirmInBand
 	}
-	return confirmMode(req, d.opts)
+	return confirmMode(ctx, req, d.opts)
 }
 
 func (d *deps) cancelSend(ctx context.Context, _ *mcp.CallToolRequest, in cancelInput) (*mcp.CallToolResult, CancelOut, error) {
@@ -547,7 +548,7 @@ func (d *deps) trashMessages(ctx context.Context, req *mcp.CallToolRequest, in t
 	if err != nil {
 		return nil, nil, err
 	}
-	res, nc, err := d.svc.Trash(ctx, account.AccountID(in.Account), refs, d.modeFor(req, ans), ans)
+	res, nc, err := d.svc.Trash(ctx, account.AccountID(in.Account), refs, d.modeFor(ctx, req, ans), ans)
 	if err != nil {
 		return nil, nil, err
 	}

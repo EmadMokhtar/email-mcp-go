@@ -24,6 +24,18 @@ type Principal struct {
 	// Client is the name that the MCP client gave for itself. It is for the
 	// audit log only. It is not trusted.
 	Client string
+	// TokenID is the id of the access token of the call, for the audit log. It is
+	// empty for a caller without a token. It is the id that "token list" shows,
+	// never the token.
+	TokenID string
+	// InBandConfirm says that the client may answer a confirmation in its own
+	// window (see ConfirmInBand). Such an answer is only as good as the client:
+	// the client alone decides whether a person saw the form. So the caller must
+	// be trusted for it. It is true for the local stdio client, and for a token
+	// that the user made with this choice. Any other caller gets the approval
+	// page. The zero value is false, so a caller that nobody thought about cannot
+	// say the "yes" of the user.
+	InBandConfirm bool
 }
 
 // principalKey is the context key for the Principal. It is a private type, so

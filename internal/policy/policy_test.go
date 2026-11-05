@@ -363,6 +363,24 @@ func TestMaxScopeLevel(t *testing.T) {
 	require.Equal(t, account.MailDraft, maxScopeLevel(Scopes{"email:draft", "email:read", "nope"}))
 }
 
+func TestEffectiveLevel(t *testing.T) {
+	for _, tc := range []struct {
+		scopes Scopes
+		want   string
+	}{
+		{Scopes{"email:read"}, "1 (Read)"},
+		{Scopes{"email:organize"}, "2 (Organize), includes read"},
+		{Scopes{"email:draft"}, "3 (Draft), includes read, organize"},
+		{Scopes{"email:send"}, "4 (Send), includes read, organize, draft"},
+		{Scopes{"email:delete"}, "5 (Delete), includes read, organize, draft, send"},
+		{Scopes{"email:read", "email:send"}, "4 (Send), includes read, organize, draft"},
+		{Scopes{}, "0 (Off)"},
+		{Scopes{"nope"}, "0 (Off)"},
+	} {
+		require.Equal(t, tc.want, EffectiveLevel(tc.scopes), "%v", tc.scopes)
+	}
+}
+
 func TestKnownScope(t *testing.T) {
 	for _, scope := range []string{"email:read", "email:organize", "email:draft", "email:send", "email:delete"} {
 		require.True(t, KnownScope(scope), scope)
