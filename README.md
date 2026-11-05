@@ -596,7 +596,8 @@ After the import:
   the agent.
 - In the text of a message, a long link is cut: the scheme, the host, up to 64
   characters of the path and up to 32 of the query, and then `...[cut]`. The
-  `html` body format has the whole link.
+  `html` body format has the whole link. The same cut applies to the text part
+  of mail that goes out and to the approval preview.
 
 ## Troubleshooting
 

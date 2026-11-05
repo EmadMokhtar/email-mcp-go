@@ -88,30 +88,32 @@ import (
 // Links are written as "text (url)". The url is parsed and shown with spaces,
 // round brackets and other unsafe characters written as %XX, so that it is one
 // word. It is shown only for http, https and mailto, only if it is no longer
-// than 2048 characters, and only if the link can be seen. Block elements
-// become line breaks. The result is passed through CleanUntrusted, so it is
-// always valid UTF-8 with no invisible characters.
+// than 2048 characters, and only if the link can be seen. A long url is cut (see
+// linkURL). Block elements become line breaks. The result is passed through
+// CleanUntrusted, so it is always valid UTF-8 with no invisible characters.
 //
 // A document that would make the parser do too much work, that is nested more
 // than 512 elements deep, or whose text would be longer than
 // maxConvertedTextBytes, gives an empty string and an error that wraps
 // ErrHTMLTooComplex. Nothing is returned for it, instead of text that was not
 // checked. The size of the markup is not limited here: the caller does that.
-//
-// The links stay whole, because this text goes out with mail and into the preview
-// that a person approves, and data can be in a query. For mail that an agent
-// reads, use ReadableText.
 func HTMLToText(markup string) (string, error) {
-	text, _, err := convertToText(markup, false)
+	text, _, err := ReadableText(markup)
 	return text, err
 }
 
-// ReadableText is HTMLToText for mail that comes in, for an agent to read. It
-// also returns the report on what was hidden. And a link is shortened (see
-// shortenURL), so a sender cannot put a long text where the agent reads it as a
-// url. The agent can get the whole link from the body format html.
+// ReadableText is HTMLToText, and it also returns the report on what was hidden.
 func ReadableText(markup string) (string, HiddenReport, error) {
-	return convertToText(markup, true)
+	doc, err := parseHTML(markup)
+	if err != nil {
+		return "", HiddenReport{}, err
+	}
+	r := textRenderer{visibility: newVisibility(doc)}
+	r.walk(doc)
+	if r.full {
+		return "", HiddenReport{}, fmt.Errorf("%w: %w", ErrHTMLTooComplex, errConvertedTooLarge)
+	}
+	return CleanUntrusted(tidyLines(string(r.buf))), r.result(), nil
 }
 
 // HiddenReport says what the check for hidden content found in one document.
@@ -127,26 +129,13 @@ type HiddenReport struct {
 	Dropped int
 }
 
-func convertToText(markup string, shortLinks bool) (string, HiddenReport, error) {
-	doc, err := parseHTML(markup)
-	if err != nil {
-		return "", HiddenReport{}, err
-	}
-	r := textRenderer{visibility: newVisibility(doc), shortLinks: shortLinks}
-	r.walk(doc)
-	if r.full {
-		return "", HiddenReport{}, fmt.Errorf("%w: %w", ErrHTMLTooComplex, errConvertedTooLarge)
-	}
-	return CleanUntrusted(tidyLines(string(r.buf))), r.result(), nil
-}
-
 // maxConvertedTextBytes is the longest text that HTMLToText makes, in bytes.
 //
 // The work budget of the parser bounds the tree, but not the text. The parser
 // copies a link into each paragraph that follows it, and the url is written
-// for each copy. The url can also grow three times when it is written (a space
-// or a byte that is not ASCII becomes %XX). Without this limit, 85 KB of markup
-// with a link of 700 bytes and 21,000 paragraphs gave 43 MB of text.
+// for each copy. Before linkURL cut long urls, 85 KB of markup with a link of 700
+// bytes and 21,000 paragraphs gave 43 MB of text. This limit holds for any other
+// way to make a text larger than its markup.
 //
 // The limit counts the text as it is built: with the line breaks of the blocks
 // and the spaces that tidyLines takes away at the end. The result is never
@@ -276,12 +265,11 @@ func (v *visibility) result() HiddenReport {
 // textRenderer collects the text of a parsed document.
 type textRenderer struct {
 	visibility
-	buf        []byte
-	pre        int        // how many pre elements we are inside
-	bullet     bool       // a list item started and its "- " is not written yet
-	links      []linkMark // links that are open, innermost last
-	full       bool       // the text reached maxConvertedTextBytes; the walk stops
-	shortLinks bool       // show links as shortenURL does
+	buf    []byte
+	pre    int        // how many pre elements we are inside
+	bullet bool       // a list item started and its "- " is not written yet
+	links  []linkMark // links that are open, innermost last
+	full   bool       // the text reached maxConvertedTextBytes; the walk stops
 }
 
 // room reports whether n more bytes fit in the text. When they do not, it
@@ -502,20 +490,16 @@ func (r *textRenderer) endLink(n *xhtml.Node) {
 	// bytes.TrimSpace does not copy, and neither does the comparison. A copy of
 	// the text of every open link would be slow for links inside links.
 	shown := bytes.TrimSpace(r.buf[m.start:])
-	link := m.url
-	if r.shortLinks {
-		link = shortenURL(link)
-	}
 	switch {
 	case len(shown) == 0:
 		// No visible text, for example a link around an image. Show the url
 		// alone, so the reader still sees where the link goes.
 		r.space()
-		r.text(link)
+		r.text(m.url)
 	case string(shown) == m.url:
 		// The text already is the url. Show it once.
 	default:
-		r.text(" (" + link + ")")
+		r.text(" (" + m.url + ")")
 	}
 }
 
@@ -626,7 +610,9 @@ const maxShownURL = 2048
 // again, with every character that is not safe in one word written as %XX.
 // That includes spaces and round brackets. Without this, a sender could write
 // an href that ends the url early and goes on with a sentence that looks like
-// text of the mail. A url that is longer than maxShownURL is not shown.
+// text of the mail. A url that is longer than maxShownURL is not shown, and a
+// long one that fits is cut (see shortenURL). The result is exactly what the text
+// shows.
 func linkURL(n *xhtml.Node) string {
 	href, ok := attributeValue(n, "href")
 	if !ok {
@@ -656,7 +642,7 @@ func linkURL(n *xhtml.Node) string {
 	if len(shown) > maxShownURL {
 		return ""
 	}
-	return shown
+	return shortenURL(shown)
 }
 
 const (
@@ -669,9 +655,9 @@ const (
 	urlCutMark = "...[cut]"
 )
 
-// shortenURL cuts a url that linkURL returned. It keeps the scheme and the host.
-// It keeps at most maxShortPath characters of the path (for mailto, of the
-// address) and at most maxShortQuery characters of what follows it.
+// shortenURL cuts a url for linkURL. It keeps the scheme and the host. It keeps at
+// most maxShortPath characters of the path (for mailto, of the address) and at
+// most maxShortQuery characters of what follows it.
 //
 // A person reads the text of a link and rarely the url. An agent reads both, so
 // a long query is a place for text that only the agent sees. A mailto link has

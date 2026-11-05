@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/EmadMokhtar/email-mcp-go/internal/thirdparty/xhtml"
 	"github.com/stretchr/testify/require"
 )
 
@@ -386,19 +387,32 @@ func TestReadableTextShortensLinks(t *testing.T) {
 	}
 }
 
-// The text of the link is what a person sees, so it stays as it is, and a url
-// that says the same is not shown a second time.
-func TestReadableTextDoesNotRepeatALinkWithTheUrlAsItsText(t *testing.T) {
+// The text of a link is what a person sees, so it is not cut.
+func TestReadableTextKeepsTheTextOfALink(t *testing.T) {
 	href := "https://example.com/?a=" + strings.Repeat("b", 100)
 	text, _ := readable(t, `<a href="`+href+`">`+href+`</a>`)
-	require.Equal(t, href, text)
+	require.Equal(t, href+" (https://example.com/?a="+strings.Repeat("b", 29)+"...[cut])", text)
 }
 
-// HTMLToText also makes the text of mail that goes out, and the preview for the
-// approver. There a link must stay whole: the query can carry data.
-func TestHTMLToTextKeepsTheWholeLink(t *testing.T) {
-	href := "https://example.com/?note=" + strings.Repeat("b", 100)
-	require.Equal(t, "go ("+href+")", htmlText(t, `<a href="`+href+`">go</a>`))
+// linkURL returns exactly what the text shows. Other code uses that to tell
+// whether the text shows the whole of an href.
+func TestLinkURLIsWhatTheTextShows(t *testing.T) {
+	for _, href := range []string{
+		"https://example.com/a?b=c",
+		"https://example.com/?note=" + strings.Repeat("b", 100),
+		"mailto:a@example.com?body=" + strings.Repeat("b", 100),
+	} {
+		doc, err := parseHTML(`<a href="` + href + `">go</a>`)
+		require.NoError(t, err)
+		var link *xhtml.Node
+		for n := doc; n != nil; n = nextNode(n) {
+			if n.Data == "a" {
+				link = n
+			}
+		}
+		require.NotNil(t, link)
+		require.Equal(t, "go ("+linkURL(link)+")", htmlText(t, `<a href="`+href+`">go</a>`))
+	}
 }
 
 // A marketing mail as a mail tool makes it: tables for the layout, a preheader

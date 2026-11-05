@@ -532,18 +532,19 @@ func TestVisibleHTMLThatWouldBeTooLargeIsRefused(t *testing.T) {
 	}
 }
 
-// The url of the link is shown for each copy that the parser makes. The text
-// would be 43 MB from 85 KB of markup, which took 0.98 s, +204 MiB and 764 MiB
-// of allocations.
-func TestHTMLToTextThatWouldBeTooLongIsRefused(t *testing.T) {
+// The url of the link is shown for each copy that the parser makes. When the
+// whole url was shown, the text was 43 MB from 85 KB of markup, which took 0.98 s,
+// +204 MiB and 764 MiB of allocations. Now each copy is cut.
+func TestHTMLToTextOfCopiedLinksIsSmall(t *testing.T) {
 	for name, in := range map[string]string{
 		"text in each copy (85 KB)": shownLinkCopiedHTML(20_968),
 		"the url alone (147 KB)":    strings.ReplaceAll(shownLinkCopiedHTML(20_968), "<p>y", "<p><br>"),
 		"non-ASCII letters (85 KB)": encodedLinkCopiedHTML(20_968),
 	} {
 		t.Run(name, func(t *testing.T) {
-			u := requireTooLargeRefused(t, HTMLToText, in, 384<<20)
-			t.Logf("HTMLToText: %d bytes refused in %v", len(in), u)
+			text, err := HTMLToText(in)
+			require.NoError(t, err)
+			require.Less(t, len(text), 4<<20)
 		})
 	}
 }

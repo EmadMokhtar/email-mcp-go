@@ -2168,7 +2168,7 @@ func TestGetMessageHTMLThatWouldBeTooLargeToShowIsRefused(t *testing.T) {
 	escaped := `<p><a href="https://e.example/` + strings.Repeat("&", 14_000) + `">` + strings.Repeat("<p>y", 1134)
 	// 85 KB. The text shows the url of each copy (2,047 characters, a space is
 	// written as %20). Before, the text format made 43 MB of text. Now each copy
-	// is cut (see mime.ReadableText), so the text is small.
+	// is cut (see mime.HTMLToText), so the text is small.
 	shown := `<p><a href="https://e.example/` + strings.Repeat(" ", 676) + `x">` + strings.Repeat("<p>y", 20_968)
 	srv := imaptest.New(t)
 	b := newTestBackend(t, srv)
