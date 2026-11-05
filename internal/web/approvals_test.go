@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
 	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
+	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 )
 
@@ -309,7 +311,7 @@ func TestApprovalPageWithoutTheWholeMessageOffersOnlyReject(t *testing.T) {
 	a := p.account()
 	c := mail.Compose{ReplyTo: &mail.ReplyRef{Ref: "o1"}, Body: strings.Repeat("w", 600) + " THE-END"}
 	id := p.fallbackSend(p.tenant, a, c)
-	p.backends.backend.setGetErr(&net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset")})
+	p.backends.backend.setGetErr(fmt.Errorf("imap: read: %w", imapsmtp.ErrConnectionLost))
 
 	resp, body := p.get(approvalPath(id))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -581,4 +583,25 @@ func TestTabTitleCountsWhatWaits(t *testing.T) {
 	p.fallbackSend(p.tenant, a, plainCompose())
 	_, body = p.get("/accounts")
 	require.Contains(t, body, "<title>(1) Accounts · email-mcp</title>")
+}
+
+func TestAnswerErrorTextMailServerConnection(t *testing.T) {
+	for name, err := range map[string]error{
+		"the server cannot be reached": fmt.Errorf("imap: connect: %w", imapsmtp.ErrServerUnreachable),
+		"the connection was lost":      fmt.Errorf("imap: read: %w", imapsmtp.ErrConnectionLost),
+	} {
+		t.Run(name, func(t *testing.T) {
+			status, text, known := answerErrorText(err)
+
+			require.True(t, known)
+			require.Equal(t, http.StatusBadGateway, status)
+			require.Equal(t, msgMailServer, text)
+		})
+	}
+
+	t.Run("a file error is not about the mail server", func(t *testing.T) {
+		_, _, known := answerErrorText(&fs.PathError{Op: "open", Path: "/some/file", Err: syscall.ENOENT})
+
+		require.False(t, known)
+	})
 }

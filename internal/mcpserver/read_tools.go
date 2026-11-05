@@ -89,7 +89,7 @@ type AccountOut struct {
 	Provider     string            `json:"provider"`
 	Areas        map[string]string `json:"areas" jsonschema:"The level of each enabled area, for example mail: Send."`
 	Capabilities CapabilitiesOut   `json:"capabilities"`
-	Status       string            `json:"status" jsonschema:"ok, or needs_reauth when the user must reconnect the account."`
+	Status       string            `json:"status" jsonschema:"ok, or needs_reauth when the user must reconnect the account. ok does not mean that the mail server can be reached now."`
 }
 
 // AccountsOut is the result of list_accounts.
