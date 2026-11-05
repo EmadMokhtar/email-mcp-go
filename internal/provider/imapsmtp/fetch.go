@@ -648,7 +648,9 @@ func convertible(what, advice string, convert func(string) (string, error)) rend
 // the html format, the error wraps mail.ErrTooLarge. The caller can still ask
 // for the headers and the attachments with the format "none". The same holds
 // for HTML that is smaller but too complex to convert.
-func chooseBody(bs imap.BodyStructure, format mail.BodyFormat) (part *textPart, render renderFunc, isHTML bool, err error) {
+//
+// The render function of an HTML part sets report.
+func chooseBody(bs imap.BodyStructure, format mail.BodyFormat, report *mime.HiddenReport) (part *textPart, render renderFunc, isHTML bool, err error) {
 	plain, html := textSections(bs)
 	var htmlPart *textPart
 	if html != nil {
@@ -670,7 +672,8 @@ func chooseBody(bs imap.BodyStructure, format mail.BodyFormat) (part *textPart, 
 			return nil, nil, false, tooLarge("clean", adviceHTML)
 		}
 		visible := func(s string) (string, error) {
-			out, err := mime.VisibleHTML(s)
+			out, r, err := mime.ReadableHTML(s)
+			*report = r
 			return mime.CleanUntrusted(out), err
 		}
 		return htmlPart, convertible("clean", adviceHTML, visible), true, nil
@@ -680,14 +683,20 @@ func chooseBody(bs imap.BodyStructure, format mail.BodyFormat) (part *textPart, 
 		if htmlPart.size > maxHTMLBytes {
 			return nil, nil, false, tooLarge("convert", adviceNone)
 		}
-		return htmlPart, convertible("convert", adviceNone, mime.HTMLToText), false, nil
+		text := func(s string) (string, error) {
+			out, r, err := mime.ReadableText(s)
+			*report = r
+			return out, err
+		}
+		return htmlPart, convertible("convert", adviceNone, text), false, nil
 	}
 	return nil, nil, false, nil
 }
 
 // fillBody fetches the start of the body part and sets the page in msg.
 func fillBody(c *imapclient.Client, uid imap.UID, bs imap.BodyStructure, format mail.BodyFormat, offset, maxChars int, msg *mail.Message) error {
-	part, render, isHTML, err := chooseBody(bs, format)
+	var report mime.HiddenReport
+	part, render, isHTML, err := chooseBody(bs, format, &report)
 	if err != nil || part == nil {
 		return err
 	}
@@ -708,6 +717,8 @@ func fillBody(c *imapclient.Client, uid imap.UID, bs imap.BodyStructure, format 
 	} else {
 		msg.Text = page
 	}
+	msg.HiddenContentSuspected = report.Suspected
+	msg.HiddenParts = report.Dropped
 	if more {
 		msg.Truncated = true
 		msg.NextOffset = offset + utf8.RuneCountInString(page)

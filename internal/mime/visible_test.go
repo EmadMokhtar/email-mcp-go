@@ -91,7 +91,7 @@ func TestVisibleHTMLKeepsContentAndLinks(t *testing.T) {
 func TestVisibleHTMLKeepsVisibleStyles(t *testing.T) {
 	// The same styles that HTMLToText keeps (see TestHTMLToTextKeepsVisibleStyles).
 	for _, style := range []string{"color:red", "display:block", "visibility:visible", "opacity:0.5",
-		"font-size:12px", "font-size:2px", "font:12px/1.5 Arial", ""} {
+		"font-size:12px", "font-size:4px", "font:12px/1.5 Arial", ""} {
 		require.Equal(t, "<p>shown</p>", visibleHTML(t, `<p style="`+style+`">shown</p>`), "style %q", style)
 	}
 	require.Equal(t, "<p>shown</p>", visibleHTML(t, `<p aria-hidden="false">shown</p>`))

@@ -134,7 +134,8 @@ func TestHTMLToTextStyleSheetPlacement(t *testing.T) {
 
 // Rules that are not simple are not applied. This is a limit, and the tests
 // keep it visible.
-func TestHTMLToTextStyleSheetIgnoresComplexSelectors(t *testing.T) {
+// These selectors are not worked out. They hide nothing, and the report warns.
+func TestHTMLToTextStyleSheetComplexSelectorsAreReported(t *testing.T) {
 	selectors := []string{
 		"div .x",
 		"div > .x",
@@ -145,34 +146,48 @@ func TestHTMLToTextStyleSheetIgnoresComplexSelectors(t *testing.T) {
 		".x:hover",
 		".x::before",
 		":not(.y)",
-		"span.x",
-		".x.y",
-		".y.x",
 		"[class=x]",
 		"[class~='x']",
 		".x[title]",
-		"*",
 	}
 	for _, sel := range selectors {
-		out := htmlText(t, `<style>`+sel+`{display:none}</style><div><span class="x y">shown</span></div>`)
+		out, report := readable(t, `<style>`+sel+`{display:none}</style><div><span class="x y">shown</span></div>`)
 		require.Equal(t, "shown", out, "selector %q", sel)
+		require.True(t, report.Suspected, "selector %q", sel)
 	}
 }
 
-func TestHTMLToTextStyleSheetIgnoresAtRules(t *testing.T) {
-	rules := []string{
+func TestHTMLToTextStyleSheetCompoundSelectorsHide(t *testing.T) {
+	for _, sel := range []string{"span.x", ".x.y", ".y.x", "span.x.y", "span#z", ".x#z", "span.y#z", "*"} {
+		out, report := readable(t, `<p>visible</p><style>`+sel+`{font-size:0}</style><span class="x y" id="z">secret</span>`)
+		require.NotContains(t, out, "secret", "selector %q", sel)
+		require.False(t, report.Suspected, "selector %q", sel)
+	}
+}
+
+func TestHTMLToTextStyleSheetAtRules(t *testing.T) {
+	// The rules inside are used.
+	for _, rule := range []string{
 		`@media screen{.x{display:none}}`,
-		`@media print{.x{display:none}}`,
 		`@media (min-width:1px){.x{display:none}}`,
+		`@media(min-width:1px){.x{display:none}}`,
 		`@supports (display:grid){.x{display:none}}`,
 		`@layer base{.x{display:none}}`,
+	} {
+		out := htmlText(t, sheetMail(rule, `<div class="x">secret</div>`))
+		require.Equal(t, "Hi", out, "rule %q", rule)
+	}
+	// Nothing in these hides an element.
+	for _, rule := range []string{
+		`@media print{.x{display:none}}`,
 		`@page{display:none}`,
 		`@font-face{font-family:a;display:none}`,
+		`@keyframes k{from{opacity:0}to{opacity:1}}`,
 		`@import url(x.css);`,
-	}
-	for _, rule := range rules {
-		out := htmlText(t, sheetMail(rule, `<div class="x">shown</div>`))
+	} {
+		out, report := readable(t, sheetMail(rule, `<div class="x">shown</div>`))
 		require.Equal(t, "shown\n\nHi", out, "rule %q", rule)
+		require.False(t, report.Suspected, "rule %q", rule)
 	}
 }
 
@@ -185,8 +200,7 @@ func TestHTMLToTextStyleSheetIgnoresRulesThatDoNotHide(t *testing.T) {
 		"opacity:1",
 		"opacity:0.5",
 		"font-size:12px",
-		"font-size:2px",
-		"font-size:1.5px",
+		"font-size:4px",
 		"font-size:1em",
 		"font:12px/1.5 Arial",
 		"opacity:50%",
@@ -261,7 +275,7 @@ func TestHTMLToTextFontSizeChildWithOwnSizeIsShown(t *testing.T) {
 	sizes := []string{
 		"13px", "10pt", "0.2in", "0.5cm", "4mm", "10q", "1pc", "1rem", "2rem", "20", // 20 is px in quirks mode
 		"small", "medium", "large", "x-large", "xx-large", "xxx-large", "x-small", "xx-small",
-		"1vw", "1.5px", "100px",
+		"1vw", "4px", "100px",
 		"initial",
 		"13PX", "13px !important", "1e1px",
 	}
@@ -291,11 +305,11 @@ func TestHTMLToTextFontSizeRelativeChildStaysHidden(t *testing.T) {
 }
 
 func TestHTMLToTextFontSizeRelativeSizeIsAMultiple(t *testing.T) {
-	// 0.5px times 2 is 1px, which is too small to read. 0.5px times 3 is 1.5px.
-	require.Equal(t, "", htmlText(t, `<div style="font-size:0.5px"><span style="font-size:2em">secret</span></div>`))
-	require.Equal(t, "shown", htmlText(t, `<div style="font-size:0.5px"><span style="font-size:3em">shown</span></div>`))
-	require.Equal(t, "", htmlText(t, `<div style="font-size:0.5px"><span style="font-size:200%">secret</span></div>`))
-	require.Equal(t, "shown", htmlText(t, `<div style="font-size:0.5px"><span style="font-size:300%">shown</span></div>`))
+	// 1px times 3 is 3px, which is too small to read. 1px times 4 is 4px.
+	require.Equal(t, "", htmlText(t, `<div style="font-size:1px"><span style="font-size:3em">secret</span></div>`))
+	require.Equal(t, "shown", htmlText(t, `<div style="font-size:1px"><span style="font-size:4em">shown</span></div>`))
+	require.Equal(t, "", htmlText(t, `<div style="font-size:1px"><span style="font-size:300%">secret</span></div>`))
+	require.Equal(t, "shown", htmlText(t, `<div style="font-size:1px"><span style="font-size:400%">shown</span></div>`))
 	// The smaller keyword divides by 1.2 and larger multiplies by 1.2.
 	require.Equal(t, "", htmlText(t, `<div style="font-size:1px"><span style="font-size:larger">secret</span></div>`))
 	// A big font made smaller stays readable.
@@ -571,7 +585,6 @@ func TestHTMLToTextImportantIsNotUndoneByNormalDeclarations(t *testing.T) {
 
 		// Whole-element hiders do not care about the order.
 		{"display none, important first", ``, `<div style="display:none!important;display:block">secret</div>`},
-		{"display none, important last", ``, `<div style="display:none;display:block!important">secret</div>`},
 		{"display none in a rule, block in the style attribute", `.x{display:none}`, `<div class="x" style="display:block!important">secret</div>`},
 	}
 	for _, tc := range tests {
@@ -581,13 +594,12 @@ func TestHTMLToTextImportantIsNotUndoneByNormalDeclarations(t *testing.T) {
 	}
 }
 
-// !important on a showing declaration does not show what another declaration
-// for the same element hides. Children are different elements: a child with
-// its own size still shows its text in a hidden parent.
+// !important on a showing declaration does not show what a declaration from
+// another source hides. In one source, see TestHiddenLastDeclarationInABlockWins.
+// Children are different elements: a child with its own size still shows its
+// text in a hidden parent.
 func TestHTMLToTextImportantDoesNotShowWhatAnotherDeclarationHides(t *testing.T) {
 	tests := []struct{ name, sheet, element, want string }{
-		{"inline size", ``, `<div style="font-size:14px!important;font-size:0">secret</div>`, "visible"},
-		{"inline visibility", ``, `<div style="visibility:visible!important;visibility:hidden">secret</div>`, "visible"},
 		{"class rule against the style attribute", `.x{font-size:14px!important}`, `<div class="x" style="font-size:0">secret</div>`, "visible"},
 		{"style attribute against a normal class rule", `.c{font-size:0}`, `<div class="c" style="font-size:14px!important">secret</div>`, "visible"},
 		{"visibility rule against the style attribute", `.x{visibility:visible!important}`, `<div class="x" style="visibility:hidden">secret</div>`, "visible"},
@@ -613,12 +625,11 @@ func TestHTMLToTextImportantDoesNotShowWhatAnotherDeclarationHides(t *testing.T)
 	}
 }
 
-// Between two !important declarations, the one that hides wins.
+// Between two !important declarations from different sources, the one that
+// hides wins. In one source, the last one wins, as in a browser.
 func TestHTMLToTextTwoImportantDeclarationsHidingWins(t *testing.T) {
 	tests := []struct{ name, sheet, element string }{
-		{"same style attribute, hiding first", ``, `<div style="font-size:0!important;font-size:14px!important">secret</div>`},
 		{"same style attribute, hiding last", ``, `<div style="font-size:14px!important;font-size:0!important">secret</div>`},
-		{"visibility, hiding first", ``, `<div style="visibility:hidden!important;visibility:visible!important">secret</div>`},
 		{"visibility, hiding last", ``, `<div style="visibility:visible!important;visibility:hidden!important">secret</div>`},
 		{"hiding in a weak rule", `.x{font-size:0!important}#y{font-size:14px!important}`, `<div class="x" id="y">secret</div>`},
 		{"hiding in a strong rule", `.x{font-size:14px!important}#y{font-size:0!important}`, `<div class="x" id="y">secret</div>`},
@@ -721,11 +732,11 @@ func TestHTMLToTextInheritWithImportantStillCounts(t *testing.T) {
 				`<span class="x" style="visibility:visible">secret</span>`)))
 			require.Equal(t, "visible", htmlText(t, hidden(``,
 				`<span style="visibility:`+keyword+`!important;visibility:visible">secret</span>`)))
-			// Without !important it is the same: the element is hidden.
-			require.Equal(t, "visible", htmlText(t, zero(``,
-				`<span style="font-size:`+keyword+`;font-size:14px">secret</span>`)))
-			require.Equal(t, "visible", htmlText(t, hidden(``,
-				`<span style="visibility:`+keyword+`;visibility:visible">secret</span>`)))
+			// Without !important, the last declaration wins, as in a browser.
+			require.Equal(t, "visible\n\nshown", htmlText(t, zero(``,
+				`<span style="font-size:`+keyword+`;font-size:14px">shown</span>`)))
+			require.Equal(t, "visible\n\nshown", htmlText(t, hidden(``,
+				`<span style="visibility:`+keyword+`;visibility:visible">shown</span>`)))
 		})
 	}
 }
@@ -737,7 +748,7 @@ func TestHTMLToTextBadBangSuffixDoesNotShowTheElement(t *testing.T) {
 		{"size", ``, `<div style="font-size:0;font-size:14px!x">secret</div>`},
 		{"visibility", ``, `<div style="visibility:hidden;visibility:visible!x">secret</div>`},
 		{"double important", ``, `<div style="font-size:0;font-size:14px!important!important">secret</div>`},
-		{"no-break space", ``, "<div style=\"font-size:0;font-size:14px! important\">secret</div>"},
+		{"no-break space", ``, "<div style=\"font-size:0;font-size:14px!\u00a0important\">secret</div>"},
 		{"rule against an earlier rule", `.h{font-size:0}.s{font-size:14px!x}`, `<div class="h s">secret</div>`},
 		{"hiding value with a bad suffix", ``, `<div style="font-size:14px;font-size:0!x">secret</div>`},
 	}
@@ -764,10 +775,10 @@ func TestHTMLToTextFontShorthandAndFontSizeOnOneElement(t *testing.T) {
 
 // The size an element passes to its children is the smallest of its sizes.
 func TestHTMLToTextSmallestSizePassesToChildren(t *testing.T) {
-	// 10px and 20px: the children get 10px. 0.1em is 1px (too small to read).
-	// With 20px it would be 2px, which is readable.
+	// 10px and 20px: the children get 10px. 0.3em is 3px (too small to read).
+	// With 20px it would be 6px, which is readable.
 	mail := mailWithSheet(`.a{font-size:10px}`,
-		`<div class="a" style="font-size:20px"><span style="font-size:0.1em">secret</span><span style="font-size:0.3em">shown</span></div>`)
+		`<div class="a" style="font-size:20px"><span style="font-size:0.3em">secret</span><span style="font-size:0.5em">shown</span></div>`)
 	require.Equal(t, "visible\n\nshown", htmlText(t, mail))
 	// The same with a relative size and a size in px: the smaller result.
 	mail = mailWithSheet(`.a{font-size:2em}`,
@@ -1058,7 +1069,8 @@ var cssNearMisses = []string{
 	"position:absolute;top:-4em",
 	"position:absolute;left:-99%",
 	"position:absolute;left:0",
-	"position:absolute;left:9999px",
+	"position:absolute;left:2999px",
+	"position:relative;top:100px",
 	"left:-9999px", // without position, an offset does nothing
 	"position:static;left:-9999px",
 	"text-indent:-1em",
@@ -1091,6 +1103,24 @@ var cssNearMisses = []string{
 	"clip:rect(auto, auto, auto, auto)",
 	"content-visibility:auto",
 	"content-visibility:visible",
+	"margin-left:-999px",
+	"margin:-20px",
+	"margin-right:9999px",
+	"font-size:4px",
+	"opacity:0.1",
+	"transform:translateX(-999px)",
+	"transform:translate3d(0, 0, -9999px)",
+	"filter:opacity(50%)",
+	"filter:blur(1px)",
+	"clip-path:none",
+	"mask-image:none",
+	"mso-hide:none",
+	"text-indent:99999px",
+	"text-indent:99999px;overflow:hidden",
+	"white-space:nowrap;overflow:hidden",
+	"width:3px;overflow:hidden",
+	"width:calc(100% - 20px)",
+	"z-index:1",
 }
 
 func TestCSSHidingTricksAreHidden(t *testing.T) {

@@ -588,6 +588,15 @@ After the import:
   [Troubleshooting](#troubleshooting)).
 - In HTML mail, text coloured like its background (for example white text on
   a white background) is not detected as hidden, so the agent can read it.
+- Some styles that can hide text cannot be worked out, such as a selector like
+  `div p`. The text then stays in the body, and `get_message` returns
+  `hidden_content_suspected: true`. `hidden_parts_dropped` says how many hidden
+  parts were left out. A rule that holds only on a phone (for a window of 768
+  pixels or less) hides nothing here, so a reader on a phone can see less than
+  the agent.
+- In the text of a message, a long link is cut: the scheme, the host, up to 64
+  characters of the path and up to 32 of the query, and then `...[cut]`. The
+  `html` body format has the whole link.
 
 ## Troubleshooting
 

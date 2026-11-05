@@ -32,7 +32,8 @@ import (
 //
 // A link that cannot be seen loses its href. As in HTMLToText, an element
 // inside a hidden parent is still shown when it sets its own font size or
-// visibility.
+// visibility. The details and summary elements become plain blocks, because
+// their open attribute goes too, and a browser would fold what is left.
 //
 // The whole document is needed. A style rule at the end can hide an element at
 // the start, so the caller must not pass the start of a document alone. A
@@ -40,23 +41,29 @@ import (
 // wraps ErrHTMLTooComplex (see HTMLToText). So does a document whose HTML
 // would be larger than maxVisibleHTMLBytes, before or after it is cleaned.
 func VisibleHTML(markup string) (string, error) {
+	out, _, err := ReadableHTML(markup)
+	return out, err
+}
+
+// ReadableHTML is VisibleHTML, and it also returns the report on what was hidden.
+func ReadableHTML(markup string) (string, HiddenReport, error) {
 	doc, err := parseHTML(markup)
 	if err != nil {
-		return "", err
+		return "", HiddenReport{}, err
 	}
 	v := newVisibility(doc)
 	v.prune(doc)
 
 	rendered := &limitedBuilder{max: maxVisibleHTMLBytes}
 	if err := xhtml.Render(rendered, doc); err != nil {
-		return "", convertError("render", err)
+		return "", HiddenReport{}, convertError("render", err)
 	}
 	// The same policy as SanitizeHTML, written to a limited builder too.
 	clean := &limitedBuilder{max: maxVisibleHTMLBytes}
 	if err := sanitizePolicy.SanitizeReaderToWriter(strings.NewReader(rendered.String()), clean); err != nil {
-		return "", convertError("sanitize", err)
+		return "", HiddenReport{}, convertError("sanitize", err)
 	}
-	return clean.String(), nil
+	return clean.String(), v.result(), nil
 }
 
 // maxVisibleHTMLBytes is the most HTML that VisibleHTML writes, in bytes. It
@@ -130,7 +137,7 @@ func (v *visibility) prune(parent *xhtml.Node) {
 		next := c.NextSibling // c may leave the tree
 		switch c.Type {
 		case xhtml.TextNode:
-			if v.state().textHidden() {
+			if !v.textShown(c) {
 				parent.RemoveChild(c)
 			}
 		case xhtml.ElementNode:
@@ -169,11 +176,35 @@ func (v *visibility) pruneElement(parent, n *xhtml.Node) {
 		} else {
 			n.Data, n.DataAtom = "pre", atom.Pre
 		}
+	case "details", "summary":
+		// The open attribute goes below, so a browser would fold what is left.
+		// What stays is what a reader sees, so these become plain blocks.
+		if n.Namespace == "" {
+			v.foldDetails(n)
+			n.Data, n.DataAtom = "div", atom.Div
+		}
 	}
 	// The styles and the other attributes were read above (here and for the
 	// elements below, which read their own). Nothing but the link stays.
 	keepOnly(n, "href")
 	v.prune(n)
+}
+
+// foldDetails removes what a closed details element hides. It does this before
+// the walk over the children, because the first summary can be removed for its
+// own reasons, and a later summary must not take its place.
+func (v *visibility) foldDetails(n *xhtml.Node) {
+	if !closedDetails(n) {
+		return
+	}
+	for c := n.FirstChild; c != nil; {
+		next := c.NextSibling
+		if !isFirstSummary(c) {
+			v.noteDropped(c)
+			n.RemoveChild(c)
+		}
+		c = next
+	}
 }
 
 // keepOnly removes every attribute of the element except the one with the given

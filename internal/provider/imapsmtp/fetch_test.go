@@ -761,6 +761,45 @@ func TestGetMessageHTMLFormat(t *testing.T) {
 	require.Empty(t, msg.Text)
 }
 
+func TestGetMessageReportsHiddenContent(t *testing.T) {
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	html := `<style>div p{display:none}</style><div><p>unclear</p></div><p style="display:none">gone</p><p>shown</p>`
+	ref := appendRef(t, srv, b, multiMail("alternative", partText("html", "utf-8", "", html)))
+
+	for _, format := range []mail.BodyFormat{mail.BodyText, mail.BodyHTML} {
+		msg := mustGet(t, b, ref, mail.BodyOptions{Format: format})
+		require.True(t, msg.HiddenContentSuspected, format)
+		require.Equal(t, 1, msg.HiddenParts, format)
+	}
+}
+
+func TestGetMessageWithoutHiddenContentReportsNothing(t *testing.T) {
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, multiMail("alternative", partText("html", "utf-8", "", `<p>shown</p>`)))
+
+	for _, format := range []mail.BodyFormat{mail.BodyText, mail.BodyHTML, mail.BodyNone} {
+		msg := mustGet(t, b, ref, mail.BodyOptions{Format: format})
+		require.False(t, msg.HiddenContentSuspected, format)
+		require.Zero(t, msg.HiddenParts, format)
+	}
+}
+
+func TestGetMessageTextShortensLinksAndHTMLKeepsThem(t *testing.T) {
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	href := "https://example.com/?note=" + strings.Repeat("a", 100)
+	ref := appendRef(t, srv, b, multiMail("alternative", partText("html", "utf-8", "", `<a href="`+href+`">go</a>`)))
+
+	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyText})
+	require.NotContains(t, msg.Text, strings.Repeat("a", 50))
+	require.Contains(t, msg.Text, "[cut]")
+
+	msg = mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyHTML})
+	require.Contains(t, msg.HTML, href)
+}
+
 func TestGetMessageHTMLFormatFallsBackToPlainText(t *testing.T) {
 	srv := imaptest.New(t)
 	b := newTestBackend(t, srv)
@@ -2128,7 +2167,8 @@ func TestGetMessageHTMLThatWouldBeTooLargeToShowIsRefused(t *testing.T) {
 	// format made 80 MB of HTML, with a peak heap of +395 MiB.
 	escaped := `<p><a href="https://e.example/` + strings.Repeat("&", 14_000) + `">` + strings.Repeat("<p>y", 1134)
 	// 85 KB. The text shows the url of each copy (2,047 characters, a space is
-	// written as %20). Before, the text format made 43 MB of text.
+	// written as %20). Before, the text format made 43 MB of text. Now each copy
+	// is cut (see mime.ReadableText), so the text is small.
 	shown := `<p><a href="https://e.example/` + strings.Repeat(" ", 676) + `x">` + strings.Repeat("<p>y", 20_968)
 	srv := imaptest.New(t)
 	b := newTestBackend(t, srv)
@@ -2150,13 +2190,14 @@ func TestGetMessageHTMLThatWouldBeTooLargeToShowIsRefused(t *testing.T) {
 		t.Logf("%s: refused, %d MiB allocated", format, allocated>>20)
 	}
 	refused(refs[0], mail.BodyHTML)
-	refused(refs[1], mail.BodyText)
 
 	// The text of the first does not show a url longer than 2,048 characters, so
 	// it is small. (The sanitizer drops the href of the second, which has
 	// spaces, so its HTML is small too.)
 	msg := mustGet(t, b, refs[0], mail.BodyOptions{Format: mail.BodyText})
 	require.Equal(t, strings.TrimSuffix(strings.Repeat("y\n\n", 1134), "\n\n"), msg.Text)
+	msg = mustGet(t, b, refs[1], mail.BodyOptions{Format: mail.BodyText, MaxChars: 1000})
+	require.Contains(t, msg.Text, "[cut]")
 	msg = mustGet(t, b, refs[1], mail.BodyOptions{Format: mail.BodyHTML})
 	require.True(t, strings.HasPrefix(msg.HTML, "<p></p><p>y</p><p>y</p>"), msg.HTML[:min(len(msg.HTML), 40)])
 	require.NotContains(t, msg.HTML, "href")
