@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.0](https://github.com/EmadMokhtar/email-mcp-go/compare/v0.5.0...v0.6.0) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **httpserve:** make in-band confirmation opt-in per token ([#33](https://github.com/EmadMokhtar/email-mcp-go/issues/33))
+
+### Bug Fixes
+
+* **httpserve:** make in-band confirmation opt-in per token ([#33](https://github.com/EmadMokhtar/email-mcp-go/issues/33)) ([1d0a7c1](https://github.com/EmadMokhtar/email-mcp-go/commit/1d0a7c1dc2457c478fc4eb71cb43ab1d95e2c053))
+* **imapsmtp:** return the text a mail client shows, not the hidden alternative ([#36](https://github.com/EmadMokhtar/email-mcp-go/issues/36)) ([74a34a2](https://github.com/EmadMokhtar/email-mcp-go/commit/74a34a27c29c66355d4003b772f6c56dbde5d89c))
+* **mime:** fail closed on css the hidden-text check cannot evaluate ([#38](https://github.com/EmadMokhtar/email-mcp-go/issues/38)) ([8a681c1](https://github.com/EmadMokhtar/email-mcp-go/commit/8a681c117e8c6399855323384371e5eafd2b781e))
+* **mime:** sanitize outgoing html so the preview equals the message ([#37](https://github.com/EmadMokhtar/email-mcp-go/issues/37)) ([28ccf8a](https://github.com/EmadMokhtar/email-mcp-go/commit/28ccf8a467b604a865d04d053ccf6429722f0e9b))
+* **outbox:** recheck the account level at delivery and let the user cancel ([#31](https://github.com/EmadMokhtar/email-mcp-go/issues/31)) ([f05a4b8](https://github.com/EmadMokhtar/email-mcp-go/commit/f05a4b881babea914564a986f01dcc57cd738e41))
+* **send:** show punycode and treat non-ascii recipients as new ([#34](https://github.com/EmadMokhtar/email-mcp-go/issues/34)) ([d86172d](https://github.com/EmadMokhtar/email-mcp-go/commit/d86172d358490f79c421c80e978724665addb929))
+* **settings:** require risk acceptance to turn off send confirmation ([#32](https://github.com/EmadMokhtar/email-mcp-go/issues/32)) ([238b3b0](https://github.com/EmadMokhtar/email-mcp-go/commit/238b3b02274d102e80c9a116a8e3a43928c3c50b))
+* **web:** serve the portal on a dedicated host with short revocable sessions ([#35](https://github.com/EmadMokhtar/email-mcp-go/issues/35)) ([08bf266](https://github.com/EmadMokhtar/email-mcp-go/commit/08bf2663c7f6fa68ea3b7e9286f0427282c9f8ed))
+
 ## [0.5.0](https://github.com/EmadMokhtar/email-mcp-go/compare/v0.4.0...v0.5.0) (2026-11-05)
 
 
