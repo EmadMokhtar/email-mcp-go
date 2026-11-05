@@ -761,14 +761,14 @@ func dump(t *testing.T, db *sql.DB) string {
 	for _, table := range tables {
 		fmt.Fprintf(&out, "== %s\n", table)
 		// The table names come from sqlite_master, never from input.
-		query := `SELECT * FROM "` + table + `"`
+		query := `SELECT * FROM "` + table + `"` //nolint:gosec // G202: the name is a table of the schema, never input
 		switch table {
 		case "audit_log":
 			query += ` WHERE kind <> 'call'`
 		case "sqlite_sequence":
 			query += ` WHERE name <> 'audit_log'`
 		}
-		rows, err := db.Query(query) //nolint:gosec // G202: the name is a table of the schema, never input
+		rows, err := db.Query(query)
 		require.NoError(t, err)
 		cols, err := rows.Columns()
 		require.NoError(t, err)
