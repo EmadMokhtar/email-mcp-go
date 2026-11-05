@@ -118,6 +118,11 @@ type Item struct {
 	Status  Status
 	// SendAfter is the end of the undo window. It is kept as whole milliseconds.
 	SendAfter time.Time
+	// NextTry is the earliest time at which a queued item can go out: the end of
+	// the undo window, or later after a failed try.
+	NextTry time.Time
+	// Attempts is the number of tries that failed.
+	Attempts int
 	// Error is the text of the last error of the Sender, cut to 300 characters.
 	// It is empty if no try has failed, and after the item is sent.
 	Error string
@@ -178,6 +183,7 @@ type OutboxStore interface {
 	CreateOutboxSending(ctx context.Context, row *store.OutboxRow, sealed []byte, keyVersion int, claimedAt time.Time) error
 	GetOutbox(ctx context.Context, tenant account.TenantID, id string) (*store.OutboxRow, error)
 	GetOutboxMessage(ctx context.Context, tenant account.TenantID, id string) (keyVersion int, sealed []byte, err error)
+	ListQueuedOutbox(ctx context.Context, tenant account.TenantID, limit int) ([]*store.OutboxRow, error)
 	DueOutbox(ctx context.Context, now time.Time, limit int) ([]*store.OutboxRow, error)
 	NextOutboxDue(ctx context.Context) (time.Time, bool, error)
 	ClaimOutbox(ctx context.Context, tenant account.TenantID, id string, now time.Time) (*store.OutboxRow, error)
@@ -468,6 +474,21 @@ func (o *Outbox) Get(ctx context.Context, tenant account.TenantID, id string) (*
 		return nil, fmt.Errorf("outbox: get: %w", err)
 	}
 	return itemFromRow(row), nil
+}
+
+// ListQueued returns up to limit items of the tenant that can still be
+// cancelled, the one that goes out first at the start. It never reads the
+// messages.
+func (o *Outbox) ListQueued(ctx context.Context, tenant account.TenantID, limit int) ([]*Item, error) {
+	rows, err := o.st.ListQueuedOutbox(ctx, tenant, limit)
+	if err != nil {
+		return nil, fmt.Errorf("outbox: list queued: %w", err)
+	}
+	items := make([]*Item, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, itemFromRow(row))
+	}
+	return items, nil
 }
 
 // RecoverInterrupted marks the interrupted items as failed, with an error text
@@ -948,14 +969,20 @@ func errorText(err error) string {
 
 // itemFromRow returns the public form of a row.
 func itemFromRow(row *store.OutboxRow) *Item {
-	return &Item{
+	item := &Item{
 		ID:        row.ID,
 		Tenant:    row.Tenant,
 		Account:   row.Account,
 		Status:    Status(row.Status),
 		SendAfter: row.SendAfter,
+		NextTry:   row.SendAfter,
+		Attempts:  row.Attempts,
 		Error:     row.Error,
 	}
+	if row.NextAttemptAt.After(row.SendAfter) {
+		item.NextTry = row.NextAttemptAt
+	}
+	return item
 }
 
 // checkIDs refuses an empty id and an id with "|". The ids are part of the

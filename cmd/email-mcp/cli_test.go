@@ -29,6 +29,8 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/app"
 	"github.com/EmadMokhtar/email-mcp-go/internal/connect"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
+	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
+	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
 	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
@@ -245,7 +247,7 @@ func requireNoAccount(t *testing.T, dir, keyPath string) {
 func TestHelpListsTheCommands(t *testing.T) {
 	r := runCLI(t, nil, "", "help")
 	require.Equal(t, exitOK, r.code)
-	for _, name := range []string{"serve", "setup", "account", "token", "import-env", "key", "doctor", "version"} {
+	for _, name := range []string{"serve", "setup", "account", "token", "outbox", "import-env", "key", "doctor", "version"} {
 		require.Contains(t, r.stdout, "  "+name+" ")
 	}
 
@@ -255,7 +257,7 @@ func TestHelpListsTheCommands(t *testing.T) {
 		require.Contains(t, r.stdout, "  "+name+" ")
 	}
 
-	for _, group := range []string{"account", "token", "key"} {
+	for _, group := range []string{"account", "token", "outbox", "key"} {
 		r = runCLI(t, nil, "", group)
 		require.Equal(t, exitUsage, r.code, group)
 		require.Contains(t, r.stderr, "Usage:", group)
@@ -1021,6 +1023,94 @@ func setStatus(t *testing.T, dir string, a *account.Account, status account.Stat
 	require.NoError(t, err)
 	defer func() { require.NoError(t, st.Close()) }()
 	require.NoError(t, st.SetAccountStatus(context.Background(), a.TenantID, a.ID, status))
+}
+
+// ---------------------------------------------------------------- outbox
+
+// queueSend queues a message of the account in the outbox of the data
+// directory, with the undo window, and returns the id of the item.
+func queueSend(t *testing.T, dir string, acct *account.Account, window time.Duration) string {
+	t.Helper()
+	ctx := context.Background()
+	a, err := app.Open(ctx, app.Config{DataDir: dir, Local: true, LogOutput: io.Discard})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, a.CloseNow(ctx)) }()
+	item, err := a.Outbox.Enqueue(ctx, store.LocalTenantID, acct.ID, &mail.RawMessage{
+		From: acct.Address, Recipients: []string{"secret-rcpt@example.com"}, Data: []byte("Subject: secret-subject\r\n\r\nhello\r\n"),
+	}, window, "")
+	require.NoError(t, err)
+	return item.ID
+}
+
+// The user lists what waits to go out and cancels it from the terminal, also
+// when the level of the account is Off. The list holds nothing of the message.
+func TestOutboxListAndCancel(t *testing.T) {
+	dir, keyPath := newCLIEnv(t)
+	server := account.MailServer{
+		IMAPHost: "imap.example.com", IMAPPort: 993, IMAPSecurity: account.SecurityTLS,
+		SMTPHost: "smtp.example.com", SMTPPort: 465, SMTPSecurity: account.SecurityTLS,
+		Username: alice,
+	}
+	acct := addAccount(t, dir, keyPath, alice, server, "pw")
+
+	r := runCLI(t, nil, "", "outbox", "list", "--data-dir", dir)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	require.Contains(t, r.stdout, "No message waits to go out.")
+
+	id := queueSend(t, dir, acct, 10*time.Minute)
+	r = runCLI(t, nil, "", "outbox", "list", "--data-dir", dir)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	require.Contains(t, r.stdout, id)
+	require.Contains(t, r.stdout, alice)
+	require.Contains(t, r.stdout, "waits to go out")
+	requireNoLeak(t, r, "secret-subject", "secret-rcpt@example.com")
+
+	st, _ := openData(t, dir, keyPath)
+	acct.Levels[account.AreaMail] = account.MailOff
+	require.NoError(t, st.UpdateAccount(context.Background(), acct))
+	require.NoError(t, st.Close())
+
+	r = runCLI(t, nil, "", "outbox", "cancel", id, "--data-dir", dir)
+	require.Equal(t, exitOK, r.code, r.stderr)
+	require.Contains(t, r.stdout, id)
+
+	r = runCLI(t, nil, "", "outbox", "list", "--data-dir", dir)
+	require.Contains(t, r.stdout, "No message waits to go out.")
+
+	a, err := app.Open(context.Background(), app.Config{DataDir: dir, Local: true, LogOutput: io.Discard})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, a.CloseNow(context.Background())) }()
+	item, err := a.Outbox.Get(context.Background(), store.LocalTenantID, id)
+	require.NoError(t, err)
+	require.Equal(t, outbox.StatusCancelled, item.Status)
+}
+
+func TestOutboxCancelRefusals(t *testing.T) {
+	dir, keyPath := newCLIEnv(t)
+	server := account.MailServer{
+		IMAPHost: "imap.example.com", IMAPPort: 993, IMAPSecurity: account.SecurityTLS,
+		SMTPHost: "smtp.example.com", SMTPPort: 465, SMTPSecurity: account.SecurityTLS,
+		Username: alice,
+	}
+	acct := addAccount(t, dir, keyPath, alice, server, "pw")
+
+	r := runCLI(t, nil, "", "outbox", "cancel", "--data-dir", dir)
+	require.Equal(t, exitUsage, r.code)
+
+	r = runCLI(t, nil, "", "outbox", "cancel", "no-such-send", "--data-dir", dir)
+	require.Equal(t, exitError, r.code)
+	require.Contains(t, r.stderr, "No queued send has this id")
+
+	// A worker has taken the send, so it cannot be stopped any more.
+	id := queueSend(t, dir, acct, 10*time.Minute)
+	st, _ := openData(t, dir, keyPath)
+	_, err := st.ClaimOutbox(context.Background(), store.LocalTenantID, id, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+
+	r = runCLI(t, nil, "", "outbox", "cancel", id, "--data-dir", dir)
+	require.Equal(t, exitError, r.code)
+	require.Contains(t, r.stderr, "too late")
 }
 
 // ---------------------------------------------------------------- token

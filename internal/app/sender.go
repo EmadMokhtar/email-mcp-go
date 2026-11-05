@@ -11,6 +11,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
 	"github.com/EmadMokhtar/email-mcp-go/internal/errtype"
 	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
+	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
@@ -26,6 +27,10 @@ const (
 	codeNeedsReauthSkipped  = "needs_reauth_skipped"
 )
 
+// errTextLevelTooLow is the text of an item that the level of its account no
+// longer allows. It is fixed, and the outbox shows it to the user.
+const errTextLevelTooLow = "the level of the account no longer allows sending"
+
 // statusTimeout is the time that the write of the account status gets after a
 // refused login. It runs even when the send has run out of time.
 const statusTimeout = 30 * time.Second
@@ -40,6 +45,13 @@ type accountReader interface {
 // newSender returns the Sender of the outbox. It loads the account, gets its
 // mail backend from the factory, and sends. The Service is not involved: the
 // outbox must exist before the Service does.
+//
+// A send can wait for minutes after the agent asked for it, in its undo window
+// or between two tries. So the sender checks the level of the account again at
+// each try. When the level no longer allows a send, the error is permanent:
+// the item fails and nothing is sent, also if the level goes up again later.
+// The scopes of the token that asked for the send are not known here, so the
+// check uses the level of the account alone.
 //
 // After a send that the server accepted, it moves the draft that the message
 // was made from (if any) to Trash. A failed discard is logged with a fixed code
@@ -62,6 +74,9 @@ func newSender(accounts accountReader, backends service.BackendFactory, log *slo
 		}
 		if err != nil {
 			return fmt.Errorf("read the account: %w", err)
+		}
+		if !policy.Decide(a, policy.ActSend, nil).Allowed {
+			return outbox.Permanent(errors.New(errTextLevelTooLow))
 		}
 		// The service never calls the mail server for such an account, so the
 		// outbox does not either. The user may reconnect the account before the

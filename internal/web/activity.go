@@ -1,7 +1,14 @@
 package web
 
-// This file holds the activity page: the audit log of the tenant, newest
-// first, with filters by account, by tool and by kind.
+// This file holds the activity page: the sends that wait to go out, each with a
+// Cancel button, and the audit log of the tenant, newest first, with filters by
+// account, by tool and by kind.
+//
+// The Cancel button is the way for the user to stop a queued send. It calls
+// Service.CancelQueuedSend, which works at any level of the account, so the user
+// can first set the level to Off and then cancel what waits. The list comes from
+// the plain columns of the outbox: the sealed message is not opened, so it has
+// no subject and no recipients.
 //
 // Each filter takes a value only from a fixed list: the accounts of the tenant,
 // the tools that the log can hold, and the two kinds. A value that is not in the
@@ -16,6 +23,7 @@ package web
 // they are not trusted either, and they are cleaned too.
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -28,6 +36,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/audit"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/mime"
+	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 )
 
@@ -53,13 +62,37 @@ const maxArgumentsShown = 4 << 10
 // unreadableArguments is shown for arguments that cannot be decrypted.
 const unreadableArguments = "These arguments cannot be read."
 
+// The texts of the list of queued sends.
+const (
+	stateWaits      = "Waits to go out"
+	stateRetry      = "Will try again"
+	titleSendAbsent = "Send not found"
+	msgNoSend       = "This send was not found."
+	titleSendGone   = "Too late to cancel"
+	msgSendGone     = "It is too late to cancel this send: it is being sent, or it has ended."
+)
+
 // activityPage is the data of the activity page.
 type activityPage struct {
-	Accounts []choice
-	Tools    []choice
-	Kinds    []choice
-	Limit    int
-	Entries  []activityRow
+	Queued []queuedRow
+	// QueuedLimit is the most sends in the list when the list is full, and 0
+	// otherwise. More sends may then wait than the list shows.
+	QueuedLimit int
+	Accounts    []choice
+	Tools       []choice
+	Kinds       []choice
+	Limit       int
+	Entries     []activityRow
+}
+
+// queuedRow is one send that waits to go out.
+type queuedRow struct {
+	ID      string
+	Account string
+	// GoesOut is short, and FullTime has the year and the time zone.
+	GoesOut  string
+	FullTime string
+	State    string
 }
 
 // choice is one value of a filter.
@@ -85,12 +118,17 @@ type activityRow struct {
 	Arguments  string
 }
 
-// handleActivity shows the log of the tenant of the session. It changes
-// nothing.
+// handleActivity shows the queued sends and the log of the tenant of the
+// session. It changes nothing.
 func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
-	sess, ok := sessionFrom(r.Context())
+	svc, sess, ctx, ok := s.userCall(r)
 	if !ok || s.d.Audit == nil {
 		s.fail(w, r, codeActivityFailed, errNoService)
+		return
+	}
+	queued, err := svc.QueuedSends(ctx)
+	if err != nil {
+		s.fail(w, r, codeActivityFailed, err)
 		return
 	}
 	accounts, err := s.d.Store.ListAccounts(r.Context(), sess.tenant)
@@ -119,6 +157,12 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := activityPage{Limit: filter.Limit, Entries: make([]activityRow, 0, len(entries))}
+	for _, q := range queued {
+		page.Queued = append(page.Queued, s.queuedRowOf(q))
+	}
+	if len(queued) >= service.MaxQueuedSends {
+		page.QueuedLimit = service.MaxQueuedSends
+	}
 	for _, a := range accounts {
 		page.Accounts = append(page.Accounts, choice{Value: string(a.ID), Label: a.Address, Selected: string(a.ID) == filter.Account})
 	}
@@ -151,6 +195,41 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 		page.Entries = append(page.Entries, row)
 	}
 	s.render(w, r, http.StatusOK, pageActivity, page)
+}
+
+// queuedRowOf returns the row of a queued send. A send with a failed try waits
+// for its next try. The text of that error is not shown: the page shows only
+// fixed texts.
+func (s *Server) queuedRowOf(q service.QueuedSend) queuedRow {
+	state := stateWaits
+	if q.Attempts > 0 {
+		state = stateRetry
+	}
+	return queuedRow{
+		ID: q.ID, Account: q.Address, GoesOut: logTime(q.GoesOut, s.now()), FullTime: formatTime(q.GoesOut), State: state,
+	}
+}
+
+// handleCancelSend cancels a queued send when the user pressed Cancel, and goes
+// back to the activity page. A send of another tenant is not found, like an id
+// that does not exist.
+func (s *Server) handleCancelSend(w http.ResponseWriter, r *http.Request) {
+	svc, _, ctx, ok := s.userCall(r)
+	if !ok {
+		s.fail(w, r, codeActivityFailed, errNoService)
+		return
+	}
+	err := svc.CancelQueuedSend(ctx, r.PathValue("id"))
+	switch {
+	case err == nil:
+		http.Redirect(w, r, "/activity", http.StatusSeeOther)
+	case errors.Is(err, service.ErrSendNotFound):
+		s.message(w, r, http.StatusNotFound, titleSendAbsent, msgNoSend)
+	case errors.Is(err, outbox.ErrTooLate):
+		s.message(w, r, http.StatusConflict, titleSendGone, msgSendGone)
+	default:
+		s.fail(w, r, codeActivityFailed, err)
+	}
 }
 
 // oneOf returns the value of a filter when the address has it exactly once and

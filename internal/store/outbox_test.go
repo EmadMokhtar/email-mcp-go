@@ -339,6 +339,47 @@ func TestOutboxRelease(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// The list of the queued items holds only the items of the tenant that still
+// wait, first the one that goes out first. An item that waits for a retry counts
+// by the time of its next try.
+func TestListQueuedOutbox(t *testing.T) {
+	s, acct := newOutboxStore(t)
+	ctx := context.Background()
+	ensureTestTenant(t, s, "t2")
+	require.NoError(t, s.CreateAccount(ctx, testAccount("t2", "a2", outboxStart)))
+
+	createOutbox(t, s, outboxItem("later", acct, outboxStart.Add(time.Minute)))
+	createOutbox(t, s, outboxItem("sooner", acct, outboxStart.Add(time.Second)))
+	retry := outboxItem("retry", acct, outboxStart)
+	retry.NextAttemptAt = outboxStart.Add(2 * time.Minute)
+	createOutbox(t, s, retry)
+	createOutbox(t, s, outboxItem("sending", acct, outboxStart))
+	_, err := s.ClaimOutbox(ctx, LocalTenantID, "sending", outboxStart)
+	require.NoError(t, err)
+	createOutbox(t, s, outboxItem("cancelled", acct, outboxStart))
+	require.NoError(t, s.CancelOutbox(ctx, LocalTenantID, "cancelled"))
+	other := outboxItem("other-tenant", "a2", outboxStart)
+	other.Tenant = "t2"
+	createOutbox(t, s, other)
+
+	list, err := s.ListQueuedOutbox(ctx, LocalTenantID, 10)
+	require.NoError(t, err)
+	ids := make([]string, 0, len(list))
+	for _, row := range list {
+		ids = append(ids, row.ID)
+		require.Equal(t, "queued", row.Status)
+	}
+	require.Equal(t, []string{"sooner", "later", "retry"}, ids)
+
+	list, err = s.ListQueuedOutbox(ctx, LocalTenantID, 2)
+	require.NoError(t, err)
+	require.Len(t, list, 2, "the limit holds")
+
+	list, err = s.ListQueuedOutbox(ctx, "no-such-tenant", 10)
+	require.NoError(t, err)
+	require.Empty(t, list)
+}
+
 func TestOutboxCancel(t *testing.T) {
 	s, acct := newOutboxStore(t)
 	ctx := context.Background()

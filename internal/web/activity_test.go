@@ -2,14 +2,18 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/audit"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
+	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
+	"github.com/EmadMokhtar/email-mcp-go/internal/outbox"
 )
 
 // record writes an audit entry of the local tenant.
@@ -23,6 +27,125 @@ func (p *pageFixture) record(e audit.Entry) {
 		e.Outcome = audit.OutcomeOK
 	}
 	require.NoError(p.t, p.audit.Record(context.Background(), e))
+}
+
+// queueSend queues a message of the account in the outbox. It is due in a
+// minute.
+func (p *pageFixture) queueSend(tenant account.TenantID, a *account.Account) string {
+	p.t.Helper()
+	item, err := p.outbox.Enqueue(context.Background(), tenant, a.ID, &mail.RawMessage{
+		From: a.Address, Recipients: []string{"secret-rcpt@example.com"}, Data: []byte("Subject: secret-subject\r\n\r\nhello\r\n"),
+	}, time.Minute, "")
+	require.NoError(p.t, err)
+	return item.ID
+}
+
+// cancelPath returns the address of the Cancel button of a queued send.
+func cancelPath(id string) string { return "/activity/sends/" + id + "/cancel" }
+
+// The page lists what waits to go out, with a form for each send. It shows
+// nothing of the sealed message.
+func TestActivityListsTheQueuedSends(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	id := p.queueSend(p.tenant, a)
+
+	resp, body := p.get("/activity")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	text := visibleText(t, body)
+	for _, want := range []string{"Queued sends", id, "me@example.com", "Waits to go out"} {
+		require.Contains(t, text, want)
+	}
+	require.Contains(t, body, `action="`+cancelPath(id)+`"`)
+	require.NotContains(t, body, "secret-subject")
+	require.NotContains(t, body, "secret-rcpt@example.com")
+}
+
+func TestActivitySaysWhenNothingIsQueued(t *testing.T) {
+	p := newPageFixture(t)
+
+	_, body := p.get("/activity")
+
+	require.Contains(t, visibleText(t, body), "No message waits to go out.")
+	require.NotContains(t, body, "/activity/sends/")
+}
+
+// A send that failed for now waits for its next try, not for its undo window.
+func TestActivitySaysWhichSendWaitsForARetry(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	p.sender.setErr(errors.New("server busy"))
+	p.queueSend(p.tenant, a)
+	p.clock.Set(t0.Add(time.Minute))
+	require.NoError(t, p.outbox.Drain(context.Background(), 0))
+
+	_, body := p.get("/activity")
+
+	require.Contains(t, visibleText(t, body), "Will try again")
+	require.NotContains(t, body, "server busy", "the text of the error is not shown")
+}
+
+// The user cancels a queued send on the page, also after setting the account to
+// Off. The send stays out of the mail, and the log has the entry.
+func TestActivityCancelStopsAQueuedSend(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account(func(a *account.Account) { a.Levels[account.AreaMail] = account.MailOff })
+	id := p.queueSend(p.tenant, a)
+
+	resp, _ := p.post(cancelPath(id), nil)
+
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	require.Equal(t, "/activity", resp.Header.Get("Location"))
+	item, err := p.outbox.Get(context.Background(), p.tenant, id)
+	require.NoError(t, err)
+	require.Equal(t, outbox.StatusCancelled, item.Status)
+	last := p.entries()[0]
+	require.Equal(t, "cancel_send", last.Tool)
+	require.Equal(t, audit.OutcomeOK, last.Outcome)
+	require.Equal(t, "cancelled_by_user", last.Detail)
+	require.Equal(t, a.ID, last.Account)
+
+	_, body := p.get("/activity")
+	require.NotContains(t, body, cancelPath(id))
+	require.Contains(t, visibleText(t, body), "Cancelled by user")
+
+	p.clock.Set(t0.Add(time.Hour))
+	require.NoError(t, p.outbox.Drain(context.Background(), 0))
+	require.Empty(t, p.sender.sent())
+}
+
+// The send of another tenant answers like an id that does not exist, and it
+// stays queued.
+func TestActivityCancelOfAnotherTenantIsNotFound(t *testing.T) {
+	p := newPageFixture(t)
+	p.addTenant("t2")
+	theirs := p.addAccount("t2", "them@example.com")
+	id := p.queueSend("t2", theirs)
+
+	resp, body := p.post(cancelPath(id), nil)
+	missing, missingBody := p.post(cancelPath("no-such-id"), nil)
+
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	require.Equal(t, http.StatusNotFound, missing.StatusCode)
+	require.Equal(t, visibleText(t, missingBody), visibleText(t, body))
+	item, err := p.outbox.Get(context.Background(), "t2", id)
+	require.NoError(t, err)
+	require.Equal(t, outbox.StatusQueued, item.Status)
+}
+
+func TestActivityCancelOfASendThatLeftIsTooLate(t *testing.T) {
+	p := newPageFixture(t)
+	a := p.account()
+	id := p.queueSend(p.tenant, a)
+	p.clock.Set(t0.Add(time.Minute))
+	require.NoError(t, p.outbox.Drain(context.Background(), 0))
+	require.Len(t, p.sender.sent(), 1)
+
+	resp, body := p.post(cancelPath(id), nil)
+
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+	require.Contains(t, visibleText(t, body), "too late")
 }
 
 func TestActivityShowsTheLog(t *testing.T) {
