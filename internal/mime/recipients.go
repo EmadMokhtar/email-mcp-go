@@ -136,7 +136,10 @@ func originalAddresses(field string, list []mail.Address) ([]*netmail.Address, e
 }
 
 // parseRecipients parses the address strings of one Compose field. Each
-// string must hold one address.
+// string must hold one address. These are the addresses that the caller typed,
+// so a local part outside ASCII is refused here (ErrNonASCIILocalPart). The
+// addresses of an original message do not pass here: a person with such an
+// address must stay reachable by a reply, and the service then always asks.
 func parseRecipients(field string, given []string) ([]*netmail.Address, error) {
 	out := make([]*netmail.Address, 0, len(given))
 	for i, s := range given {
@@ -151,6 +154,11 @@ func parseRecipients(field string, given []string) ([]*netmail.Address, error) {
 		}
 		if err := checkAddress(name, a); err != nil {
 			return nil, err
+		}
+		// A hidden character is left to the check of the service, which refuses
+		// it with its own error before the user is asked.
+		if local, _ := splitAddress(a.Address); !isPrintableASCII(local) && CleanUntrusted(local) == local {
+			return nil, fmt.Errorf("%w: %s", ErrNonASCIILocalPart, name)
 		}
 		out = append(out, a)
 	}

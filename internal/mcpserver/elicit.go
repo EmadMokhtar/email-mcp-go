@@ -34,6 +34,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/confirm"
+	"github.com/EmadMokhtar/email-mcp-go/internal/mime"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 )
 
@@ -204,8 +205,12 @@ func linkRequest(message, link string) *mcp.CallToolResult {
 // longer than the preview, a last line says how many characters are not shown
 // (confirm.Preview.MoreCharsText), so the person knows that the text goes on.
 //
+// A domain outside ASCII has its ASCII form after it, and each address that can
+// look like another one has a warning line right after the recipients.
+//
 //	Send this email from <from>?
 //	To: <to, comma-separated>
+//	Warning: <text> (only for such an address)
 //	Subject: <subject>
 //	Attachments: <n> (<name>, ... and <n> more) | Attachments: none
 //
@@ -215,7 +220,11 @@ func linkRequest(message, link string) *mcp.CallToolResult {
 func sendPreview(p confirm.Preview) string {
 	to := make([]string, 0, len(p.To))
 	for _, addr := range p.To {
-		to = append(to, oneLine(addr))
+		to = append(to, mime.ShownAddress(oneLine(addr)))
+	}
+	recipients := strings.Join(to, ", ")
+	for _, warning := range p.Warnings {
+		recipients += "\nWarning: " + oneLine(warning)
 	}
 	body := clean(p.BodyStart)
 	shown := firstChars(body, previewBodyChars)
@@ -226,7 +235,7 @@ func sendPreview(p confirm.Preview) string {
 		shown += "\n" + more
 	}
 	return fmt.Sprintf("Send this email from %s?\nTo: %s\nSubject: %s\nAttachments: %s\n\nBody:\n%s",
-		oneLine(p.From), strings.Join(to, ", "), cut(oneLine(p.Subject), previewSubjectChars),
+		oneLine(p.From), recipients, cut(oneLine(p.Subject), previewSubjectChars),
 		attachmentList(p.Attachments), shown)
 }
 

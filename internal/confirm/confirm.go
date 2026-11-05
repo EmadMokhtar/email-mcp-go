@@ -189,6 +189,10 @@ type Preview struct {
 	// Attachments are the file names of the attachments of a send, in the order
 	// of the message. They are part of what the user approves.
 	Attachments []string `json:"attachments,omitempty"`
+	// Warnings are the lines about the recipients of a send that can look like
+	// another address. Each channel shows them next to the recipients. They are
+	// part of what the user approves.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // MoreCharsText returns the line that a channel shows after BodyStart when the
@@ -354,6 +358,7 @@ func (m *Manager) createWithLifetime(ctx context.Context, tenant account.TenantI
 	// Own the preview, so a later change by the caller does not change it.
 	p.To = slices.Clone(p.To)
 	p.Attachments = slices.Clone(p.Attachments)
+	p.Warnings = slices.Clone(p.Warnings)
 	p.Messages = slices.Clone(p.Messages[:min(len(p.Messages), maxMessages)])
 	if short := firstChars(p.BodyStart, maxBodyStart); len(short) < len(p.BodyStart) {
 		// What is cut is not shown, so it counts toward BodyMore.
