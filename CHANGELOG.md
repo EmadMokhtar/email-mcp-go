@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/EmadMokhtar/email-mcp-go/compare/v0.3.0...v0.4.0) (2026-11-05)
+
+
+### Features
+
+* **web:** rebuild the portal as a small mail app ([#20](https://github.com/EmadMokhtar/email-mcp-go/issues/20)) ([18783b8](https://github.com/EmadMokhtar/email-mcp-go/commit/18783b8c85c6b40bb03452dfe7f62fe03fdcc357))
+
+
+### Bug Fixes
+
+* **mcpserver:** report an unreachable mail server instead of internal error ([#18](https://github.com/EmadMokhtar/email-mcp-go/issues/18)) ([68a5a9f](https://github.com/EmadMokhtar/email-mcp-go/commit/68a5a9f49fab36eb4497b239a8b3951735aa7547))
+
 ## [0.3.0](https://github.com/EmadMokhtar/email-mcp-go/compare/v0.2.0...v0.3.0) (2026-11-03)
 
 
