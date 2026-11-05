@@ -17,6 +17,7 @@ import (
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/audit"
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
+	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 	"github.com/EmadMokhtar/email-mcp-go/internal/provider/imapsmtp"
 	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
@@ -81,11 +82,11 @@ var (
 
 // The errors of UpdateSettings. Callers check them with errors.Is.
 var (
-	// ErrAutonomyNotAccepted means that both confirmations would be off (full
-	// autonomy), and the user did not accept the risk in this save. Nothing was
-	// changed.
-	ErrAutonomyNotAccepted = errors.New("service: both confirmations are off, " +
-		"and the user did not accept the risk of full autonomy")
+	// ErrAutonomyNotAccepted means that the save needs the acceptance (see
+	// NeedsRiskAcceptance), and the user did not accept the risk in this save.
+	// Nothing was changed.
+	ErrAutonomyNotAccepted = errors.New("service: the save turns off send confirmation, " +
+		"starts unattended sends or leaves both confirmations off, and the user did not accept the risk")
 	// ErrInvalidLevel means that the mail level is not 0 to 5.
 	ErrInvalidLevel = errors.New("service: the mail level must be 0 to 5")
 	// ErrInvalidLimits means that the limits are not valid (see
@@ -101,8 +102,7 @@ type SettingsUpdate struct {
 	// autonomy means both are off.
 	ConfirmSends, ConfirmDeletes bool
 	// AcceptAutonomyRisk is true when the user ticked the box that accepts the
-	// risk of full autonomy in this save. A save that ends with both switches
-	// off needs it, every time.
+	// risk in this save. NeedsRiskAcceptance says when a save needs it.
 	AcceptAutonomyRisk bool
 	// Limits are the limits of the account and its undo windows.
 	Limits account.Limits
@@ -243,20 +243,55 @@ func (s *Service) CreateIMAPAccount(ctx context.Context, address string, server 
 	return a, nil
 }
 
+// NeedsRiskAcceptance reports whether saving u over the account a needs
+// AcceptAutonomyRisk. A save needs it when:
+//   - it turns ConfirmSends from on to off, at any level and whatever
+//     ConfirmDeletes is, so the switch never goes off without an acceptance;
+//   - it starts unattended sends (see unattendedSends): the new state allows
+//     them and the old state did not. So raising the level to Send or above
+//     with ConfirmSends off needs it too, because an acceptance given at a
+//     lower level did not cover a level that sends;
+//   - it ends with both confirmations off (full autonomy), every time, also
+//     when the user accepted before.
+//
+// An account that already sends unattended and stays that way needs no new
+// acceptance, unless both confirmations are off. The settings page uses this
+// function to show the box, so the page and UpdateSettings cannot disagree.
+func NeedsRiskAcceptance(a *account.Account, u SettingsUpdate) bool {
+	sendsTurnedOff := a.ConfirmSends && !u.ConfirmSends
+	unattendedStarts := unattendedSends(u.MailLevel, u.ConfirmSends) &&
+		!unattendedSends(a.Level(account.AreaMail), a.ConfirmSends)
+	autonomy := !u.ConfirmSends && !u.ConfirmDeletes
+	return sendsTurnedOff || unattendedStarts || autonomy
+}
+
+// unattendedSends reports whether the agent can send with no question to the
+// user: the mail level allows a send and ConfirmSends is off. It asks policy, so
+// a damaged level counts as Off here too. It looks at the account alone, so nil
+// scopes put no token limit on the level.
+func unattendedSends(level account.Level, confirmSends bool) bool {
+	d := policy.Decide(&account.Account{
+		Levels:       map[account.Area]account.Level{account.AreaMail: level},
+		ConfirmSends: confirmSends,
+	}, policy.ActSend, nil)
+	return d.Allowed && !d.NeedsConfirmation
+}
+
 // UpdateSettings saves the settings of an account of the tenant of the
 // caller. The user calls it from the settings page. In this order it:
 //  1. refuses a mail level outside 0 to 5 (ErrInvalidLevel) and limits that
 //     account.Limits.Validate refuses (ErrInvalidLimits);
 //  2. finds the account in the tenant (ErrAccountNotFound);
-//  3. refuses a save that ends with both confirmations off when
-//     AcceptAutonomyRisk is false (ErrAutonomyNotAccepted). This holds for
-//     every such save, also when the user accepted before;
-//  4. sets AutonomyAcceptedAt to now when the save has both confirmations off;
+//  3. refuses a save that needs the acceptance when AcceptAutonomyRisk is
+//     false (ErrAutonomyNotAccepted, see NeedsRiskAcceptance);
+//  4. sets AutonomyAcceptedAt to now when the save needs the acceptance. The
+//     time stays when the user turns a confirmation on again. It is a record
+//     of the last acceptance. It never replaces a new acceptance;
 //  5. saves the account, but not its status or its pins (store.UpdateAccount
 //     does not write them), so a failed login that set needs_reauth after
 //     step 2 keeps that status, and a reconnect after step 2 keeps its pins;
 //  6. writes the audit entry "settings_changed", and "autonomy_accepted" when
-//     the user accepted the risk of full autonomy.
+//     the save needed the acceptance.
 //
 // It does not close the cached backend of the account: a send or a read may
 // use it at this moment, and closing it would make that call fail (a send
@@ -288,8 +323,8 @@ func (s *Service) UpdateSettings(ctx context.Context, id account.AccountID, u Se
 	if err != nil {
 		return fmt.Errorf("service: look up account: %w", err)
 	}
-	autonomy := !u.ConfirmSends && !u.ConfirmDeletes
-	if autonomy && !u.AcceptAutonomyRisk {
+	needsAcceptance := NeedsRiskAcceptance(a, u)
+	if needsAcceptance && !u.AcceptAutonomyRisk {
 		return ErrAutonomyNotAccepted
 	}
 
@@ -303,7 +338,7 @@ func (s *Service) UpdateSettings(ctx context.Context, id account.AccountID, u Se
 	if a.Mail != nil {
 		a.Mail.SaveSentCopy = u.SaveSentCopy
 	}
-	if autonomy {
+	if needsAcceptance {
 		now := s.d.Now().UTC()
 		a.AutonomyAcceptedAt = &now
 	}
@@ -315,7 +350,7 @@ func (s *Service) UpdateSettings(ctx context.Context, id account.AccountID, u Se
 	}
 
 	s.record(ctx, p, entry{tool: toolUpdateSettings, account: id, outcome: audit.OutcomeOK, detail: detailSettingsChanged})
-	if autonomy {
+	if needsAcceptance {
 		s.record(ctx, p, entry{tool: toolUpdateSettings, account: id, outcome: audit.OutcomeOK, detail: detailAutonomyAccepted})
 	}
 	return nil

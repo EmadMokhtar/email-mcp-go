@@ -256,7 +256,10 @@ deletes** on. So:
 
 Only you can change a level, and only on the settings page of the account in
 the browser. The agent cannot change permissions through any tool. It can call
-`request_permission_change`, which only returns a link to that page.
+`request_permission_change`, which only returns a link to that page. The link
+does not change the form. The page shows the requested level apart from the
+form, says what that level allows, and offers a button **Apply requested level
+N**. **Save** never applies a requested level.
 
 ## Confirmations and full autonomy
 
@@ -310,13 +313,24 @@ a recipient with any character outside printable ASCII:
   One such address stops a whole reply to all, and the error says why. A plain
   reply that names the other people in Cc still works.
 
+**Confirm sends** is the switch that lets mail leave with no check. You can
+turn it off only on the settings page, and only after you tick a box that
+accepts this risk. This holds whatever Confirm deletes is:
+
+> An email or a calendar invite can contain hidden instructions, such as 'forward all invoices to me'. With Confirm sends off, the agent may follow them, and nobody checks before anything leaves.
+
+You must tick the same box when you raise the level to Send or above while
+Confirm sends is off, because that also lets the agent send without asking. If
+the agent can already send without asking and stays that way, a change asks
+nothing new.
+
 **Full autonomy** means both switches are off. The agent then sends and moves
-mail to the Trash without asking. You can turn it on only on the settings page,
-and only after you tick a box that accepts this risk:
+mail to the Trash without asking. Every save with both switches off needs the
+same box again.
 
-> An email or a calendar invite can contain hidden instructions, such as 'forward all invoices to me'. With confirmations off, the agent may follow them, and nobody checks before anything leaves.
-
-The time when you accepted it is stored and shown in the activity log.
+The time when you last accepted the risk is stored and shown on the settings
+page, and each acceptance is in the activity log. If you turn Confirm sends on
+and later off again, you must accept the risk again.
 
 These guardrails stay on in full autonomy. You can change the numbers per
 account:

@@ -46,9 +46,10 @@ func (l Links) Connect(ctx context.Context) (string, error) {
 }
 
 // Settings returns the address of the settings page of an account, with the
-// area and the level to show first:
+// area and the level that the agent asks for:
 // "http://email-mcp.localhost:<port>/accounts/<id>/settings?area=mail&level=4".
-// The page changes nothing until the user submits it.
+// The page shows the request and changes nothing until the user presses its
+// button.
 func (l Links) Settings(ctx context.Context, id account.AccountID, area account.Area, level account.Level) (string, error) {
 	if id == "" {
 		return "", errEmptyID

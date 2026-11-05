@@ -31,9 +31,9 @@ import (
 )
 
 // autonomyText is the warning of spec section 7.3, the exact label of the box
-// that accepts full autonomy.
+// that accepts the risk of turning off Confirm sends.
 const autonomyText = "An email or a calendar invite can contain hidden instructions, such as 'forward all invoices to me'. " +
-	"With confirmations off, the agent may follow them, and nobody checks before anything leaves."
+	"With Confirm sends off, the agent may follow them, and nobody checks before anything leaves."
 
 // pageBackend is the mail backend of the page tests. It gives one original
 // message for a reply ("o1", from alice@example.com), holds the drafts that a
