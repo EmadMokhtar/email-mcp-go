@@ -116,6 +116,10 @@ type MessageOut struct {
 	NextOffset     int                    `json:"next_offset" jsonschema:"The offset that reads the next part of a truncated body."`
 	Attachments    []AttachmentRef        `json:"attachments"`
 	Untrusted      Untrusted[MessageText] `json:"untrusted"`
+
+	// These hold no text of the sender, so they are outside Untrusted.
+	AlternativesDiffer bool `json:"alternatives_differ" jsonschema:"True when the message has another version of the body that says something else than this one. Mail clients show this version, and the other one is not returned. Tell the user when it matters. Set only on the first page of the body, and always false with body_format none."`
+	TextLeftOut        bool `json:"text_left_out" jsonschema:"True when mail clients show more text than this result has: the message has too many text parts, or a part that is too large or too complex to read. Tell the user."`
 }
 
 // clean removes the characters that hide text from a reader.
@@ -238,6 +242,9 @@ func messageOut(m *mail.Message) MessageOut {
 			HTML:            clean(m.HTML),
 			AttachmentNames: names,
 		}),
+
+		AlternativesDiffer: m.AlternativesDiffer,
+		TextLeftOut:        m.TextLeftOut,
 	}
 }
 

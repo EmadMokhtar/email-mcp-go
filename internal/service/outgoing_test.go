@@ -418,6 +418,37 @@ func TestDraftCountsTheHiddenCharactersOfBothParts(t *testing.T) {
 	require.Equal(t, 7, needs.Pending.Preview.BodyMore)
 }
 
+// A draft in a multipart/mixed shows its text part and its HTML part both (see
+// mime.LayoutOf). Each of them can hold hidden characters, and the count holds
+// both, also with padding in the text part. This joins the rule for the shown
+// parts with the rule that the preview counts what it does not show.
+func TestDraftCountsWhatIsHiddenInEveryShownPart(t *testing.T) {
+	env := newWriteEnv(t)
+	a := env.account()
+	env.backend.addMessage("d1", crlf("From: Me <me@example.com>\n"+
+		"To: Ann <ann@example.com>\n"+
+		"Subject: Two parts\n"+
+		"MIME-Version: 1.0\n"+
+		"Content-Type: multipart/mixed; boundary=\"A\"\n"+
+		"\n"+
+		"--A\n"+
+		"Content-Type: text/plain; charset=utf-8\n"+
+		"\n"+
+		"Pay"+strings.Repeat(spaceWithNoWidth, 3)+" now.\n"+
+		"--A\n"+
+		"Content-Type: text/html; charset=utf-8\n"+
+		"\n"+
+		"<p>Kind"+strings.Repeat(tagLetterA, 2)+" regards</p>\n"+
+		"--A--\n"), true)
+	draft := mail.Ref("d1")
+
+	_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "Pay now.\n\nKind regards", needs.Pending.Preview.BodyStart)
+	require.Equal(t, 5, needs.Pending.Preview.BodyMore, "3 and 2 hidden characters, none counted twice")
+}
+
 // The detail page shows the whole text with its white space, so only what it
 // cannot show is counted there.
 func TestPendingDetailCountsWhatItCannotShow(t *testing.T) {

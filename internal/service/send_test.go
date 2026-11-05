@@ -1245,6 +1245,79 @@ func TestPreviewShowsTheTextOfTheHTML(t *testing.T) {
 			"the preview shows what most mail programs show")
 		require.NotContains(t, needs.Pending.Preview.BodyStart, "Harmless")
 	})
+
+	t.Run("a draft with two HTML parts", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		env.backend.addMessage("d1", draftWithAlternatives(
+			"Content-Type: text/html; charset=utf-8\n\n<p>Harmless first part.</p>\n",
+			"Content-Type: text/html; charset=utf-8\n\n<p>Please wire the money today.</p>\n"), true)
+		draft := mail.Ref("d1")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Contains(t, needs.Pending.Preview.BodyStart, "Please wire the money today.",
+			"a mail client shows the last alternative")
+		require.NotContains(t, needs.Pending.Preview.BodyStart, "Harmless")
+	})
+
+	t.Run("a draft with the text part after the HTML part", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		env.backend.addMessage("d1", draftWithAlternatives(
+			"Content-Type: text/html; charset=utf-8\n\n<p>Harmless HTML.</p>\n",
+			"Content-Type: text/plain; charset=utf-8\n\nPlease wire the money today.\n"), true)
+		draft := mail.Ref("d1")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Contains(t, needs.Pending.Preview.BodyStart, "Please wire the money today.",
+			"a mail client shows the last alternative")
+		require.NotContains(t, needs.Pending.Preview.BodyStart, "Harmless")
+	})
+
+	t.Run("a draft with text parts that are all shown", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		env.backend.addMessage("d1", crlf("From: Me <me@example.com>\n"+
+			"To: Ann <ann@example.com>\n"+
+			"Subject: Two parts\n"+
+			"MIME-Version: 1.0\n"+
+			"Content-Type: multipart/mixed; boundary=\"A\"\n"+
+			"\n"+
+			"--A\n"+
+			"Content-Type: text/plain; charset=utf-8\n"+
+			"\n"+
+			"Please wire the money today.\n"+
+			"--A\n"+
+			"Content-Type: text/html; charset=utf-8\n"+
+			"\n"+
+			"<p>Kind regards</p>\n"+
+			"--A--\n"), true)
+		draft := mail.Ref("d1")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Contains(t, needs.Pending.Preview.BodyStart, "Please wire the money today.")
+		require.Contains(t, needs.Pending.Preview.BodyStart, "Kind regards")
+	})
+}
+
+// draftWithAlternatives is a saved draft with the two given parts, each with its
+// header, as alternatives.
+func draftWithAlternatives(first, second string) []byte {
+	return crlf("From: Me <me@example.com>\n" +
+		"To: Ann <ann@example.com>\n" +
+		"Subject: Two bodies\n" +
+		"MIME-Version: 1.0\n" +
+		"Content-Type: multipart/alternative; boundary=\"A\"\n" +
+		"\n" +
+		"--A\n" + first +
+		"--A\n" + second +
+		"--A--\n")
 }
 
 // An action that the user confirms in band ends with its request state. After

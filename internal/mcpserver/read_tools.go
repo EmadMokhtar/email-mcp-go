@@ -190,12 +190,12 @@ func registerReadTools(srv *mcp.Server, d *deps) {
 	}, d.listNewMessages)
 	addTool(srv, d, &mcp.Tool{
 		Name:        "get_message",
-		Description: "Get one message: headers, body and attachment list. Needs Mail 1 (read).",
+		Description: "Get one message: headers, body and attachment list. The body is the text that mail clients show. Needs Mail 1 (read).",
 		Annotations: readOnly(),
 	}, d.getMessage)
 	addTool(srv, d, &mcp.Tool{
 		Name:        "get_attachment",
-		Description: "Get one attachment of a message as an embedded resource. At most 10 MB. Needs Mail 1 (read).",
+		Description: "Get one attachment that get_message lists, as an embedded resource. At most 10 MB. Use get_message for the body. Needs Mail 1 (read).",
 		Annotations: readOnly(),
 	}, d.getAttachment)
 	addTool(srv, d, &mcp.Tool{
@@ -325,7 +325,9 @@ func (d *deps) getMessage(ctx context.Context, _ *mcp.CallToolRequest, in getMes
 }
 
 // bodyOptions turns the arguments of get_message into mail.BodyOptions. The
-// backend makes the HTML safe, and no other path returns HTML.
+// backend makes the HTML safe. No other path returns the body of a message:
+// get_attachment refuses a part of the body, and only returns a file that the
+// sender attached, as data.
 func (in getMessageInput) bodyOptions() (mail.BodyOptions, error) {
 	format := mail.BodyFormat(in.BodyFormat)
 	switch format {

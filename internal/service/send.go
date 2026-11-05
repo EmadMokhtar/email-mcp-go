@@ -478,10 +478,10 @@ func checkShownAddresses(msg *mail.RawMessage) error {
 
 // sendContent is what the preview shows of the content of a message.
 type sendContent struct {
-	// body is the whole cleaned text that the recipient sees: the text of the
-	// HTML when the message has HTML, the text part otherwise. It is cleaned as
-	// a whole, never cut first, so no hidden characters before the text can push
-	// the text out of the preview.
+	// body is the whole cleaned text that the recipient sees: the text of every
+	// part that a mail client shows (see mime.LayoutOf), with the HTML turned
+	// into text. It is cleaned as a whole, never cut first, so no hidden
+	// characters before the text can push the text out of the preview.
 	body string
 	// hidden is how many characters of what is sent cleaning removed. A new
 	// message has none, because it cannot hold them. A draft can.
@@ -591,9 +591,8 @@ func contentHash(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// draftContent reads a whole draft for the preview: the text of its whole HTML
-// part (or its text part when it has no HTML), and the file names of its
-// attachments.
+// draftContent reads a whole draft for the preview: all the text that a mail
+// client shows (see mime.LayoutOf), and the file names of its attachments.
 //
 // It gives ErrDraftUnreadable when the parser cannot read the draft in full (a
 // part that it skipped could be an attachment that the user would not see; the
@@ -605,30 +604,63 @@ func contentHash(parts ...string) string {
 // A draft goes out as it was saved, so what a person wrote in another mail
 // program keeps its styles and images. An agent cannot put such parts in a
 // draft: create_draft goes through mime.Build. The hash covers every byte of the
-// draft, and the count of characters holds the hidden characters of its text
-// part and of its HTML, because both go out. The markup of its HTML is not
-// counted: it is not text that the user could read, and a draft with styles
-// would always say that much is not shown.
+// draft, and the count of characters holds the hidden characters of every text
+// part and HTML part that goes out, because all of them go out. The markup of
+// the HTML is not counted: it is not text that the user could read, and a draft
+// with styles would always say that much is not shown.
+//
+// In a multipart/alternative the preview shows the last part that can be shown,
+// as most mail clients do, also when that is a text part after the HTML part. Such
+// a draft cannot come from the agent: create_draft always writes the text part
+// first, and the agent cannot set the draft flag on another message.
 func draftContent(data []byte) (sendContent, error) {
 	parsed, err := mime.ParseMessage(bytes.NewReader(data), 0)
 	if err != nil || parsed == nil || parsed.Incomplete {
 		return sendContent{}, ErrDraftUnreadable
 	}
-	content := sendContent{hash: contentHash(string(data))}
-	content.body, content.hidden = mime.CleanAndCount(parsed.Text)
-	content.padding = paddingRunes(content.body)
-	if parsed.HTML != "" {
-		if content.body, err = mime.HTMLToText(parsed.HTML); err != nil {
-			return sendContent{}, ErrDraftUnreadable
-		}
-		content.padding = 0
-		content.hidden += mime.HiddenRunes(parsed.HTML)
+	body, err := parsed.ShownText()
+	if err != nil {
+		return sendContent{}, ErrDraftUnreadable
 	}
+	content := sendContent{
+		body: mime.CleanUntrusted(body),
+		hash: contentHash(string(data)),
+	}
+	content.hidden, content.padding = draftUnseen(parsed)
 	for _, att := range parsed.Attachments {
 		content.attachments = append(content.attachments, att.Filename)
 		content.types = append(content.types, att.ContentType)
 	}
 	return content, nil
+}
+
+// draftUnseen counts what the preview of a draft does not show of the text that
+// goes out. hidden is the number of hidden characters in the text parts and the
+// HTML parts. padding is the white space that the preview takes away from the
+// text parts that it shows.
+//
+// A mail client shows only some of the parts (see mime.LayoutOf), but all of
+// them go out, so the hidden characters of the part that the client does not
+// show count too. The first text part and the first HTML part of the message are
+// counted once, also when they are shown.
+func draftUnseen(parsed *mime.Parsed) (hidden, padding int) {
+	textShown, htmlShown := false, false
+	for _, part := range parsed.Shown {
+		hidden += mime.HiddenRunes(part.Text)
+		if part.HTML {
+			htmlShown = htmlShown || part.Text == parsed.HTML
+			continue
+		}
+		textShown = textShown || part.Text == parsed.Text
+		padding += paddingRunes(mime.CleanUntrusted(part.Text))
+	}
+	if !textShown {
+		hidden += mime.HiddenRunes(parsed.Text)
+	}
+	if !htmlShown {
+		hidden += mime.HiddenRunes(parsed.HTML)
+	}
+	return hidden, padding
 }
 
 // buildMessage builds a new message, a reply or a forward from c. A reply reads
