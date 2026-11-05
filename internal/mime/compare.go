@@ -10,6 +10,10 @@ import (
 // same still differ a little, for example in the alt text of images.
 const missingWordShare = 20
 
+// maxMissingWords is the most words that a text of any length may have that the
+// other text does not have.
+const maxMissingWords = 8
+
 // TextsDiffer reports whether other, a second version of the body of a message,
 // says something that shown, the version that a mail client shows, does not say.
 // Both are plain text: a caller turns HTML into text first.
@@ -20,8 +24,9 @@ const missingWordShare = 20
 // that only shown has does not count either: the reader sees it.
 //
 // A text of fewer than 20 words may not have one word that shown does not have.
-// A longer text may have one in 20. So a short line added to a long text is not
-// reported. This result is a hint for the reader. It is not a security check.
+// A longer text may have one in 20, and at most 8. So a few words added to a long
+// text are not reported. This result is a hint for the reader. It is not a
+// security check: the other version is not returned to the agent.
 func TextsDiffer(shown, other string) bool {
 	seen := map[string]bool{}
 	for _, word := range textWords(shown) {
@@ -34,7 +39,7 @@ func TextsDiffer(shown, other string) bool {
 			missing++
 		}
 	}
-	return missing > len(words)/missingWordShare
+	return missing > min(len(words)/missingWordShare, maxMissingWords)
 }
 
 // textWords returns the words of a text in lower case, without punctuation and

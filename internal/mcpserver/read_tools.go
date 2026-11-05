@@ -190,12 +190,12 @@ func registerReadTools(srv *mcp.Server, d *deps) {
 	}, d.listNewMessages)
 	addTool(srv, d, &mcp.Tool{
 		Name:        "get_message",
-		Description: "Get one message: headers, body and attachment list. The body is the version that mail clients show. Needs Mail 1 (read).",
+		Description: "Get one message: headers, body and attachment list. The body is the text that mail clients show. Needs Mail 1 (read).",
 		Annotations: readOnly(),
 	}, d.getMessage)
 	addTool(srv, d, &mcp.Tool{
 		Name:        "get_attachment",
-		Description: "Get one attachment of a message as an embedded resource. At most 10 MB. A part of the body is not an attachment: use get_message for the body. Needs Mail 1 (read).",
+		Description: "Get one attachment that get_message lists, as an embedded resource. At most 10 MB. Use get_message for the body. Needs Mail 1 (read).",
 		Annotations: readOnly(),
 	}, d.getAttachment)
 	addTool(srv, d, &mcp.Tool{

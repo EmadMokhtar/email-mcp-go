@@ -1267,9 +1267,39 @@ func TestPreviewShowsTheTextOfTheHTML(t *testing.T) {
 			"Content-Type: text/plain; charset=utf-8\n\nPlease wire the money today.\n"), true)
 		draft := mail.Ref("d1")
 
-		_, _, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
 
-		require.ErrorIs(t, err, ErrDraftUnreadable, "mail clients do not agree on which part they show")
+		require.NoError(t, err)
+		require.Contains(t, needs.Pending.Preview.BodyStart, "Please wire the money today.",
+			"a mail client shows the last alternative")
+		require.NotContains(t, needs.Pending.Preview.BodyStart, "Harmless")
+	})
+
+	t.Run("a draft with text parts that are all shown", func(t *testing.T) {
+		env := newWriteEnv(t)
+		a := env.account()
+		env.backend.addMessage("d1", crlf("From: Me <me@example.com>\n"+
+			"To: Ann <ann@example.com>\n"+
+			"Subject: Two parts\n"+
+			"MIME-Version: 1.0\n"+
+			"Content-Type: multipart/mixed; boundary=\"A\"\n"+
+			"\n"+
+			"--A\n"+
+			"Content-Type: text/plain; charset=utf-8\n"+
+			"\n"+
+			"Please wire the money today.\n"+
+			"--A\n"+
+			"Content-Type: text/html; charset=utf-8\n"+
+			"\n"+
+			"<p>Kind regards</p>\n"+
+			"--A--\n"), true)
+		draft := mail.Ref("d1")
+
+		_, needs, err := env.svc.Send(env.ctx(), a.ID, nil, &draft, ConfirmInBand, nil)
+
+		require.NoError(t, err)
+		require.Contains(t, needs.Pending.Preview.BodyStart, "Please wire the money today.")
+		require.Contains(t, needs.Pending.Preview.BodyStart, "Kind regards")
 	})
 }
 

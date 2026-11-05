@@ -533,32 +533,28 @@ func composedBody(data []byte) string {
 	return composedText(data)
 }
 
-// draftContent reads a whole draft for the preview: the text of the HTML that a
-// mail client shows (or of its text part when it has no HTML), and the file names
-// of its attachments.
+// draftContent reads a whole draft for the preview: all the text that a mail
+// client shows (see mime.LayoutOf), and the file names of its attachments.
 //
 // It gives ErrDraftUnreadable when the parser cannot read the draft in full (a
 // part that it skipped could be an attachment that the user would not see; the
 // parser reads 1 MB of each header, 10000 parts and a fixed depth, and a draft
 // that create_draft saved stays far below these), and when the HTML cannot be
 // turned into text (mime.ErrHTMLTooComplex). In that case the text part is not
-// shown instead, because it can say something else than the HTML. The same holds
-// for a text part that comes after the HTML part in a multipart/alternative: mail
-// clients do not agree on which of the two they show, so no preview is right for
-// every recipient. create_draft never makes such a draft.
+// shown instead, because it can say something else than the HTML.
+//
+// In a multipart/alternative the preview shows the last part that can be shown,
+// as most mail clients do, also when that is a text part after the HTML part. Such
+// a draft cannot come from the agent: create_draft always writes the text part
+// first, and the agent cannot set the draft flag on another message.
 func draftContent(data []byte) (sendContent, error) {
 	parsed, err := mime.ParseMessage(bytes.NewReader(data), 0)
 	if err != nil || parsed == nil || parsed.Incomplete {
 		return sendContent{}, ErrDraftUnreadable
 	}
-	if parsed.HTML != "" && !parsed.ShownHTML {
+	body, err := parsed.ShownText()
+	if err != nil {
 		return sendContent{}, ErrDraftUnreadable
-	}
-	body := parsed.Text
-	if parsed.ShownHTML {
-		if body, err = mime.HTMLToText(parsed.HTML); err != nil {
-			return sendContent{}, ErrDraftUnreadable
-		}
 	}
 	var names []string
 	for _, att := range parsed.Attachments {

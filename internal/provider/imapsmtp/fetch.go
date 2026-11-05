@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	stdhtml "html"
 	"io"
 	"math"
 	"regexp"
@@ -35,6 +36,15 @@ const (
 	// that is compared with the body (see alternativesDiffer).
 	maxHTMLBytes = 4 << 20
 
+	// maxShownParts is the most text parts that the backend reads for a body. A
+	// mail client shows every text part, but each one is another fetch, and a
+	// sender chooses how many there are.
+	maxShownParts = 16
+
+	// maxOtherVersions is the most other versions of a body that are compared
+	// with the body (see alternativesDiffer).
+	maxOtherVersions = 4
+
 	// referencesFetchBytes is the most bytes of the References header that the
 	// backend reads. A longer header is cut, and the IDs that are complete are
 	// used.
@@ -61,102 +71,13 @@ const (
 // test can lower it.
 var maxTextFetchBytes int64 = 25 << 20
 
-// shownBody returns the part that a mail client shows as the body of a message,
-// and the other versions of it, which a client does not show. shown is nil when
-// the message has no such part. It reads the structure only: no message data is
-// needed, and attachments are never in the result.
-//
-// Only text/plain and text/html parts that are not attachments (see isAttachment)
-// can be the body. In a multipart/alternative, a client shows the last part that
-// it can show, so that part is the body, also when it is empty, and the parts
-// before it are the other versions. In any other multipart, a client shows every
-// part. The first text/html part with content is then the body, or else the first
-// text/plain part with content, and the other parts are not versions of it.
-//
-// A shown part of size 0 means that the body is empty. A message that is not
-// multipart is part 1.
-func shownBody(bs imap.BodyStructure) (shown *textPart, others []*textPart) {
-	if bs == nil {
-		return nil, nil
-	}
-	if _, single := bs.(*imap.BodyStructureSinglePart); single {
-		return shownIn(bs, []int{1})
-	}
-	return shownIn(bs, nil)
-}
-
-// shownIn is shownBody for the part at path.
-func shownIn(bs imap.BodyStructure, path []int) (shown *textPart, others []*textPart) {
-	switch p := bs.(type) {
-	case *imap.BodyStructureSinglePart:
-		return singleTextPart(p, path), nil
-	case *imap.BodyStructureMultiPart:
-		if strings.EqualFold(p.Subtype, "alternative") {
-			return shownAlternative(p, path)
-		}
-		for i, child := range p.Children {
-			s, o := shownIn(child, childPath(path, i))
-			if s != nil && (shown == nil || betterBody(s, shown)) {
-				shown, others = s, o
-			}
-		}
-	}
-	return shown, others
-}
-
-// betterBody reports whether part s is a better body than part shown, which
-// comes before it in a multipart that is not an alternative. Text beats no text,
-// and HTML beats plain text.
-func betterBody(s, shown *textPart) bool {
-	return s.size > 0 && (shown.size == 0 || (s.html && !shown.html))
-}
-
-// shownAlternative is shownBody for a multipart/alternative. The others are in
-// the order from the last to the first.
-func shownAlternative(p *imap.BodyStructureMultiPart, path []int) (shown *textPart, others []*textPart) {
-	for i := len(p.Children) - 1; i >= 0; i-- {
-		s, o := shownIn(p.Children[i], childPath(path, i))
-		switch {
-		case s == nil:
-		case shown == nil:
-			shown, others = s, o
-		default:
-			others = append(append(others, s), o...)
-		}
-	}
-	return shown, others
-}
-
-// childPath returns the part number of child i (from zero) of the part at path.
-func childPath(path []int, i int) []int {
-	return append(slices.Clone(path), i+1)
-}
-
-// singleTextPart returns what a fetch of the text of p needs. It returns nil
-// when p cannot be the body of a message.
-func singleTextPart(p *imap.BodyStructureSinglePart, path []int) *textPart {
-	mediaType := p.MediaType()
-	if isAttachment(p) || (mediaType != "text/plain" && mediaType != "text/html") {
-		return nil
-	}
-	return &textPart{
-		path:     path,
-		html:     mediaType == "text/html",
-		charset:  p.Params["charset"],
-		encoding: p.Encoding,
-		size:     p.Size,
-	}
-}
-
-// attachmentInfos lists the attachments of a message (see isAttachment), in
-// the order of the message, from the structure only. The ID of an attachment
-// is its part number, "2" or "1.3", the text that GetAttachment takes.
-func attachmentInfos(bs imap.BodyStructure) []mail.AttachmentInfo {
+// attachmentInfos lists the attachments of a message, in the order of the message.
+// The ID of an attachment is its part number, "2" or "1.3", the text that
+// GetAttachment takes.
+func attachmentInfos(st structure) []mail.AttachmentInfo {
 	var out []mail.AttachmentInfo
-	for _, l := range leaves(bs) {
-		if isAttachment(l.part) {
-			out = append(out, attachmentInfo(l))
-		}
+	for _, l := range st.attachments {
+		out = append(out, attachmentInfo(l))
 	}
 	return out
 }
@@ -378,8 +299,8 @@ func dropLastRunes(s string, n int) string {
 // the start alone. A style rule at the end of the document can hide an element
 // at the start, and mime.HTMLToText leaves out hidden text. With only the
 // start, text that the sender hid would show. The caller does not ask for an
-// HTML part larger than maxHTMLBytes (see chooseBody), so the result for HTML
-// is at most 4 MiB.
+// HTML part larger than maxHTMLBytes (see fetchPart), so the result for HTML is
+// at most 4 MiB.
 func textFetchBytes(p *textPart, want int) int64 {
 	if p.html {
 		return min(int64(p.size), maxHTMLBytes)
@@ -543,32 +464,37 @@ func readSection(c *imapclient.Client, uid imap.UID, section *imap.FetchItemBody
 //
 // The message data is read with BODY.PEEK in a read-only folder, so the
 // message is not marked as read. The backend fetches the BODYSTRUCTURE
-// first and reads only the text/plain or text/html part that a mail client shows
-// (see shownBody). So the agent reads what the user reads, and not a part that
+// first and reads only the text/plain and text/html parts that a mail client shows
+// (see mime.LayoutOf). So the agent reads what the user reads, and not a part that
 // only the agent would see. Of a text/plain part it reads only the start, as much
 // as the page needs (BODY.PEEK[n]<0.size>). An HTML part is read whole (see
-// textFetchBytes), and only if it is not larger than 4 MiB. It never fetches an
-// attachment part.
+// textFetchBytes), and only if it is not larger than 4 MiB. Parts after the page
+// are not read. It never fetches an attachment part.
 //
 // The formats:
-//   - text: Text is the text that a client shows. For an HTML part it is the
-//     text of the HTML (see mime.HTMLToText).
-//   - html: HTML is the HTML part that a client shows, without what a reader
-//     cannot see and cleaned (see mime.VisibleHTML). When a client shows a
-//     text/plain part, that part is in Text.
+//   - text: Text is the text that a client shows. The text of an HTML part comes
+//     from mime.HTMLToText.
+//   - html: HTML is what a client shows, without what a reader cannot see and
+//     cleaned (see mime.VisibleHTML). A text part next to an HTML part is escaped.
+//     A message with only text parts gives them in Text.
 //   - none: only the headers and the attachment list.
 //
 // An empty format means text.
 //
-// With the text and html formats, AlternativesDiffer says whether the message has
-// another version of the body that says something else (see alternativesDiffer).
-// Reading that version is one more fetch, of at most 4 MiB.
+// A message can have several text parts that a client shows, one after the other.
+// The body then holds them in order, joined with mime.PartSeparator, and the
+// paging goes over the whole. At most 16 parts are read.
+//
+// On the first page, AlternativesDiffer says whether the message has another
+// version of the body that says something else (see alternativesDiffer). Reading
+// such a version is one more fetch, of at most 4 MiB.
 //
 // An HTML part larger than 4 MiB is not converted, because the conversion needs
-// memory of about 40 times the size, for every page. The error wraps
-// mail.ErrTooLarge, and the format "none" still works. A text/plain alternative
-// is not used instead: a sender chooses the size of the HTML, and a client still
-// shows that HTML and not the text/plain part.
+// memory of about 40 times the size, for every page. The same holds for HTML that
+// is too complex to convert. Such a part is left out, and TextLeftOut is true.
+// When no text part can be read, the error wraps mail.ErrTooLarge, and the format
+// "none" still works. Another version of the body is not used instead: a sender
+// chooses the size of the HTML, and a client still shows that HTML.
 //
 // The page starts at the character opts.Offset of the body after it is
 // decoded and cleaned (for HTML, after the hidden parts are removed and it is
@@ -630,9 +556,10 @@ func (b *Backend) GetMessage(ctx context.Context, ref mail.Ref, opts mail.BodyOp
 		if err != nil {
 			return err
 		}
-		out := newMessage(r, m)
+		st := analyzeStructure(m.BodyStructure)
+		out := newMessage(r, m, st)
 		if format != mail.BodyNone {
-			if err := fillBody(c, uid, m.BodyStructure, format, offset, maxChars, out); err != nil {
+			if err := fillBody(c, uid, st, format, offset, maxChars, out); err != nil {
 				return err
 			}
 		}
@@ -646,14 +573,13 @@ func (b *Backend) GetMessage(ctx context.Context, ref mail.Ref, opts mail.BodyOp
 }
 
 // newMessage makes a message from the fetched data, without the body.
-func newMessage(r imapRef, m *imapclient.FetchMessageBuffer) *mail.Message {
-	st := analyzeStructure(m.BodyStructure)
+func newMessage(r imapRef, m *imapclient.FetchMessageBuffer, st structure) *mail.Message {
 	s := newSummary(m)
 	s.Ref = encodeRef(r)
 	s.HasAttachments = st.hasAttachments
 	s.HasInvite = st.hasInvite
 
-	msg := &mail.Message{Summary: s, Attachments: attachmentInfos(m.BodyStructure)}
+	msg := &mail.Message{Summary: s, Attachments: attachmentInfos(st)}
 	if env := m.Envelope; env != nil {
 		msg.Cc = convertAddresses(env.Cc)
 		msg.ReplyTo = convertAddresses(env.ReplyTo)
@@ -691,69 +617,72 @@ func convertible(what, advice string, convert func(string) (string, error)) rend
 	}
 }
 
-// chooseBody picks the part that the body comes from (see shownBody), how to turn
-// its decoded text into the text of the page, and whether that text is HTML. It
-// returns a nil part when the body is empty, or when the message has no body to
-// show.
-//
-// An HTML part larger than maxHTMLBytes is not converted. The error wraps
-// mail.ErrTooLarge. The caller can still ask for the headers and the attachments
-// with the format "none". The same holds for HTML that is smaller but too complex
-// to convert.
-func chooseBody(bs imap.BodyStructure, format mail.BodyFormat) (part *textPart, render renderFunc, isHTML bool, err error) {
-	part, _ = shownBody(bs)
-	switch {
-	case part == nil || part.size == 0:
-		return nil, nil, false, nil
-	case !part.html:
-		return part, cleanText, false, nil
+// bodyAdvice says what still works for a body that cannot be read.
+const bodyAdvice = `use body_format "none" to read the headers and the attachments only`
+
+// partRender returns how to turn the decoded text of a part into the text of the
+// page.
+type partRender func(p *textPart) renderFunc
+
+// textRender is the partRender of the text format.
+func textRender(p *textPart) renderFunc {
+	if p.html {
+		return convertible("convert", bodyAdvice, mime.HTMLToText)
 	}
-	const advice = `use body_format "none" to read the headers and the attachments only`
-	what, render, isHTML := "convert", renderFunc(mime.HTMLToText), false
-	if format == mail.BodyHTML {
-		what, isHTML = "clean", true
-		render = func(s string) (string, error) {
-			out, err := mime.VisibleHTML(s)
-			return mime.CleanUntrusted(out), err
-		}
-	}
-	if part.size > maxHTMLBytes {
-		return nil, nil, false, fmt.Errorf("%w: the HTML body is too large to %s (%d bytes, the limit is %d bytes); %s",
-			mail.ErrTooLarge, what, part.size, maxHTMLBytes, advice)
-	}
-	return part, convertible(what, advice, render), isHTML, nil
+	return cleanText
 }
 
-// fillBody fetches the start of the body part and sets the page in msg.
-func fillBody(c *imapclient.Client, uid imap.UID, bs imap.BodyStructure, format mail.BodyFormat, offset, maxChars int, msg *mail.Message) error {
-	part, render, isHTML, err := chooseBody(bs, format)
+// htmlRender is the partRender of the html format. A text part next to an HTML
+// part has to be HTML too, so it is escaped.
+func htmlRender(p *textPart) renderFunc {
+	if p.html {
+		return convertible("clean", bodyAdvice, func(s string) (string, error) {
+			out, err := mime.VisibleHTML(s)
+			return mime.CleanUntrusted(out), err
+		})
+	}
+	return func(decoded string) (string, error) {
+		return "<pre>" + stdhtml.EscapeString(mime.CleanUntrusted(decoded)) + "</pre>", nil
+	}
+}
+
+func isHTMLPart(p *textPart) bool { return p.html }
+
+// tooLargeHTML reports whether p is an HTML part that the backend does not convert.
+func tooLargeHTML(p *textPart) bool { return p.html && p.size > maxHTMLBytes }
+
+// fillBody fetches the text parts that the page needs and sets the page in msg.
+func fillBody(c *imapclient.Client, uid imap.UID, st structure, format mail.BodyFormat, offset, maxChars int, msg *mail.Message) error {
+	asHTML := format == mail.BodyHTML && slices.ContainsFunc(st.shown, isHTMLPart)
+	render := partRender(textRender)
+	if asHTML {
+		render = htmlRender
+	}
+	// One more character than the page tells that more text follows.
+	body, err := fetchBody(c, uid, st.shown, offset+maxChars+1, render)
 	if err != nil {
 		return err
 	}
-	var text string
-	var partial bool
-	if part != nil {
-		// One more character than the page tells that more text follows.
-		text, partial, err = fetchBodyText(c, uid, part, offset+maxChars+1, render)
-		if err != nil {
-			return err
-		}
-		setPage(msg, text, partial, isHTML, offset, maxChars)
+	setPage(msg, body, asHTML, offset, maxChars)
+	msg.TextLeftOut = body.leftOut
+	// The answer does not depend on the page, so one fetch of the other versions
+	// is enough.
+	if offset == 0 {
+		msg.AlternativesDiffer, err = alternativesDiffer(c, uid, st, body, asHTML)
 	}
-	msg.AlternativesDiffer, err = alternativesDiffer(c, uid, bs, text, partial, isHTML)
 	return err
 }
 
-// setPage sets the page of text that starts at the character offset in msg.
-func setPage(msg *mail.Message, text string, partial, isHTML bool, offset, maxChars int) {
-	page, more := pageRunes(text, offset, maxChars)
+// setPage sets the page of the body that starts at the character offset in msg.
+func setPage(msg *mail.Message, body bodyText, asHTML bool, offset, maxChars int) {
+	page, more := pageRunes(body.text, offset, maxChars)
 	// The text ends at the cap on the bytes of a text part, but the body goes on.
 	// A page that reaches the end of this text says so, and the next page is
 	// empty and ends the paging. (Text that ends before the page is not more.)
-	if partial && page != "" {
+	if body.partial && page != "" {
 		more = true
 	}
-	if isHTML {
+	if asHTML {
 		msg.HTML = page
 	} else {
 		msg.Text = page
@@ -765,50 +694,130 @@ func setPage(msg *mail.Message, text string, partial, isHTML bool, offset, maxCh
 }
 
 // alternativesDiffer reports whether the message has another version of the body
-// that says something else than shown (see mime.TextsDiffer), the text of the
-// body as chooseBody made it. partial says that shown is not the whole body, and
-// isHTML says that shown is HTML.
+// that says something else than body, the text that was read of the parts that a
+// client shows (see mime.TextsDiffer). asHTML says that body is HTML.
 //
-// A message that has no other version with content gives false. The answer is
-// true when the versions cannot be compared, because this is not known to be the
-// same text: the other version is larger than maxHTMLBytes or too complex, the
-// server sent no data for it, or the message has more than two versions, which
-// normal mail does not have. Then the other versions are not fetched. A failed
-// connection is an error.
-func alternativesDiffer(c *imapclient.Client, uid imap.UID, bs imap.BodyStructure, shown string, partial, isHTML bool) (bool, error) {
-	_, versions := shownBody(bs)
-	var others []*textPart
-	for _, p := range versions {
-		if p.size > 0 {
-			others = append(others, p)
-		}
-	}
+// A message that has no other version gives false. The answer is true when the
+// versions cannot be compared, because they are not known to say the same: there
+// are more than maxOtherVersions, a text part is left out, or a part is larger
+// than maxHTMLBytes or too complex to convert. Then not all of them are fetched.
+//
+// The comparison needs the whole text. A page can hold only the start of a
+// text/plain part, and the html format gives HTML, so in these cases the shown
+// parts are read again. A failed connection, or a message that is gone, is an
+// error.
+func alternativesDiffer(c *imapclient.Client, uid imap.UID, st structure, body bodyText, asHTML bool) (bool, error) {
+	tooLarge := func(p *textPart) bool { return p.size > maxHTMLBytes }
 	switch {
-	case len(others) == 0:
+	case len(st.others) == 0:
 		return false, nil
-	case len(others) > 1 || partial || others[0].size > maxHTMLBytes:
+	case len(st.others) > maxOtherVersions, body.leftOut,
+		slices.ContainsFunc(st.others, tooLarge), slices.ContainsFunc(st.shown, tooLarge):
 		return true, nil
 	}
-	if isHTML {
-		text, err := mime.HTMLToText(shown)
-		if err != nil {
+	shown := body.text
+	if asHTML || !body.complete {
+		whole, err := fetchBody(c, uid, st.shown, int(maxTextFetchBytes), textRender)
+		switch {
+		case errors.Is(err, mail.ErrTooLarge):
+			return true, nil
+		case err != nil:
+			return false, err
+		case whole.leftOut || !whole.complete:
 			return true, nil
 		}
-		shown = text
+		shown = whole.text
 	}
-	other := others[0]
-	render := cleanText
-	if other.html {
-		render = mime.HTMLToText
+	for _, other := range st.others {
+		text, _, err := fetchBodyStart(c, uid, other, int64(other.size), textRender(other))
+		switch {
+		case errors.Is(err, mail.ErrTooLarge):
+			return true, nil
+		case err != nil:
+			return false, err
+		}
+		if mime.TextsDiffer(shown, text) {
+			return true, nil
+		}
 	}
-	text, _, err := fetchBodyStart(c, uid, other, int64(other.size), render)
-	switch {
-	case errors.Is(err, mail.ErrTooLarge), errors.Is(err, mime.ErrHTMLTooComplex), errors.Is(err, mail.ErrNotFound):
-		return true, nil
-	case err != nil:
-		return false, err
+	return false, nil
+}
+
+// bodyText is what fetchBody read of the text parts of a message.
+type bodyText struct {
+	// text holds the parts in order, joined with mime.PartSeparator.
+	text string
+	// partial is true when the last part in text goes on after it (see
+	// fetchBodyText).
+	partial bool
+	// complete is true when text has all of each part that is not left out.
+	complete bool
+	// leftOut is true when a part is not in text: there are more than
+	// maxShownParts, or a part is too large or too complex to read.
+	leftOut bool
+}
+
+// fetchBody returns the text of parts, made by render. The text has at least need
+// characters, or it is all the text that the backend reads of the parts. It stops
+// when it has enough, so the parts after that are not fetched.
+//
+// A part that is too large or too complex is left out. When no part can be read,
+// the error of the first one is returned. It wraps mail.ErrTooLarge.
+func fetchBody(c *imapclient.Client, uid imap.UID, parts []*textPart, need int, render partRender) (bodyText, error) {
+	read := parts[:min(len(parts), maxShownParts)]
+	out := bodyText{
+		complete: true,
+		leftOut:  len(read) < len(parts) || slices.ContainsFunc(read, tooLargeHTML),
 	}
-	return mime.TextsDiffer(shown, text), nil
+	var (
+		pieces  []string
+		refused error
+		anyRead bool
+		count   int
+	)
+	for _, p := range read {
+		if count >= need {
+			out.complete = false
+			break
+		}
+		text, partial, err := fetchPart(c, uid, p, need-count, render(p))
+		switch {
+		case errors.Is(err, mail.ErrTooLarge):
+			out.leftOut = true
+			if refused == nil {
+				refused = err
+			}
+			continue
+		case err != nil:
+			return bodyText{}, err
+		}
+		anyRead = true
+		if text != "" {
+			if len(pieces) > 0 {
+				count += utf8.RuneCountInString(mime.PartSeparator)
+			}
+			pieces = append(pieces, text)
+			count += utf8.RuneCountInString(text)
+		}
+		if partial {
+			out.partial, out.complete = true, false
+			break
+		}
+	}
+	if !anyRead && refused != nil {
+		return bodyText{}, refused
+	}
+	out.text = strings.Join(pieces, mime.PartSeparator)
+	return out, nil
+}
+
+// fetchPart is fetchBodyText for a part that may be too large to read.
+func fetchPart(c *imapclient.Client, uid imap.UID, p *textPart, need int, render renderFunc) (string, bool, error) {
+	if tooLargeHTML(p) {
+		return "", false, fmt.Errorf("%w: the HTML body is too large to read (%d bytes, the limit is %d bytes); %s",
+			mail.ErrTooLarge, p.size, maxHTMLBytes, bodyAdvice)
+	}
+	return fetchBodyText(c, uid, p, need, render)
 }
 
 // fetchBodyText returns the text of a body part, made by render from the
@@ -948,11 +957,10 @@ func (b *Backend) GetRaw(ctx context.Context, ref mail.Ref, maxBytes int64) ([]b
 }
 
 // GetAttachment returns the data of one attachment of a message. The attachment
-// ID is a part number that GetMessage lists, such as "2" or "1.3". It must be a
-// part that is an attachment (see isAttachment) and it must be in the structure
-// of the message, else the error wraps mail.ErrNotFound. Nothing is fetched for
-// any other ID. A part of the body is not an attachment: GetAttachment returns
-// data as it is, and the body must go through GetMessage, which cleans it.
+// ID is a part number that GetMessage lists, such as "2" or "1.3". For any other ID
+// the error wraps mail.ErrNotFound, and nothing is fetched. A part of the body is
+// not an attachment: GetAttachment returns data as it is, and the body must go
+// through GetMessage, which cleans it.
 //
 // The limit is for the data after the transfer encoding is removed. The
 // backend refuses an attachment that is clearly larger than maxBytes from the
@@ -1012,8 +1020,8 @@ func (b *Backend) GetAttachment(ctx context.Context, ref mail.Ref, attachmentID 
 
 // leafByID finds the attachment with the given ID (a part number such as "1.2").
 func leafByID(bs imap.BodyStructure, id string) (leaf, bool) {
-	for _, l := range leaves(bs) {
-		if partPath(l.path) == id && isAttachment(l.part) {
+	for _, l := range analyzeStructure(bs).attachments {
+		if partPath(l.path) == id {
 			return l, true
 		}
 	}

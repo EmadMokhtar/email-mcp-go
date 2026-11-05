@@ -947,6 +947,20 @@ func TestSnippets(t *testing.T) {
 			want: "only html",
 		},
 		{
+			name: "the first text part in mixed",
+			raw: mailWith("Content-Type: multipart/mixed; boundary=OUT",
+				"--OUT\nContent-Type: text/plain; charset=utf-8\n\nthe note\n"+
+					"--OUT\nContent-Type: text/html; charset=utf-8\n\n<p>the html</p>\n--OUT--\n"),
+			want: "the note",
+		},
+		{
+			name: "the root part that related names",
+			raw: mailWith("Content-Type: multipart/related; boundary=REL; start=\"<b@x>\"",
+				"--REL\nContent-ID: <a@x>\nContent-Type: text/html; charset=utf-8\n\n<p>not the root</p>\n"+
+					"--REL\nContent-ID: <b@x>\nContent-Type: text/html; charset=utf-8\n\n<p>the root</p>\n--REL--\n"),
+			want: "the root",
+		},
+		{
 			name: "text part nested in mixed, with an attachment",
 			raw: mailWith("Content-Type: multipart/mixed; boundary=OUT",
 				"--OUT\nContent-Type: multipart/alternative; boundary=IN\n\n"+

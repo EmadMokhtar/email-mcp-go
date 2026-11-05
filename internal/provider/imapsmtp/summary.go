@@ -35,7 +35,7 @@ const (
 	snippetHTMLBudget = 8 << 20
 )
 
-// textPart is the part of a message that the snippet comes from.
+// textPart is a text part of a message: what a fetch of its text needs.
 type textPart struct {
 	path     []int // the IMAP part number, for example [1 2] for "1.2"
 	html     bool  // text/html. Otherwise text/plain.
@@ -79,44 +79,93 @@ func leaves(bs imap.BodyStructure) []leaf {
 	return out
 }
 
-// isAttachment reports whether a part is an attachment: its Content-Disposition
-// is "attachment", or it is not text (an image, a PDF, a message). This is the
-// one rule for HasAttachments of a summary, for the list of attachments of a
-// message, and for leaving a part out of the body.
-func isAttachment(p *imap.BodyStructureSinglePart) bool {
-	if d := p.Disposition(); d != nil && strings.EqualFold(d.Value, "attachment") {
-		return true
-	}
-	return !strings.EqualFold(p.Type, "text")
-}
-
-// structure is what a summary needs from the BODYSTRUCTURE of a message.
+// structure is what the BODYSTRUCTURE of a message says about it.
 type structure struct {
 	hasAttachments bool
 	hasInvite      bool
-	text           *textPart // nil when the message has no usable text part
+	// shown holds the text parts that a mail client shows, in the order of the
+	// message, and others holds the other versions of the body (see
+	// mime.LayoutOf). All have content.
+	shown, others []*textPart
+	// attachments holds the attachments, in the order of the message.
+	attachments []leaf
 }
 
-// analyzeStructure reads the BODYSTRUCTURE of a message.
-//
-// A part is an attachment by isAttachment. A part is an invite when it is
-// text/calendar. The snippet comes from the part that a mail client shows (see
-// shownBody). A part without content gives no snippet. Messages inside the
-// message (message/rfc822) are not searched.
+// analyzeStructure reads the BODYSTRUCTURE of a message. mime.LayoutOf says what
+// each part is, and this is the one rule for HasAttachments of a summary, for the
+// list of attachments of a message, and for the body. A part is an invite when it
+// is text/calendar. Messages inside the message (message/rfc822) are not searched.
 func analyzeStructure(bs imap.BodyStructure) structure {
 	var s structure
+	byID := map[string]leaf{}
 	for _, l := range leaves(bs) {
+		byID[partPath(l.path)] = l
 		if l.part.MediaType() == "text/calendar" {
 			s.hasInvite = true
 		}
-		if isAttachment(l.part) {
-			s.hasAttachments = true
-		}
 	}
-	if shown, _ := shownBody(bs); shown != nil && shown.size > 0 {
-		s.text = shown
+	layout := mime.LayoutOf(partTree(bs, nil))
+	for _, n := range layout.Shown {
+		s.shown = append(s.shown, newTextPart(byID[n.ID]))
 	}
+	for _, n := range layout.Others {
+		s.others = append(s.others, newTextPart(byID[n.ID]))
+	}
+	for _, n := range layout.Attachments {
+		s.attachments = append(s.attachments, byID[n.ID])
+	}
+	s.hasAttachments = len(s.attachments) > 0
 	return s
+}
+
+// firstText returns the first text that a mail client shows, which the snippet
+// comes from. It is nil when the body is empty.
+func (s structure) firstText() *textPart {
+	if len(s.shown) == 0 {
+		return nil
+	}
+	return s.shown[0]
+}
+
+// partTree describes the part at path for mime.LayoutOf. path is nil for the
+// message. A message that is not multipart is part 1.
+func partTree(bs imap.BodyStructure, path []int) *mime.PartNode {
+	switch p := bs.(type) {
+	case *imap.BodyStructureSinglePart:
+		if path == nil {
+			path = []int{1}
+		}
+		disposition := p.Disposition()
+		return &mime.PartNode{
+			ID:         partPath(path),
+			MediaType:  p.MediaType(),
+			Attachment: disposition != nil && strings.EqualFold(disposition.Value, "attachment"),
+			Named:      partFilename(p) != "",
+			Empty:      p.Size == 0,
+			ContentID:  p.ID,
+		}
+	case *imap.BodyStructureMultiPart:
+		n := &mime.PartNode{ID: partPath(path), MediaType: p.MediaType()}
+		if p.Extended != nil {
+			n.Start = p.Extended.Params["start"]
+		}
+		for i, child := range p.Children {
+			n.Children = append(n.Children, partTree(child, append(slices.Clone(path), i+1)))
+		}
+		return n
+	}
+	return nil
+}
+
+// newTextPart returns what a fetch of the text of a part needs.
+func newTextPart(l leaf) *textPart {
+	return &textPart{
+		path:     l.path,
+		html:     l.part.MediaType() == "text/html",
+		charset:  l.part.Params["charset"],
+		encoding: l.part.Encoding,
+		size:     l.part.Size,
+	}
 }
 
 // fetchSummaries returns the summaries of the messages with the given UIDs, in
@@ -165,7 +214,7 @@ func fetchSummaries(c *imapclient.Client, mailbox string, uidValidity uint32, ui
 			return nil, err
 		}
 		for uid, raw := range bodies {
-			snippets[uid] = makeSnippet(structures[uid].text, raw)
+			snippets[uid] = makeSnippet(structures[uid].firstText(), raw)
 		}
 	}
 
@@ -209,7 +258,7 @@ func planSnippets(uids []imap.UID, structures map[imap.UID]structure) []*snippet
 	var plan []*snippetFetch
 	fetches := map[string]*snippetFetch{}
 	for _, uid := range uids {
-		p := structures[uid].text
+		p := structures[uid].firstText()
 		if p == nil {
 			continue
 		}

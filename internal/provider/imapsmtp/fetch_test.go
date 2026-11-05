@@ -71,6 +71,13 @@ func partText(subtype, charset, encoding, body string) string {
 	return h + "\n\n" + body
 }
 
+// inlineFile returns a text part with a file name that is not marked as an
+// attachment.
+func inlineFile(contentType, name, body string) string {
+	return "Content-Type: " + contentType + "; name=\"" + name + "\"\n" +
+		"Content-Disposition: inline; filename=\"" + name + "\"\n\n" + body
+}
+
 // partFile returns an attachment part.
 func partFile(contentType, name, encoding, body string) string {
 	h := "Content-Type: " + contentType + "; name=\"" + name + "\"\n" +
@@ -96,6 +103,13 @@ func multi(subtype, boundary string, parts ...string) string {
 func multiMail(subtype string, parts ...string) []byte {
 	headers, body, _ := strings.Cut(multi(subtype, "OUTER", parts...), "\n\n")
 	return mailWith(headers, body)
+}
+
+// relatedMail returns a message whose top level is a multipart/related that
+// names its root part.
+func relatedMail(start string, parts ...string) []byte {
+	headers, body, _ := strings.Cut(multi("related", "OUTER", parts...), "\n\n")
+	return mailWith(headers+"; start=\""+start+"\"", body)
 }
 
 // textMail returns a single-part message.
@@ -211,32 +225,32 @@ func bsMulti(sub string, children ...imap.BodyStructure) *imap.BodyStructureMult
 }
 
 // Ported from the prototype (bodystructure_test.go, TestTextParts). The
-// prototype returned every text part. shownBody returns the part that a mail
-// client shows and the other versions of it, and the parts that are attachments
-// are never in the result.
-func TestShownBody(t *testing.T) {
+// prototype returned every text part. analyzeStructure returns the parts that a
+// mail client shows and the other versions of them, and the parts that are
+// attachments are never in the result. The rule is mime.LayoutOf, with its own
+// test. This test is about how a BODYSTRUCTURE reaches that rule.
+func TestAnalyzeStructureFindsTheBody(t *testing.T) {
+	cid := func(id string) *imap.BodyStructureSinglePart {
+		p := bsText("html")
+		p.ID = id
+		return p
+	}
 	tests := []struct {
 		name      string
 		structure imap.BodyStructure
-		shown     []int
+		shown     [][]int
 		others    [][]int
 	}{
 		{
 			// A message without a multipart wrapper has part 1.
 			name:      "single text part",
 			structure: bsText("plain"),
-			shown:     []int{1},
+			shown:     [][]int{{1}},
 		},
 		{
 			name:      "alternative text and html",
 			structure: bsMulti("alternative", bsText("plain"), bsText("html")),
-			shown:     []int{2},
-			others:    [][]int{{1}},
-		},
-		{
-			name:      "html before plain: the last alternative is shown",
-			structure: bsMulti("alternative", bsText("html"), bsText("plain")),
-			shown:     []int{2},
+			shown:     [][]int{{2}},
 			others:    [][]int{{1}},
 		},
 		{
@@ -245,21 +259,27 @@ func TestShownBody(t *testing.T) {
 			name: "mixed with an attachment",
 			structure: bsMulti("mixed", bsText("plain"),
 				bsFile("application", "pdf", "attachment", "a.pdf", 5000)),
-			shown: []int{1},
+			shown: [][]int{{1}},
 		},
 		{
 			// A text file sent as an attachment is not body text either.
 			name: "text part marked as an attachment",
 			structure: bsMulti("mixed", bsText("html"),
 				bsFile("text", "plain", "attachment", "notes.txt", 100)),
-			shown: []int{1},
+			shown: [][]int{{1}},
+		},
+		{
+			name: "a text part with a name after the body",
+			structure: bsMulti("mixed", bsText("plain"),
+				bsFile("text", "html", "inline", "report.html", 100)),
+			shown: [][]int{{1}},
 		},
 		{
 			name: "nested multipart",
 			structure: bsMulti("mixed",
 				bsMulti("alternative", bsText("plain"), bsText("html")),
 				bsFile("image", "png", "attachment", "a.png", 900)),
-			shown:  []int{1, 2},
+			shown:  [][]int{{1, 2}},
 			others: [][]int{{1, 1}},
 		},
 		{
@@ -268,81 +288,40 @@ func TestShownBody(t *testing.T) {
 				bsFile("application", "pdf", "attachment", "a.pdf", 5000)),
 		},
 		{
-			name: "an empty part in mixed is not the body",
+			name: "a part without content is not the body",
 			structure: bsMulti("mixed",
 				bsLeaf("text", "plain", 0), bsText("html")),
-			shown: []int{2},
+			shown: [][]int{{2}},
 		},
 		{
-			name: "an empty part before the last alternative",
-			structure: bsMulti("alternative",
-				bsLeaf("text", "plain", 0), bsText("html")),
-			shown:  []int{2},
-			others: [][]int{{1}},
-		},
-		{
-			// A client shows an empty last part, so the text before it is not
-			// the body.
-			name: "an empty last alternative is the body",
+			name: "an empty last alternative hides the text before it",
 			structure: bsMulti("alternative",
 				bsText("plain"), bsLeaf("text", "html", 0)),
-			shown:  []int{2},
 			others: [][]int{{1}},
 		},
 		{
-			name: "an empty last alternative in mixed keeps the other version",
-			structure: bsMulti("mixed",
-				bsMulti("alternative", bsText("plain"), bsLeaf("text", "html", 0)),
-				bsFile("application", "pdf", "attachment", "a.pdf", 5000)),
-			shown:  []int{1, 2},
-			others: [][]int{{1, 1}},
-		},
-		{
-			name: "text after an empty alternative in mixed is the body",
-			structure: bsMulti("mixed",
-				bsMulti("alternative", bsText("plain"), bsLeaf("text", "html", 0)),
-				bsText("plain")),
-			shown: []int{2},
-		},
-		{
-			name: "the last alternative wins",
-			structure: bsMulti("alternative",
-				bsText("plain"), bsText("plain"), bsText("html"), bsText("html")),
-			shown:  []int{4},
-			others: [][]int{{3}, {2}, {1}},
-		},
-		{
-			name: "a calendar part cannot be shown as the body",
-			structure: bsMulti("alternative",
-				bsText("plain"), bsText("html"), bsLeaf("text", "calendar", 100)),
-			shown:  []int{2},
-			others: [][]int{{1}},
+			name: "every text part outside an alternative",
+			structure: bsMulti("mixed", bsText("plain"),
+				bsMulti("alternative", bsText("plain"), bsText("html"))),
+			shown:  [][]int{{1}, {2, 2}},
+			others: [][]int{{2, 1}},
 		},
 		{
 			name: "html with an inline image in related",
 			structure: bsMulti("mixed",
 				bsMulti("related", bsText("html"), bsFile("image", "png", "inline", "logo.png", 800)),
 				bsFile("application", "pdf", "attachment", "a.pdf", 5000)),
-			shown: []int{1, 1},
+			shown: [][]int{{1, 1}},
 		},
 		{
-			name: "related as the last alternative",
-			structure: bsMulti("alternative", bsText("plain"),
-				bsMulti("related", bsText("html"), bsFile("image", "png", "inline", "logo.png", 800))),
-			shown:  []int{2, 1},
+			name: "the root part that related names",
+			structure: &imap.BodyStructureMultiPart{
+				Subtype:  "related",
+				Children: []imap.BodyStructure{cid("<a@x>"), cid("<b@x>")},
+				Extended: &imap.BodyStructureMultiPartExt{Params: map[string]string{"start": "<b@x>"}},
+			},
+			shown:  [][]int{{2}},
 			others: [][]int{{1}},
-		},
-		{
-			name: "html beats plain outside an alternative",
-			structure: bsMulti("mixed", bsText("plain"),
-				bsMulti("alternative", bsText("plain"), bsText("html"))),
-			shown:  []int{2, 2},
-			others: [][]int{{2, 1}},
-		},
-		{
-			name:      "the first of a kind wins outside an alternative",
-			structure: bsMulti("mixed", bsText("html"), bsText("html")),
-			shown:     []int{1},
 		},
 		{
 			// A message inside the message is an attachment. Its text is not
@@ -353,26 +332,95 @@ func TestShownBody(t *testing.T) {
 					MessageRFC822: &imap.BodyStructureMessageRFC822{
 						BodyStructure: bsMulti("alternative", bsText("plain"), bsText("html")),
 					}}),
-			shown: []int{1},
+			shown: [][]int{{1}},
 		},
 		{
 			name:      "no structure",
 			structure: nil,
 		},
 	}
+	paths := func(parts []*textPart) [][]int {
+		var out [][]int
+		for _, p := range parts {
+			out = append(out, p.path)
+		}
+		return out
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			shown, others := shownBody(tt.structure)
-			if tt.shown == nil {
-				require.Nil(t, shown)
-			} else {
-				require.Equal(t, tt.shown, shown.path)
+			st := analyzeStructure(tt.structure)
+			require.Equal(t, tt.shown, paths(st.shown))
+			require.Equal(t, tt.others, paths(st.others))
+		})
+	}
+}
+
+// ParseMessage and the backend read a message in different ways, but they must
+// always give the same answer.
+func TestParseMessageAndTheStructureAgree(t *testing.T) {
+	inline := inlineFile("text/html", "report.html", "<p>report</p>")
+	raws := map[string][]byte{
+		"plain only": plainMail("s", "text"),
+		"alternative": multiMail("alternative",
+			partText("plain", "utf-8", "", "plain"), partText("html", "utf-8", "", "<p>html</p>")),
+		"html then plain": multiMail("alternative",
+			partText("html", "utf-8", "", "<p>html</p>"), partText("plain", "utf-8", "", "plain")),
+		"an empty last alternative": multiMail("alternative",
+			partText("plain", "utf-8", "", "plain"), partText("html", "utf-8", "", "")),
+		"an empty first alternative": multiMail("alternative",
+			partText("plain", "utf-8", "", ""), partText("html", "utf-8", "", "<p>html</p>")),
+		"text parts in mixed": multiMail("mixed",
+			partText("plain", "utf-8", "", "one"), partText("html", "utf-8", "", "<p>two</p>"),
+			partText("plain", "utf-8", "", "three")),
+		"a named part after the body":  multiMail("mixed", partText("plain", "utf-8", "", "note"), inline),
+		"a named part before the body": multiMail("mixed", inline, partText("plain", "utf-8", "", "note")),
+		"only a named part":            multiMail("mixed", inline),
+		"a name in an alternative":     multiMail("alternative", partText("plain", "utf-8", "", "note"), inline),
+		"related with a root": relatedMail("<b@x>",
+			"Content-ID: <a@x>\n"+partText("html", "utf-8", "", "<p>a</p>"),
+			"Content-ID: <b@x>\n"+partText("html", "utf-8", "", "<p>b</p>")),
+		"a pdf": multiMail("mixed", partText("plain", "utf-8", "", "note"),
+			partFile("application/pdf", "a.pdf", "base64", b64Lines(binaryData(100), 76))),
+		"a calendar": multiMail("alternative", partText("plain", "utf-8", "", "note"),
+			partText("calendar", "utf-8", "", "BEGIN:VCALENDAR")),
+	}
+	for name, raw := range raws {
+		t.Run(name, func(t *testing.T) {
+			srv := imaptest.New(t)
+			b := newTestBackend(t, srv)
+			r := mustDecodeRef(t, appendRef(t, srv, b, raw))
+
+			var st structure
+			err := b.pool.with(t.Context(), func(c *imapclient.Client) error {
+				if err := b.examineRef(c, r); err != nil {
+					return err
+				}
+				m, err := fetchOne(c, imap.UID(r.UID), &imap.FetchOptions{UID: true, BodyStructure: &imap.FetchItemBodyStructure{Extended: true}})
+				if err != nil {
+					return err
+				}
+				st = analyzeStructure(m.BodyStructure)
+				return nil
+			})
+			require.NoError(t, err)
+			p, err := mime.ParseMessage(bytes.NewReader(raw), 0)
+			require.NoError(t, err)
+
+			var wantShown, gotShown, wantFiles, gotFiles []string
+			for _, s := range p.Shown {
+				wantShown = append(wantShown, s.ID)
 			}
-			var paths [][]int
-			for _, o := range others {
-				paths = append(paths, o.path)
+			for _, s := range st.shown {
+				gotShown = append(gotShown, s.section())
 			}
-			require.Equal(t, tt.others, paths)
+			for _, a := range p.Attachments {
+				wantFiles = append(wantFiles, a.ID)
+			}
+			for _, l := range st.attachments {
+				gotFiles = append(gotFiles, partPath(l.path))
+			}
+			require.Equal(t, wantShown, gotShown, "shown parts")
+			require.Equal(t, wantFiles, gotFiles, "attachments")
 		})
 	}
 }
@@ -386,38 +434,38 @@ func TestAttachmentInfos(t *testing.T) {
 			bsMulti("alternative", bsText("plain"), bsText("html")),
 			pdf("a.pdf", 100),
 			bsMulti("mixed", bsText("plain"), bsFile("image", "png", "attachment", "deep.png", 50)))
-		got := attachmentInfos(bs)
+		got := attachmentInfos(analyzeStructure(bs))
 		require.Equal(t, []mail.AttachmentInfo{
 			{ID: "2", Filename: "a.pdf", ContentType: "application/pdf", Size: 100},
 			{ID: "3.2", Filename: "deep.png", ContentType: "image/png", Size: 50},
 		}, got)
 	})
 	t.Run("a message that is only an attachment has part 1", func(t *testing.T) {
-		got := attachmentInfos(pdf("only.pdf", 10))
+		got := attachmentInfos(analyzeStructure(pdf("only.pdf", 10)))
 		require.Equal(t, []mail.AttachmentInfo{{ID: "1", Filename: "only.pdf", ContentType: "application/pdf", Size: 10}}, got)
 	})
 	t.Run("the body is not an attachment", func(t *testing.T) {
-		require.Empty(t, attachmentInfos(bsMulti("alternative", bsText("plain"), bsText("html"))))
-		require.Empty(t, attachmentInfos(bsText("plain")))
-		require.Empty(t, attachmentInfos(nil))
+		require.Empty(t, attachmentInfos(analyzeStructure(bsMulti("alternative", bsText("plain"), bsText("html")))))
+		require.Empty(t, attachmentInfos(analyzeStructure(bsText("plain"))))
+		require.Empty(t, attachmentInfos(analyzeStructure(nil)))
 	})
 	t.Run("same rules as the summary", func(t *testing.T) {
-		// A part is an attachment when its disposition is attachment or when
-		// it is not text. This is the rule of analyzeStructure, which sets
-		// HasAttachments of the summary.
+		// A part is an attachment when its disposition is attachment, when it
+		// is not text, or when it has a name and is not the body. This is the
+		// rule of analyzeStructure, which sets HasAttachments of the summary.
 		inlineImage := bsFile("image", "png", "inline", "logo.png", 5)
 		textAttachment := bsFile("text", "plain", "attachment", "notes.txt", 7)
 		inlineText := bsFile("text", "csv", "inline", "data.csv", 7)
 		rfc822 := &imap.BodyStructureSinglePart{Type: "message", Subtype: "rfc822", Size: 33}
 		bs := bsMulti("mixed", bsText("plain"), inlineImage, textAttachment, inlineText, rfc822)
 
-		got := attachmentInfos(bs)
+		got := attachmentInfos(analyzeStructure(bs))
 		var ids []string
 		for _, a := range got {
 			ids = append(ids, a.ID)
 		}
-		require.Equal(t, []string{"2", "3", "5"}, ids)
-		require.Equal(t, "message/rfc822", got[2].ContentType)
+		require.Equal(t, []string{"2", "3", "4", "5"}, ids)
+		require.Equal(t, "message/rfc822", got[3].ContentType)
 		require.True(t, analyzeStructure(bs).hasAttachments)
 	})
 	t.Run("size is the size after the transfer encoding", func(t *testing.T) {
@@ -425,7 +473,7 @@ func TestAttachmentInfos(t *testing.T) {
 		b64.Encoding = "BASE64"
 		plain := pdf("b.bin", 7800)
 		plain.Encoding = "8bit"
-		got := attachmentInfos(bsMulti("mixed", bsText("plain"), b64, plain))
+		got := attachmentInfos(analyzeStructure(bsMulti("mixed", bsText("plain"), b64, plain)))
 		require.Equal(t, int64(5700), got[0].Size, "7800 base64 bytes with 76 characters per line hold 5700 bytes")
 		require.Equal(t, int64(7800), got[1].Size)
 	})
@@ -459,14 +507,14 @@ func TestAttachmentInfos(t *testing.T) {
 		}
 		for name, tc := range names {
 			t.Run(name, func(t *testing.T) {
-				got := attachmentInfos(tc.bs)
+				got := attachmentInfos(analyzeStructure(tc.bs))
 				require.Len(t, got, 1)
 				require.Equal(t, tc.want, got[0].Filename)
 			})
 		}
 	})
 	t.Run("content type is lower case", func(t *testing.T) {
-		got := attachmentInfos(bsMulti("mixed", bsText("plain"), bsFile("APPLICATION", "PDF", "attachment", "a.pdf", 1)))
+		got := attachmentInfos(analyzeStructure(bsMulti("mixed", bsText("plain"), bsFile("APPLICATION", "PDF", "attachment", "a.pdf", 1))))
 		require.Equal(t, "application/pdf", got[0].ContentType)
 	})
 }
@@ -790,6 +838,7 @@ func TestGetMessageTextIsWhatAClientShows(t *testing.T) {
 	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyText})
 	require.Equal(t, "See you at lunch!", msg.Text)
 	require.True(t, msg.AlternativesDiffer)
+	require.False(t, msg.TextLeftOut)
 	require.Empty(t, msg.HTML)
 	require.False(t, msg.Truncated)
 	require.Zero(t, msg.NextOffset)
@@ -810,7 +859,7 @@ func TestGetMessageTextIsWhatAClientShows(t *testing.T) {
 	require.False(t, msg.AlternativesDiffer)
 }
 
-func TestGetMessageBodyIsThePartThatAClientShows(t *testing.T) {
+func TestGetMessageBodyIsWhatAClientShows(t *testing.T) {
 	png := partFile("image/png", "a.png", "base64", b64Lines(binaryData(100), 76))
 	cases := []struct {
 		name   string
@@ -853,6 +902,14 @@ func TestGetMessageBodyIsThePartThatAClientShows(t *testing.T) {
 			differ: true,
 		},
 		{
+			name: "the root part that related names",
+			raw: relatedMail("<b@x>",
+				"Content-ID: <a@x>\n"+partText("html", "utf-8", "", "<p>the instruction</p>"),
+				"Content-ID: <b@x>\n"+partText("html", "utf-8", "", "<p>the root part</p>")),
+			want:   "the root part",
+			differ: true,
+		},
+		{
 			name: "a calendar after the html",
 			raw: multiMail("alternative",
 				partText("plain", "utf-8", "", "you are invited"),
@@ -877,11 +934,23 @@ func TestGetMessageBodyIsThePartThatAClientShows(t *testing.T) {
 			differ: true,
 		},
 		{
-			name: "plain and html in mixed are not alternatives",
+			name: "plain and html in mixed are both shown",
 			raw: multiMail("mixed",
 				partText("plain", "utf-8", "", "the note"),
 				partText("html", "utf-8", "", "<p>the html version</p>")),
-			want: "the html version",
+			want: "the note\n\nthe html version",
+		},
+		{
+			name: "two alternatives in mixed are both compared",
+			raw: multiMail("mixed",
+				multi("alternative", "A1",
+					partText("plain", "utf-8", "", "the first text"),
+					partText("html", "utf-8", "", "<p>the first text</p>")),
+				multi("alternative", "A2",
+					partText("plain", "utf-8", "", "the instruction"),
+					partText("html", "utf-8", "", "<p>the second text</p>"))),
+			want:   "the first text\n\nthe second text",
+			differ: true,
 		},
 		{
 			name: "the same words in both alternatives",
@@ -898,13 +967,20 @@ func TestGetMessageBodyIsThePartThatAClientShows(t *testing.T) {
 			want: "Read more (https://example.com/a)",
 		},
 		{
-			name: "more than two versions",
+			name: "another version that is too complex to compare",
+			raw: multiMail("alternative",
+				partText("html", "utf-8", "", amplifyingHTML(500, 4000)),
+				partText("plain", "utf-8", "", "the last version")),
+			want:   "the last version",
+			differ: true,
+		},
+		{
+			name: "three versions with the same words",
 			raw: multiMail("alternative",
 				partText("plain", "utf-8", "", "the same"),
 				partText("plain", "utf-8", "", "the same"),
 				partText("html", "utf-8", "", "<p>the same</p>")),
-			want:   "the same",
-			differ: true,
+			want: "the same",
 		},
 	}
 	for _, tc := range cases {
@@ -918,6 +994,26 @@ func TestGetMessageBodyIsThePartThatAClientShows(t *testing.T) {
 			require.Equal(t, tc.differ, msg.AlternativesDiffer)
 			require.False(t, msg.Truncated)
 		})
+	}
+}
+
+// More versions than the backend fetches cannot be called the same.
+func TestGetMessageTooManyVersionsToCompare(t *testing.T) {
+	var parts []string
+	for range maxOtherVersions + 1 {
+		parts = append(parts, partText("plain", "utf-8", "", "the same"))
+	}
+	parts = append(parts, partText("html", "utf-8", "", "<p>the same</p>"))
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, multiMail("alternative", parts...))
+	sections := len(srv.FetchedSections())
+
+	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyText})
+	require.Equal(t, "the same", msg.Text)
+	require.True(t, msg.AlternativesDiffer)
+	for _, s := range sectionsSince(srv, sections) {
+		require.NotRegexp(t, `^BODY(\.PEEK)?\[[1-5]\]`, s, "another version was fetched")
 	}
 }
 
@@ -938,8 +1034,9 @@ func TestGetMessageAlternativeThatIsTooLargeToCompare(t *testing.T) {
 	}
 }
 
-// A page after the first says the same as the first page.
-func TestGetMessageAlternativesDifferOnEveryPage(t *testing.T) {
+// The versions are compared on the first page. The other pages cost no more
+// fetches.
+func TestGetMessageComparesVersionsOnTheFirstPageOnly(t *testing.T) {
 	srv := imaptest.New(t)
 	b := newTestBackend(t, srv)
 	ref := appendRef(t, srv, b, multiMail("alternative",
@@ -949,8 +1046,184 @@ func TestGetMessageAlternativesDifferOnEveryPage(t *testing.T) {
 	first := mustGet(t, b, ref, mail.BodyOptions{MaxChars: 50})
 	require.True(t, first.Truncated)
 	require.True(t, first.AlternativesDiffer)
+
+	sections := len(srv.FetchedSections())
 	second := mustGet(t, b, ref, mail.BodyOptions{MaxChars: 50, Offset: first.NextOffset})
-	require.True(t, second.AlternativesDiffer)
+	require.False(t, second.AlternativesDiffer)
+	for _, s := range sectionsSince(srv, sections) {
+		require.NotRegexp(t, `^BODY(\.PEEK)?\[1\]`, s, "the other version was fetched")
+	}
+}
+
+// A page holds only the start of a long text part. The whole part is compared,
+// so a long message does not look different because of its length.
+func TestGetMessageComparesTheWholeOfALongPart(t *testing.T) {
+	words := strings.Repeat("the quick brown fox jumps over the lazy dog\n", 500)
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, multiMail("alternative",
+		partText("html", "utf-8", "", "<p>"+words+"</p>"),
+		partText("plain", "utf-8", "", words)))
+
+	msg := mustGet(t, b, ref, mail.BodyOptions{MaxChars: 50})
+	require.True(t, msg.Truncated)
+	require.False(t, msg.AlternativesDiffer)
+}
+
+// A message that goes away during the comparison is gone, like for any other
+// fetch. The answer is not a difference between versions.
+func TestGetMessageOtherVersionThatIsGoneIsAnError(t *testing.T) {
+	const structure = `(("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" 5 1 NIL NIL NIL NIL)` +
+		`("TEXT" "HTML" ("CHARSET" "utf-8") NIL NIL "7BIT" 8 1 NIL NIL NIL NIL) "ALTERNATIVE")`
+	fake := scriptedMessage(t, structure, 10, func(section string) (string, bool) {
+		if section == "2" {
+			return "<p>x</p>", false
+		}
+		return "", true
+	})
+	b := newScriptedBackend(t, fake)
+
+	msg, err := b.GetMessage(t.Context(), scriptedRef, mail.BodyOptions{})
+	require.ErrorIs(t, err, mail.ErrNotFound)
+	require.Nil(t, msg)
+}
+
+func TestGetMessageJoinsTheTextParts(t *testing.T) {
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, multiMail("mixed",
+		partText("plain", "utf-8", "", "the first part"),
+		partText("html", "utf-8", "", "<p>the second part</p>"),
+		partFile("application/pdf", "a.pdf", "base64", b64Lines(binaryData(100), 76)),
+		partText("plain", "utf-8", "", "the third part")))
+	const whole = "the first part\n\nthe second part\n\nthe third part"
+
+	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyText})
+	require.Equal(t, whole, msg.Text)
+	require.False(t, msg.TextLeftOut)
+	require.False(t, msg.Truncated)
+
+	// Pages join to the whole text, also across a part.
+	var got strings.Builder
+	offset := 0
+	for range 20 {
+		msg = mustGet(t, b, ref, mail.BodyOptions{MaxChars: 7, Offset: offset})
+		got.WriteString(msg.Text)
+		if !msg.Truncated {
+			break
+		}
+		offset = msg.NextOffset
+	}
+	require.Equal(t, whole, got.String())
+}
+
+// A page that the first part fills does not read the next part.
+func TestGetMessageReadsOnlyThePartsThatThePageNeeds(t *testing.T) {
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, multiMail("mixed",
+		partText("plain", "utf-8", "", strings.Repeat("a", 500)),
+		partText("plain", "utf-8", "", "the second part")))
+	sections := len(srv.FetchedSections())
+
+	msg := mustGet(t, b, ref, mail.BodyOptions{MaxChars: 10})
+	require.Equal(t, strings.Repeat("a", 10), msg.Text)
+	require.True(t, msg.Truncated)
+	for _, s := range sectionsSince(srv, sections) {
+		require.NotRegexp(t, `^BODY(\.PEEK)?\[2`, s, "the second part was fetched")
+	}
+}
+
+func TestGetMessageHTMLFormatJoinsTheTextParts(t *testing.T) {
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, multiMail("mixed",
+		partText("plain", "utf-8", "", "1 < 2"),
+		partText("html", "utf-8", "", "<p>the html</p>")))
+
+	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyHTML})
+	require.Empty(t, msg.Text)
+	require.Equal(t, "<pre>1 &lt; 2</pre>\n\n<p>the html</p>", msg.HTML)
+}
+
+// A message with more text parts than the backend reads says so.
+func TestGetMessageTooManyTextParts(t *testing.T) {
+	var parts []string
+	for i := range maxShownParts + 1 {
+		parts = append(parts, partText("plain", "utf-8", "", fmt.Sprintf("part%d", i)))
+	}
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, multiMail("mixed", parts...))
+
+	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyText})
+	require.True(t, msg.TextLeftOut)
+	require.Contains(t, msg.Text, fmt.Sprintf("part%d", maxShownParts-1))
+	require.NotContains(t, msg.Text, fmt.Sprintf("part%d", maxShownParts))
+}
+
+// A text part that cannot be read does not hide the others, and the result says
+// that it is left out.
+func TestGetMessageLeavesOutATextPartThatCannotBeRead(t *testing.T) {
+	cases := map[string]string{
+		"too large":   bigHTML(5 << 20),
+		"too complex": amplifyingHTML(500, 4000),
+	}
+	for name, html := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv := imaptest.New(t)
+			b := newTestBackend(t, srv)
+			ref := appendRef(t, srv, b, multiMail("mixed",
+				partText("plain", "utf-8", "", "the note"),
+				partText("html", "utf-8", "", html),
+				partText("plain", "utf-8", "", "the footer")))
+
+			msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyText})
+			require.Equal(t, "the note\n\nthe footer", msg.Text)
+			require.True(t, msg.TextLeftOut)
+		})
+	}
+}
+
+// A file that a sender names is an attachment, also when it is text and inline.
+func TestGetMessageNamedTextPartIsAnAttachment(t *testing.T) {
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, multiMail("mixed",
+		partText("plain", "utf-8", "", "Please review the attached."),
+		inlineFile("text/html", "report.html", "<p>the report</p>")))
+
+	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyText})
+	require.Equal(t, "Please review the attached.", msg.Text)
+	require.True(t, msg.HasAttachments)
+	require.Len(t, msg.Attachments, 1)
+	require.Equal(t, "2", msg.Attachments[0].ID)
+	require.Equal(t, "report.html", msg.Attachments[0].Filename)
+
+	att, err := b.GetAttachment(t.Context(), ref, "2", 1<<20)
+	require.NoError(t, err)
+	require.Equal(t, "<p>the report</p>", string(att.Data))
+
+	p := mustSearch(t, b, mail.Query{}, "")
+	require.Equal(t, "Please review the attached.", p.Items[0].Snippet)
+	require.True(t, p.Items[0].HasAttachments)
+}
+
+// A message needs a body, so the only text part is the body, whatever its name.
+func TestGetMessageOnlyTextPartIsTheBody(t *testing.T) {
+	srv := imaptest.New(t)
+	b := newTestBackend(t, srv)
+	ref := appendRef(t, srv, b, multiMail("mixed",
+		inlineFile("text/plain", "patch.txt", "the patch"),
+		partFile("application/pdf", "a.pdf", "base64", b64Lines(binaryData(100), 76))))
+
+	msg := mustGet(t, b, ref, mail.BodyOptions{Format: mail.BodyText})
+	require.Equal(t, "the patch", msg.Text)
+	require.Len(t, msg.Attachments, 1)
+	require.Equal(t, "2", msg.Attachments[0].ID)
+
+	_, err := b.GetAttachment(t.Context(), ref, "1", 1<<20)
+	require.ErrorIs(t, err, mail.ErrNotFound)
 }
 
 func TestGetMessageHTMLOnlyConverted(t *testing.T) {
@@ -2150,7 +2423,7 @@ func TestCutTextIsAlwaysTheStartOfTheWholeText(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				part, _ := shownBody(m.BodyStructure)
+				part := analyzeStructure(m.BodyStructure).shown[0]
 				sizes = int64(part.size)
 
 				var cut bool
@@ -2197,7 +2470,7 @@ func TestCutHTMLIsNeverConverted(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		part, _ := shownBody(m.BodyStructure)
+		part := analyzeStructure(m.BodyStructure).shown[0]
 
 		text, _, err := fetchBodyStart(c, uid, part, int64(part.size)-10, mime.HTMLToText)
 		require.ErrorIs(t, err, mail.ErrTooLarge)
