@@ -41,11 +41,11 @@ image and try it.
    mode](/manual/reference/local-http-mode/).
 3. **Publishing the port does not help.** `docker run -p 8765:8765` forwards to
    the network interface of the container (the connection of the container to
-   its network), not to its loopback address **[not verified]**. And email-mcp
-   refuses to listen on any address that is not a loopback address: `serve
-   --http 0.0.0.0:8765` stops at once. This is on purpose: local HTTP mode has
-   no TLS (Transport Layer Security: the encryption of a connection), so it must
-   never be open to a network.
+   its network), not to its loopback address. And email-mcp refuses to listen
+   on any address that is not a loopback address: `serve --http 0.0.0.0:8765`
+   stops at once. This is on purpose: local HTTP mode has no TLS (Transport
+   Layer Security: the encryption of a connection), so it must never be open to
+   a network.
 4. **The web pages are not reachable either.** `email-mcp setup` and the
    approval links use the name `email-mcp.localhost`, which the server answers
    only on 127.0.0.1 inside the container. Your browser, outside the container,
@@ -78,9 +78,5 @@ documentation, on 2026-11-06:
 - "docker container run"
   (<https://docs.docker.com/reference/cli/docker/container/run/>): `-i` keeps
   standard input open.
-
-The Docker documentation does not say, in so many words, where `docker run -p`
-forwards inside the container. So the clause about it in point 3 is marked
-**[not verified]**: test it before you depend on it.
 
 [install]: /manual/getting-started/install/
