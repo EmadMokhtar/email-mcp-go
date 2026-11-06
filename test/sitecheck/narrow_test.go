@@ -29,33 +29,75 @@ const (
 	phoneHeight = 812
 )
 
-// TestNoSidewaysScroll opens every page of the built site in Chrome, at the
-// width of a phone, and requires that the page does not scroll sideways. A long
-// line of code or a wide image must stay inside its own box. Only a browser can
-// see this, so the site check cannot. "make site" runs this test after the
-// build, with the folder of the built site and its base path.
+// TestNoSidewaysScroll opens pages in Chrome, at the width of a phone, and
+// requires that the page does not scroll sideways. A long line of code or a
+// wide image must stay inside its own box. Only a browser can see this, so the
+// site check cannot. "make site" runs this test after the build, with the folder
+// of the built site and its base path.
+//
+// It is one test with one Chrome, because a Chrome takes a few seconds to start.
+// The subtests share it:
+//
+//   - "built pages": every page of the built site.
+//   - "wide content": pages that hold wide things. The built site holds none
+//     today: it has no table and no long line of code. So the test makes its own
+//     pages. Each one is a real page of the built site, with its real layout and
+//     its real stylesheet, and one wide thing in the place of the text. Each wide
+//     thing has a page of its own, so a failure names the thing that broke out
+//     of its box.
 func TestNoSidewaysScroll(t *testing.T) {
 	public, base := builtSite(t)
 
 	pages := indexPages(t, public)
 	require.NotEmpty(t, pages, "no index.html in %s. Did the build run?", public)
 
-	// The prefix has no slash at the end, so "/manual/" stays a full path for
-	// the file server. A request outside the base path gets a 404, as on the
-	// real site.
+	cases := []struct{ name, path, content string }{
+		{"code block", "code-block/", "<pre><code>" + wideCommand + "</code></pre>"},
+		{"table", "table/", wideTable()},
+		{"inline code", "inline-code/", "<p>Set <code>" + wideWord + "</code> before you start.</p>"},
+		{"link", "link/", `<p>Read <a href="` + wideLink + `">` + wideLink + `</a> first.</p>`},
+	}
+
+	// The pages of the wide things are ready before the server starts, and the
+	// server only reads them. Every other address is a file of the built site, so
+	// the pages find their real stylesheet. The prefix has no slash at the end, so
+	// "/manual/" stays a full path for the file server. A request outside the base
+	// path gets a 404, as on the real site.
+	const fixtureDir = "wide-content/"
+	fixtures := map[string]string{}
+	for _, c := range cases {
+		fixtures[base+fixtureDir+c.path] = pageWithContent(t, public, c.content)
+	}
 	files := http.StripPrefix(strings.TrimSuffix(base, "/"), http.FileServer(http.Dir(public)))
-	server := httptest.NewServer(files)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page, ok := fixtures[r.URL.Path]
+		if !ok {
+			files.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, page)
+	}))
 	defer server.Close()
 
 	ctx, cancel := chrometest.Start(t)
 	defer cancel()
 	require.NoError(t, chromedp.Do(ctx, chromedp.EmulateViewport(phoneWidth, phoneHeight)))
 
-	for _, rel := range pages {
-		t.Run(rel, func(t *testing.T) {
-			requireNoSidewaysScroll(t, ctx, server.URL+base+pagePath(rel))
-		})
-	}
+	t.Run("built pages", func(t *testing.T) {
+		for _, rel := range pages {
+			t.Run(rel, func(t *testing.T) {
+				requireNoSidewaysScroll(t, ctx, server.URL+base+pagePath(rel))
+			})
+		}
+	})
+	t.Run("wide content", func(t *testing.T) {
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				requireNoSidewaysScroll(t, ctx, server.URL+base+fixtureDir+c.path)
+			})
+		}
+	})
 }
 
 // builtSite returns the folder of the built site and the base path where it is
@@ -118,54 +160,6 @@ func wideTable() string {
 		_, _ = fmt.Fprintf(&row, "<td>Value %d</td>", i)
 	}
 	return "<table><thead><tr>" + head.String() + "</tr></thead><tbody><tr>" + row.String() + "</tr></tbody></table>"
-}
-
-// TestNoSidewaysScrollOnWideContent requires that wide content stays inside its
-// own box on a phone. TestNoSidewaysScroll checks only the content that the
-// site holds today, and today that content has no table and no long line of
-// code. So this test makes its own pages: each one is a real page of the built
-// site, with its real layout and its real stylesheet, and one wide thing in the
-// place of the text. Each wide thing has a page of its own, so a failure names
-// the thing that broke out of its box.
-func TestNoSidewaysScrollOnWideContent(t *testing.T) {
-	public, base := builtSite(t)
-
-	cases := []struct{ name, path, content string }{
-		{"code block", "code-block/", "<pre><code>" + wideCommand + "</code></pre>"},
-		{"table", "table/", wideTable()},
-		{"inline code", "inline-code/", "<p>Set <code>" + wideWord + "</code> before you start.</p>"},
-		{"link", "link/", `<p>Read <a href="` + wideLink + `">` + wideLink + `</a> first.</p>`},
-	}
-
-	// The pages are ready before the server starts, and the server only reads
-	// them. Every other address is a file of the built site, so the pages find
-	// their real stylesheet.
-	const fixtureDir = "wide-content/"
-	pages := map[string]string{}
-	for _, c := range cases {
-		pages[base+fixtureDir+c.path] = pageWithContent(t, public, c.content)
-	}
-	files := http.StripPrefix(strings.TrimSuffix(base, "/"), http.FileServer(http.Dir(public)))
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		page, ok := pages[r.URL.Path]
-		if !ok {
-			files.ServeHTTP(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = io.WriteString(w, page)
-	}))
-	defer server.Close()
-
-	ctx, cancel := chrometest.Start(t)
-	defer cancel()
-	require.NoError(t, chromedp.Do(ctx, chromedp.EmulateViewport(phoneWidth, phoneHeight)))
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			requireNoSidewaysScroll(t, ctx, server.URL+base+fixtureDir+c.path)
-		})
-	}
 }
 
 // pageWithContent returns the HTML of one real page of the built site, with the

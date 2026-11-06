@@ -22,12 +22,19 @@ import (
 // the test, and the build does not wait for ever.
 const timeLimit = 2 * time.Minute
 
-// programs are the places to look for Chrome: the names on Linux, and the
-// application on macOS, which is not in the PATH.
+// programs are the places to look for Chrome, in this order: the names on Linux,
+// and the application on macOS, which is not in the PATH. The first three were
+// here first, and they stay first, so a computer that has more than one Chrome
+// finds the same one as before. The rest are other names that some systems
+// use: google-chrome-stable and chromium-browser on Linux, and Chromium, which
+// is a separate application on macOS.
 var programs = []string{
 	"google-chrome",
 	"chromium",
 	"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+	"google-chrome-stable",
+	"chromium-browser",
+	"/Applications/Chromium.app/Contents/MacOS/Chromium",
 }
 
 // Find returns the path of Chrome. When CHROME_PATH is set, it is the only
@@ -41,12 +48,21 @@ func Find() (string, error) {
 		}
 		return found, nil
 	}
-	for _, program := range programs {
-		if found, err := exec.LookPath(program); err == nil {
-			return found, nil
-		}
+	if found, ok := firstProgram(programs); ok {
+		return found, nil
 	}
 	return "", errors.New("make screenshots needs Chrome: install Google Chrome or Chromium, or set CHROME_PATH to the program")
+}
+
+// firstProgram returns the path of the first of candidates that is a program.
+// A name with no slash is looked up in the PATH.
+func firstProgram(candidates []string) (string, bool) {
+	for _, candidate := range candidates {
+		if found, err := exec.LookPath(candidate); err == nil {
+			return found, true
+		}
+	}
+	return "", false
 }
 
 // Start prepares a headless Chrome and returns the context of its first tab.
