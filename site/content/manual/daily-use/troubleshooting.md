@@ -267,8 +267,9 @@ it.
 
 Put the program in a folder on your `PATH`. The page [Install
 email-mcp](/manual/getting-started/install/#put-the-program-on-your-path) shows
-how. Or give the full path of the program, such as `./email-mcp doctor` in the
-folder where you unpacked it.
+how. Or run the program from the folder where you unpacked it. A dot means the
+current folder, so `./email-mcp doctor` runs the program that is in the current
+folder. On Windows, the command is `.\email-mcp.exe doctor`.
 
 ## More help
 

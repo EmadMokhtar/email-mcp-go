@@ -91,7 +91,7 @@ whole number of seconds from 0 to 300. A count of 0 allows nothing.
 
 | Setting (as on the page) | What it does | Default |
 |---|---|---|
-| **Mail level** | The level of the account: what the agent may do with its mail. The list has 0 Off, 1 Read, 2 Organize, 3 Draft, 4 Send and 5 Delete. | 4 Send |
+| **Mail level** | The level of the account: what the agent may do with its mail. The list has 0 Off, 1 Read, 2 Organize, 3 Draft, 4 Send and 5 Delete (moves mail to the Trash). | 4 Send |
 | **Confirm sends** | Asks you before the agent sends a message. | On |
 | **Confirm deletes** | Asks you before the agent moves mail to the Trash. | On |
 | **Sends per hour** | The most sends in one hour. | 20 |

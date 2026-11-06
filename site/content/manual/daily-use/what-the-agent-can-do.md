@@ -35,11 +35,11 @@ means that the tool needs no level. email-mcp reads and writes mail over IMAP
 | `list_folders`, `list_tags` | 1 | Lists the folders and the tags (IMAP keywords: labels that the mail server keeps on a message). |
 | `search_messages`, `list_new_messages` | 1 | Finds messages. At most 100 per page, with a snippet of at most 200 characters. See the details below. |
 | `get_message`, `get_attachment` | 1 | Reads one message or one attachment (at most 10 MiB). See the details below. |
-| `get_send_status` | 1 | Shows whether a send is queued, sent, failed, or waiting for approval. |
+| `get_send_status` | 1 | Shows whether a send is queued, sent, failed, or waiting for approval. See the details below. |
 | `set_flags`, `tag_messages`, `move_messages` | 2 | Marks as read or unread, flags (marks on a message), tags and moves messages. `move_messages` never moves mail to the Trash (the folder of deleted mail) or to a folder inside it, at any level: use `trash_messages` (level 5). A folder with a common Trash name (such as `Trash`, `Deleted Items` or `Bin`) counts as the Trash, also when the server does not mark it. |
 | `create_folder`, `create_tag` | 2 | Makes a folder or a tag. There is no tool that deletes a folder. `create_folder` never makes a folder inside the Trash. |
 | `create_draft`, `discard_draft` | 3 | Writes a draft (a message that is saved but not sent), or moves a draft to the Trash. |
-| `send_message`, `cancel_send` | 4 | Sends a new message, a reply or a forward, and cancels a send during its undo window. |
+| `send_message`, `cancel_send` | 4 | Sends a new message, a reply or a forward, and cancels a send during its undo window, or a send that waits for approval. |
 | `trash_messages` | 5 | Moves messages to the Trash. It never deletes mail for good. |
 
 A MiB (mebibyte) is 1,048,576 bytes. The limit for an attachment is 10 MiB,
@@ -66,6 +66,15 @@ MiB.
   then true. A text part with a file name is an attachment, unless the message
   has no other body. `get_attachment` reads only the attachments that
   `get_message` lists, not the body.
+- **`get_send_status`:** The status is one of `queued`, `sending`, `sent`,
+  `failed`, `cancelled`, `pending_approval`, `declined` and `expired`. A send
+  that you rejected is `declined`. A send that was cancelled, or that the agent
+  withdrew before you answered, is `cancelled`. A send that nobody answered in
+  time is `expired`.
+- **`cancel_send`:** A queued send can be cancelled until it goes out. A send
+  that waits for your approval can be withdrawn, and its status is then
+  `cancelled`. A send that is being sent, or that already went out or failed,
+  cannot be cancelled.
 
 ## Untrusted content
 

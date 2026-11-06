@@ -35,7 +35,11 @@ has the steps.
 
 ## The menu
 
-Every page has a menu at the left. After you sign in, it has these entries:
+After you sign in, every page has a menu. On a wide window the menu is at the
+left, and on a narrow window it moves to the top. On a very narrow window, such
+as a phone, **Waiting for you** shows as **Waiting**, and an open action hides
+the menu: its back link leads to the list. A browser that is not signed in has
+no menu. The menu has these entries:
 
 - **Waiting for you** shows the sends and the moves to the Trash (the folder of
   deleted mail) that wait for your answer. A number beside the name says how

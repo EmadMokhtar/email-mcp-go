@@ -84,7 +84,8 @@ If the page says "It is too late to cancel this send: it is being sent, or it
 has ended.", the send already left, or it is leaving now.
 
 A send that still waits for your answer is not in this list. It is on **Waiting
-for you**. Click **Reject** there. See
+for you**. Click **Reject** there. The agent can also withdraw such a send with
+the tool `cancel_send`. The page then says **Cancelled**. See
 [Confirmations](/manual/daily-use/confirmations/).
 
 To cancel without a browser, run these two commands in a terminal (a window

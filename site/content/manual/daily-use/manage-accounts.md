@@ -116,15 +116,22 @@ In the browser:
 
    {{< screenshot
      name="account-settings"
-     alt=`The settings page of an account. The group Permissions shows the
-       Mail level list with 4 Send chosen, and the box Confirm sends. The
-       group Limits and the button Save follow.`
+     alt=`The settings page of an account. At the top, the group Permissions
+       shows the Mail level list with 4 Send chosen. The groups Limits and
+       Sent mail and the button Save follow. At the bottom are the section
+       Reconnect the account, with its button, and the section Remove the
+       account, with the box Yes, remove this account and its queued messages
+       and the button Remove account.`
    >}}
 
 3. Tick the box "Yes, remove this account and its queued messages".
 
 4. Click **Remove account**. The page then shows **Accounts**, and the account
    is gone.
+
+Removing an account also deletes its activity history: its rows in the log of
+the page **Activity** go with it. This holds for the browser and for the
+command. If you add the account again, it gets a new id.
 
 Without a browser, run `email-mcp account remove <id>`. It asks you first. When
 standard input is not a terminal, add `--yes`:

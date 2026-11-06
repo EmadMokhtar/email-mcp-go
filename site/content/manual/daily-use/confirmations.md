@@ -111,8 +111,9 @@ server accepted the message."
 
 These are the other results that the page can show:
 
-- **Approved**: "It is being carried out.", or "It goes out at" and a time, or
-  "It waits to be sent." The send is in the queue.
+- **Approved**, with one of these texts: "It is being carried out."; "It goes
+  out at" and a time, or "It waits to be sent." (the send is in the queue); or
+  "The result is not known yet. Check Activity."
 - **Sending**: "The mail server is still working on it. Reload this page to see
   the result."
 - **Not sent**: "The mail server did not take the message, and it will not try
@@ -127,11 +128,12 @@ These are the other results that the page can show:
 The confirmation is only as good as the AI app. The server trusts the app to
 show the form to a person. It does not trust the model. An app that answers the
 form by itself defeats the confirmation. For example, do not set up a Claude
-Code `Elicitation` hook (a script that Claude Code runs when an event happens)
-that answers it automatically. Over stdio, this trust goes to the app that you
-started. Over HTTP, the server gives this trust only to a token where you chose
-it, because any program with a token can claim to show a form. Every other token
-uses the approval link.
+Code `Elicitation` hook (a script that Claude Code runs when an event happens;
+the page [Claude Code][cc] names the source and the date) that answers it
+automatically. Over stdio, this trust goes to the app that you started. Over
+HTTP, the server gives this trust only to a token where you chose it, because
+any program with a token can claim to show a form. Every other token uses the
+approval link.
 
 The page [How each AI app confirms](/manual/daily-use/app-confirmation/) lists
 what each app can do.
@@ -165,3 +167,4 @@ So for a recipient with any character outside printable ASCII:
   that names the other people in Cc (the people who get a copy) still works.
 
 [all]: /manual/daily-use/full-autonomy-and-limits/#all-settings-of-an-account
+[cc]: /manual/getting-started/connect-ai-app/claude-code/#confirmation

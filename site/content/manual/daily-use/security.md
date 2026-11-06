@@ -40,10 +40,11 @@ intelligence) program that uses the tools of email-mcp. A level is a number from
 In plain words: the links that the agent gets never carry a secret. Only the
 browser that `email-mcp setup` signed in can change a level, or approve a send
 with an approval link. A send that your AI app confirms with its own form is
-answered in that app. But an agent that may run any shell command as you can do
-anything that you can do, also outside email-mcp. The page [Recommended Claude
-Code deny rules](/manual/daily-use/deny-rules/) shows how to limit that in
-Claude Code.
+answered in that app (see [Trust in the AI
+app](/manual/daily-use/confirmations/#trust-in-the-ai-app)). But an agent that
+may run any shell command as you can do anything that you can do, also outside
+email-mcp. The page [Recommended Claude Code deny
+rules](/manual/daily-use/deny-rules/) shows how to limit that in Claude Code.
 
 **An agent that controls your browser is the same risk.** Browser-control tools,
 such as Claude in Chrome or a Playwright MCP (Model Context Protocol) server
