@@ -33,6 +33,10 @@ const (
 	// variable, because "go test" runs a test in the folder of its package.
 	shotDirVariable = "EMAIL_MCP_SCREENSHOT_DIR"
 
+	// shotStamp is the file that the Makefile touches after a good run. Keep it
+	// in step with SCREENSHOT_STAMP in the Makefile.
+	shotStamp = ".done"
+
 	// The size of the browser window of a shot, in pixels. The manual uses the
 	// desktop layout of the pages.
 	shotWidth  = 1280
@@ -111,19 +115,82 @@ func checkPageText(text string, forbidden ...string) error {
 	return nil
 }
 
+// clearShots makes dir ready for a new run. It creates the folder when it is
+// missing. It removes the images (*.png) and the stamp file of the Makefile
+// (.done) that are directly inside it. It leaves every other file and every
+// subfolder alone.
+//
+// The folder comes from the environment. A wrong value must not be able to
+// delete a real folder of data, so the code removes files by name and never a
+// whole folder. The stamp goes too. If a run fails halfway, an old stamp would
+// still say that the shots are current, and "make" would skip the next run
+// although the folder holds only some of the images.
+func clearShots(dir string) error {
+	// G703 flags both calls below, because dir comes from the environment.
+	// TestScreenshots requires an absolute path first, and the loop removes only
+	// single files by name.
+	if err := os.MkdirAll(dir, 0o750); err != nil { //nolint:gosec // G703: see above
+		return err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || (name != shotStamp && filepath.Ext(name) != ".png") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil { //nolint:gosec // G703: see above
+			return err
+		}
+	}
+	return nil
+}
+
 func TestShotRefusesSecrets(t *testing.T) {
 	require.NoError(t, checkPageText("Waiting for you", "pw-1"))
 	require.Error(t, checkPageText("your token emcp_abc123", "pw-1"))
 	require.Error(t, checkPageText("password pw-1 here", "pw-1"))
 }
 
-// TestScreenshots makes every image of the manual. It starts with an empty
-// folder, so an image of a shot that was removed cannot stay behind.
+// TestClearShotsKeepsOtherFiles requires that clearShots removes the images and
+// the stamp file, and nothing else. The folder comes from the environment, so a
+// wrong value must not be able to delete a real folder of data.
+func TestClearShotsKeepsOtherFiles(t *testing.T) {
+	t.Run("removes only the images and the stamp", func(t *testing.T) {
+		dir := t.TempDir()
+		sub := filepath.Join(dir, "sub")
+		require.NoError(t, os.Mkdir(sub, 0o750))
+		for _, name := range []string{"a-light.png", ".done", "notes.txt", filepath.Join("sub", "b.png")} {
+			require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600))
+		}
+
+		require.NoError(t, clearShots(dir))
+
+		require.NoFileExists(t, filepath.Join(dir, "a-light.png"))
+		require.NoFileExists(t, filepath.Join(dir, ".done"))
+		require.FileExists(t, filepath.Join(dir, "notes.txt"))
+		require.FileExists(t, filepath.Join(sub, "b.png"))
+	})
+
+	t.Run("creates a folder that is missing", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "not", "there", "yet")
+
+		require.NoError(t, clearShots(dir))
+
+		require.DirExists(t, dir)
+	})
+}
+
+// TestScreenshots makes every image of the manual. It starts without the images
+// of an earlier run, so an image of a shot that was removed cannot stay behind.
 func TestScreenshots(t *testing.T) {
 	dir := os.Getenv(shotDirVariable)
 	require.NotEmpty(t, dir, "%s must name the folder of the images", shotDirVariable)
-	require.NoError(t, os.RemoveAll(dir))       //nolint:gosec // G703: the Makefile sets this path
-	require.NoError(t, os.MkdirAll(dir, 0o750)) //nolint:gosec // G703: the Makefile sets this path
+	require.True(t, filepath.IsAbs(dir),
+		"%s must be an absolute path, because go test runs in the folder of the package. Got %q", shotDirVariable, dir)
+	require.NoError(t, clearShots(dir))
 
 	h := newHarness(t)
 	m := newMailServers(t)

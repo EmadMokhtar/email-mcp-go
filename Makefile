@@ -75,7 +75,7 @@ SCREENSHOT_STAMP := site/assets/screenshots/.done
 $(SCREENSHOT_STAMP): $(SCREENSHOT_INPUTS)
 	EMAIL_MCP_SCREENSHOT_DIR=$(CURDIR)/site/assets/screenshots go test \
 		-tags screenshots -count=1 \
-		-run 'TestScreenshots|TestFindChrome|TestShotRefuses' \
+		-run 'TestScreenshots|TestClearShots|TestFindChrome|TestShotRefuses' \
 		./internal/e2e/ ./internal/testutil/chrometest/
 	touch $@
 
