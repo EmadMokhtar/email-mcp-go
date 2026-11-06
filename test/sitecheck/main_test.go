@@ -3,6 +3,7 @@ package main
 import (
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,9 +14,13 @@ import (
 // subPath is where GitHub Pages serves the site. The root tests use "/".
 const subPath = "/email-mcp-go/"
 
-// regularPage is the page that newSite adds to every test site. The real site
-// always has a regular page, and the check fails a site that has none.
-const regularPage = "site/public/regular/index.html"
+// regularRel is the page that newSite adds to every test site, below
+// site/public. The real site always has a regular page, and the check fails a
+// site that has none.
+const regularRel = "regular/index.html"
+
+// regularPage is the path of regularRel from the root of the repository.
+const regularPage = "site/public/" + regularRel
 
 // newSite writes a small repository in a temporary folder and returns the
 // config that points at it. The keys of files are paths from the root of the
@@ -31,7 +36,7 @@ func newSite(t *testing.T, base string, files map[string]string) config {
 	if files == nil {
 		files = map[string]string{}
 	}
-	files[regularPage] = htmlPageKind("page", "", "")
+	files[regularPage] = pageAt(regularRel, "page", "", "")
 	for name, body := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
@@ -54,6 +59,28 @@ func htmlPageKind(kind, head, body string) string {
 	return "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n" +
 		"<title>T</title>\n" + head + "\n</head>\n<body" + attr + ">\n" + body +
 		"\n</body>\n</html>\n"
+}
+
+// selfNav returns the page list of the page at rel (below site/public). It has
+// one link, to the page itself. The real page list has a link to every page, so
+// every regular page of the manual and the tech docs is in its own list. The
+// link is relative, so it is good under any base path.
+func selfNav(rel string) string {
+	self := "./"
+	if path.Base(rel) != "index.html" {
+		self = path.Base(rel)
+	}
+	return `<nav class="docs-nav" aria-label="Manual"><ul><li><a href="` + self + `">Page</a></li></ul></nav>`
+}
+
+// pageAt is htmlPageKind for the page at rel (below site/public). A regular
+// page gets a page list with a link to itself, because the check requires it
+// for the pages of the manual and the tech docs.
+func pageAt(rel, kind, head, body string) string {
+	if kind == "page" {
+		body = selfNav(rel) + body
+	}
+	return htmlPageKind(kind, head, body)
 }
 
 // requireClean checks that the site has no problem.
@@ -175,6 +202,28 @@ func TestOutsideResourceFails(t *testing.T) {
 			body: `<picture><source srcset="https://x.test/a.png"><img src="/email-mcp-go/a.png" alt="A"></picture>`,
 		},
 		"media source": {body: `<video><source src="https://x.test/a.mp4"></video>`},
+
+		// Every <link> with an href stays inside the site, whatever its rel.
+		"preload":               {head: `<link rel="preload" href="https://x.test/a.woff2" as="font">`},
+		"preconnect":            {head: `<link rel="preconnect" href="https://x.test">`},
+		"dns prefetch":          {head: `<link rel="dns-prefetch" href="//x.test">`},
+		"alternate":             {head: `<link rel="alternate" href="https://x.test/feed.xml">`},
+		"manifest":              {head: `<link rel="manifest" href="https://x.test/m.json">`},
+		"link with no rel":      {head: `<link href="https://x.test/a.css">`},
+		"link with rel in caps": {head: `<link REL="Stylesheet" href="https://x.test/a.css">`},
+		"canonical and more":    {head: `<link rel="canonical preload" href="https://x.test/a.css">`},
+
+		// Elements that load a page, a file or a media file.
+		"iframe":           {body: `<iframe src="https://x.test/"></iframe>`},
+		"iframe no scheme": {body: `<iframe src="//x.test/"></iframe>`},
+		"embed":            {body: `<embed src="https://x.test/a.swf">`},
+		"object":           {body: `<object data="https://x.test/a.pdf"></object>`},
+		"video":            {body: `<video src="https://x.test/a.mp4"></video>`},
+		"video poster":     {body: `<video poster="https://x.test/p.png"></video>`},
+		"audio":            {body: `<audio src="https://x.test/a.mp3"></audio>`},
+		"track":            {body: `<video><track src="https://x.test/a.vtt"></video>`},
+		"svg image":        {body: `<svg><image href="https://x.test/a.png"/></svg>`},
+		"svg image xlink":  {body: `<svg xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="https://x.test/a.png"/></svg>`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := newSite(t, subPath, map[string]string{
@@ -191,6 +240,172 @@ func TestCanonicalLinkPasses(t *testing.T) {
 		"site/public/index.html": htmlPage(`<link rel="canonical" href="https://x.test/">`, ""),
 	})
 	requireClean(t, cfg)
+}
+
+// TestInsideResourcesPass covers things that look like the ones above and that
+// stay inside the site, or that load nothing.
+func TestInsideResourcesPass(t *testing.T) {
+	for name, markup := range map[string]struct{ head, body string }{
+		"canonical in capitals":      {head: `<link rel="Canonical" href="https://x.test/">`},
+		"link with no href":          {head: `<link rel="preload" as="font">`},
+		"other link inside the site": {head: `<link rel="alternate" href="/email-mcp-go/feed.xml">`},
+		"iframe inside the site":     {body: `<iframe src="/email-mcp-go/a.html"></iframe>`},
+		"object inside the site":     {body: `<object data="/email-mcp-go/a.pdf"></object>`},
+		"video inside the site":      {body: `<video src="/email-mcp-go/a.mp4" poster="/email-mcp-go/a.png"></video>`},
+		"track inside the site":      {body: `<video><track src="/email-mcp-go/a.vtt"></video>`},
+		"svg image inside the site":  {body: `<svg><image href="/email-mcp-go/a.png"/></svg>`},
+		"svg image with data":        {body: `<svg><image href="data:image/png;base64,AAAA"/></svg>`},
+		"iframe with data":           {body: `<iframe src="data:text/html,x"></iframe>`},
+		"mailto link":                {body: `<a href="mailto:me@example.com">x</a>`},
+		"link to another site":       {body: `<a href="https://x.test/">x</a>`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := newSite(t, subPath, map[string]string{
+				"site/public/index.html": htmlPage(markup.head, markup.body),
+				"site/public/feed.xml":   "",
+				"site/public/a.html":     "",
+				"site/public/a.pdf":      "",
+				"site/public/a.mp4":      "",
+				"site/public/a.png":      "",
+				"site/public/a.vtt":      "",
+			})
+			requireClean(t, cfg)
+		})
+	}
+}
+
+// TestEventAttributeFails requires that no element has an attribute that starts
+// with "on". The site has no script, and these attributes are script.
+func TestEventAttributeFails(t *testing.T) {
+	for name, body := range map[string]string{
+		"link":        `<a href="/email-mcp-go/" onclick="x()">x</a>`,
+		"block":       `<div onmouseover="x()">x</div>`,
+		"image":       `<img src="/email-mcp-go/a.png" alt="A" onerror="x()">`,
+		"svg":         `<svg onload="x()"></svg>`,
+		"svg element": `<svg><rect onbegin="x()"/></svg>`,
+		"capitals":    `<p ONCLICK="x()">x</p>`,
+		"no value":    `<p onclick>x</p>`,
+		"details":     `<details ontoggle="x()"><summary>x</summary></details>`,
+		"autofocus":   `<input onfocus="x()" autofocus>`,
+		"form":        `<form onsubmit="x()"></form>`,
+		"main":        `<main onload="x()"></main>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := newSite(t, subPath, map[string]string{
+				"site/public/index.html": htmlPage("", body),
+				"site/public/a.png":      "",
+			})
+			requireOneProblem(t, cfg, "site/public/index.html", "the site has no script")
+		})
+	}
+
+	t.Run("attribute in the head", func(t *testing.T) {
+		cfg := newSite(t, subPath, map[string]string{
+			"site/public/index.html": htmlPage(`<link rel="stylesheet" href="/email-mcp-go/s.css" onload="x()">`, ""),
+			"site/public/s.css":      "",
+		})
+		requireOneProblem(t, cfg, "site/public/index.html", "the site has no script")
+	})
+
+	t.Run("names that only contain on", func(t *testing.T) {
+		cfg := newSite(t, subPath, map[string]string{
+			"site/public/index.html": htmlPage(`<meta name="x" content="online">`,
+				`<p data-onclick="x" aria-label="on" title="onclick" class="onion">x</p>`),
+		})
+		requireClean(t, cfg)
+	})
+}
+
+// TestJavaScriptAddressFails requires that no href or src starts with
+// "javascript:". The browser ignores the case of the letters, a space or a
+// control character before it, and a tab or a new line inside it.
+func TestJavaScriptAddressFails(t *testing.T) {
+	for name, body := range map[string]string{
+		"link":                     `<a href="javascript:alert(1)">x</a>`,
+		"capitals":                 `<a href="JAVASCRIPT:alert(1)">x</a>`,
+		"mixed case":               `<a href="JavaScript:alert(1)">x</a>`,
+		"space before":             `<a href="  javascript:alert(1)">x</a>`,
+		"new line before":          "<a href=\"\njavascript:alert(1)\">x</a>",
+		"tab inside":               `<a href="java&#9;script:alert(1)">x</a>`,
+		"new line inside":          `<a href="java&#10;script:alert(1)">x</a>`,
+		"area":                     `<map name="m"><area href="javascript:alert(1)" alt="x"></map>`,
+		"input image":              `<input type="image" src="javascript:alert(1)" alt="x">`,
+		"link in svg":              `<svg><a href="javascript:alert(1)"><text>x</text></a></svg>`,
+		"link in svg xlink":        `<svg xmlns:xlink="http://www.w3.org/1999/xlink"><a xlink:href="javascript:alert(1)"><text>x</text></a></svg>`,
+		"no code after the scheme": `<a href="javascript:">x</a>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := newSite(t, subPath, map[string]string{
+				"site/public/index.html": htmlPage("", body),
+			})
+			requireOneProblem(t, cfg, "site/public/index.html", "javascript:")
+		})
+	}
+
+	t.Run("text that only contains javascript", func(t *testing.T) {
+		cfg := newSite(t, subPath, map[string]string{
+			"site/public/index.html": htmlPage("", `<a href="https://x.test/javascript:x">x</a><p>javascript:alert(1)</p>`),
+		})
+		requireClean(t, cfg)
+	})
+}
+
+// TestStylesheetLoadsFromOutsideFails checks the stylesheets of the built site.
+// A page can load nothing from another site, and neither can its stylesheet.
+func TestStylesheetLoadsFromOutsideFails(t *testing.T) {
+	for _, tc := range []struct{ name, css, want string }{
+		{"import with a string", `@import "a.css";`, "@import"},
+		{"import with a local file", `@import url(a.css);`, "@import"},
+		{"import in capitals", `@IMPORT "a.css";`, "@import"},
+		{"import with no space", `@import"a.css";`, "@import"},
+		{"url with a scheme", `a { background: url(https://x.test/a.png) }`, "loads from another site"},
+		{"url in double quotes", `a { background: url("https://x.test/a.png") }`, "loads from another site"},
+		{"url in single quotes", `a { background: url('https://x.test/a.png') }`, "loads from another site"},
+		{"url with no scheme", `a { background: url(//x.test/a.png) }`, "loads from another site"},
+		{"url with a backslash", `a { background: url(/\x.test/a.png) }`, "loads from another site"},
+		{"url with a quoted no scheme", `a { background: url("//x.test/a.png") }`, "loads from another site"},
+		{"url with spaces", `a { background: url(  https://x.test/a.png  ) }`, "loads from another site"},
+		{"url in capitals", `a { background: URL(HTTPS://x.test/a.png) }`, "loads from another site"},
+		{"url with another scheme", `a { background: url(ftp://x.test/a.png) }`, "loads from another site"},
+		{"font face", `@font-face { font-family: x; src: url(https://x.test/a.woff2) format("woff2") }`, "loads from another site"},
+		{"second url", `a { background: url(a.png) } b { background: url(https://x.test/b.png) }`, "loads from another site"},
+		{"url with data", `a { background: url(data:image/png;base64,AAAA) }`, ""},
+		{"url with quoted data", `a { background: url("data:image/svg+xml;utf8,<svg/>") }`, ""},
+		{"url with data in capitals", `a { background: url(DATA:image/png;base64,AAAA) }`, ""},
+		{"url with a local file", `a { background: url(a.png) }`, ""},
+		{"url with a path", `a { background: url(/email-mcp-go/a.png) }`, ""},
+		{"url with a fragment", `a { clip-path: url(#clip) }`, ""},
+		{"no url", `a { color: red }`, ""},
+		{"empty", ``, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := newSite(t, subPath, map[string]string{
+				"site/public/index.html":       htmlPage("", ""),
+				"site/public/css/site.min.css": tc.css,
+			})
+			requireOutcome(t, cfg, "site/public/css/site.min.css", tc.want)
+		})
+	}
+
+	t.Run("import of an address reports the import and the address", func(t *testing.T) {
+		cfg := newSite(t, subPath, map[string]string{
+			"site/public/index.html": htmlPage("", ""),
+			"site/public/site.css":   `@import url(https://x.test/a.css);`,
+		})
+		got := check(cfg)
+		require.Len(t, got, 2, "problems: %v", got)
+		require.Equal(t, filepath.Join(cfg.Root, "site", "public", "site.css"), got[0].File)
+		require.Contains(t, got[0].Text+got[1].Text, "@import")
+		require.Contains(t, got[0].Text+got[1].Text, "loads from another site")
+	})
+
+	t.Run("a file that is not a stylesheet is not read", func(t *testing.T) {
+		cfg := newSite(t, subPath, map[string]string{
+			"site/public/index.html": htmlPage("", ""),
+			"site/public/a.txt":      `@import "a.css"; url(https://x.test/a.png)`,
+		})
+		requireClean(t, cfg)
+	})
 }
 
 func TestMissingIconFails(t *testing.T) {
@@ -379,8 +594,64 @@ func TestRegularPageNeedsCodeArea(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := newSite(t, subPath, map[string]string{
 				"site/public/index.html":    htmlPage("", ""),
-				"site/public/" + tc.page:    htmlPageKind(tc.kind, tc.head, ""),
+				"site/public/" + tc.page:    pageAt(tc.page, tc.kind, tc.head, ""),
 				"internal/outbox/outbox.go": "package outbox\n",
+			})
+			requireOutcome(t, cfg, "site/public/"+tc.page, tc.want)
+		})
+	}
+}
+
+// TestRegularPageMissingFromSidebarFails guards the page list. The partial
+// page-order.html walks the groups and one level under them. A page outside
+// that shape is built, but it is not in the page list and not in the previous
+// and next links, and nothing else fails. The page list of such a page cannot
+// list the page itself, so a link to itself is the test.
+func TestRegularPageMissingFromSidebarFails(t *testing.T) {
+	const missing = "is not in the page list"
+	list := func(href string) string {
+		return `<nav class="docs-nav"><ul><li><a href="` + href + `">x</a></li></ul></nav>`
+	}
+	const area = `<meta name="code-area" content="internal/outbox/outbox.go">`
+	for _, tc := range []struct {
+		name string
+		page string // path of the page below site/public
+		kind string
+		head string
+		body string
+		want string
+	}{
+		{"page that lists itself", "manual/send/index.html", "page", area, list(subPath + "manual/send/"), ""},
+		{"page list of other pages only", "manual/send/index.html", "page", area, list(subPath + "manual/other/"), missing},
+		{"page with no page list", "manual/send/index.html", "page", area, "", missing},
+		{"page deeper than the list walks", "manual/group/hub/leaf/index.html", "page", area, list(subPath + "manual/group/hub/"), missing},
+		{"tech page that is not listed", "tech/outbox/index.html", "page", area, "", missing},
+		{"link to itself in the top menu", "manual/send/index.html", "page", area,
+			`<nav class="site-nav"><a href="` + subPath + `manual/send/">x</a></nav>`, missing},
+		{"link to itself in the previous and next links", "manual/send/index.html", "page", area,
+			`<nav class="docs-pager"><a href="` + subPath + `manual/send/">x</a></nav>`, missing},
+		{"link to itself outside any nav", "manual/send/index.html", "page", area,
+			`<a href="` + subPath + `manual/send/">x</a>`, missing},
+		{"link to the same path on another site", "manual/send/index.html", "page", area,
+			list("https://x.test" + subPath + "manual/send/"), missing},
+		{"relative link to itself", "manual/send/index.html", "page", area, list("../send/"), ""},
+		{"page list with other classes", "manual/send/index.html", "page", area,
+			`<nav class="a docs-nav b"><a href="` + subPath + `manual/send/">x</a></nav>`, ""},
+		{"glossary that is not listed", "manual/glossary/index.html", "page", "", "", missing},
+		{"glossary that lists itself", "tech/glossary/index.html", "page", "", list(subPath + "tech/glossary/"), ""},
+		{"section page that is not listed", "manual/index.html", "section", "", "", ""},
+		{"page with no kind that is not listed", "manual/send/index.html", "", "", "", ""},
+		{"page outside the manual and the tech docs", "about/index.html", "page", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := newSite(t, subPath, map[string]string{
+				"site/public/index.html":    htmlPage("", ""),
+				"site/public/" + tc.page:    htmlPageKind(tc.kind, tc.head, tc.body),
+				"internal/outbox/outbox.go": "package outbox\n",
+				// The pages that some page lists exist, so the only problem is
+				// the page that is not listed.
+				"site/public/manual/other/index.html":     htmlPageKind("section", "", ""),
+				"site/public/manual/group/hub/index.html": htmlPageKind("section", "", ""),
 			})
 			requireOutcome(t, cfg, "site/public/"+tc.page, tc.want)
 		})
@@ -403,7 +674,7 @@ func TestSiteWithNoRegularPageFails(t *testing.T) {
 			cfg := newSite(t, subPath, map[string]string{
 				"site/public/index.html":        htmlPageKind("home", "", ""),
 				"site/public/manual/index.html": htmlPageKind("section", "", ""),
-				"site/public/about/index.html":  htmlPageKind(tc.kind, "", ""),
+				"site/public/about/index.html":  pageAt("about/index.html", tc.kind, "", ""),
 			})
 			// Take away the page that newSite adds, so that the pages of this
 			// test are the only ones.
@@ -460,6 +731,44 @@ func TestContentRules(t *testing.T) {
 		{"fence inside a list is skipped", "1. Run:\n\n   ```sh\n   # comment\n   " + line81 + "\n   ```\n", ""},
 		{"text after the code fence is checked", "```sh\nx\n```\n# Title\n", "line 4: H1"},
 		{"table is skipped", "| a | " + line81 + " |\n| - | - |\n", ""},
+
+		// A code fence needs a language.
+		{"fence with a language", "```sh\nx\n```\n", ""},
+		{"fence with a language and text after the closing fence", "```sh\nx\n```\n\ntext\n", ""},
+		{"fence with no language", "```\nx\n```\n", "line 1: code fence with no language"},
+		{"fence with only spaces after it", "```  \nx\n```\n", "line 1: code fence with no language"},
+		{"fence with tildes and no language", "~~~\nx\n~~~\n", "line 1: code fence with no language"},
+		{"fence with only attributes", "``` {linenos=true}\nx\n```\n", "line 1: code fence with no language"},
+		{"fence with a language and attributes", "```go {linenos=true}\nx\n```\n", ""},
+		{"longer fence with a language", "````md\nx\n````\n", ""},
+		{"longer fence with no language", "````\nx\n````\n", "line 1: code fence with no language"},
+		{"fence with no language inside a longer fence", "````md\n```\nx\n```\n````\n", ""},
+		{"fence with no language inside a list", "1. Run:\n\n   ```\n   x\n   ```\n", "line 3: code fence with no language"},
+		{"fence with a language inside a list", "1. Run:\n\n   ```sh\n   x\n   ```\n", ""},
+		{"second fence with no language", "```sh\nx\n```\n\n```\ny\n```\n", "line 5: code fence with no language"},
+		{"closing fence is not an opening fence", "```sh\nx\n```\n```sh\ny\n```\n", ""},
+		{"inline code with three backticks is no fence", "```code``` in a line\n", ""},
+
+		// A heading with a line of = under it is an H1 too.
+		{"setext H1", "Title\n=====\n", "line 2: H1"},
+		{"setext H1 with one equals sign", "Title\n=\n", "line 2: H1"},
+		{"setext H1 with spaces around the equals signs", "Title\n  ===  \n", "line 2: H1"},
+		{"setext H1 after the front matter", "---\ntitle: T\n---\nTitle\n===\n", "line 5: H1"},
+		{"setext H1 under the second line of a paragraph", "First\nsecond\n===\n", "line 3: H1"},
+		{"setext H1 after text that is after a fence", "```sh\nx\n```\nTitle\n===\n", "line 5: H1"},
+		{"second line of equals signs belongs to the heading", "Title\n===\n===\n", "line 2: H1"},
+		{"equals signs inside a code fence", "```sh\nx\n====\n```\n", ""},
+		{"equals signs inside a code fence with tildes", "~~~sh\nTitle\n====\n~~~\n", ""},
+		{"equals signs in the front matter", "---\ntitle: T\n====\n---\n\n## A\n", ""},
+		{"equals signs after a blank line", "text\n\n====\n", ""},
+		{"equals signs at the top of the file", "====\n", ""},
+		{"equals signs after a closing fence", "```sh\nx\n```\n====\n", ""},
+		{"equals signs with other characters", "text\n==x\n", ""},
+		{"equals signs after a list item", "- item\n===\n", ""},
+		{"equals signs after a numbered list item", "1. item\n===\n", ""},
+		{"equals signs after a quote", "> quote\n===\n", ""},
+		{"equals signs after four spaces are code", "text\n    ===\n", ""},
+		{"dashes under a paragraph are an H2", "Title\n-----\n", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := newSite(t, subPath, map[string]string{

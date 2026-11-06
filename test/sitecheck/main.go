@@ -9,15 +9,21 @@
 //     base path, and every #anchor goes to an id that exists. A link written
 //     as /manual/ fails when the site is served under /email-mcp-go/, because
 //     it leaves the site.
-//   - The site loads nothing from another site, and has no script.
+//   - The site loads nothing from another site, and has no script. That covers
+//     every <link> (except a canonical one), the elements that load a page or
+//     a media file, event attributes (onclick and the like), javascript:
+//     addresses, and the @import and url() of the stylesheets.
 //   - Every image has alt text.
 //   - Every link to the source code (blob or tree) goes to a path that exists
 //     in the repository, and so does every code-area meta tag.
-//   - Every regular page of the manual and the tech docs has a code-area. The
-//     built site has at least one regular page (data-kind="page"), because
-//     without one this rule would check nothing and pass.
+//   - Every regular page of the manual and the tech docs has a code-area, and a
+//     link to itself in the page list (nav.docs-nav). A page that page-order.html
+//     does not reach is built, but it is not in the list, and nothing else
+//     fails. The built site has at least one regular page (data-kind="page"),
+//     because without one these rules would check nothing and pass.
 //   - Every screenshot that was made is used by a page.
-//   - The Markdown files in site/content follow the content rules.
+//   - The Markdown files in site/content follow the content rules: no H1, no
+//     heading deeper than H3, a language on every code fence, and short lines.
 //
 // It prints one problem on each line and exits with 1 when it finds any. A
 // missing or wrong flag exits with 2.
@@ -32,6 +38,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -131,22 +138,29 @@ func normalizeBase(base string) string {
 	return base
 }
 
-// pages checks every HTML page of the built site.
+// pages checks every HTML page and every stylesheet of the built site.
 func (c *checker) pages() {
 	count := 0
 	err := filepath.WalkDir(c.cfg.Public, func(file string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || filepath.Ext(file) != ".html" {
+		if d.IsDir() {
 			return nil
 		}
-		rel, err := filepath.Rel(c.cfg.Public, file)
-		if err != nil {
-			return err
+		switch filepath.Ext(file) {
+		case ".css":
+			// The same walk reads the stylesheets, so a built site that
+			// cannot be read is one problem and not two.
+			c.stylesheet(file)
+		case ".html":
+			rel, err := filepath.Rel(c.cfg.Public, file)
+			if err != nil {
+				return err
+			}
+			count++
+			c.page(file, filepath.ToSlash(rel))
 		}
-		count++
-		c.page(file, filepath.ToSlash(rel))
 		return nil
 	})
 	switch {
@@ -177,6 +191,12 @@ func (c *checker) page(file, rel string) {
 		if n.Type != html.ElementNode {
 			continue
 		}
+		c.attributes(file, n)
+		for _, name := range loaders[n.Data] {
+			if ref, _ := attr(n, name); ref != "" {
+				c.resource(file, pageURL, "<"+n.Data+" "+name+">", ref)
+			}
+		}
 		switch n.Data {
 		case "a":
 			if href, ok := attr(n, "href"); ok {
@@ -198,6 +218,17 @@ func (c *checker) page(file, rel string) {
 				c.resource(file, pageURL, "<source src>", src)
 			}
 			c.srcset(file, pageURL, n)
+		case "image":
+			// The parser turns an HTML <image> into an <img>, so this is the
+			// <image> of an SVG. It has href, or xlink:href in an old drawing,
+			// and the parser gives both the name href.
+			if n.Namespace == "svg" {
+				for _, a := range n.Attr {
+					if a.Key == "href" && a.Val != "" {
+						c.resource(file, pageURL, "<image href>", a.Val)
+					}
+				}
+			}
 		case "link":
 			c.linkTag(file, pageURL, n)
 		case "meta":
@@ -214,6 +245,83 @@ func (c *checker) page(file, rel string) {
 	if kind == "page" && codeAreaRequired(rel) && codeAreas == 0 {
 		c.add(file, "the page has no code-area meta (add code_areas to its front matter)")
 	}
+	if kind == "page" && inDocs(rel) && !inPageList(doc, pageURL) {
+		c.add(file, "the page is not in the page list (nav.docs-nav has no link to it). "+
+			"Is it outside the groups, and the one level under them, that page-order.html walks?")
+	}
+}
+
+// loaders lists, for each element that loads a page or a media file, the
+// attributes that hold an address. <img>, <source> and <link> have their own
+// code, because they need more than the address.
+var loaders = map[string][]string{
+	"iframe": {"src"},
+	"embed":  {"src"},
+	"object": {"data"},
+	"video":  {"src", "poster"},
+	"audio":  {"src"},
+	"track":  {"src"},
+}
+
+// attributes checks the attributes of any element. The site has no script, and
+// script can hide in two kinds of attribute: the event attributes, which all
+// start with "on", and an address that starts with "javascript:".
+func (c *checker) attributes(file string, n *html.Node) {
+	for _, a := range n.Attr {
+		if strings.HasPrefix(a.Key, "on") {
+			c.add(file, "<%s %s> is an event attribute: the site has no script", n.Data, a.Key)
+		}
+		if (a.Key == "href" || a.Key == "src") && isJavaScriptAddress(a.Val) {
+			c.add(file, "<%s %s> %q starts with javascript: and the site has no script", n.Data, a.Key, a.Val)
+		}
+	}
+}
+
+// isJavaScriptAddress tells if a browser would run v as script. The browser
+// ignores the case of the letters, the spaces and control characters at the
+// start, and every tab and new line inside, so the check does too.
+func isJavaScriptAddress(v string) bool {
+	v = strings.TrimLeftFunc(v, func(r rune) bool { return r <= ' ' })
+	v = strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' {
+			return -1
+		}
+		return r
+	}, v)
+	return strings.HasPrefix(strings.ToLower(v), "javascript:")
+}
+
+// inPageList tells if the page list of the page (the nav with the class
+// docs-nav) has a link to the page itself. The list of a page that
+// page-order.html does not reach cannot have it. The pager and the top menu
+// are other navs, and a link in them does not count.
+func inPageList(doc *html.Node, pageURL string) bool {
+	for nav := range doc.Descendants() {
+		if nav.Type != html.ElementNode || nav.Data != "nav" {
+			continue
+		}
+		class, _ := attr(nav, "class")
+		if !slices.Contains(strings.Fields(class), "docs-nav") {
+			continue
+		}
+		for a := range nav.Descendants() {
+			if a.Type != html.ElementNode || a.Data != "a" {
+				continue
+			}
+			href, ok := attr(a, "href")
+			if !ok {
+				continue
+			}
+			u, err := url.Parse(href)
+			if err != nil || u.Host != "" || u.Scheme != "" {
+				continue
+			}
+			if (&url.URL{Path: pageURL}).ResolveReference(u).Path == pageURL {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // pagePath is the address of a page below the base path: "manual/" for
@@ -228,19 +336,26 @@ func pagePath(rel string) string {
 	return rel
 }
 
+// inDocs says if a page is a page of the manual or of the tech docs.
+func inDocs(rel string) bool {
+	return strings.HasPrefix(rel, "manual/") || strings.HasPrefix(rel, "tech/")
+}
+
 // codeAreaRequired says if a regular page must say which code it covers. The
 // manual and the tech docs need it, except the glossaries, which cover no code.
+// The glossaries are only free of the code-area. They are in the page list like
+// every other page.
 func codeAreaRequired(rel string) bool {
-	if !strings.HasPrefix(rel, "manual/") && !strings.HasPrefix(rel, "tech/") {
-		return false
-	}
-	return !strings.HasSuffix("/"+pagePath(rel), "/glossary/")
+	return inDocs(rel) && !strings.HasSuffix("/"+pagePath(rel), "/glossary/")
 }
 
 // link checks an <a href>. A link with no host and no scheme goes to this site.
 // A source link goes to the repository. Other links are allowed: the site may
 // link to anything, but it may not load anything from outside.
 func (c *checker) link(file, pageURL, href string) {
+	if isJavaScriptAddress(href) {
+		return // attributes reports it, and a second message would only repeat it
+	}
 	if p, ok := sourcePath(href); ok {
 		c.sourceLink(file, href, p)
 		return
@@ -286,19 +401,21 @@ func (c *checker) srcset(file, pageURL string, n *html.Node) {
 	}
 }
 
-// linkTag checks a <link>. Only the kinds that the browser loads as part of the
-// page are resources. A canonical link only says where the page lives, and it
-// has a full address.
+// linkTag checks a <link>. Whatever its rel, a link with an href may make the
+// browser load a file, so the address must stay inside the site. The one free
+// kind is a canonical link, which only says where the page lives. It has a full
+// address, and the browser does not load it. A link that has other kinds too,
+// such as rel="canonical preload", is not free.
 func (c *checker) linkTag(file, pageURL string, n *html.Node) {
-	rel, _ := attr(n, "rel")
 	href, ok := attr(n, "href")
 	if !ok {
 		return
 	}
-	kinds := strings.Fields(strings.ToLower(rel))
-	if slices.Contains(kinds, "stylesheet") || slices.Contains(kinds, "icon") {
-		c.resource(file, pageURL, `<link rel="`+rel+`" href>`, href)
+	rel, _ := attr(n, "rel")
+	if kinds := strings.Fields(strings.ToLower(rel)); len(kinds) == 1 && kinds[0] == "canonical" {
+		return
 	}
+	c.resource(file, pageURL, `<link rel="`+rel+`" href>`, href)
 }
 
 // meta checks a <meta>. It returns true for a code-area.
@@ -441,6 +558,47 @@ func (c *checker) pageIDs(file string) map[string]bool {
 	return ids
 }
 
+// cssURL finds the url(...) of a stylesheet. The address is in one of three
+// groups: in double quotes, in single quotes, or with no quotes. Comments are
+// not skipped on purpose: a rule that skips them could be fooled by one.
+var cssURL = regexp.MustCompile(`(?i)url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s"']*))\s*\)`)
+
+// cssScheme matches the start of an address that has a scheme, like https:.
+var cssScheme = regexp.MustCompile(`^[a-z][a-z0-9+.\-]*:`)
+
+// stylesheet checks a CSS file of the built site. A page can load nothing from
+// another site, and neither can its stylesheet. An @import is a problem even
+// when it points inside the site, because this check does not follow it. A
+// url() with a scheme or with // at the start goes to another site. A data:
+// address holds its own bytes and loads nothing.
+func (c *checker) stylesheet(file string) {
+	data, err := os.ReadFile(file) //nolint:gosec // G304: the walk of the built site gave this path
+	if err != nil {
+		c.add(file, "cannot read the stylesheet: %v", err)
+		return
+	}
+	css := string(data)
+	if strings.Contains(strings.ToLower(css), "@import") {
+		c.add(file, "@import found: the stylesheet must not load another file")
+	}
+	for _, m := range cssURL.FindAllStringSubmatch(css, -1) {
+		value := strings.TrimSpace(m[1] + m[2] + m[3]) // only one group has text
+		if cssLoadsFromOutside(value) {
+			c.add(file, "url(%s) loads from another site", value)
+		}
+	}
+}
+
+// cssLoadsFromOutside tells if the address of a url() goes to another site. A
+// backslash counts as a slash, because a browser reads /\host/ as //host/.
+func cssLoadsFromOutside(value string) bool {
+	value = strings.ReplaceAll(strings.ToLower(value), `\`, "/")
+	if strings.HasPrefix(value, "data:") {
+		return false
+	}
+	return strings.HasPrefix(value, "//") || cssScheme.MatchString(value)
+}
+
 // screenshots checks that every screenshot that was made is in the built site.
 // The shortcode publishes an image only when a page uses it, so a missing file
 // means that no page does. A missing folder means that no screenshot was made,
@@ -486,10 +644,11 @@ func (c *checker) content() {
 	}
 }
 
-// markdown checks the content rules on one file: no H1, nothing deeper than
-// H3, and lines of at most maxLine characters. The front matter, the code
-// fences and the tables are skipped, because they have their own syntax and
-// they cannot always wrap.
+// markdown checks the content rules on one file: no H1 (written with # or with
+// a line of =), nothing deeper than H3, a language on every code fence, and
+// lines of at most maxLine characters. The front matter, the code fences and
+// the tables are skipped, because they have their own syntax and they cannot
+// always wrap.
 func (c *checker) markdown(file string) {
 	data, err := os.ReadFile(file) //nolint:gosec // G304: the walk of site/content gave this path
 	if err != nil {
@@ -502,9 +661,12 @@ func (c *checker) markdown(file string) {
 	}
 
 	start := afterFrontMatter(lines)
-	fence := "" // the fence that is open, or empty
+	fence := ""        // the fence that is open, or empty
+	paragraph := false // the line before is a line of a paragraph
 	for i := start; i < len(lines); i++ {
 		line, number := lines[i], i+1
+		wasParagraph := paragraph
+		paragraph = false
 		if fence != "" {
 			if closesFence(line, fence) {
 				fence = ""
@@ -513,11 +675,20 @@ func (c *checker) markdown(file string) {
 		}
 		if f := fenceOf(line); f != "" {
 			fence = f
+			if fenceLanguage(line, f) == "" {
+				c.add(file, "line %d: code fence with no language. Write one after the fence, such as sh or text", number)
+			}
 			continue
 		}
 		if strings.HasPrefix(strings.TrimLeft(line, " "), "|") {
 			continue
 		}
+		underline := wasParagraph && isSetextUnderline(line)
+		if underline {
+			c.add(file, "line %d: H1 in the body (a line of = under text). The title comes from the front matter", number)
+		}
+		// The underline belongs to the heading, so it is not text for the next line.
+		paragraph = !underline && isParagraphLine(line)
 		if level := headingLevel(line); level == 1 {
 			c.add(file, "line %d: H1 in the body. The title comes from the front matter", number)
 		} else if level > 3 {
@@ -561,6 +732,47 @@ func fenceOf(line string) string {
 		return strings.Repeat(mark, n)
 	}
 	return ""
+}
+
+// fenceLanguage returns the language of an opening fence line: the first word
+// after the fence. Attributes in braces, like {linenos=true}, are not a
+// language. It returns "" when the fence has none.
+func fenceLanguage(line, fence string) string {
+	info := strings.TrimLeft(strings.TrimSpace(line), fence[:1])
+	if words := strings.Fields(info); len(words) > 0 && !strings.HasPrefix(words[0], "{") {
+		return words[0]
+	}
+	return ""
+}
+
+// isSetextUnderline tells if line is a line of = signs, with at most three
+// spaces before it. Under a line of a paragraph, it makes that paragraph an H1.
+func isSetextUnderline(line string) bool {
+	s := strings.TrimLeft(line, " ")
+	if len(line)-len(s) > 3 {
+		return false // four spaces start a code block
+	}
+	s = strings.TrimRight(s, " \t")
+	return s != "" && strings.Trim(s, "=") == ""
+}
+
+// isParagraphLine tells if line can be the text of a setext heading: it is not
+// blank, not an ATX heading, and not the start of a quote or a list item. A
+// line of = under those is text and not a heading.
+func isParagraphLine(line string) bool {
+	s := strings.TrimLeft(line, " \t")
+	if s == "" || headingLevel(line) > 0 || strings.HasPrefix(s, ">") {
+		return false
+	}
+	if len(s) > 1 && strings.ContainsRune("-+*", rune(s[0])) && s[1] == ' ' {
+		return false
+	}
+	digits := len(s) - len(strings.TrimLeft(s, "0123456789"))
+	if digits > 0 && digits < len(s) && (s[digits] == '.' || s[digits] == ')') &&
+		(digits+1 == len(s) || s[digits+1] == ' ') {
+		return false
+	}
+	return true
 }
 
 // closesFence tells if line closes the open fence: only the same mark, at least
