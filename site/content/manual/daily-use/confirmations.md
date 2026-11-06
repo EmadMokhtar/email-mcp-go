@@ -33,7 +33,10 @@ A send goes through five steps. The agent asks to send. email-mcp checks that
 the level of the account allows a send. The send waits for your yes, when a
 confirmation is needed. Then the send waits in the undo window: the time before
 the mail goes out, when you or the agent can still cancel it (see [Activity and
-undo](/manual/daily-use/activity-and-undo/)). Then the mail goes out.
+undo](/manual/daily-use/activity-and-undo/)). By default this window is 0
+seconds after you confirmed a send, so an approved send goes out at once. A send
+with no confirmation waits 30 seconds. You can change both times: see [All
+settings of an account][all]. Then the mail goes out.
 
 {{< diagram "send-path" >}}
 
