@@ -1,0 +1,24 @@
+{{- /*
+  The body of a page of the manual or the tech docs: the page list at the left,
+  the text, and the previous and next links. section.html and page.html both
+  print it, so a group page and a page look the same.
+
+  Call it with the page that is shown: partial "docs.html" .
+*/ -}}
+{{ partial "sidebar.html" . }}
+<div class="docs-body">
+  <article class="doc">
+    <h1>{{ .Title }}</h1>
+    {{ .Content }}
+    {{- /* Only the tech docs show the code that a page covers. */ -}}
+    {{- if and (eq .Section "tech") .Params.code_areas }}
+    <h2>Code covered by this page</h2>
+    <ul>
+      {{- range .Params.code_areas }}
+      <li>{{ partial "source-link.html" . }}</li>
+      {{- end }}
+    </ul>
+    {{- end }}
+  </article>
+  {{ partial "pager.html" . }}
+</div>

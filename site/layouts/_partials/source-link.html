@@ -1,0 +1,28 @@
+{{- /*
+  A link to a file or a folder of the repository, at the git ref of this build.
+
+  Call it with the path from the root of the repository:
+  partial "source-link.html" "internal/outbox/outbox.go"
+
+  The link goes to <repo>/blob/<sourceRef>/<path>. A path that ends in "/" is a
+  folder, and its link uses "tree" instead of "blob". The site parameters
+  "repo" and "sourceRef" are in hugo.toml. A build can change the ref with
+  HUGO_PARAMS_SOURCEREF, for example to point at a release tag.
+
+  The program test/sitecheck checks that the path exists in the repository.
+*/ -}}
+{{- $path := . -}}
+{{- if not $path -}}
+  {{- errorf "source link: the path is empty" -}}
+{{- end -}}
+{{- if strings.HasPrefix $path "/" -}}
+  {{- errorf "source link: the path %q starts with a slash. Write it from the root of the repository, like internal/outbox/outbox.go" $path -}}
+{{- end -}}
+{{- $repo := site.Params.repo -}}
+{{- $ref := site.Params.sourceRef -}}
+{{- if not (and $repo $ref) -}}
+  {{- errorf "source link: the site parameters repo and sourceRef must both be set" -}}
+{{- end -}}
+{{- $kind := cond (strings.HasSuffix $path "/") "tree" "blob" -}}
+<a href="{{ printf "%s/%s/%s/%s" $repo $kind $ref $path }}"><code>{{ $path }}</code></a>
+{{- /* The dashes of this comment remove the new line at the end of the file. Without them, a space would follow every link. */ -}}

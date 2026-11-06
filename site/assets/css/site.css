@@ -321,6 +321,233 @@ svg {
   height: auto;
 }
 
+/*
+  A page of the manual or the tech docs: the page list at the left, on the
+  ground, and the text at the right, on a pane. The same two tones as the menu
+  and the page of the portal. On a narrow screen there is one column, and the
+  page list comes after the text, so a reader sees the text first.
+*/
+
+.page-docs {
+  display: grid;
+  grid-template-columns: 16rem minmax(0, 1fr);
+  padding: 0;
+  background: var(--ground);
+}
+
+.docs-body {
+  min-width: 0;
+  padding: 36px var(--gutter) 64px;
+  background: var(--pane);
+}
+
+/*
+  The page list stays in view while the text scrolls, and scrolls by itself
+  when it is taller than the screen. The first rule for max-height is for a
+  browser that does not know dvh.
+*/
+.docs-nav {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100vh;
+  max-height: 100dvh;
+  padding: 20px 10px 32px calc(var(--gutter) - 10px);
+  overflow-y: auto;
+  font-size: 0.9375rem;
+}
+
+.docs-nav ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.docs-nav a {
+  display: block;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  color: var(--soft);
+  text-decoration: none;
+  transition: background-color 150ms var(--ease), color 150ms var(--ease);
+}
+
+.docs-nav a:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.docs-nav a[aria-current] {
+  background: var(--go-soft);
+  color: var(--go-text);
+  font-weight: 600;
+}
+
+/* The title of the part, then the groups: ink, and heavier than the pages. */
+.docs-nav .docs-nav-title,
+.docs-nav > ul > li > a {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.docs-nav .docs-nav-title {
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.docs-nav > ul > li {
+  margin-top: 12px;
+}
+
+/* The pages under a hub page, such as the AI apps. */
+.docs-nav ul ul ul {
+  margin-left: 12px;
+}
+
+.docs-pager {
+  display: flex;
+  gap: 16px;
+  max-width: 44rem;
+  margin-top: 2.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+}
+
+.docs-pager a {
+  display: flex;
+  flex-direction: column;
+  max-width: 50%;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+  transition: background-color 150ms var(--ease);
+}
+
+.docs-pager a:hover {
+  background: var(--hover);
+}
+
+/* The padding of a link is taken back, so its words line up with the text. */
+.docs-pager-prev {
+  margin-left: -10px;
+}
+
+.docs-pager-next {
+  margin-right: -10px;
+  margin-left: auto;
+  text-align: right;
+}
+
+.docs-pager-label {
+  color: var(--soft);
+  font-size: 0.875rem;
+  font-weight: 400;
+}
+
+@media (max-width: 900px) {
+  .page-docs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .docs-nav {
+    position: static;
+    max-height: none;
+    order: 2;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+  }
+}
+
+/*
+  A drawing (SVG) in the text. It sits in a box with a rule above and below,
+  and the box scrolls sideways when the screen is narrower than the drawing, so
+  the page does not. The drawing is not allowed to shrink below 40rem, because
+  its words would be too small to read.
+*/
+
+.diagram {
+  margin: 0 0 1rem;
+  padding: 16px 0;
+  overflow-x: auto;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.diagram svg {
+  display: block;
+  width: 100%;
+  min-width: 40rem;
+  max-width: none;
+  height: auto;
+}
+
+/*
+  The classes of a drawing. A drawing has no colour of its own. It takes its
+  colours from these classes, which use the tokens of the page, so it follows
+  light and dark. The meaning is always in the words of the drawing too.
+
+    d-box   a box, a rect with rx="8". With d-go, d-warn or d-bad it gets the
+            colours of the notice of that name.
+    d-line  a line or an arrow, a path with no fill. An arrow head is part of
+            the path. d-go, d-warn and d-bad change its colour.
+    d-text  a word in the drawing.
+    d-soft  a word of less weight, such as the label of a line.
+*/
+
+.d-box {
+  fill: var(--pane);
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+.d-box.d-go {
+  fill: var(--go-soft);
+  stroke: var(--go);
+}
+
+.d-box.d-warn {
+  fill: var(--warn-soft);
+  stroke: var(--warn-line);
+}
+
+.d-box.d-bad {
+  fill: var(--bad-soft);
+  stroke: var(--bad-line);
+}
+
+.d-line {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.d-line.d-go {
+  stroke: var(--go);
+}
+
+/* The amber of a notice is too pale for a line, so a line takes the amber ink. */
+.d-line.d-warn {
+  stroke: var(--warn-ink);
+}
+
+.d-line.d-bad {
+  stroke: var(--bad);
+}
+
+.d-text {
+  fill: var(--ink);
+  font: 500 15px/1.25 var(--sans);
+}
+
+.d-soft {
+  fill: var(--soft);
+  font: 400 13px/1.25 var(--sans);
+}
+
 /* The footer. */
 
 .site-footer {

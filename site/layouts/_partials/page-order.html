@@ -1,0 +1,25 @@
+{{- /*
+  The reading order of one part of the site: the manual or the tech docs. It
+  returns a flat list of pages. The sidebar and the previous and next links
+  both use this list, so they always agree.
+
+  Call it with any page of the part: partial "page-order.html" .
+
+  The list starts with the page of the part itself. Then, for each group
+  (a folder with an _index.md) in order of weight: the group page, and the
+  pages of the group in order of weight. A page that is itself a section (the
+  hub "Connect an AI app") is followed by its own pages, one level deeper.
+  This partial goes no deeper, because the specs have no third level.
+*/ -}}
+{{- $part := .FirstSection -}}
+{{- $list := slice $part -}}
+{{- range $part.Sections.ByWeight -}}
+  {{- $list = $list | append . -}}
+  {{- range .Pages.ByWeight -}}
+    {{- $list = $list | append . -}}
+    {{- if .IsSection -}}
+      {{- $list = $list | append .Pages.ByWeight -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- return $list -}}

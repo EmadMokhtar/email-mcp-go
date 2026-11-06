@@ -1,7 +1,9 @@
-{{- /* The first page of a part: the manual or the tech docs. */ -}}
+{{- /*
+  A group page of the manual or the tech docs, such as "Get started". Hugo needs
+  one file for each kind of page, and page.html is the same. The work is in the
+  partial docs.html.
+*/ -}}
+{{ define "main-class" }} page-docs{{ end }}
 {{ define "main" }}
-<article class="doc">
-  <h1>{{ .Title }}</h1>
-  {{ .Content }}
-</article>
+{{ partial "docs.html" . }}
 {{ end }}
