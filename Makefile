@@ -64,8 +64,12 @@ site/static/icon.svg: internal/web/static/icon.svg
 # site: build the docs site into site/public/. --cleanDestinationDir removes
 # files of earlier builds that the site no longer makes. --panicOnWarning turns
 # a Hugo warning into an error, so a warning cannot reach the published site.
+# The last step is the site check (test/sitecheck). It reads the built pages and
+# finds what Hugo cannot: a link that leaves the base path, a missing file or
+# anchor, a script, a missing alt text, a path in the source that does not exist.
 site: site/static/icon.svg
 	HUGO_PARAMS_VERSION=$(SITE_VERSION) $(HUGO) --source site --cleanDestinationDir --panicOnWarning --baseURL $(SITE_BASE_URL)
+	go run ./test/sitecheck -public site/public -base $(SITE_BASE_PATH) -root .
 
 # site-serve: show the docs site on http://localhost:1313/ and rebuild it when
 # a file changes.
