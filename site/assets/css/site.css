@@ -1,0 +1,345 @@
+/*
+  The one stylesheet of the docs site. The look comes from DESIGN.md, the same
+  as the portal: a tinted ground, white reading panes, thin rules, and one
+  green. The site is flat, with no shadow and no gradient. It loads nothing
+  from another site, so the fonts are the fonts of the computer. The site has
+  no script.
+
+  Each colour has a night value under the same name. The setting of the
+  computer chooses between them. Never mix a day value with a night value.
+*/
+
+:root {
+  color-scheme: light dark;
+
+  --ground: #f4f6f3;
+  --pane: #ffffff;
+  --hover: #edf1ed;
+  --ink: #16201c;
+  --soft: #55615b;
+  --line: #dde2de;
+  --line-strong: #8a958f;
+
+  --go: #0b6b4f;
+  --go-hover: #085a42;
+  --go-ink: #ffffff;
+  --go-text: #0b6b4f;
+  --go-soft: #e2eee8;
+
+  --warn-soft: #fbf1d9;
+  --warn-ink: #5c4300;
+  --warn-line: #e6d29d;
+  --bad: #b3261e;
+  --bad-hover: #93201a;
+  --bad-ink: #ffffff;
+  --bad-text: #a4231c;
+  --bad-soft: #fbe9e7;
+  --bad-line: #f0c6c2;
+  --info-soft: #e9eef0;
+
+  --radius: 8px;
+  --radius-small: 4px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* The space at the left and right of the page. */
+  --gutter: 44px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #131414;
+    --pane: #1a1b1b;
+    --hover: #252626;
+    --ink: #e9eaea;
+    --soft: #a9adab;
+    --line: #2e3030;
+    --line-strong: #6f7371;
+
+    --go: #39b98f;
+    --go-hover: #4fcaa1;
+    --go-ink: #06140f;
+    --go-text: #5fd0aa;
+    --go-soft: #17322a;
+
+    --warn-soft: #2e2613;
+    --warn-ink: #eed594;
+    --warn-line: #54462a;
+    --bad: #e5675e;
+    --bad-hover: #ee8078;
+    --bad-ink: #1c0705;
+    --bad-text: #f19a93;
+    --bad-soft: #351b19;
+    --bad-line: #5a2f2b;
+    --info-soft: #262727;
+  }
+}
+
+/* On a phone the gutter is smaller (the 680px breakpoint of the portal). */
+@media (max-width: 680px) {
+  :root {
+    --gutter: 16px;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-width: thin;
+}
+
+/*
+  The page is a column: the menu, the reading pane that takes the free height,
+  and the footer. A column (not a grid) lets a wide child shrink to the screen
+  instead of stretching the page.
+*/
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 1rem/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--go-soft);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--go);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--go-text);
+  text-underline-offset: 0.18em;
+}
+
+/* The top menu. */
+
+.site-header {
+  border-bottom: 1px solid var(--line);
+}
+
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 10px calc(var(--gutter) - 10px);
+}
+
+.brand {
+  padding: 8px 10px;
+  margin-right: 8px;
+  color: var(--ink);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+}
+
+.menu-link {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  color: var(--soft);
+  text-decoration: none;
+  transition: background-color 150ms var(--ease), color 150ms var(--ease);
+}
+
+.menu-link:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.menu-link[aria-current] {
+  background: var(--go-soft);
+  color: var(--go-text);
+  font-weight: 600;
+}
+
+/* The reading pane. */
+
+.page {
+  flex: 1;
+  min-width: 0;
+  padding: 36px var(--gutter) 64px;
+  background: var(--pane);
+}
+
+/*
+  The page is 44rem wide, for code and tables. Long words, addresses and inline
+  code break at the edge of the column, so a line of text never makes the page
+  scroll sideways.
+*/
+.doc {
+  max-width: 44rem;
+  overflow-wrap: anywhere;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+h1 {
+  margin-bottom: 1.25rem;
+  font-size: 1.625rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+/* A group of the page is set off by a rule above it, never by a box. */
+.doc h2 {
+  margin-top: 2.25rem;
+  margin-bottom: 0.75rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.doc h3 {
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Reading text is 34rem wide. The 44rem of the page is for code and tables. */
+.doc p,
+.doc ul,
+.doc ol {
+  max-width: 34rem;
+  margin: 0 0 0.75rem;
+}
+
+.doc ul,
+.doc ol {
+  padding-left: 1.5rem;
+}
+
+.doc ul {
+  list-style: disc;
+}
+
+.doc li {
+  margin-bottom: 0.25rem;
+}
+
+strong {
+  font-weight: 600;
+}
+
+code {
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-small);
+  background: var(--hover);
+  font: 0.875em/1.5 var(--mono);
+}
+
+/*
+  A code block is one colour. It keeps its lines as they are and scrolls
+  sideways inside its own box, so the page never does.
+*/
+pre {
+  max-width: 100%;
+  margin: 0 0 1rem;
+  padding: 12px 16px;
+  overflow-x: auto;
+  border-radius: var(--radius-small);
+  background: var(--hover);
+  font: 0.875rem/1.5 var(--mono);
+}
+
+pre code {
+  padding: 0;
+  background: none;
+  font: inherit;
+  overflow-wrap: normal;
+}
+
+/*
+  A table has rules between rows and no fill. As a block it scrolls sideways
+  inside its own box when it is wider than the column. Its words stay whole,
+  so a narrow screen scrolls the table and does not break the words of a cell.
+*/
+table {
+  display: block;
+  max-width: 100%;
+  margin: 0 0 1rem;
+  overflow-x: auto;
+  overflow-wrap: normal;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
+}
+
+th {
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--soft);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+th,
+td {
+  padding: 8px 16px 8px 0;
+  vertical-align: top;
+}
+
+th:last-child,
+td:last-child {
+  padding-right: 0;
+}
+
+td {
+  border-bottom: 1px solid var(--line);
+}
+
+img,
+svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* The footer. */
+
+.site-footer {
+  padding: 16px var(--gutter);
+  border-top: 1px solid var(--line);
+  color: var(--soft);
+  font-size: 0.875rem;
+}
+
+.site-footer p {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

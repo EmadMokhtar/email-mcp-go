@@ -50,3 +50,12 @@ temp/
 # TLS files of the interop test servers. go run ./test/interop/gencerts makes
 # them for each run. They are never committed.
 /test/interop/certs/
+
+# The docs site (see the Makefile). Hugo writes the built site to site/public/
+# and its cache to site/resources/. The screenshots are made for each build and
+# are never committed. site/static/icon.svg is a copy of the icon of the portal.
+site/public/
+site/resources/
+site/.hugo_build.lock
+site/assets/screenshots/
+site/static/icon.svg

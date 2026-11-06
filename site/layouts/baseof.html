@@ -1,0 +1,44 @@
+{{- /*
+  The shell of every page: head, top menu, footer. Pages fill the "main" block.
+  The site has no script, so nothing here loads one.
+*/ -}}
+{{- $version := site.Params.version -}}
+{{- if not $version -}}
+  {{- errorf "site.Params.version is empty. Set it with HUGO_PARAMS_VERSION. make site reads it from .release-please-manifest.json (the Make variable SITE_VERSION)." -}}
+{{- end -}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} - {{ site.Title }}{{ end }}</title>
+  {{- with .Description }}
+  <meta name="description" content="{{ . }}">
+  {{- end }}
+  {{- with resources.Get "css/site.css" }}
+    {{- with . | minify | fingerprint }}
+  <link rel="stylesheet" href="{{ .RelPermalink }}">
+    {{- end }}
+  {{- else }}
+    {{- errorf "assets/css/site.css is missing" }}
+  {{- end }}
+  <link rel="icon" type="image/svg+xml" href="{{ "icon.svg" | relURL }}">
+</head>
+<body>
+  <header class="site-header">
+    <nav class="site-nav" aria-label="Main">
+      <a class="brand" href="{{ site.Home.RelPermalink }}">email-mcp</a>
+      <a class="menu-link" href="{{ "manual/" | relURL }}"{{ if eq .Section "manual" }} aria-current="true"{{ end }}>Manual</a>
+      <a class="menu-link" href="{{ "tech/" | relURL }}"{{ if eq .Section "tech" }} aria-current="true"{{ end }}>Tech docs</a>
+      <a class="menu-link" href="{{ site.Params.repo }}">GitHub</a>
+    </nav>
+  </header>
+  <main class="page">
+    {{- block "main" . }}{{ end }}
+  </main>
+  <footer class="site-footer">
+    <p>email-mcp version {{ $version }}</p>
+  </footer>
+</body>
+</html>

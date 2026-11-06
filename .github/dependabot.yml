@@ -11,6 +11,8 @@
 #   - the docker/buildkit-syft-scanner image in .goreleaser.yaml;
 #   - the tool versions that "go run" uses (staticcheck, govulncheck,
 #     GoReleaser) in the Makefile and the workflows;
+#   - the Hugo version of the docs site, in .hugo-version (the Makefile and the
+#     workflows read it);
 #   - the versions that release.yml gives to two installer actions:
 #     cosign-release (sigstore/cosign-installer) and syft-version
 #     (anchore/sbom-action/download-syft). Dependabot updates the actions, not
