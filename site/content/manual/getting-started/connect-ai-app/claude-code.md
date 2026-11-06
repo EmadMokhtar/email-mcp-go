@@ -13,7 +13,11 @@ such as `search_messages`.
 
 ## Source and date
 
-Source: <https://code.claude.com/docs/en/mcp>, checked on 2026-10-29.
+Source: <https://code.claude.com/docs/en/mcp>, checked on 2026-10-29. The
+command `claude mcp remove` is on the same page, checked on 2026-11-06.
+
+The command `claude --version` is in the CLI reference of Claude Code:
+<https://code.claude.com/docs/en/cli-reference>, checked on 2026-11-06.
 
 ## Add email-mcp (stdio)
 
@@ -73,6 +77,13 @@ protocol that apps and browsers use to talk over a network. With local HTTP,
 email-mcp runs a small server on your own computer, and Claude Code connects to
 it with a token (a secret that Claude Code sends to the server). Do these three
 steps in order.
+
+If your master key is a file, set the environment variable `EMAIL_MCP_KEK` in
+the terminal where you run steps 1 and 2. Use the same value as in the config of
+your AI app. For example, on macOS and Linux, `export
+EMAIL_MCP_KEK=file:/Users/you/.email-mcp.key` sets it for that terminal (the
+path is an example). Without it, the two commands look for the master key in the
+keychain.
 
 1. Make a token. `--name` is a name for the token, such as the app that uses
    it. `--scopes` says what the token allows. A scope is one permission of a

@@ -22,14 +22,16 @@ Homebrew (a package manager: a program that installs other programs) installs
 a "cask" (a package of a ready-made program) from the tap (a repository of
 Homebrew packages) `EmadMokhtar/homebrew-tap`. This command installs the
 cask. The flag `--cask` says that the package is a ready-made program. The name
-`emadmokhtar/tap/email-mcp` has the form `user/repo/cask`. Homebrew reads
-`emadmokhtar/tap` as the tap `EmadMokhtar/homebrew-tap` on GitHub, and the
-command also adds this tap, so you do not need to run `brew tap` first:
+`emadmokhtar/tap/email-mcp` is the cask `email-mcp` of the tap
+`EmadMokhtar/homebrew-tap`. Homebrew reads the tap name `user/repo` as the
+GitHub repository `user/homebrew-repo` (see `brew help tap`, checked on
+2026-11-06):
 
 ```sh
 brew install --cask emadmokhtar/tap/email-mcp
 ```
 
+If Homebrew cannot find the cask, run `brew tap emadmokhtar/tap` and try again.
 When it ends without an error, go to [Check the install](#check-the-install).
 
 The binaries (the program files) are not signed by Apple. So on macOS the cask
@@ -52,7 +54,7 @@ that reads your commands) looks for programs. There are archives for Linux
 the files use `linux`, `darwin` (macOS) and `windows`, and then `amd64` (Intel
 and AMD processors) or `arm64` (Arm processors, such as Apple silicon).
 
-### Unpack the archive and put the program on your PATH
+### Unpack the archive
 
 On macOS and Linux, the archive is a `.tar.gz` file. This command unpacks it.
 `-x` extracts the files, `-z` reads the gzip compression, and `-f` names the
@@ -66,33 +68,41 @@ The current folder now holds the program `email-mcp`. On Windows, the archive
 is a `.zip` file: open it in the file explorer, and copy `email-mcp.exe` out of
 it.
 
+### macOS: clear the quarantine mark
+
+The binaries are not signed by Apple (see the note under Homebrew above). macOS
+can block a program that has the quarantine mark of a download. The cask removes
+this mark, and you can do the same. Do this after you checked the archive and
+unpacked it, in the folder where you unpacked it, and before you copy the
+program to its place. A copy keeps the mark, and the copy in `/usr/local/bin`
+(see below) belongs to the administrator. This command deletes the mark
+`com.apple.quarantine` from the file. `-d` deletes one attribute, and `-r` also
+goes into folders:
+
+```sh
+xattr -dr com.apple.quarantine ./email-mcp
+```
+
+### Put the program on your PATH
+
 To see your `PATH`, run `echo $PATH` on macOS and Linux (a colon separates the
 folders). In the Command Prompt on Windows, run `echo %PATH%` (a semicolon
 separates the folders).
 
 On macOS and Linux, put the program in `/usr/local/bin`. This folder belongs to
-the administrator, so the command starts with `sudo` (it runs the command as the
-administrator):
+the administrator, so each command starts with `sudo` (it runs the command as
+the administrator). The first command makes the folder when it does not exist
+yet. `-p` also makes missing parent folders, and it does nothing when the folder
+exists. The second command copies the program:
 
 ```sh
+sudo mkdir -p /usr/local/bin
 sudo cp email-mcp /usr/local/bin/
 ```
 
-On Windows, no folder for your own programs is on the `PATH` yet. Make a
-folder, such as `C:\Tools`, put `email-mcp.exe` in it, and add the folder to
-the `PATH`: search for "environment variables" in the Windows settings.
-
-### macOS: if macOS blocks the program
-
-The binaries are not signed by Apple (see the note under Homebrew above). If
-macOS blocks `email-mcp` when you run it, remove the quarantine mark, as the
-cask does. Do this after you checked the archive. This command deletes the mark
-`com.apple.quarantine` from the file. `-d` deletes one attribute, and `-r` also
-goes into folders. Use the path where you put the program:
-
-```sh
-xattr -dr com.apple.quarantine /usr/local/bin/email-mcp
-```
+Windows has no standard folder for your own programs on the `PATH`. Make a
+folder, such as `C:\Tools`, put `email-mcp.exe` in it, and add the folder to the
+`PATH`: search for "environment variables" in the Windows settings.
 
 When the program is on your `PATH`, go to
 [Check the install](#check-the-install).

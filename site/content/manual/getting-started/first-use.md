@@ -22,6 +22,9 @@ it logs in to the mail servers:
 email-mcp doctor
 ```
 
+If your master key is a file, set the environment variable `EMAIL_MCP_KEK` in
+this terminal first, with the same value as in the config of your AI app.
+
 It prints one line for each check. Every line should say `ok`, and none `FAIL`.
 For example:
 
@@ -43,7 +46,9 @@ email accounts, then show the unread mail of today." The agent lists your
 accounts, and then it shows your unread mail from today.
 
 If the agent says that it has no email tools, check that your AI app lists the
-email-mcp server as connected. In Claude Code, `/mcp` shows it. Claude Desktop
+email-mcp server as connected. In
+[Claude Code](/manual/getting-started/connect-ai-app/claude-code/), `/mcp` shows
+it. [Claude Desktop](/manual/getting-started/connect-ai-app/claude-desktop/)
 needs a restart after you change its config file. Then run `email-mcp doctor`
 again.
 
@@ -97,11 +102,15 @@ address, so nobody else gets it.
    send the message. Then nothing is sent.
 
 The program that your AI app started (`email-mcp serve`) serves the approval
-page. `email-mcp setup` does not need to run, so you can stop it. The link works
-while your AI app keeps email-mcp running. If you close the AI app, the link
-stops working. Your browser must still be signed in. If the page says "Run
-`email-mcp setup` in a terminal, then open this link again.", do that: run the
-command, open its sign-in link, and open the approval link again.
+page. `email-mcp setup` does not need to run, so you can stop it. When the AI
+app starts email-mcp itself (over stdio), the link works while the AI app keeps
+email-mcp running. If you close the AI app, the link stops working. With local
+HTTP, the `email-mcp serve --http` that you started serves the page, and the
+link works while it runs.
+
+Your browser must still be signed in. If the page says "Run `email-mcp setup` in
+a terminal, then open this link again.", do that: run the command, open its
+sign-in link, and open the approval link again.
 
 The agent can check the result with `get_send_status`. This tool shows whether a
 send is queued, sent, failed, or waiting for approval.

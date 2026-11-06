@@ -27,7 +27,9 @@ Connect at least one account with `email-mcp setup` (see
   key is a file (see The master key). `EMAIL_MCP_KEK` is an environment
   variable: a named setting that a program reads from its surroundings. KEK
   means key encryption key. The master key is the key that protects your stored
-  passwords.
+  passwords. The email-mcp commands that you run yourself in a terminal, such as
+  `email-mcp setup`, `email-mcp token create` and `email-mcp serve --http`, need
+  the same value of `EMAIL_MCP_KEK`.
 
 ## Choose your app
 

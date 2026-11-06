@@ -46,8 +46,8 @@ sign-in lasts 24 hours, and it ends sooner after 2 hours without use. Run
 
 The command keeps running. Keep this terminal open, and open a second terminal
 for any other command. The terminal also shows log lines, such as
-`time=... level=INFO msg=...`. They are the log of email-mcp, and they are
-normal.
+`time=... level=INFO msg=...`. They are the log of email-mcp. Lines with
+`level=INFO` are normal.
 
 Your browser then shows the **Accounts** page. With no account yet, the page
 has the button **Connect your first account**. If an account exists already,
@@ -143,9 +143,9 @@ it.
    for each server. Then type the password again, and click **Test the
    connection and save** again.
 
-   For a server on your own computer, such as a local bridge, the page says:
-   "Trust it only if you expect it." A server that is not on your own computer
-   also needs the box **I understand the risk**. If your provider gave you no
+   For a certificate that no known authority signed, the page also says: "Trust
+   it only if you expect it." A server that is not on your own computer also
+   needs the box **I understand the risk**. If your provider gave you no
    fingerprint, do not tick the boxes for such a server. The page shows this
    warning with the box:
 
@@ -246,9 +246,11 @@ These flags change the other settings:
 ### A certificate that your computer does not trust
 
 If a server shows a certificate that your computer does not trust, `account add`
-prints the server, the SHA-256 fingerprint and the problem. It saves nothing.
-This is what it prints for a certificate that no known authority signed, such as
-the certificate of a local bridge (the ports and the fingerprint are examples):
+prints the server, the SHA-256 fingerprint and the problem. This is what it
+prints when standard input is not a terminal (for example, when a pipe gives it
+the password), for a certificate that no known authority signed, such as the
+certificate of a local bridge. In this case it saves nothing. The ports and the
+fingerprint are examples:
 
 ```text
 The IMAP server 127.0.0.1:1143 showed a certificate that this computer does not trust.
