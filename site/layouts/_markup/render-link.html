@@ -1,0 +1,22 @@
+{{- /*
+  Draws a link of a Markdown page. A destination that starts with a single "/"
+  is a page of this site, written from the root: [text](/manual/). It goes
+  through GetPage, and the link prints the address of that page, which has the
+  base path of the site (/email-mcp-go/ on GitHub Pages). So the same source
+  works under a sub-path and at the root. A page that does not exist fails the
+  build. Every other link (https:, mailto:, #anchor, a relative path) is
+  printed as it is.
+*/ -}}
+{{- $dest := .Destination -}}
+{{- if and (strings.HasPrefix $dest "/") (not (strings.HasPrefix $dest "//")) -}}
+  {{- /* An anchor (#name) is not part of the path of a page. */ -}}
+  {{- $path := index (split $dest "#") 0 -}}
+  {{- $anchor := strings.TrimPrefix $path $dest -}}
+  {{- with .Page.GetPage $path -}}
+    {{- $dest = printf "%s%s" .RelPermalink $anchor -}}
+  {{- else -}}
+    {{- errorf "%s: the link %q goes to a page that does not exist" $.Page.Path $.Destination -}}
+  {{- end -}}
+{{- end -}}
+<a href="{{ $dest | safeURL }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text }}</a>
+{{- /* The dashes of this comment remove the new line before it and the one at the end of the file. Without them, a space would follow every link. */ -}}

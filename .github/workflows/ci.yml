@@ -24,13 +24,13 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
+      # One go vet has every build tag and every package, so a new package
+      # with a tag is vetted without a change here. The interop test needs
+      # Docker to run, so it runs nightly in interop.yml. The tests with the
+      # screenshots tag need Chrome, and "make site" runs them. Here they are
+      # only vetted, so a change that breaks them shows up at once.
       - name: go vet
-        run: go vet ./...
-      # The interop test needs Docker to run, so it runs nightly in
-      # interop.yml. Here it is only vetted, so a change that breaks it shows
-      # up at once.
-      - name: go vet (interop tag)
-        run: go vet -tags interop ./test/interop/
+        run: go vet -tags interop,screenshots ./...
       - name: go test
         run: go test -race ./...
 
@@ -45,7 +45,7 @@ jobs:
         with:
           go-version: stable
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags interop ./...
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags interop,screenshots ./...
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
@@ -88,3 +88,35 @@ jobs:
           go-version: stable
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  # Build the docs site on every pull request, with the same "make site" as
+  # pages.yml. It makes the screenshots with Chrome (the Ubuntu runner has it),
+  # builds the site with Hugo, and runs the site check. There is no path
+  # filter on purpose: a required check that does not run blocks the merge
+  # forever. Hugo runs through "go run" (see the Makefile), so the Go checksum
+  # database verifies it and the job downloads no release file.
+  site:
+    name: build site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+      - name: make site
+        run: make site
+      # The images are not in git. A reviewer opens this artifact to see how
+      # the pages look after the change. The step also runs when "make site"
+      # failed, because the images that were made before the failure help to
+      # find the cause. Nothing is uploaded when the run stopped before the
+      # first image.
+      - name: upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: screenshots
+          path: site/assets/screenshots
+          retention-days: 7
+          if-no-files-found: ignore

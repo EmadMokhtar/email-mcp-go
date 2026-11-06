@@ -1,0 +1,30 @@
+{{- /*
+  The links to the previous and the next page, in the order of page-order.html.
+  No page writes them by hand.
+
+  Call it with the page that is shown: partial "pager.html" .
+*/ -}}
+{{- $shown := . -}}
+{{- $order := partial "page-order.html" . -}}
+{{- $prev := false -}}
+{{- $next := false -}}
+{{- range $i, $page := $order -}}
+  {{- if $page.Eq $shown -}}
+    {{- if gt $i 0 -}}
+      {{- $prev = index $order (sub $i 1) -}}
+    {{- end -}}
+    {{- if lt (add $i 1) (len $order) -}}
+      {{- $next = index $order (add $i 1) -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- if or $prev $next }}
+<nav class="docs-pager" aria-label="Previous and next page">
+  {{- with $prev }}
+  <a class="docs-pager-prev" href="{{ .RelPermalink }}" rel="prev"><span class="docs-pager-label">Previous</span> {{ .LinkTitle }}</a>
+  {{- end }}
+  {{- with $next }}
+  <a class="docs-pager-next" href="{{ .RelPermalink }}" rel="next"><span class="docs-pager-label">Next</span> {{ .LinkTitle }}</a>
+  {{- end }}
+</nav>
+{{- end }}

@@ -1,0 +1,42 @@
+{{- /*
+  The page list at the left of a page of the manual or the tech docs. It
+  prints the pages in the order of page-order.html, as nested lists: the
+  groups, the pages of each group, and the pages under a hub page.
+
+  Call it with the page that is shown: partial "sidebar.html" .
+
+  The first page of the order is the part itself (the manual or the tech docs).
+  It is the title of the list, not an item. The level of a page is the number of
+  pages above it, minus one: a group page is level 1, a page of a group is
+  level 2, and a page under a hub is level 3. The list of pages is in the order
+  of a tree, so a page is at most one level deeper than the page before it.
+*/ -}}
+{{- $shown := . -}}
+{{- $order := partial "page-order.html" . -}}
+{{- $part := index $order 0 -}}
+<nav class="docs-nav" aria-label="{{ $part.Title }}">
+  <a class="docs-nav-title" href="{{ $part.RelPermalink }}"{{ if $shown.Eq $part }} aria-current="page"{{ end }}>{{ $part.Title }}</a>
+  {{- $open := 0 -}}
+  {{- range after 1 $order -}}
+    {{- $level := sub (len .Ancestors) 1 -}}
+    {{- if gt $level $open }}
+  <ul>
+    {{- else }}
+      {{- /* Close the item before this one, then each list we leave. */ -}}
+      {{- print "</li>" | safeHTML -}}
+      {{- range seq (sub $open $level) }}
+  </ul></li>
+      {{- end }}
+    {{- end }}
+  <li><a href="{{ .RelPermalink }}"{{ if $shown.Eq . }} aria-current="page"{{ end }}>{{ .LinkTitle }}</a>
+    {{- $open = $level -}}
+  {{- end }}
+  {{- /* Close the last item and every list that is still open. */ -}}
+  {{- if gt $open 0 }}
+  </li>
+    {{- range seq (sub $open 1) }}
+  </ul></li>
+    {{- end }}
+  </ul>
+  {{- end }}
+</nav>

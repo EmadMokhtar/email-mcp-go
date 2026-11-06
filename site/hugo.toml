@@ -1,0 +1,23 @@
+# Settings of the docs site. Hugo reads this file from the site/ folder.
+#
+# There is no baseURL. The build gives it on the command line (make site), so
+# the same files work on GitHub Pages under /email-mcp-go/ and at the root of a
+# custom domain.
+
+title = "email-mcp"
+
+# The site has no tag pages and no feeds.
+disableKinds = ["taxonomy", "term", "RSS"]
+
+[params]
+  # The git ref that source links point to. A build can change it with
+  # HUGO_PARAMS_SOURCEREF, for example to point at a release tag.
+  sourceRef = "main"
+  repo = "https://github.com/EmadMokhtar/email-mcp-go"
+
+  # "version" is not set here. The footer needs it, and the build gives it with
+  # HUGO_PARAMS_VERSION (make site reads it from .release-please-manifest.json).
+
+[markup.highlight]
+  # Code blocks stay one colour. The site has no syntax colours.
+  codeFences = false

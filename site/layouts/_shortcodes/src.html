@@ -1,0 +1,10 @@
+{{- /*
+  A link to a file or a folder of the repository, at the git ref of this build:
+  {{< src "internal/outbox/outbox.go" >}}. The work is in the partial
+  source-link.html.
+*/ -}}
+{{- with .Get 0 -}}
+  {{- partial "source-link.html" . -}}
+{{- else -}}
+  {{- errorf "%s: the shortcode src needs a path" .Position -}}
+{{- end -}}

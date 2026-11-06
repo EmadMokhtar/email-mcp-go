@@ -1197,7 +1197,8 @@ Must cover:
   binary that GoReleaser built (`Dockerfile`, `.goreleaser.yaml`).
 - A section "How the site is published" from `.github/workflows/pages.yml` and
   the foundation: `release.yml` calls it as the last job, after the release job
-  succeeds; `workflow_dispatch` is for the first launch and urgent fixes. Add
+  succeeds; a pre-release tag publishes nothing; `workflow_dispatch` is for the
+  first launch and urgent fixes. Add
   two owner steps to the one-time list, because a release cannot deploy the site
   without them: set the Pages source to "GitHub Actions", and allow tags that
   match `v*` to deploy to the `github-pages` environment (foundation, "Steps
@@ -1442,8 +1443,9 @@ page.
 | `internal/version` | release-process | |
 | `internal/web` | web-portal | permissions, send-flow |
 
-Areas that are not Go packages (the docs check does not see them, because it
-counts Go files only):
+Areas that are not Go packages. The docs check does not see them, because it
+counts Go files and the folders `internal/web/templates/` and
+`internal/web/static/` only:
 
 | Code area | Main page | Also check |
 |---|---|---|

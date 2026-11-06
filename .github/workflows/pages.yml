@@ -1,0 +1,90 @@
+name: Pages
+
+# Builds the docs site and publishes it on GitHub Pages. "make site" makes the
+# screenshots, builds the site with Hugo and runs the site check. Then the
+# result is deployed.
+#
+# Two ways to start it:
+#   - It is made to be called by release.yml as its last job, after the
+#     release job succeeds (workflow_call). So a failed release publishes
+#     nothing, and the site never points to files that do not exist yet. A
+#     called workflow cannot get more permissions than its caller gives it, so
+#     the job in the caller needs "pages: write" and "id-token: write".
+#   - workflow_dispatch starts it by hand, for the first launch and for urgent
+#     fixes. It publishes whatever is on the chosen branch or tag, also work
+#     that is not released.
+#
+# Before the first deploy, the owner must set the Pages source of the
+# repository to "GitHub Actions", and must allow tags that match v* to deploy
+# to the environment github-pages. By default that environment accepts only
+# the default branch, so a release would fail to deploy without it.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+# Read-only by default. Only the deploy job gets write permissions, and only
+# the ones it needs.
+permissions:
+  contents: read
+
+# Two deploys must not run at the same time. A deploy that has started is never
+# cancelled, so the site is not left half published.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+# Every action is pinned by full commit SHA. The comment after the SHA is the
+# release tag. To update an action, look up the SHA of the new tag first.
+#
+# No step puts a ${{ }} value into a "run:" script. Values go through "env:"
+# and are used as quoted shell variables.
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # A permissions block replaces the one above, so contents is listed again.
+    permissions:
+      contents: read # check out the code
+      pages: read # configure-pages reads the Pages settings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          # No module cache: this job deploys, and it never uses files that
+          # another workflow run wrote.
+          cache: false
+      # It finds the address of the site, and the path part of that address.
+      # They differ between a project site and a custom domain.
+      - name: configure pages
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      # Hugo runs through "go run" (see the Makefile), so the Go checksum
+      # database verifies it and the job downloads no release file. The links
+      # to the source code point to the tag of a release, and to the commit in
+      # any other run, so a link never points to a branch that has moved on.
+      - name: make site
+        env:
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          HUGO_PARAMS_SOURCEREF: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+        run: make site SITE_BASE_URL="$BASE_URL/" SITE_BASE_PATH="$BASE_PATH/"
+      - name: upload the site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site/public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # A deployment environment. GitHub Pages needs it, and the owner controls
+    # which branches and tags may deploy to it (see the top of this file).
+    environment: github-pages
+    permissions:
+      pages: write # publish the site
+      id-token: write # prove to Pages that the deploy comes from this workflow
+    steps:
+      - name: deploy to GitHub Pages
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

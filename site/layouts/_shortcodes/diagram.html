@@ -1,0 +1,33 @@
+{{- /*
+  A drawing from assets/diagrams, written into the page as SVG:
+  {{< diagram "name" >}} inserts assets/diagrams/name.svg.
+
+  The drawing is inline, not an <img>, because only inline SVG can use the
+  colours of the stylesheet, so it follows light and dark. The box scrolls
+  sideways when the screen is narrow, and then the page does not. The box
+  takes the keyboard focus, so a person without a mouse can scroll it.
+
+  The name of the box is the text of the <title> of the drawing. A screen
+  reader lists the boxes of a page by name, so a page with two drawings must
+  not call both "Diagram". A drawing with no <title> stops the build.
+*/ -}}
+{{- with .Get 0 -}}
+  {{- $name := . -}}
+  {{- with resources.Get (printf "diagrams/%s.svg" $name) -}}
+    {{- $svg := .Content -}}
+    {{- $title := "" -}}
+    {{- with findRESubmatch `(?s)<title[^>]*>(.*?)</title>` $svg 1 -}}
+      {{- $title = index (index . 0) 1 | htmlUnescape | strings.TrimSpace -}}
+    {{- end -}}
+    {{- if not $title -}}
+      {{- errorf "%s: assets/diagrams/%s.svg has no <title>. Add one: it names the box of the drawing" $.Position $name -}}
+    {{- end -}}
+<div class="diagram" role="region" aria-label="{{ $title }}" tabindex="0">
+  {{- $svg | safeHTML -}}
+</div>
+  {{- else -}}
+    {{- errorf "%s: the diagram %q does not exist. Add assets/diagrams/%s.svg" $.Position $name $name -}}
+  {{- end -}}
+{{- else -}}
+  {{- errorf "%s: the shortcode diagram needs the name of a file in assets/diagrams" .Position -}}
+{{- end -}}

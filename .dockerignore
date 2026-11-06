@@ -27,6 +27,7 @@ test/interop/certs/
 .vscode/
 .superpowers/
 docs/
+site/
 *.md
 *.swp
 *~

@@ -1,0 +1,8 @@
+{{- /*
+  A page of the manual or the tech docs. Hugo needs one file for each kind of
+  page, and section.html is the same. The work is in the partial docs.html.
+*/ -}}
+{{ define "main-class" }} page-docs{{ end }}
+{{ define "main" }}
+{{ partial "docs.html" . }}
+{{ end }}
