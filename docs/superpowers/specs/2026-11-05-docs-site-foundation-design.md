@@ -127,7 +127,8 @@ The footer shows the released version, read from
 - No web fonts, no CDN, no script or style from another site.
 - A page works when no script runs.
 - There is no logo. The name is `email-mcp`. The browser tab icon reuses
-  `internal/web/static/icon.svg`, and no page shows it. (My call.)
+  `internal/web/static/icon.svg`, and no page shows it. The build copies the
+  file, because Hugo reads only its own folder. (My call.)
 - Diagrams are inline SVG or images built before commit, not a script that draws
   them in the browser.
 
@@ -181,8 +182,9 @@ The test works in this order:
 
 The Go library chromedp, which controls Chrome, drives the browser. It fits
 because the repository has no Node setup. It is a test dependency, so it does not
-enter the released program. (My call.) CI uses the Chrome that the
-`ubuntu-latest` runner already has.
+enter the released program. Dependabot ignores it, because the `fix` prefix would
+propose a release of an unchanged program, so it is updated by hand. (My call.)
+CI uses the Chrome that the `ubuntu-latest` runner already has.
 
 **How they stay up to date.** The images are not in git. Every build makes them
 again:
@@ -225,17 +227,20 @@ the last job. The site then keeps its previous version.
   the site and deploys it. It offers `workflow_call` and `workflow_dispatch`.
 - `release.yml` calls it as a last job, after the release job succeeds. So a
   failed release publishes nothing, and the site never points to files that do
-  not exist yet.
+  not exist yet. A pre-release tag, such as `v0.2.0-rc.1`, publishes nothing
+  either, because Homebrew and the `latest` image do not get that version.
 - `workflow_dispatch` is for the first launch and for urgent fixes. It publishes
   whatever is on the chosen branch or tag, including work that is not released.
 - The workflow follows the rules of the existing workflows: read-only
   permissions by default, actions pinned by full commit SHA, and no `${{ }}`
   value inside a `run:` script.
 - The Hugo version is pinned in `.hugo-version`, in the same way as
-  `.go-version`. CI downloads it and checks it against the published checksum.
-  Local builds run the same version with `go run`, so no install is needed.
-- `make screenshots` makes the images, and it needs Chrome. `make site` runs it
-  and then builds the site. `make site-serve` starts a local preview.
+  `.go-version`. CI and local builds both run it with `go run`, as the Makefile
+  does for other tools. So the Go checksum database verifies it, and no install
+  is needed. (My call.)
+- `make screenshots` makes the images, and it needs Chrome. It runs only when
+  the code changed. `make site` runs it and then builds the site. `make
+  site-serve` runs it and then starts a local preview.
 
 ## The check on pull requests
 
@@ -278,7 +283,7 @@ after the cutover. So an author knows which page to change. (My call.)
   links to the site. It stays in the release archives through
   `.goreleaser.yaml`.
 - `DOCKER.md` and `docs/harnesses.md` are deleted after the move.
-- Comments that say "see the README" change to point to the new place. They are
+- Comments that point to the README change to point to the new place. They are
   in `.github/workflows/`, `.goreleaser.yaml`, `Dockerfile` and
   `internal/web/settings.go`.
 - `websiteUrl` in `server.json` changes to the site address.

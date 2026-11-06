@@ -162,8 +162,10 @@ Rules:
   such as the levels, go in front matter. Prose goes in the body.)
 - `_index.md` follows `.github/markdown.instructions.md` (front matter, no H1 in
   the body, lines of 80 characters).
-- Next to each claim in the source, a short comment names its row in the truth
-  table below, such as `# T13`. It helps the next person find the proof.
+- Next to each claim in the source, a short note names its row in the truth
+  table below. In front matter it is a YAML comment, such as `# T13`. In the
+  Markdown body it is `{{< truth "T13" >}}`, a shortcode that prints nothing. It
+  helps the next person find the proof.
   (My call.)
 - Every internal link uses Hugo `relURL` (a function that adds the base path of
   the site to a link). The site is published under a path
@@ -1059,10 +1061,10 @@ things keep it true:
    template, so the test checks the two pieces. If a pull request renames a
    label in the portal, the test fails until the picture changes too. If the
    `site/` folder is missing (for example in a source archive), the test skips
-   with a message. (My call.) This guard matters because `approval.html` is
-   not a Go file, so the docs check of the foundation would not see a change
-   to it.
-2. **The truth table.** The source comments (`# T13`) tie each claim to its row.
+   with a message. (My call.) This guard matters because the docs check of the
+   foundation covers the manual and the tech docs, and it does not cover this
+   picture.
+2. **The truth table.** The source notes (`T13`) tie each claim to its row.
    A pull request that changes a "Proof" location should re-read its rows.
 3. **Few moving parts.** The page has no version, no count and no number from
    the code. The footer shows the version (foundation). The only facts that can
