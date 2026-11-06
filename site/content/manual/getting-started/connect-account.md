@@ -129,7 +129,7 @@ it.
    If the test fails, the page says why, and it saves nothing. For example:
    "The server refused the user name or the password. Some providers need an
    app password, or IMAP access turned on in their settings." For more help,
-   see Troubleshooting.
+   see [Troubleshooting](/manual/daily-use/troubleshooting/).
 
 7. If the page shows the section **Certificates**, a server showed a
    certificate (the proof of identity that a server shows) that your computer
@@ -180,7 +180,7 @@ Windows):
 
 `email-mcp setup` also prints the address of a page on 127.0.0.1 (the address
 of your own computer) that says the same. You cannot sign in on 127.0.0.1
-itself (see the Security page).
+itself (see the [Security](/manual/daily-use/security/) page).
 
 The command opens your browser through a private temporary file, so the link
 with its one-time token (a secret code) is not in the list of running programs.

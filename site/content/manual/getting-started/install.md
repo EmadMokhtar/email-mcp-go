@@ -159,4 +159,7 @@ You should see the word `email-mcp` and the version, for example
 `go install`, prints `email-mcp dev`.
 
 If the shell says that it cannot find `email-mcp`, the folder that holds the
-program is not on your `PATH`. Then see Troubleshooting.
+program is not on your `PATH`. Then see the entry [The shell cannot find
+`email-mcp`][shell] of Troubleshooting.
+
+[shell]: /manual/daily-use/troubleshooting/#the-shell-cannot-find-email-mcp

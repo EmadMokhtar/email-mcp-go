@@ -37,7 +37,8 @@ account mxavsb75q46brlmikhbydlxiyi (you@example.com): ok
 
 The first line names your own data folder. The third line shows where your
 master key is: `master key (keychain)`, or `master key (file:...)` when the key
-is in a file. If a line says `FAIL`, see Troubleshooting.
+is in a file. If a line says `FAIL`, see
+[Troubleshooting](/manual/daily-use/troubleshooting/).
 
 ## Ask the first question
 
@@ -70,7 +71,8 @@ message. **Confirm deletes** asks you before the agent moves mail to the Trash
   web page names level 5 **Delete**. It moves mail to the Trash, and it never
   deletes mail for good.
 
-See Permission levels for the full list.
+See [Permission levels](/manual/daily-use/permission-levels/) for the full
+list.
 
 ## Try a send (optional)
 
@@ -101,8 +103,8 @@ address, so nobody else gets it.
    server accepted the message." Click **Reject** instead if you do not want to
    send the message. Then nothing is sent.
 
-The program that your AI app started (`email-mcp serve`) serves the approval
-page. `email-mcp setup` does not need to run, so you can stop it. When the AI
+The email-mcp program that runs for your AI app serves the approval page.
+`email-mcp setup` does not need to run, so you can stop it. When the AI
 app starts email-mcp itself (over stdio), the link works while the AI app keeps
 email-mcp running. If you close the AI app, the link stops working. With local
 HTTP, the `email-mcp serve --http` that you started serves the page, and the
@@ -117,6 +119,9 @@ send is queued, sent, failed, or waiting for approval.
 
 ## Where to go next
 
-- Permission levels explains what the agent may do.
-- Confirmations explains when a send or a move to the Trash waits for you.
-- Security explains what email-mcp protects against.
+- [Permission levels](/manual/daily-use/permission-levels/) explains what the
+  agent may do.
+- [Confirmations](/manual/daily-use/confirmations/) explains when a send or a
+  move to the Trash waits for you.
+- [Security](/manual/daily-use/security/) explains what email-mcp protects
+  against.

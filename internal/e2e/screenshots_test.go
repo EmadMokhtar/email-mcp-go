@@ -21,8 +21,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/require"
 
@@ -74,15 +77,21 @@ type shooter struct {
 // failed, fails the test. An image of the wrong page would not fail by itself.
 func (s *shooter) open(link string, want ...string) {
 	s.t.Helper()
+	s.openStatus(link, http.StatusOK, want...)
+}
+
+// openStatus is open for a page that answers with the status wantStatus.
+func (s *shooter) openStatus(link string, wantStatus int64, want ...string) {
+	s.t.Helper()
 	resp, err := chromedp.Run(s.ctx, chromedp.NavigateResponse(link))
 	require.NoError(s.t, navigationError(link, err))
 	require.NotNil(s.t, resp, "the page at %s gave no answer", addressPath(link))
 	// The text is read only when the answer is good, and it is never printed.
 	text := ""
-	if resp.Status == http.StatusOK {
+	if resp.Status == wantStatus {
 		text = s.pageText()
 	}
-	require.NoError(s.t, checkOpened(resp.URL, resp.Status, text, want...))
+	require.NoError(s.t, checkPage(resp.URL, resp.Status, wantStatus, text, want...))
 }
 
 // checkOpened returns an error when the page that was opened is not the page
@@ -93,9 +102,16 @@ func (s *shooter) open(link string, want ...string) {
 // the text that was wanted. It never holds the address with its query, and it
 // never holds the text of the page, which may show a secret.
 func checkOpened(address string, status int64, text string, want ...string) error {
+	return checkPage(address, status, http.StatusOK, text, want...)
+}
+
+// checkPage is checkOpened for a page that answers with the status wantStatus.
+// A browser that is not signed in gets such a page: it answers 401, and the
+// page is the thing to show.
+func checkPage(address string, status, wantStatus int64, text string, want ...string) error {
 	where := addressPath(address)
-	if status != http.StatusOK {
-		return fmt.Errorf("the page at %s answered with status %d, not %d", where, status, http.StatusOK)
+	if status != wantStatus {
+		return fmt.Errorf("the page at %s answered with status %d, not %d", where, status, wantStatus)
 	}
 	for _, w := range want {
 		if !strings.Contains(text, w) {
@@ -165,7 +181,8 @@ func (s *shooter) viewport(height int64) {
 // test, and so does a click that leads to another page. Take no shot while a
 // form is busy: the busy sign of a form never ends, and a shot would wait for
 // it until the time limit. So click only links and buttons that load a page
-// at once.
+// at once. The button of a form is fine when ready names an element that only
+// the page after the redirect has: the click returns once that page shows.
 func (s *shooter) click(selector, ready string, want ...string) {
 	s.t.Helper()
 	require.NoError(s.t, chromedp.Do(s.ctx,
@@ -175,6 +192,32 @@ func (s *shooter) click(selector, ready string, want ...string) {
 	where, err := chromedp.Run(s.ctx, chromedp.Location())
 	require.NoError(s.t, err)
 	require.NoError(s.t, checkOpened(where, http.StatusOK, s.pageText(), want...))
+}
+
+// reloadUntil reloads the open page until its text has every text in want, or
+// the time is over. The result of an approved send comes from the outbox, so the
+// page may first say that the send is still going out. A reload of a page that
+// was opened with GET is safe. The failure names the wanted text and never the
+// text of the page, because the log of a CI run is public.
+func (s *shooter) reloadUntil(limit time.Duration, want ...string) {
+	s.t.Helper()
+	deadline := time.Now().Add(limit)
+	for {
+		text := s.pageText()
+		missing := ""
+		for _, w := range want {
+			if !strings.Contains(text, w) {
+				missing = w
+				break
+			}
+		}
+		if missing == "" {
+			return
+		}
+		require.True(s.t, time.Now().Before(deadline), "the page does not show %q after %s", missing, limit)
+		time.Sleep(250 * time.Millisecond)
+		require.NoError(s.t, chromedp.Do(s.ctx, chromedp.Reload()))
+	}
 }
 
 // shot saves the open page as <name>-light.png and <name>-dark.png.
@@ -390,4 +433,38 @@ func TestScreenshots(t *testing.T) {
 	s.viewport(shotHeight)
 	s.open(send["approval_link"].(string), "Waiting for you", subject, to, body, "Reject", "Approve and send")
 	s.shot("waiting")
+
+	// The person approves. After a confirmation the undo window is 0 seconds, so
+	// the send goes out at once. The page may say "Sending" for a moment, so the
+	// shot waits for the true result.
+	s.click(`form[action$="/approve"] button`, ".outcome", "Waiting for you")
+	s.reloadUntil(20*time.Second, "Sent", "The mail server accepted the message.")
+	s.shot("result-sent")
+
+	// The agent has made requests and an action by now. The log shows them.
+	s.click(`a.menu-link[href="/activity"]`, "ol.log", "Activity", "Queued sends", "Log", "Send message")
+	s.shot("activity")
+
+	// The account, its settings and its reconnect page are one click apart. The
+	// list of accounts is short, so its shot uses the short window.
+	s.viewport(shotHeightShort)
+	s.click(`a.menu-link[href="/accounts"]`, ".rows", "Accounts", "you@example.com", "Connected", "Mail level: Send",
+		"Permissions and settings", "Reconnect")
+	s.shot("accounts")
+	s.viewport(shotHeight)
+	s.click(`a[href$="/settings"]`, "#mail_level", "Permissions", "Mail level", "Confirm sends", "Save")
+	s.shot("account-settings")
+	s.open(h.webBase()+"/accounts", "Accounts")
+	s.click(`a[href$="/reconnect"]`, "#password", "Reconnect you@example.com", "New password or app password",
+		"Test the connection and save")
+	s.shot("reconnect")
+
+	// The last shot is a browser that never signed in, so the cookies go. The
+	// page answers 401 and says only what to do.
+	_, err = chromedp.Call(ctx, network.ClearBrowserCookies, cdp.Empty{})
+	require.NoError(t, err)
+	s.viewport(shotHeightShort)
+	s.openStatus(h.webBase()+"/approvals", http.StatusUnauthorized,
+		"Run email-mcp setup in a terminal, then open this link again.")
+	s.shot("no-session")
 }

@@ -64,14 +64,18 @@ Read these four pages in order. After them, you have a working setup.
 - I want to [connect a mail
   account](/manual/getting-started/connect-account/).
 - I want to [connect a second
-  account](/manual/getting-started/connect-account/).
+  account](/manual/daily-use/manage-accounts/).
 - I want to [connect an AI app](/manual/getting-started/connect-ai-app/).
-- I want to let the agent send mail.
-- I want to answer a send that waits for me.
-- I want to turn off the access of the agent to an account (level 0).
-- I want to cancel a send.
-- I want to see what the agent did.
-- I want to fix a failed login.
+- I want to [let the agent send
+  mail](/manual/daily-use/permission-levels/).
+- I want to [answer a send that waits for
+  me](/manual/daily-use/confirmations/).
+- I want to [turn off the access of the agent to an account (level
+  0)](/manual/daily-use/permission-levels/#turn-off-the-access-of-the-agent).
+- I want to [cancel a send](/manual/daily-use/activity-and-undo/#cancel-a-send).
+- I want to [see what the agent
+  did](/manual/daily-use/activity-and-undo/).
+- I want to [fix a failed login](/manual/daily-use/troubleshooting/).
 - I want to use an AI app that cannot start a program.
 - I want to check a download.
 

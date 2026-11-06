@@ -49,7 +49,8 @@ token (a secret that the app sends to the server).
 | Codex CLI | The command `codex mcp add`, or the file `config.toml`, over stdio or local HTTP | [Codex CLI](/manual/getting-started/connect-ai-app/codex-cli/) |
 
 Each page says where its facts come from, and when they were checked. Each page
-also says how that app confirms a send. Anything
+also says how that app confirms a send. The page [How each AI app
+confirms](/manual/daily-use/app-confirmation/) compares the five apps. Anything
 marked **[not verified]** is something the official docs of that app did not say
 on 2026-10-29. It is not a guess: test it before you depend on it.
 
@@ -71,4 +72,4 @@ your browser). Do not give such a tool access to the browser, or to the browser
 profile (a separate set of browser settings and sign-ins), where you run
 `email-mcp setup`, open the approval links (the links where you answer a
 confirmation) and use the email-mcp web pages (the pages that email-mcp shows
-in your browser). See the Security page.
+in your browser). See the [Security](/manual/daily-use/security/) page.

@@ -78,3 +78,6 @@ Desktop after you change the file.
 elicitation (a way for a server to ask the person a question through the app).
 If it does not, every send that needs a confirmation returns the approval link
 (a link to a web page where you approve or reject the send).
+
+The page [How each AI app confirms](/manual/daily-use/app-confirmation/)
+compares the five apps.

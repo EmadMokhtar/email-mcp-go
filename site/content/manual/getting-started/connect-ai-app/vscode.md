@@ -101,3 +101,6 @@ shows the confirmation form). The guide links to the 2025-06-18 specification
 and does not name the protocol version that VS Code uses over HTTP
 **[not verified]**. With a version older than 2026-07-28, HTTP gives the
 approval link (a link to a web page where you approve or reject the send).
+
+The page [How each AI app confirms](/manual/daily-use/app-confirmation/)
+compares the five apps.

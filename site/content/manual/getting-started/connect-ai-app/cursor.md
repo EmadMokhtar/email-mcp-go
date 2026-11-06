@@ -90,3 +90,6 @@ through the app) as supported, so a send over stdio asks in band (the app
 itself shows the confirmation form). They do not say whether Cursor supports
 form mode, URL (web address) mode or both, or which protocol version it uses
 over HTTP **[not verified]**.
+
+The page [How each AI app confirms](/manual/daily-use/app-confirmation/)
+compares the five apps.

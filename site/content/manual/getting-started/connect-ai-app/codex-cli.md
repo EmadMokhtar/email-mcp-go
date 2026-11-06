@@ -96,3 +96,6 @@ or reject the send). Codex has its own approval setting for
 MCP tools (`default_tools_approval_mode`, and `tools.<tool>.approval_mode` per
 tool). That setting decides whether Codex asks you before it calls a tool. It
 does not replace the confirmation of email-mcp, and it cannot turn it off.
+
+The page [How each AI app confirms](/manual/daily-use/app-confirmation/)
+compares the five apps.
