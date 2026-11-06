@@ -95,7 +95,7 @@ it.
    (SMTP). The form starts with port 993 for IMAP and port 465 for SMTP, both
    with **TLS** (Transport Layer Security: it encrypts the connection from the
    first byte). **STARTTLS** is for servers that start plain and then switch on
-   encryption (usually ports 143 and 587).
+   encryption (ports 143 and 587).
 
 4. Check the **User name**. The page fills it in.
 

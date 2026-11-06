@@ -11,10 +11,10 @@ code_areas:
 After this page, the `email-mcp` program is on your computer, and you have
 checked that it runs. Choose one way to install it.
 
-Most people use Homebrew (macOS and Linux), or a release archive (Windows, or
-when you want to check the signature yourself). A signature is a code that shows
-who made a file, and that nobody changed it. Developers can use Go or the
-source code.
+Use Homebrew on macOS and Linux. Use a release archive on Windows, or when you
+want to check the signature yourself. A signature is a code that shows who made
+a file, and that nobody changed it. Use Go or the source code if you are a
+developer.
 
 ## Homebrew (macOS and Linux)
 

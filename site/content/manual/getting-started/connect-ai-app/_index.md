@@ -31,7 +31,7 @@ Connect at least one account with `email-mcp setup` (see
 
 ## Choose your app
 
-Most apps start email-mcp over stdio (standard input and output: the AI app
+An app can start email-mcp over stdio (standard input and output: the AI app
 starts the program and talks to it directly, with no network). Some apps can
 also connect over local HTTP. HTTP (HyperText Transfer Protocol) is the protocol
 that apps and browsers use to talk over a network. For local HTTP, email-mcp
