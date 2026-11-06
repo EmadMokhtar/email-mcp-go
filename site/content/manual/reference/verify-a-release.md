@@ -47,8 +47,8 @@ Put the archive, `checksums.txt` and `checksums.txt.sigstore.json` in one
 folder. The next command checks the signature of `checksums.txt`. The release
 workflow runs the same command. `--certificate-identity` is the identity that
 must have signed the file: the release workflow, at the tag of the release.
-`--certificate-oidc-issuer` is the service that vouches for that identity:
-GitHub Actions. `--bundle` is the file that holds the signature and the
+`--certificate-oidc-issuer` is the service that issued that identity: GitHub
+Actions. `--bundle` is the file that holds the signature and the
 certificate. Replace `<version>` with the version of the release:
 
 ```sh
@@ -70,14 +70,21 @@ Run this in the same folder. `--check` reads the checksums from the file, and
 sha256sum --ignore-missing --check checksums.txt
 ```
 
-It prints the name of your archive and `OK`.
+It prints the name of your archive and `OK`. A Mac that has no `sha256sum` can
+use `shasum` instead. This command does the same check. `-a 256` chooses the
+SHA-256 function:
+
+```sh
+shasum -a 256 --ignore-missing --check checksums.txt
+```
 
 ## 3. Optional: check the provenance attestation
 
 Use the GitHub CLI (the `gh` program: a command line tool for GitHub). The
 command checks that GitHub holds a signed record for this file. `--repo` is the
 repository that must have built the file. When the check works, the command ends
-with no error. When it does not, it ends with an error:
+with exit code 0 (a program exits with 0 when it works). When it does not, it
+ends with the exit code 1:
 
 ```sh
 gh attestation verify email-mcp_<version>_darwin_arm64.tar.gz --repo EmadMokhtar/email-mcp-go
@@ -87,9 +94,25 @@ gh attestation verify email-mcp_<version>_darwin_arm64.tar.gz --repo EmadMokhtar
 
 The container image has its own attestation in the registry. A container image
 is a package that holds a program, to run in a container. `oci://` names an
-image in a registry (a server that stores container images). See
+image in a registry (a server that stores container images). `gh attestation
+verify` takes a file path or an `oci://` image in the same way. See
 [Containers](/manual/reference/containers/) for what the image is.
 
 ```sh
 gh attestation verify oci://ghcr.io/emadmokhtar/email-mcp:<version> --repo EmadMokhtar/email-mcp-go
 ```
+
+When the check works, this command ends with exit code 0 too, as for the
+archive.
+
+## Sources
+
+- The use of `gh attestation verify` (the flag `--repo`, a file path or an
+  `oci://` image) comes from `gh attestation verify --help`, and the exit codes
+  come from `gh help exit-codes`. Both were checked on 2026-11-06, with the
+  GitHub CLI 2.103.3.
+- The flags of `cosign verify-blob` (`--certificate-identity`,
+  `--certificate-oidc-issuer` and `--bundle`) come from the page "Verifying
+  Signatures" of the cosign docs
+  (<https://docs.sigstore.dev/cosign/verifying/verify/>), checked on
+  2026-11-06. The release workflow runs the same command.

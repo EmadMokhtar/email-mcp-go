@@ -27,8 +27,9 @@ HTTP: [Claude Code](/manual/getting-started/connect-ai-app/claude-code/),
 Code](/manual/getting-started/connect-ai-app/vscode/) and [Codex
 CLI](/manual/getting-started/connect-ai-app/codex-cli/). The page [Claude
 Desktop](/manual/getting-started/connect-ai-app/claude-desktop/) has no config
-for local HTTP: the config that the docs of that app show starts local servers
-over stdio (the page names the source, checked on 2026-10-29).
+for local HTTP: the config that the MCP (Model Context Protocol) docs show
+starts local servers over stdio. The MCP docs are the docs that the Claude
+Desktop page names as its source, checked on 2026-10-29.
 
 ## Make a token and start the server
 
@@ -74,8 +75,9 @@ The web pages (the pages that email-mcp shows in your browser, from your own
 computer) make a token too, with no command. Do these steps in order:
 
 1. Sign in to the web pages, if your browser is not signed in yet. Run
-   `email-mcp setup`, and open the sign-in link that it prints. The page
-   [Connect your first
+   `email-mcp setup`, and open the sign-in link that it prints. `setup` keeps
+   running while you use the pages, so keep its terminal open. Stop it with
+   Ctrl-C when you are done. The page [Connect your first
    account](/manual/getting-started/connect-account/#sign-in-to-the-web-pages)
    has the steps.
 2. Click **Connections** in the menu.
@@ -159,9 +161,9 @@ page of email-mcp.
   [Connect an AI app](/manual/getting-started/connect-ai-app/) leads to the page
   of each app, and each page shows how to keep the token out of the file where
   the app allows it.
-- The MCP endpoint is `http://127.0.0.1:8765/mcp`. MCP (Model Context Protocol)
-  is an open standard that lets AI apps call tools that other programs offer.
-  Every request needs the header `Authorization: Bearer <token>`. A header is
+- The MCP endpoint is `http://127.0.0.1:8765/mcp`. MCP is an open standard that
+  lets AI apps call tools that other programs offer. Every request needs the
+  header `Authorization: Bearer <token>`. A header is
   an extra line of information that an app sends with a request.
 - The server listens only on a loopback address (127.0.0.1, [::1] or
   localhost): an address that only your own computer can reach. It refuses to

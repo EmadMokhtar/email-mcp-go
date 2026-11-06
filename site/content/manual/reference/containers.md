@@ -39,9 +39,10 @@ image and try it.
    `email-mcp serve`, which uses stdio (standard input and output) and needs no
    network. Local HTTP mode does not work inside a container. See [Local HTTP
    mode](/manual/reference/local-http-mode/).
-3. **Publishing the port does not help.** `docker run -p 8765:8765` publishes a
-   port of the container on your computer (see the sources below). email-mcp
-   refuses to listen on any address that is not a loopback address:
+3. **Publishing the port does not help.** `docker run -p 8765:8765` forwards to
+   the network interface of the container (the connection of the container to
+   its network), not to its loopback address (see the sources below). And
+   email-mcp refuses to listen on any address that is not a loopback address:
    `serve --http 0.0.0.0:8765` stops at once. This is on purpose: local HTTP
    mode has no TLS (Transport Layer Security: no encryption), so it must never
    be open to a network.
@@ -68,9 +69,8 @@ image and try it.
 
 ## Sources
 
-The statements about the network of a container, about publishing a port and
-about the option `-i` come from the Docker documentation, checked on
-2026-11-06:
+The statements about Docker on this page are checked against the Docker
+documentation, on 2026-11-06:
 
 - "Networking overview"
   (<https://docs.docker.com/engine/network/>): it says that `--dns=127.0.0.1`
@@ -81,5 +81,9 @@ about the option `-i` come from the Docker documentation, checked on
 - "docker container run"
   (<https://docs.docker.com/reference/cli/docker/container/run/>): `-i` keeps
   standard input open.
+
+The statement that `docker run -p` forwards to the network interface of the
+container, and not to its loopback address, comes from the file `DOCKER.md` of
+the email-mcp repository.
 
 [install]: /manual/getting-started/install/

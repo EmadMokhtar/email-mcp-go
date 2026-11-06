@@ -160,7 +160,7 @@ You should see the word `email-mcp` and the version, for example
 
 If the shell says that it cannot find `email-mcp`, the folder that holds the
 program is not on your `PATH`. Then see the entry [The shell cannot find
-`email-mcp`][shell] of Troubleshooting.
+`email-mcp`][shell] of [Troubleshooting](/manual/daily-use/troubleshooting/).
 
 [shell]: /manual/daily-use/troubleshooting/#the-shell-cannot-find-email-mcp
 [verify]: /manual/reference/verify-a-release/

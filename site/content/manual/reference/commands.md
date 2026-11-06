@@ -8,6 +8,8 @@ code_areas:
   - cmd/email-mcp/serve.go
   - cmd/email-mcp/setup.go
   - cmd/email-mcp/account.go
+  - cmd/email-mcp/connect.go
+  - cmd/email-mcp/reconnect.go
   - cmd/email-mcp/token.go
   - cmd/email-mcp/outbox.go
   - cmd/email-mcp/importenv.go
@@ -21,9 +23,8 @@ You run each command in a terminal (a window where you type commands).
 ## The commands
 
 Write `email-mcp`, then the name of the command. The commands `serve` and
-`setup` keep running until you press Ctrl-C (hold the Ctrl key and press C). An
-AI app that starts `serve` stops it for you. The other commands end when they
-are done.
+`setup` keep running until you press Ctrl-C (hold the Ctrl key and press C). The
+other commands end when they are done.
 
 | Command | What it does |
 |---|---|
@@ -70,10 +71,10 @@ An empty password for `account reconnect` keeps the stored one.
 | `account add` | `--email <address>` | The email address of the account. Required. |
 | `account add` | `--imap-host <host>` | The IMAP (Internet Message Access Protocol: the protocol for reading mail) server, such as `imap.example.com`. Give both hosts, or neither to look them up. |
 | `account add` | `--smtp-host <host>` | The SMTP (Simple Mail Transfer Protocol: the protocol for sending mail) server, such as `smtp.example.com`. |
-| `account add` | `--imap-port <number>` | The IMAP port (the number that names one service on an address). The default is 993 for `tls`, and 143 for `starttls` and `plain`. |
-| `account add` | `--smtp-port <number>` | The SMTP port. The default is 465 for `tls`, 587 for `starttls`, and 25 for `plain`. |
 | `account add` | `--imap-security <mode>` | The IMAP security: `tls`, `starttls` or `plain`. The default is `tls`. `tls` (Transport Layer Security) encrypts from the first byte. `starttls` starts plain and then switches encryption on. `plain` has no encryption. |
 | `account add` | `--smtp-security <mode>` | The SMTP security: `tls`, `starttls` or `plain`. The default is `tls`. |
+| `account add` | `--imap-port <number>` | The IMAP port (the number that names one service on an address). The default is 993 for `tls`, and 143 for `starttls` and `plain`. |
+| `account add` | `--smtp-port <number>` | The SMTP port. The default is 465 for `tls`, 587 for `starttls`, and 25 for `plain`. |
 | `account add` | `--username <name>` | The login name of both servers. The default is the email address. |
 | `account add` | `--plaintext-i-understand` | Allows a connection without encryption to a server on this computer. |
 | `account add` | `--trust-fingerprint <fingerprint>` | When standard input is not a terminal: trusts the certificate with this SHA-256 (Secure Hash Algorithm with 256 bits) fingerprint (a short code that identifies the certificate), if a server shows it in this run. Repeat the flag for the second server. |

@@ -129,10 +129,11 @@ valid](/manual/daily-use/troubleshooting/#the-master-key-file-is-not-valid).
 ### The mode 0600 rule
 
 The mode of a file says who may read and write it. On macOS and Linux, a key
-file must have mode 0600: you can read and write it, and nobody else can do
-anything with it. email-mcp refuses a key file when other users of the computer
-have any access to it. A file with mode 0644 is refused, for example. Windows
-has no such modes, so email-mcp does not check the mode there.
+file must have mode 0600, or a stricter mode, such as 0400. Mode 0600 means that
+you can read and write the file, and nobody else has any access to it.
+email-mcp refuses a key file when any other user of the computer has access to
+it. A file with mode 0644 is refused, for example. Windows has no such modes, so
+email-mcp does not check the mode there.
 
 The command `ls -l` shows the mode in its first column. `-rw-------` is mode
 0600 (a macOS system may add a sign `@` after it). To fix a wrong mode, run
@@ -154,18 +155,20 @@ master key of such a folder, use [the rotation below](#change-the-master-key).
    master key file` to standard error (the place where a program writes messages
    about itself: your terminal shows it).
 2. Make the file yourself, on macOS and Linux. This command writes 32 random
-   bytes as base64 text. `openssl rand -base64 32` makes the text, and `>`
-   writes it to the file. `umask 077` makes new files that only you can read,
-   and the round brackets keep this setting inside this one command. The path is
-   an example:
+   bytes as base64 text. `openssl rand -base64 32` makes the text. `openssl` is
+   the command of OpenSSL (a toolkit of encryption programs). `>` writes the
+   text to the file. `umask 077` makes new files that only you can read, and the
+   round brackets keep this setting inside this one command. The path is an
+   example:
 
    ```sh
    (umask 077; openssl rand -base64 32 > /home/you/.email-mcp.key)
    ```
 
    The command prints nothing. To check the file, run these two commands. The
-   first column of `ls -l` must start with `-rw-------`, and `wc -c` must count
-   45 bytes (44 characters and the line break):
+   first column of `ls -l` must start with `-rw-------`. `wc -c` (`wc` counts
+   the content of a file, and `-c` counts bytes) must print 45: the 44
+   characters of the key and the line break:
 
    ```sh
    ls -l /home/you/.email-mcp.key
