@@ -22,8 +22,10 @@ Claude Code, call tools that other programs offer.
 - It runs on your own computer. Your passwords stay on your computer,
   encrypted.
 - You decide what the agent may do, per account: only read, also organize,
-  also write drafts, also send, also move mail to the Trash.
-- By default, every send and every move to the Trash waits for your "yes".
+  also write drafts, also send, also move mail to the Trash. Each choice is a
+  level: a number from 0 (no access) to 5 (also move mail to the Trash).
+- By default, every send waits for your "yes". A move to the Trash needs level
+  5 first, and then it waits for your "yes" too.
 - One server can hold several accounts.
 
 ## How the parts fit

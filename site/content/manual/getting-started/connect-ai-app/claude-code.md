@@ -20,14 +20,24 @@ Source: <https://code.claude.com/docs/en/mcp>, checked on 2026-10-29.
 Run this in a terminal. The command adds email-mcp to Claude Code under the
 name `email`. `--scope user` makes the server available in every project.
 Everything after `--` is the command that Claude Code runs. `email-mcp serve`
-talks MCP over stdio (standard input and output:
-Claude Code starts the program and talks to it directly, with no network).
+talks MCP over stdio (standard input and output: Claude Code starts the program
+and talks to it directly, with no network).
 
 ```sh
 claude mcp add --scope user email -- email-mcp serve
 ```
 
 Start Claude Code. The command `/mcp` shows whether the server is connected.
+
+If Claude Code cannot find `email-mcp`, give it the absolute path of the program
+as the command. An absolute path is the full path of a file. The command
+`which email-mcp` shows it (use `where email-mcp` on Windows). If you added the
+server before, remove it first with `claude mcp remove email`. The path in this
+command is an example:
+
+```sh
+claude mcp add --scope user email -- /opt/homebrew/bin/email-mcp serve
+```
 
 ## If your master key is a file
 
@@ -39,7 +49,12 @@ With a key file as the master key, this command also sets the environment
 variable (a named setting that a program reads from its surroundings)
 `EMAIL_MCP_KEK` for the server. KEK means key encryption key. `--env` sets the
 variable, and `--transport stdio` says that Claude Code starts the server as a
-program:
+program. The value `file:` says that the master key is in a file, and the
+absolute path of the key file follows. The path in the command is only an
+example: use the path of your own key file. On macOS it can look like
+`/Users/you/.email-mcp.key`. To see which master key you use, run
+`email-mcp doctor`: its line shows `master key (keychain)` or
+`master key (file:...)`:
 
 ```sh
 claude mcp add --scope user --env EMAIL_MCP_KEK=file:/home/you/.email-mcp.key \
@@ -56,20 +71,56 @@ Use stdio when the app supports it. Use local HTTP only for an app that cannot
 start a program (see Local HTTP mode). HTTP (HyperText Transfer Protocol) is the
 protocol that apps and browsers use to talk over a network. With local HTTP,
 email-mcp runs a small server on your own computer, and Claude Code connects to
-it with a token (a secret that Claude Code sends to the server). This command
-adds the server. `--transport http` says that Claude Code connects over HTTP.
-`--header` adds a header (an extra line of information) with your token to
-every request. Replace `<token>` with the token that `email-mcp token create`
-printed:
+it with a token (a secret that Claude Code sends to the server). Do these three
+steps in order.
 
-```sh
-claude mcp add --transport http --scope user email \
-  http://127.0.0.1:8765/mcp --header "Authorization: Bearer <token>"
-```
+1. Make a token. `--name` is a name for the token, such as the app that uses
+   it. `--scopes` says what the token allows. A scope is one permission of a
+   token. The scopes are `email:read`, `email:organize`, `email:draft`,
+   `email:send` and `email:delete`, or `all`. Scopes add up: each scope also
+   allows the ones before it, so `email:send` also allows reading, organizing
+   and drafting. Give only the scopes that the app needs. Use `email:read` to
+   let the agent only read mail, and `email:send` to let it also send. The
+   command needs both flags:
+
+   ```sh
+   email-mcp token create --name claude-code --scopes email:send
+   ```
+
+   The command prints the token: a text that starts with `emcp_`. Copy it now.
+   It is shown only once.
+
+2. Start the server. `--http` gives the address where the server listens. The
+   address must be a loopback address (an address that only your own computer
+   can reach), such as `127.0.0.1`. The number after the colon is the port (the
+   number that names one service on an address):
+
+   ```sh
+   email-mcp serve --http 127.0.0.1:8765
+   ```
+
+   The server prints a log line that says "serving MCP over local HTTP", with
+   the address and the path `/mcp`. It must keep running as long as Claude Code
+   uses it. Run it in its own terminal, and keep that terminal open. If it says
+   that the address is already in use, use another port number here and in the
+   address of step 3.
+
+3. Add the server to Claude Code. `--transport http` says that Claude Code
+   connects over HTTP. `--header` adds a header (an extra line of information)
+   with your token to every request. In `Authorization: Bearer <token>`, a
+   bearer token is a token that works for anyone who holds it. Replace
+   `<token>` with the token of step 1:
+
+   ```sh
+   claude mcp add --transport http --scope user email \
+     http://127.0.0.1:8765/mcp --header "Authorization: Bearer <token>"
+   ```
 
 To get the form in Claude Code instead of the approval link (a link to a web
-page where you approve or reject the send), make the token with
-`email-mcp token create --in-band-confirm`.
+page where you approve or reject the send), add `--in-band-confirm` to the
+command of step 1: `email-mcp token create --name claude-code --scopes
+email:send --in-band-confirm`. Any program with the token can then answer for
+you.
 
 With `--header`, Claude Code stores the token **in plain text** in
 `~/.claude.json`. To keep it out of that file, use a
@@ -93,7 +144,8 @@ set, and as refused (HTTP 401) when it is not.
   server to ask the person a question through the app. The docs say that it
   declares form and URL (web address) elicitation on connections that use
   protocol 2026-07-28, and on the stdio and HTTP servers of your own MCP config
-  on older protocol versions (Claude Code v2.1.287 or later). A protocol
+  on older protocol versions (Claude Code v2.1.287 or later). To see your
+  version of Claude Code, run `claude --version` in a terminal. A protocol
   version is a date. It names the version of the MCP rules that the app and the
   server use.
 - In a non-interactive session (a run with no person at the keyboard, such as

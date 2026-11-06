@@ -70,7 +70,10 @@ Use stdio when the app supports it. Use local HTTP only for an app that cannot
 start a program (see Local HTTP mode). HTTP (HyperText Transfer Protocol) is the
 protocol that apps and browsers use to talk over a network. With local HTTP,
 email-mcp runs a small server on your own computer, and Codex connects to it
-with a token (a secret that Codex sends to the server).
+with a token (a secret that Codex sends to the server). To make the token and to
+start the server, follow steps 1 and 2 of [Local HTTP on the Claude Code
+page](/manual/getting-started/connect-ai-app/claude-code/#local-http). Keep the
+server running.
 
 The docs list `url` and `bearer_token_env_var` (the name of an environment
 variable that holds the token):

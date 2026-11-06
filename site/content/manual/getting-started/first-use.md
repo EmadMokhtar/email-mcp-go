@@ -32,8 +32,9 @@ master key (keychain): ok
 account mxavsb75q46brlmikhbydlxiyi (you@example.com): ok
 ```
 
-The first line names your own data folder. If a line says `FAIL`, see
-Troubleshooting.
+The first line names your own data folder. The third line shows where your
+master key is: `master key (keychain)`, or `master key (file:...)` when the key
+is in a file. If a line says `FAIL`, see Troubleshooting.
 
 ## Ask the first question
 
@@ -41,12 +42,21 @@ Start your AI (artificial intelligence) app, and ask, for example: "List my
 email accounts, then show the unread mail of today." The agent lists your
 accounts, and then it shows your unread mail from today.
 
+If the agent says that it has no email tools, check that your AI app lists the
+email-mcp server as connected. In Claude Code, `/mcp` shows it. Claude Desktop
+needs a restart after you change its config file. Then run `email-mcp doctor`
+again.
+
 ## What a new account may do
 
-A new account starts at mail level 4, named **Send** on the web page, with
-**Confirm sends** and **Confirm deletes** on. **Confirm sends** asks you before
-the agent sends a message. **Confirm deletes** asks you before the agent moves
-mail to the Trash (the folder of deleted mail). So:
+A mail level is a number from 0 to 5. It says what the agent may do with the
+mail of an account. The web page names the levels Off (0), Read (1), Organize
+(2), Draft (3), Send (4) and Delete (5).
+
+A new account starts at mail level 4, named **Send**, with **Confirm sends** and
+**Confirm deletes** on. **Confirm sends** asks you before the agent sends a
+message. **Confirm deletes** asks you before the agent moves mail to the Trash
+(the folder of deleted mail). So:
 
 - reading, organizing and writing drafts (messages that are saved but not sent)
   happen without questions;
@@ -55,8 +65,7 @@ mail to the Trash (the folder of deleted mail). So:
   web page names level 5 **Delete**. It moves mail to the Trash, and it never
   deletes mail for good.
 
-A level is what the agent may do with an account. The levels go from 0 to 5
-(see Permission levels).
+See Permission levels for the full list.
 
 ## Try a send (optional)
 
@@ -86,6 +95,13 @@ address, so nobody else gets it.
 3. Click **Approve and send**. The page shows **Sent**, and the text "The mail
    server accepted the message." Click **Reject** instead if you do not want to
    send the message. Then nothing is sent.
+
+The program that your AI app started (`email-mcp serve`) serves the approval
+page. `email-mcp setup` does not need to run, so you can stop it. The link works
+while your AI app keeps email-mcp running. If you close the AI app, the link
+stops working. Your browser must still be signed in. If the page says "Run
+`email-mcp setup` in a terminal, then open this link again.", do that: run the
+command, open its sign-in link, and open the approval link again.
 
 The agent can check the result with `get_send_status`. This tool shows whether a
 send is queued, sent, failed, or waiting for approval.

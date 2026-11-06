@@ -21,7 +21,10 @@ developer.
 Homebrew (a package manager: a program that installs other programs) installs
 a "cask" (a package of a ready-made program) from the tap (a repository of
 Homebrew packages) `EmadMokhtar/homebrew-tap`. This command installs the
-cask. The flag `--cask` says that the package is a ready-made program:
+cask. The flag `--cask` says that the package is a ready-made program. The name
+`emadmokhtar/tap/email-mcp` has the form `user/repo/cask`. Homebrew reads
+`emadmokhtar/tap` as the tap `EmadMokhtar/homebrew-tap` on GitHub, and the
+command also adds this tap, so you do not need to run `brew tap` first:
 
 ```sh
 brew install --cask emadmokhtar/tap/email-mcp
@@ -49,18 +52,60 @@ that reads your commands) looks for programs. There are archives for Linux
 the files use `linux`, `darwin` (macOS) and `windows`, and then `amd64` (Intel
 and AMD processors) or `arm64` (Arm processors, such as Apple silicon).
 
-When the folder is on your `PATH`, go to
+### Unpack the archive and put the program on your PATH
+
+On macOS and Linux, the archive is a `.tar.gz` file. This command unpacks it.
+`-x` extracts the files, `-z` reads the gzip compression, and `-f` names the
+file. Replace the name with the name of the file that you downloaded:
+
+```sh
+tar -xzf email-mcp_<version>_<os>_<arch>.tar.gz
+```
+
+The current folder now holds the program `email-mcp`. On Windows, the archive
+is a `.zip` file: open it in the file explorer, and copy `email-mcp.exe` out of
+it.
+
+To see your `PATH`, run `echo $PATH` on macOS and Linux (a colon separates the
+folders). In the Command Prompt on Windows, run `echo %PATH%` (a semicolon
+separates the folders).
+
+On macOS and Linux, put the program in `/usr/local/bin`. This folder belongs to
+the administrator, so the command starts with `sudo` (it runs the command as the
+administrator):
+
+```sh
+sudo cp email-mcp /usr/local/bin/
+```
+
+On Windows, no folder for your own programs is on the `PATH` yet. Make a
+folder, such as `C:\Tools`, put `email-mcp.exe` in it, and add the folder to
+the `PATH`: search for "environment variables" in the Windows settings.
+
+### macOS: if macOS blocks the program
+
+The binaries are not signed by Apple (see the note under Homebrew above). If
+macOS blocks `email-mcp` when you run it, remove the quarantine mark, as the
+cask does. Do this after you checked the archive. This command deletes the mark
+`com.apple.quarantine` from the file. `-d` deletes one attribute, and `-r` also
+goes into folders. Use the path where you put the program:
+
+```sh
+xattr -dr com.apple.quarantine /usr/local/bin/email-mcp
+```
+
+When the program is on your `PATH`, go to
 [Check the install](#check-the-install).
 
 ## For developers
 
-These two ways need developer tools.
+These two ways need Go 1.26 or newer (Go is a programming language). The second
+way also needs git and make.
 
 ### Go
 
-With Go 1.26 or newer (Go is a programming language), this command downloads
-the code, builds the program, and installs it. `@latest` means the newest
-release:
+With Go 1.26 or newer, this command downloads the code, builds the program, and
+installs it. `@latest` means the newest release:
 
 ```sh
 go install github.com/EmadMokhtar/email-mcp-go/cmd/email-mcp@latest
