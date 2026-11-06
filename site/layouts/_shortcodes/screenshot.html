@@ -23,6 +23,6 @@
   <img src="{{ $light.RelPermalink }}" alt="{{ $alt }}" width="{{ $light.Width }}" height="{{ $light.Height }}" loading="lazy">
 </picture>
   {{- else -}}
-    {{- errorf "%s: the screenshot %q has no images. Add the shot to TestScreenshots in internal/e2e, then run make screenshots" .Position $name -}}
+    {{- errorf "%s: the screenshot %q has no images. Add the shot to TestScreenshots in internal/e2e, then run make -B screenshots. Plain make screenshots can do nothing, because the stamp file says that the images are current" .Position $name -}}
   {{- end -}}
 {{- end -}}

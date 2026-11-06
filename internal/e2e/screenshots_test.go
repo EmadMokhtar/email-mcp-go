@@ -50,7 +50,12 @@ const (
 	// result is painted. The buttons of the pages have such a transition, so an
 	// image taken right after the switch to light or dark shows them with a
 	// colour half way, and a different one in each run.
-	settleScript = `Promise.all(document.getAnimations().map((a) => a.finished)).then(() => new Promise(requestAnimationFrame))`
+	//
+	// It uses allSettled and not all. A transition that is cancelled while it
+	// runs (the page can cancel one when a form changes) makes its "finished"
+	// promise fail. Promise.all would then fail at once, and the shot would
+	// fail at random. allSettled waits for every transition, however it ends.
+	settleScript = `Promise.allSettled(document.getAnimations().map((a) => a.finished)).then(() => new Promise(requestAnimationFrame))`
 )
 
 // shooter opens pages in one Chrome tab and saves them as images.
