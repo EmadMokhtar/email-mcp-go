@@ -1,11 +1,14 @@
 {{- /*
-  The body of a page of the manual or the tech docs: the page list at the left,
-  the text, and the previous and next links. section.html and page.html both
-  print it, so a group page and a page look the same.
+  The body of a page of the manual or the tech docs: the text, the previous and
+  next links, and the page list. section.html and page.html both print it, so a
+  group page and a page look the same.
+
+  The text comes first in the file, so on a narrow screen (one column) the text
+  is first, and so it is for a reader with a screen reader or the Tab key.
+  site.css puts the page list at the left on a wide screen.
 
   Call it with the page that is shown: partial "docs.html" .
 */ -}}
-{{ partial "sidebar.html" . }}
 <div class="docs-body">
   <article class="doc">
     <h1>{{ .Title }}</h1>
@@ -22,3 +25,4 @@
   </article>
   {{ partial "pager.html" . }}
 </div>
+{{ partial "sidebar.html" . }}

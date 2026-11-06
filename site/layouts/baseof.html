@@ -4,6 +4,9 @@
   and the tech docs do, for their page list). The site has no script, so
   nothing here loads one.
 
+  The first link of the body is the skip link. It goes to <main id="main">, and
+  site.css shows it only when it has the focus.
+
   test/sitecheck reads two marks that this file prints: the code-area tags,
   and data-kind on <body>, which says if the page is a regular page.
 */ -}}
@@ -35,15 +38,16 @@
   <link rel="icon" type="image/svg+xml" href="{{ "icon.svg" | relURL }}">
 </head>
 <body data-kind="{{ .Kind }}">
+  <a class="skip-link" href="#main">Skip to the main content</a>
   <header class="site-header">
-    <nav class="site-nav" aria-label="Main">
+    <nav class="site-nav" aria-label="Main menu">
       <a class="brand" href="{{ site.Home.RelPermalink }}">email-mcp</a>
       <a class="menu-link" href="{{ "manual/" | relURL }}"{{ if eq .Section "manual" }} aria-current="true"{{ end }}>Manual</a>
       <a class="menu-link" href="{{ "tech/" | relURL }}"{{ if eq .Section "tech" }} aria-current="true"{{ end }}>Tech docs</a>
       <a class="menu-link" href="{{ site.Params.repo }}">GitHub</a>
     </nav>
   </header>
-  <main class="page{{ block "main-class" . }}{{ end }}">
+  <main id="main" class="page{{ block "main-class" . }}{{ end }}">
     {{- block "main" . }}{{ end }}
   </main>
   <footer class="site-footer">
