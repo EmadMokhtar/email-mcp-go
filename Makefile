@@ -29,8 +29,10 @@ SITE_BASE_PATH ?= /email-mcp-go/
 
 # The released version, for the footer of the site. Release-please keeps it in
 # the manifest. Setting SITE_VERSION on the command line replaces it. The
-# templates stop the build when it is empty.
-SITE_VERSION := $(shell sed -n 's/.*"\.": "\(.*\)".*/\1/p' .release-please-manifest.json)
+# templates stop the build when it is empty. The pattern takes the text up to
+# the next quote ([^"]*). With ".*" it would also take everything up to the
+# last quote of the line, when the manifest has a second entry on that line.
+SITE_VERSION := $(shell sed -n 's/.*"\.": "\([^"]*\)".*/\1/p' .release-please-manifest.json)
 
 .PHONY: build test lint vuln screenshots site site-serve
 
@@ -46,10 +48,10 @@ test:
 # The interop test (build tag "interop") is checked too, but not run: it needs
 # the Docker servers of test/interop/compose.yaml. The same goes for the tests
 # with the build tag "screenshots": they need Chrome, and "make site" runs them.
+# One go vet has every tag and every package, so a new package with a tag is
+# checked without a change here.
 lint:
-	go vet ./...
-	go vet -tags interop ./test/interop/
-	go vet -tags screenshots ./internal/e2e/ ./test/sitecheck/
+	go vet -tags interop,screenshots ./...
 	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) -tags interop,screenshots ./...
 	golangci-lint run
 

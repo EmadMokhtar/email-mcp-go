@@ -24,17 +24,13 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
+      # One go vet has every build tag and every package, so a new package
+      # with a tag is vetted without a change here. The interop test needs
+      # Docker to run, so it runs nightly in interop.yml. The tests with the
+      # screenshots tag need Chrome, and "make site" runs them. Here they are
+      # only vetted, so a change that breaks them shows up at once.
       - name: go vet
-        run: go vet ./...
-      # The interop test needs Docker to run, so it runs nightly in
-      # interop.yml. Here it is only vetted, so a change that breaks it shows
-      # up at once.
-      - name: go vet (interop tag)
-        run: go vet -tags interop ./test/interop/
-      # The tests with this tag need Chrome, and "make site" runs them. Here
-      # they are only vetted, like the interop test.
-      - name: go vet (screenshots tag)
-        run: go vet -tags screenshots ./internal/e2e/ ./test/sitecheck/
+        run: go vet -tags interop,screenshots ./...
       - name: go test
         run: go test -race ./...
 
