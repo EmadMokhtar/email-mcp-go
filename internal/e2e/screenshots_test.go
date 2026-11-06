@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,12 +67,73 @@ type shooter struct {
 func (s *shooter) open(link string, want ...string) {
 	s.t.Helper()
 	resp, err := chromedp.Run(s.ctx, chromedp.NavigateResponse(link))
-	require.NoError(s.t, err)
-	require.Equal(s.t, int64(http.StatusOK), resp.Status, "the page at %s", resp.URL)
-	text := s.pageText()
-	for _, w := range want {
-		require.Contains(s.t, text, w, "the page at %s", resp.URL)
+	require.NoError(s.t, navigationError(link, err))
+	require.NotNil(s.t, resp, "the page at %s gave no answer", addressPath(link))
+	// The text is read only when the answer is good, and it is never printed.
+	text := ""
+	if resp.Status == http.StatusOK {
+		text = s.pageText()
 	}
+	require.NoError(s.t, checkOpened(resp.URL, resp.Status, text, want...))
+}
+
+// checkOpened returns an error when the page that was opened is not the page
+// that a shot needs: the answer is not 200, or the text lacks one of want.
+//
+// The log of a CI run is public, so the error holds only what is safe: the path
+// of the address (the sign-in link has its token in the query), the status, and
+// the text that was wanted. It never holds the address with its query, and it
+// never holds the text of the page, which may show a secret.
+func checkOpened(address string, status int64, text string, want ...string) error {
+	where := addressPath(address)
+	if status != http.StatusOK {
+		return fmt.Errorf("the page at %s answered with status %d, not %d", where, status, http.StatusOK)
+	}
+	for _, w := range want {
+		if !strings.Contains(text, w) {
+			return fmt.Errorf("the page at %s does not show %q", where, w)
+		}
+	}
+	return nil
+}
+
+// navigationError turns the error of the browser into an error for the log, or
+// returns nil when there is none. The browser may repeat the address, or a
+// part of it, in its message, so those parts are replaced.
+func navigationError(link string, err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if link != "" {
+		msg = strings.ReplaceAll(msg, link, addressPath(link))
+	}
+	if u, parseErr := url.Parse(link); parseErr == nil {
+		secrets := []string{u.RawQuery, u.Fragment}
+		for _, values := range u.Query() {
+			secrets = append(secrets, values...)
+		}
+		for _, secret := range secrets {
+			if secret != "" {
+				msg = strings.ReplaceAll(msg, secret, "(left out)")
+			}
+		}
+	}
+	return fmt.Errorf("open %s: %s", addressPath(link), msg)
+}
+
+// addressPath returns the path of an address for a message, and nothing else:
+// not the host, not the query, not the fragment. An address with no path gives
+// "/". An address that cannot be read gives a fixed text and never the address.
+func addressPath(address string) string {
+	u, err := url.Parse(address)
+	if err != nil {
+		return "(an address that cannot be read)"
+	}
+	if u.Path == "" {
+		return "/"
+	}
+	return u.Path
 }
 
 // pageText returns the text that the open page shows.
@@ -152,6 +214,69 @@ func TestShotRefusesSecrets(t *testing.T) {
 	require.NoError(t, checkPageText("Waiting for you", "pw-1"))
 	require.Error(t, checkPageText("your token emcp_abc123", "pw-1"))
 	require.Error(t, checkPageText("password pw-1 here", "pw-1"))
+}
+
+// TestShotRefusesToPrintTheSignInLink requires that the failure of open never
+// shows the query of an address, where the sign-in link has its token, and
+// never shows the text of the page. The log of a CI run is public.
+func TestShotRefusesToPrintTheSignInLink(t *testing.T) {
+	const token = "tok-secret-123"
+	link := "http://127.0.0.1:4321/setup?token=" + token + "#top"
+	const pageSecret = "secret-page-body emcp_abc123"
+
+	requireSafe := func(t *testing.T, err error) {
+		t.Helper()
+		require.Error(t, err)
+		for _, leak := range []string{token, "token=", "?", "#top", pageSecret, "emcp_"} {
+			require.NotContains(t, err.Error(), leak)
+		}
+	}
+
+	t.Run("a wrong status names the status and the path", func(t *testing.T) {
+		err := checkOpened(link, http.StatusInternalServerError, "", "Sign out")
+		requireSafe(t, err)
+		require.Contains(t, err.Error(), "status 500")
+		require.Contains(t, err.Error(), "/setup")
+	})
+
+	t.Run("a missing text names the wanted text and not the page", func(t *testing.T) {
+		err := checkOpened(link, http.StatusOK, "Hello "+pageSecret, "Sign out", "Approve and send")
+		requireSafe(t, err)
+		require.Contains(t, err.Error(), `"Sign out"`)
+		require.Contains(t, err.Error(), "/setup")
+	})
+
+	t.Run("the second missing text is named, not the first", func(t *testing.T) {
+		err := checkOpened(link, http.StatusOK, "Sign out", "Sign out", "Approve and send")
+		requireSafe(t, err)
+		require.Contains(t, err.Error(), `"Approve and send"`)
+		require.NotContains(t, err.Error(), `"Sign out"`)
+	})
+
+	t.Run("a good page has no error", func(t *testing.T) {
+		require.NoError(t, checkOpened(link, http.StatusOK, "Sign out and more", "Sign out"))
+		require.NoError(t, checkOpened(link, http.StatusOK, "anything"))
+	})
+
+	t.Run("an error of the browser has the path and not the address", func(t *testing.T) {
+		cause := errors.New("cannot load " + link + " (token " + token + "): net::ERR_FAILED")
+		err := navigationError(link, cause)
+		requireSafe(t, err)
+		require.Contains(t, err.Error(), "/setup")
+		require.Contains(t, err.Error(), "net::ERR_FAILED")
+		require.NoError(t, navigationError(link, nil))
+	})
+
+	t.Run("an address that cannot be read is not printed", func(t *testing.T) {
+		bad := "http://[::1?token=" + token
+		requireSafe(t, checkOpened(bad, http.StatusNotFound, ""))
+		require.NotContains(t, addressPath(bad), token)
+	})
+
+	t.Run("a path with no slash and an address with no path", func(t *testing.T) {
+		require.Equal(t, "/", addressPath("http://127.0.0.1:4321?token="+token))
+		require.Equal(t, "/approvals/abc", addressPath("http://x.localhost:1/approvals/abc?a=1"))
+	})
 }
 
 // TestClearShotsKeepsOtherFiles requires that clearShots removes the images and
