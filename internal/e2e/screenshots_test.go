@@ -459,6 +459,29 @@ func TestScreenshots(t *testing.T) {
 		"Test the connection and save")
 	s.shot("reconnect")
 
+	// The Connections page makes a token with its real form. The answer to the
+	// form shows the new token once, and a shot of it would hold the secret (a
+	// shot of that page fails, see checkPageText). So the form is only filled
+	// and sent, and the shot is of the list when the page is opened again. The
+	// list shows the name, the permissions and the end date of the token, and
+	// never the token.
+	const tokenName = "my-app"
+	s.open(h.webBase()+"/connections", "Connections", "No token yet.", "New token", "Make a token")
+	require.NoError(t, chromedp.Do(ctx,
+		chromedp.SendKeys(chromedp.CSS(`input[name="name"]`), tokenName),
+		chromedp.Click(chromedp.CSS(`input[name="scope"][value="email:read"]`)),
+		chromedp.Click(chromedp.CSS(`input[name="scope"][value="email:draft"]`)),
+	))
+	s.click(`form[action="/connections"] button[type="submit"]`, ".notice.good",
+		"Connections", "Copy this token now. It is shown only once.")
+	s.open(h.webBase()+"/connections", "Connections", tokenName, "email:read", "email:draft", "Revoke",
+		"Signed-in browsers")
+	// require.NotContains would print the whole text on failure, and the log of a
+	// CI run is public. So the check prints only its own message.
+	require.False(t, strings.Contains(s.pageText(), "Copy this token now"),
+		"the list must not show the notice of a new token")
+	s.shot("connections")
+
 	// The last shot is a browser that never signed in, so the cookies go. The
 	// page answers 401 and says only what to do.
 	_, err = chromedp.Call(ctx, network.ClearBrowserCookies, cdp.Empty{})

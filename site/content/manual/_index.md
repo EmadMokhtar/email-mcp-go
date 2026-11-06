@@ -76,8 +76,9 @@ Read these four pages in order. After them, you have a working setup.
 - I want to [see what the agent
   did](/manual/daily-use/activity-and-undo/).
 - I want to [fix a failed login](/manual/daily-use/troubleshooting/).
-- I want to use an AI app that cannot start a program.
-- I want to check a download.
+- I want to [use an AI app that cannot start a
+  program](/manual/reference/local-http-mode/).
+- I want to [check a download](/manual/reference/verify-a-release/).
 
 ## What is not in this version
 

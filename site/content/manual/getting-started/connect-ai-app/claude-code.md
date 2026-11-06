@@ -72,11 +72,11 @@ command `/mcp` shows whether the server is connected.
 ## Local HTTP
 
 Use stdio when the app supports it. Use local HTTP only for an app that cannot
-start a program (see Local HTTP mode). HTTP (HyperText Transfer Protocol) is the
-protocol that apps and browsers use to talk over a network. With local HTTP,
-email-mcp runs a small server on your own computer, and Claude Code connects to
-it with a token (a secret that Claude Code sends to the server). Do these three
-steps in order.
+start a program (see [Local HTTP mode](/manual/reference/local-http-mode/)).
+HTTP (HyperText Transfer Protocol) is the protocol that apps and browsers use to
+talk over a network. With local HTTP, email-mcp runs a small server on your own
+computer, and Claude Code connects to it with a token (a secret that Claude Code
+sends to the server). Do these three steps in order.
 
 If your master key is a file, set the environment variable `EMAIL_MCP_KEK` in
 each terminal where you run step 1 or step 2 (step 2 runs in its own terminal).

@@ -55,12 +55,11 @@ surroundings) `EMAIL_MCP_KEK`. KEK means key encryption key.
 ## Local HTTP
 
 Use stdio when the app supports it. Use local HTTP only for an app that cannot
-start a program (see Local HTTP mode). HTTP (HyperText Transfer Protocol) is the
-protocol that apps and browsers use to talk over a network. With local HTTP,
-email-mcp runs a small server on your own computer, and Cursor connects to it
-with a token (a secret that Cursor sends to the server).
-To make the token and to start the
-server, follow steps 1 and 2 of
+start a program (see [Local HTTP mode](/manual/reference/local-http-mode/)).
+HTTP (HyperText Transfer Protocol) is the protocol that apps and browsers use to
+talk over a network. With local HTTP, email-mcp runs a small server on your own
+computer, and Cursor connects to it with a token (a secret that Cursor sends to
+the server). To make the token and to start the server, follow steps 1 and 2 of
 [Local HTTP on the Claude Code page](
 /manual/getting-started/connect-ai-app/claude-code/#local-http). Keep the server
 running. If your master key is a file, also set `EMAIL_MCP_KEK` first, as that

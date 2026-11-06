@@ -24,12 +24,12 @@ Connect at least one account with `email-mcp setup` (see
 - The config (the settings file) of the AI app never holds your mail password.
   email-mcp keeps the passwords in its own encrypted database.
 - The only setting an app may need is `EMAIL_MCP_KEK`, and only when your master
-  key is a file (see The master key). `EMAIL_MCP_KEK` is an environment
-  variable: a named setting that a program reads from its surroundings. KEK
-  means key encryption key. The master key is the key that protects your stored
-  passwords. The email-mcp commands that you run yourself in a terminal, such as
-  `email-mcp setup`, `email-mcp token create` and `email-mcp serve --http`, need
-  the same value of `EMAIL_MCP_KEK`.
+  key is a file (see [The master key](/manual/reference/master-key/)).
+  `EMAIL_MCP_KEK` is an environment variable: a named setting that a program
+  reads from its surroundings. KEK means key encryption key. The master key is
+  the key that protects your stored passwords. The email-mcp commands that you
+  run yourself in a terminal, such as `email-mcp setup`, `email-mcp token
+  create` and `email-mcp serve --http`, need the same value of `EMAIL_MCP_KEK`.
 
 ## Choose your app
 
@@ -58,7 +58,8 @@ on 2026-10-29. It is not a guess: test it before you depend on it.
 
 If your app is not in the table, check how it starts MCP servers. An app that
 can start a program over stdio uses the command `email-mcp serve`. An app that
-cannot uses local HTTP mode (see Local HTTP mode).
+cannot uses local HTTP mode (see [Local HTTP
+mode](/manual/reference/local-http-mode/)).
 
 If an app cannot find `email-mcp`, give it the absolute path of the program as
 the command. An absolute path starts at the root of your file system, such as

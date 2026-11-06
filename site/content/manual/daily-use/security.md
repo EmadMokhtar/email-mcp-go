@@ -65,8 +65,9 @@ hold what a confirmation can show:
   text of the message is made from the result. Styles, images, comments, other
   attributes and hidden text are removed, so an HTML mail from an agent looks
   plain. A link keeps its address only when the text of the message shows the
-  whole address. A long address is cut in the text (see the known limitations),
-  so such a link goes out as plain text, without its address.
+  whole address. A long address is cut in the text (see the [known
+  limitations](/manual/reference/known-limitations/)), so such a link goes out
+  as plain text, without its address.
 - A subject, a plain text body or a display name (the name that shows next to an
   address) with a character that a reader cannot see is refused. Such characters
   are zero width characters, direction controls, tag characters and the like.

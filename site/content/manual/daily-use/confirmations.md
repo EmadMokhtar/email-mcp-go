@@ -62,8 +62,8 @@ The server asks in one of two ways:
   server use. Over HTTP (HyperText Transfer Protocol: the protocol that apps and
   browsers use to talk over a network) it works only for apps that use the MCP
   protocol version 2026-07-28 or newer, and only with a token (a secret that the
-  app sends to the server) that you made with `--in-band-confirm` (see Local
-  HTTP mode).
+  app sends to the server) that you made with `--in-band-confirm` (see [Local
+  HTTP mode](/manual/reference/local-http-mode/)).
 - **With an approval link.** Otherwise the tool answers `pending_approval` with
   a link to the **Waiting for you** page (a web page where you approve or reject
   the send). Open it in the browser that `email-mcp

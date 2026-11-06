@@ -59,7 +59,8 @@ The line says: `data directory <path>: FAIL it does not exist.` Connect an
 account first, or point `doctor` at the right folder with `--data-dir` or
 `EMAIL_MCP_DATA_DIR`. The page [Connect your first
 account](/manual/getting-started/connect-account/) connects an account. The
-page Where the data lives says where each system keeps the data folder.
+page [Where the data lives](/manual/reference/data-folder/) says where each
+system keeps the data folder.
 
 Two other lines of the same check mean that the path is not a folder (`FAIL it
 is not a directory`), or that the folder cannot be read (`FAIL it cannot be
@@ -100,8 +101,8 @@ Other commands, such as `email-mcp setup` and `email-mcp serve`, give a longer
 text for the same cause: "the master key file ... does not exist, and the
 database has keys that only the old master key can open. Check the path in
 EMAIL_MCP_KEK". These commands never make a new key for a data folder that
-already has keys, because a new key could never open them. The page The master
-key explains the master key.
+already has keys, because a new key could never open them. The page [The master
+key](/manual/reference/master-key/) explains the master key.
 
 ### The master key file is not valid
 
@@ -127,7 +128,7 @@ openssl rand -base64 32 > /home/you/.email-mcp.key
 chmod 600 /home/you/.email-mcp.key
 ```
 
-The page The master key says more.
+The page [The master key](/manual/reference/master-key/) says more.
 
 ### The master key file has the wrong mode
 

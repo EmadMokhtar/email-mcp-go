@@ -115,7 +115,9 @@ a terminal, then open this link again.", do that: run the command, open its
 sign-in link, and open the approval link again.
 
 The agent can check the result with `get_send_status`. This tool shows whether a
-send is queued, sent, failed, or waiting for approval.
+send is queued, sent, failed, or waiting for approval. It can also say that a
+send is being sent, cancelled, declined or expired. See [What the agent can
+do](/manual/daily-use/what-the-agent-can-do/#details) for all eight states.
 
 ## Where to go next
 

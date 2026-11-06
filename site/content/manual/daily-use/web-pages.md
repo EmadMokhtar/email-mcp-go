@@ -37,9 +37,9 @@ has the steps.
 
 After you sign in, every page has a menu. On a wide window the menu is at the
 left, and on a narrow window it moves to the top. On a very narrow window, such
-as a phone, **Waiting for you** shows as **Waiting**, and an open action hides
-the menu: its back link leads to the list. A browser that is not signed in has
-no menu. The menu has these entries:
+as a phone, **Waiting for you** shows as **Waiting**, and an open send or move
+to the Trash hides the menu: its back link leads to **Waiting for you**. A
+browser that is not signed in has no menu. The menu has these entries:
 
 - **Waiting for you** shows the sends and the moves to the Trash (the folder of
   deleted mail) that wait for your answer. A number beside the name says how
@@ -53,7 +53,8 @@ no menu. The menu has these entries:
 - **Connections** shows the access tokens of local HTTP mode, and the browsers
   that are signed in. A token is a secret that an app sends to the local server.
   HTTP (HyperText Transfer Protocol) is the protocol that apps and browsers use
-  to talk over a network. The page Local HTTP mode explains the tokens.
+  to talk over a network. The page [Local HTTP
+  mode](/manual/reference/local-http-mode/) explains the tokens.
 - **Sign out** signs this browser out.
 
 {{< screenshot

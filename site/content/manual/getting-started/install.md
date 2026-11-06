@@ -47,12 +47,12 @@ yourself, use a release archive.
 
 Download the archive (one file that holds the program) for your platform from
 the [GitHub releases](https://github.com/EmadMokhtar/email-mcp-go/releases),
-check it (see Verifying a release), unpack it, and put `email-mcp` in a folder
-on your `PATH`. The `PATH` is the list of folders where the shell (the program
-that reads your commands) looks for programs. There are archives for Linux
-(amd64, arm64), macOS (Apple silicon, Intel) and Windows (amd64). The names of
-the files use `linux`, `darwin` (macOS) and `windows`, and then `amd64` (Intel
-and AMD processors) or `arm64` (Arm processors, such as Apple silicon).
+check it (see [Verifying a release][verify]), unpack it, and put `email-mcp` in
+a folder on your `PATH`. The `PATH` is the list of folders where the shell (the
+program that reads your commands) looks for programs. There are archives for
+Linux (amd64, arm64), macOS (Apple silicon, Intel) and Windows (amd64). The
+names of the files use `linux`, `darwin` (macOS) and `windows`, and then `amd64`
+(Intel and AMD processors) or `arm64` (Arm processors, such as Apple silicon).
 
 ### Unpack the archive
 
@@ -143,8 +143,8 @@ folder on your `PATH`, or run it with its full path.
 Docker is not for use on your own computer. In a container (a way to run a
 program in its own closed space), email-mcp cannot reach your keychain (the
 password store of your operating system), and you cannot reach its web pages
-(the pages that email-mcp shows in your browser). The page Containers explains
-why.
+(the pages that email-mcp shows in your browser). The page
+[Containers](/manual/reference/containers/) explains why.
 
 ## Check the install
 
@@ -163,3 +163,4 @@ program is not on your `PATH`. Then see the entry [The shell cannot find
 `email-mcp`][shell] of Troubleshooting.
 
 [shell]: /manual/daily-use/troubleshooting/#the-shell-cannot-find-email-mcp
+[verify]: /manual/reference/verify-a-release/

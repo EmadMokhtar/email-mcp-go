@@ -101,6 +101,6 @@ email-mcp outbox cancel <id>
 The first command prints the columns `ID`, `ACCOUNT`, `GOES OUT` and `STATE`.
 When nothing waits, it prints "No message waits to go out." The second command
 prints "Cancelled the send" and the id, and "It will not go out." The page
-Commands lists every command of email-mcp.
+[Commands](/manual/reference/commands/) lists every command of email-mcp.
 
 [all]: /manual/daily-use/full-autonomy-and-limits/#all-settings-of-an-account

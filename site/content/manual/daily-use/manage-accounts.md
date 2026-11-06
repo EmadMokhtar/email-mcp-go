@@ -36,7 +36,8 @@ terminal (a window where you type commands) if you have no browser.
   browser.
 - **Test an account.** Run `email-mcp account test <id>`. It logs in to the
   mail servers of the account with the stored settings and password. `email-mcp
-  account list` shows the ids. The page Commands lists every command.
+  account list` shows the ids. The page [Commands](/manual/reference/commands/)
+  lists every command.
 - **Reconnect an account.** See [Reconnect an account](#reconnect-an-account).
 - **Remove an account.** See [Remove an account](#remove-an-account).
 
