@@ -1461,7 +1461,7 @@ counts Go files only):
 | `DESIGN.md`, `PRODUCT.md` | web-portal | |
 
 A change to `internal/web/templates/approval.html` also needs the picture in
-`site/layouts/partials/approval-picture.html` and the label test in
+`site/layouts/_partials/approval-picture.html` and the label test in
 `internal/web`. Both come from the landing page spec ("Keeping the page true"),
 which asks this map to say so.
 

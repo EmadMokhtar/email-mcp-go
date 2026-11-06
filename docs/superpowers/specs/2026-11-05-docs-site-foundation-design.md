@@ -232,7 +232,8 @@ the last job. The site then keeps its previous version.
   permissions by default, actions pinned by full commit SHA, and no `${{ }}`
   value inside a `run:` script.
 - The Hugo version is pinned in `.hugo-version`, in the same way as
-  `.go-version`. The download is checked against the published checksum.
+  `.go-version`. CI downloads it and checks it against the published checksum.
+  Local builds run the same version with `go run`, so no install is needed.
 - `make screenshots` makes the images, and it needs Chrome. `make site` runs it
   and then builds the site. `make site-serve` starts a local preview.
 
@@ -305,7 +306,8 @@ split by sidebar group.
    - The owner does the steps below, and one manual run from `main` publishes
      the site.
 6. Cutover: shorten the README, delete the moved files, fix the comments, add
-   the docs check and the pull request template.
+   the docs check and the pull request template, and call `pages.yml` from
+   `release.yml`. Until then, a release of the program publishes no site.
 
 Steps 2 to 4 change content only, except that step 2 also adds its shots to the
 screenshot test. A link to a page that does not exist yet waits for the pull

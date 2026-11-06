@@ -114,9 +114,8 @@ The builder follows these. They are not open.
 - The manual has its own glossary page.
 - Every fact comes from the code or from an existing document. If they differ,
   the code wins and the difference is reported. See "Differences to resolve".
-- The README is cut down in step 6, not in the manual's pull request. The manual
-  pull request adds files under `site/content/manual/` and changes no other
-  file.
+- The README is cut down in step 6, not in the manual's pull request. See item 6
+  of "Definition of done" for the files that the manual pull request changes.
 
 ### Made in this document
 

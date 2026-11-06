@@ -151,7 +151,7 @@ One point stays open, with a default:
 |---|---|
 | Words and front matter | `site/content/_index.md` |
 | Home template | `site/layouts/index.html` |
-| Approval picture | `site/layouts/partials/approval-picture.html` |
+| Approval picture | `site/layouts/_partials/approval-picture.html` |
 | Styles | the one shared stylesheet, in a "landing" part |
 | Social card | `site/static/` or `site/assets/`, as the builder chooses |
 
@@ -1049,7 +1049,7 @@ The docs check of the foundation does not cover the landing page. So three
 things keep it true:
 
 1. **A label test.** A Go test in `internal/web` (name chosen by the builder)
-   reads `site/layouts/partials/approval-picture.html` and
+   reads `site/layouts/_partials/approval-picture.html` and
    `internal/web/templates/approval.html`. For each label below, it checks that
    the text is in both files:
    `Waiting for you`, `Reject`, `Approve and send`, `From`,
