@@ -14,7 +14,9 @@
 //   - Every image has alt text.
 //   - Every link to the source code (blob or tree) goes to a path that exists
 //     in the repository, and so does every code-area meta tag.
-//   - Every regular page of the manual and the tech docs has a code-area.
+//   - Every regular page of the manual and the tech docs has a code-area. The
+//     built site has at least one regular page (data-kind="page"), because
+//     without one this rule would check nothing and pass.
 //   - Every screenshot that was made is used by a page.
 //   - The Markdown files in site/content follow the content rules.
 //
@@ -110,6 +112,7 @@ type checker struct {
 	cfg      config
 	base     string                     // cfg.Base with a slash at both ends
 	ids      map[string]map[string]bool // the ids of each page that a link went to
+	regular  int                        // how many pages have data-kind="page"
 	problems []problem
 }
 
@@ -152,6 +155,11 @@ func (c *checker) pages() {
 		c.add(c.cfg.Public, "cannot read the built site: %v", err)
 	case count == 0:
 		c.add(c.cfg.Public, "no HTML page found. Did the build run?")
+	case c.regular == 0:
+		// The code-area rule runs only on regular pages. If the shell loses
+		// its data-kind marker, no page is regular and the rule would pass
+		// with no sign, so the missing marker is a problem on its own.
+		c.add(c.cfg.Public, `no page has data-kind="page". Does the page shell still print it?`)
 	}
 }
 
@@ -200,6 +208,9 @@ func (c *checker) page(file, rel string) {
 		case "body":
 			kind, _ = attr(n, "data-kind")
 		}
+	}
+	if kind == "page" {
+		c.regular++
 	}
 	if kind == "page" && codeAreaRequired(rel) && codeAreas == 0 {
 		c.add(file, "the page has no code-area meta (add code_areas to its front matter)")

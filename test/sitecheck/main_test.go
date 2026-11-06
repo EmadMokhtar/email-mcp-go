@@ -1,6 +1,7 @@
 package main
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,10 @@ import (
 // subPath is where GitHub Pages serves the site. The root tests use "/".
 const subPath = "/email-mcp-go/"
 
+// regularPage is the page that newSite adds to every test site. The real site
+// always has a regular page, and the check fails a site that has none.
+const regularPage = "site/public/regular/index.html"
+
 // newSite writes a small repository in a temporary folder and returns the
 // config that points at it. The keys of files are paths from the root of the
 // repository, so the built pages are under site/public/.
@@ -21,6 +26,12 @@ func newSite(t *testing.T, base string, files map[string]string) config {
 	// The real site always has a content folder. The check reports its absence,
 	// so every test site has one.
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "site", "content"), 0o750))
+	// A test that needs a site with no regular page removes this file.
+	files = maps.Clone(files)
+	if files == nil {
+		files = map[string]string{}
+	}
+	files[regularPage] = htmlPageKind("page", "", "")
 	for name, body := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
@@ -376,6 +387,32 @@ func TestRegularPageNeedsCodeArea(t *testing.T) {
 	}
 }
 
+// TestSiteWithNoRegularPageFails guards the code-area rule. The rule only runs
+// on pages with data-kind="page". If the page shell loses that marker, no page
+// would be checked, and the rule would pass with no sign. So the check fails a
+// built site that has no regular page.
+func TestSiteWithNoRegularPageFails(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, want string
+	}{
+		{"markers of other kinds only", "section", `no page has data-kind="page"`},
+		{"no marker at all", "", `no page has data-kind="page"`},
+		{"one regular page among other kinds", "page", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := newSite(t, subPath, map[string]string{
+				"site/public/index.html":        htmlPageKind("home", "", ""),
+				"site/public/manual/index.html": htmlPageKind("section", "", ""),
+				"site/public/about/index.html":  htmlPageKind(tc.kind, "", ""),
+			})
+			// Take away the page that newSite adds, so that the pages of this
+			// test are the only ones.
+			require.NoError(t, os.Remove(filepath.Join(cfg.Root, filepath.FromSlash(regularPage))))
+			requireOutcome(t, cfg, "site/public", tc.want)
+		})
+	}
+}
+
 func TestSourceLinkPathMustExist(t *testing.T) {
 	for _, tc := range []struct{ name, href, want string }{
 		{"file", repoURL + "/blob/main/internal/outbox/outbox.go", ""},
@@ -440,6 +477,7 @@ func TestContentRules(t *testing.T) {
 func TestPlainFailures(t *testing.T) {
 	t.Run("no built site", func(t *testing.T) {
 		cfg := newSite(t, subPath, nil)
+		require.NoError(t, os.RemoveAll(cfg.Public))
 		got := check(cfg)
 		require.Len(t, got, 1, "problems: %v", got)
 		require.Equal(t, cfg.Public, got[0].File)
@@ -447,6 +485,7 @@ func TestPlainFailures(t *testing.T) {
 	})
 	t.Run("a built site with no page", func(t *testing.T) {
 		cfg := newSite(t, subPath, map[string]string{"site/public/style.css": ""})
+		require.NoError(t, os.Remove(filepath.Join(cfg.Root, filepath.FromSlash(regularPage))))
 		got := check(cfg)
 		require.Len(t, got, 1, "problems: %v", got)
 		require.Contains(t, got[0].Text, "no HTML page")
