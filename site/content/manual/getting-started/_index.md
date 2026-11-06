@@ -6,4 +6,6 @@ code_areas:
   - cmd/email-mcp/
 ---
 
-This part is coming.
+These pages take you from nothing to a working setup. Do the four steps in
+order: install email-mcp, connect one account, connect one AI (artificial
+intelligence) app, and ask a first question.

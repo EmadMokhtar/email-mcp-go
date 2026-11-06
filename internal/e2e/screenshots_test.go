@@ -39,9 +39,12 @@ const (
 	shotStamp = ".done"
 
 	// The size of the browser window of a shot, in pixels. The manual uses the
-	// desktop layout of the pages.
-	shotWidth  = 1280
-	shotHeight = 800
+	// desktop layout of the pages. A page with little on it, such as the first
+	// form of "Connect an account", gets the short window, so the image has no
+	// large empty area.
+	shotWidth       = 1280
+	shotHeight      = 800
+	shotHeightShort = 420
 
 	// tokenStart starts every access token (internal/tokens).
 	tokenStart = "emcp_"
@@ -147,6 +150,31 @@ func (s *shooter) pageText() string {
 	text, err := chromedp.Run(s.ctx, chromedp.Evaluate[string](`document.body.innerText`))
 	require.NoError(s.t, err)
 	return text
+}
+
+// viewport sets the height of the browser window for the next shots. The width
+// is always shotWidth.
+func (s *shooter) viewport(height int64) {
+	s.t.Helper()
+	require.NoError(s.t, chromedp.Do(s.ctx, chromedp.EmulateViewport(shotWidth, height)))
+}
+
+// click clicks the element that the CSS selector names, and waits until the
+// element ready shows on the page that follows. It then requires that this page
+// shows each of the texts in want, as open does. So a renamed button fails the
+// test, and so does a click that leads to another page. Take no shot while a
+// form is busy: the busy sign of a form never ends, and a shot would wait for
+// it until the time limit. So click only links and buttons that load a page
+// at once.
+func (s *shooter) click(selector, ready string, want ...string) {
+	s.t.Helper()
+	require.NoError(s.t, chromedp.Do(s.ctx,
+		chromedp.Click(chromedp.CSS(selector)),
+		chromedp.WaitVisible(chromedp.CSS(ready)),
+	))
+	where, err := chromedp.Run(s.ctx, chromedp.Location())
+	require.NoError(s.t, err)
+	require.NoError(s.t, checkOpened(where, http.StatusOK, s.pageText(), want...))
 }
 
 // shot saves the open page as <name>-light.png and <name>-dark.png.
@@ -324,6 +352,25 @@ func TestScreenshots(t *testing.T) {
 
 	h := newHarness(t)
 	m := newMailServers(t)
+
+	setupURL, err := h.app.Web.NewSetupURL(context.Background())
+	require.NoError(t, err)
+
+	ctx, cancel := chrometest.Start(t)
+	defer cancel()
+	s := &shooter{t: t, ctx: ctx, dir: dir, forbidden: []string{secretPassword, setupURL}}
+	s.viewport(shotHeightShort)
+
+	// The first two shots come before any account exists: the browser signs in
+	// to a program with no account, and the person clicks the button that the
+	// page offers. The shot of the first form stops there. The next step looks
+	// up the mail provider on the network, and this test uses none.
+	s.open(setupURL, "Sign out", "No account is connected yet", "Connect your first account")
+	s.shot("accounts-empty")
+	s.click(`.empty a[href="/connect"]`, "#email",
+		"Connect an account", "Email address", "Find the server settings", "Enter the settings yourself")
+	s.shot("connect")
+
 	a := h.connect(localCtx(), "you@example.com", m)
 
 	// The client has no elicitation, so the send waits for the web page.
@@ -340,15 +387,7 @@ func TestScreenshots(t *testing.T) {
 	})
 	require.Equal(t, "pending_approval", send["status"])
 
-	setupURL, err := h.app.Web.NewSetupURL(context.Background())
-	require.NoError(t, err)
-
-	ctx, cancel := chrometest.Start(t)
-	defer cancel()
-	require.NoError(t, chromedp.Do(ctx, chromedp.EmulateViewport(shotWidth, shotHeight)))
-	s := &shooter{t: t, ctx: ctx, dir: dir, forbidden: []string{secretPassword, setupURL}}
-
-	s.open(setupURL, "Sign out")
+	s.viewport(shotHeight)
 	s.open(send["approval_link"].(string), "Waiting for you", subject, to, body, "Reject", "Approve and send")
 	s.shot("waiting")
 }
