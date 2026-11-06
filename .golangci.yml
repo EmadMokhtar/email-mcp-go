@@ -3,9 +3,11 @@ version: "2"
 
 run:
   # Also lint the interop test (test/interop), which has this build tag. It
-  # is linted only: it runs nightly against Docker servers (interop.yml).
+  # is linted only: it runs nightly against Docker servers (interop.yml). The
+  # tag "screenshots" adds the tests that need Chrome. "make site" runs them.
   build-tags:
     - interop
+    - screenshots
 
 linters:
   # The standard set is errcheck, govet, ineffassign, staticcheck and unused.

@@ -18,6 +18,7 @@
 #     (anchore/sbom-action/download-syft). Dependabot updates the actions, not
 #     these inputs;
 #   - the golangci-lint version that ci.yml gives to golangci-lint-action;
+#   - chromedp, in go.mod (see the ignore list of the gomod entry);
 #   - the release-please version in the "$schema" URL of
 #     release-please-config.json. Keep it the same as the release-please
 #     version inside googleapis/release-please-action (release-please.yml).
@@ -45,6 +46,12 @@ updates:
       # The plan pins go-imap/v2 to exactly v2.0.0-beta.8 (see the global
       # constraints). Change it only on purpose, never through Dependabot.
       - dependency-name: github.com/emersion/go-imap/v2
+      # Only the tests that make the images of the docs site use chromedp, so
+      # it is not in the released binary or image. The prefix "fix" would make
+      # each update propose a release of an unchanged program. Only chromedp
+      # needs go-json-experiment/json.
+      - dependency-name: github.com/chromedp/*
+      - dependency-name: github.com/go-json-experiment/json
 
   # The actions in .github/workflows, pinned by commit SHA. Dependabot updates
   # the SHA and the tag in the comment after it.

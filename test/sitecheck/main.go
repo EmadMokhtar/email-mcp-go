@@ -1,5 +1,4 @@
-// Command sitecheck checks the built docs site. It is the last step of
-// "make site":
+// Command sitecheck checks the built docs site. "make site" runs it after Hugo:
 //
 //	go run ./test/sitecheck -public site/public -base /email-mcp-go/ -root .
 //

@@ -32,7 +32,7 @@ SITE_BASE_PATH ?= /email-mcp-go/
 # templates stop the build when it is empty.
 SITE_VERSION := $(shell sed -n 's/.*"\.": "\(.*\)".*/\1/p' .release-please-manifest.json)
 
-.PHONY: build test lint vuln site site-serve
+.PHONY: build test lint vuln screenshots site site-serve
 
 # build: compile a static binary into bin/
 build:
@@ -44,11 +44,13 @@ test:
 
 # lint: run go vet, staticcheck and golangci-lint (install golangci-lint v2 first).
 # The interop test (build tag "interop") is checked too, but not run: it needs
-# the Docker servers of test/interop/compose.yaml.
+# the Docker servers of test/interop/compose.yaml. The same goes for the tests
+# with the build tag "screenshots": they need Chrome, and "make site" runs them.
 lint:
 	go vet ./...
 	go vet -tags interop ./test/interop/
-	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) -tags interop ./...
+	go vet -tags screenshots ./internal/e2e/ ./test/sitecheck/
+	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) -tags interop,screenshots ./...
 	golangci-lint run
 
 # vuln: check dependencies and code for known vulnerabilities
@@ -61,17 +63,38 @@ site/static/icon.svg: internal/web/static/icon.svg
 	mkdir -p site/static
 	cp internal/web/static/icon.svg site/static/icon.svg
 
+# screenshots: make the images of the user manual. A Go test starts the whole
+# program, and a headless Chrome saves its pages in site/assets/screenshots/. The
+# images are not in git. The stamp file makes the test run only when the code
+# changed, so a change of the text of the site does not start Chrome.
+# "make -B screenshots" forces a new run. It needs Chrome: see
+# internal/testutil/chrometest.
+SCREENSHOT_INPUTS := $(shell find cmd internal -type f) go.mod go.sum
+SCREENSHOT_STAMP := site/assets/screenshots/.done
+
+$(SCREENSHOT_STAMP): $(SCREENSHOT_INPUTS)
+	EMAIL_MCP_SCREENSHOT_DIR=$(CURDIR)/site/assets/screenshots go test \
+		-tags screenshots -count=1 \
+		-run 'TestScreenshots|TestFindChrome|TestShotRefuses' \
+		./internal/e2e/ ./internal/testutil/chrometest/
+	touch $@
+
+screenshots: $(SCREENSHOT_STAMP)
+
 # site: build the docs site into site/public/. --cleanDestinationDir removes
 # files of earlier builds that the site no longer makes. --panicOnWarning turns
 # a Hugo warning into an error, so a warning cannot reach the published site.
-# The last step is the site check (test/sitecheck). It reads the built pages and
-# finds what Hugo cannot: a link that leaves the base path, a missing file or
-# anchor, a script, a missing alt text, a path in the source that does not exist.
-site: site/static/icon.svg
+# Then comes the site check (test/sitecheck). It reads the built pages and finds
+# what Hugo cannot: a link that leaves the base path, a missing file or anchor, a
+# script, a missing alt text, a path in the source that does not exist. The last
+# step opens every page in Chrome, at the width of a phone, and fails when a page
+# scrolls sideways.
+site: screenshots site/static/icon.svg
 	HUGO_PARAMS_VERSION=$(SITE_VERSION) $(HUGO) --source site --cleanDestinationDir --panicOnWarning --baseURL $(SITE_BASE_URL)
 	go run ./test/sitecheck -public site/public -base $(SITE_BASE_PATH) -root .
+	SITE_PUBLIC_DIR=$(CURDIR)/site/public SITE_BASE_PATH=$(SITE_BASE_PATH) go test -tags screenshots -count=1 -run TestNoSidewaysScroll ./test/sitecheck/
 
 # site-serve: show the docs site on http://localhost:1313/ and rebuild it when
 # a file changes.
-site-serve: site/static/icon.svg
+site-serve: screenshots site/static/icon.svg
 	HUGO_PARAMS_VERSION=$(SITE_VERSION) $(HUGO) server --source site
