@@ -29,8 +29,9 @@ The numbers in brackets are sections of the design document at
 >   - Users who need protection from such an agent should use hosted mode, or
 >     run the server under a separate OS user.
 
-Hosted mode (one server that many people use) cannot be installed yet. For now,
-the option is to run email-mcp under a separate operating system user: another
+Local mode is how email-mcp runs today: on your own computer, for you. Hosted
+mode (one server that many people use) cannot be installed yet. For now, the
+option is to run email-mcp under a separate operating system user: another
 account on your computer, not your own. In the quote, OS means operating system,
 the web UI (user interface) is the web pages of email-mcp, and the keychain is
 the password store of your operating system. The agent is the AI (artificial

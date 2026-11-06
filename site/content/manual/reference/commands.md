@@ -84,7 +84,7 @@ An empty password for `account reconnect` keeps the stored one.
 | `account reconnect` | `--replace-pinned-certificate` | When standard input is not a terminal: also needed to replace, with `--trust-fingerprint`, the trusted certificate of a server whose certificate changed. |
 | `account remove` | `--yes` | Removes without a question. Needed when standard input is not a terminal. |
 | `token create` | `--name <name>` | A name for the token, such as the client that uses it. Required. |
-| `token create` | `--scopes <list>` | What the token allows, as a comma-separated list of `email:read`, `email:organize`, `email:draft`, `email:send`, `email:delete`, or `all`. Required. |
+| `token create` | `--scopes <list>` | What the token allows, as a comma-separated list of `email:read`, `email:organize`, `email:draft`, `email:send`, `email:delete` (moves mail to the Trash), or `all`. Required. |
 | `token create` | `--expires-in <time>` | How long the token stays valid, such as `30d` or `12h`. The default is 90d, and the most is 3650d. |
 | `token create` | `--in-band-confirm` | Lets the app of this token answer a confirmation in its own window, instead of the approval page. Any program with the token can then answer for you. |
 | `import-env` | `--email <address>` | The email address of the account. The default is `IMAP_USERNAME`, when it is an address. |

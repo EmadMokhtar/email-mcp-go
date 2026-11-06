@@ -77,8 +77,10 @@ shows it.
 
 4. Click **Save**.
 
-A save that turns off a confirmation needs one more box. See [Full autonomy,
-limits and settings](/manual/daily-use/full-autonomy-and-limits/).
+A save needs one more box when it turns off **Confirm sends**, when it raises
+the level to Send or above while **Confirm sends** is off, and when it leaves
+both confirmations off. See [Full autonomy, limits and
+settings](/manual/daily-use/full-autonomy-and-limits/).
 
 ## Turn off the access of the agent
 

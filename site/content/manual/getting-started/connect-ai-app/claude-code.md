@@ -89,11 +89,11 @@ master key in the keychain.
 1. Make a token. `--name` is a name for the token, such as the app that uses
    it. `--scopes` says what the token allows. A scope is one permission of a
    token. The scopes are `email:read`, `email:organize`, `email:draft`,
-   `email:send` and `email:delete`, or `all`. Scopes add up: each scope also
-   allows the ones before it, so `email:send` also allows reading, organizing
-   and drafting. Give only the scopes that the app needs. Use `email:read` to
-   let the agent only read mail, and `email:send` to let it also send. The
-   command needs both flags:
+   `email:send` and `email:delete` (moves mail to the Trash), or `all`. Scopes
+   add up: each scope also allows the ones before it, so `email:send` also
+   allows reading, organizing and drafting. Give only the scopes that the app
+   needs. Use `email:read` to let the agent only read mail, and `email:send` to
+   let it also send. The command needs both flags:
 
    ```sh
    email-mcp token create --name claude-code --scopes email:send

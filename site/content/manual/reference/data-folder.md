@@ -39,9 +39,11 @@ it at once.
 
 email-mcp does not store your mail. It stores your account settings, the
 encrypted passwords, the messages that wait in the outbox (the queue of messages
-that wait to go out) until they are sent, and the activity log (the list of what
-the agent did, with the recipient lists and the arguments of tool calls
-encrypted). The activity log never holds a message body or attachment data. The
+that wait to go out) until they are sent, the sends and the moves to the Trash
+that wait for your approval (stored encrypted, and removed when the action
+ends), and the activity log (the list of what the agent did, with the recipient
+lists and the arguments of tool calls encrypted). The activity log never holds a
+message body or attachment data. The
 agent is the AI (artificial intelligence) program that uses the tools of
 email-mcp. A tool is one action that the agent can call, such as
 `search_messages`. The page [Activity and

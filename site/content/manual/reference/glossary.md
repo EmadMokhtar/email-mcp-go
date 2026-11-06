@@ -25,8 +25,13 @@ alphabetical order.
   file holds the master key as base64 text.
 - **Certificate pinning:** storing the fingerprint of a server certificate and
   refusing any other certificate later.
+- **Certificate:** the proof of identity that a server shows. email-mcp checks
+  it, and it can pin it. See [A local
+  bridge](/manual/getting-started/connect-account/#a-local-bridge).
 - **Checksum:** a short code that a function makes from the content of a file.
   Another content gives another code.
+- **Confirmation:** your "yes" before the agent can send mail or move mail to
+  the Trash. See [Confirmations](/manual/daily-use/confirmations/).
 - **cosign / Sigstore:** tools and a public service that sign files with
   short-lived certificates instead of long-lived keys.
 - **Data folder:** the folder where email-mcp keeps its data. See [Where the
@@ -66,6 +71,8 @@ alphabetical order.
   levels](/manual/daily-use/permission-levels/).
 - **Local bridge:** a program on your own computer that offers IMAP and SMTP
   servers for a mail service.
+- **Local mode:** how email-mcp runs today: on your own computer, for you. See
+  [Security](/manual/daily-use/security/).
 - **Local HTTP mode:** email-mcp runs a small server on your own computer, and
   an AI app that cannot start a program connects to it with a token. See [Local
   HTTP mode](/manual/reference/local-http-mode/).

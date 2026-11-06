@@ -66,8 +66,9 @@ your AI app. See [The master key](/manual/reference/master-key/).
 3. Give the app the address `http://127.0.0.1:8765/mcp` and the token. The page
    of your app shows where they go.
 
-This token lets the app read mail and write drafts, but not send. Give only the
-scopes that the app needs.
+This token lets the app read mail and write drafts, but not send. Scopes add up
+(see below), so its highest level is 3 (Draft), and it also allows organizing.
+Give only the scopes that the app needs.
 
 ## Make a token in the browser
 
@@ -91,8 +92,8 @@ computer) make a token too, with no command. Do these steps in order:
 6. Click **Make a token**. The page shows "Copy this token now. It is shown only
    once." and the token. Copy it now. When you open the page again, it shows the
    name of the token, and never the token.
-7. Look at the section **Tokens**. It lists every token. The shot below shows it
-   with the token `my-app` of this page.
+7. Look at the section **Tokens**. It lists every token. The picture below shows
+   it with the token `my-app` of this page.
 
 {{< screenshot
   name="connections"
@@ -131,11 +132,11 @@ page of email-mcp.
   5 that says what the agent may do with the mail of an account), and a level
   includes every level under it. The agent is the AI (artificial intelligence)
   program that uses the tools of email-mcp. So `email:send` alone also allows
-  reading, organizing and drafting. `email:delete` allows everything. A token
-  works on every account of the install. The level that applies to an account is
-  the lower of the account level and the highest level of the token. `token
-  create` and `token list` print it, for example `effective maximum level: 4
-  (Send), includes read, organize, draft`.
+  reading, organizing and drafting. `email:delete` (moves mail to the Trash)
+  allows everything. A token works on every account of the install. The level
+  that applies to an account is the lower of the account level and the highest
+  level of the token. `token create` and `token list` print it, for example
+  `effective maximum level: 4 (Send), includes read, organize, draft`.
 - **A token ends.** A new token stops working after 90 days. Choose another
   time with `--expires-in`, such as `--expires-in 30d` or `--expires-in 12h`
   (from 1 minute to 3650 days). A token from before this rule has no end date
@@ -168,7 +169,7 @@ page of email-mcp.
 - The server listens only on a loopback address (127.0.0.1, [::1] or
   localhost): an address that only your own computer can reach. It refuses to
   start on any other address, for example `--http 0.0.0.0:8765`, because local
-  HTTP has no TLS (Transport Layer Security: no encryption).
+  HTTP has no TLS (Transport Layer Security: the encryption of a connection).
 - It refuses requests that come from a web page (requests with an `Origin`
   header), unless you allow that origin with `--allow-origin`.
 - `email-mcp token list` shows the tokens. `email-mcp token revoke <id>` stops

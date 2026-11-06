@@ -24,13 +24,18 @@ Connect at least one account with `email-mcp setup` (see
 
 - The config (the settings file) of the AI app never holds your mail password.
   email-mcp keeps the passwords in its own encrypted database.
-- The only setting an app may need is `EMAIL_MCP_KEK`, and only when your master
+- An app may need the setting `EMAIL_MCP_KEK`, and only when your master
   key is a file (see [The master key](/manual/reference/master-key/)).
   `EMAIL_MCP_KEK` is an environment variable: a named setting that a program
   reads from its surroundings. KEK means key encryption key. The master key is
   the key that protects your stored passwords. The email-mcp commands that you
   run yourself in a terminal, such as `email-mcp setup`, `email-mcp token
   create` and `email-mcp serve --http`, need the same value of `EMAIL_MCP_KEK`.
+  An app needs one more setting, `EMAIL_MCP_DATA_DIR`, only when you use a data
+  folder other than the default one, for example a new folder that you made
+  after you lost the old key (see [Where the data
+  lives](/manual/reference/data-folder/)). Set it the same way, in the config
+  of the app and in your terminal.
 
 ## Choose your app
 

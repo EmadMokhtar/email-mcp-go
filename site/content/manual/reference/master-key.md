@@ -108,8 +108,8 @@ claude mcp add --scope user --env EMAIL_MCP_KEK=file:/home/you/.email-mcp.key \
 name. Otherwise Claude Code reads the name as another variable.)
 
 If `doctor` says that the value is not valid, see the entry "The value of
-EMAIL_MCP_KEK is not valid" of
-[Troubleshooting](/manual/daily-use/troubleshooting/).
+EMAIL_MCP_KEK is not valid" of [Troubleshooting](
+/manual/daily-use/troubleshooting/#the-value-of-email_mcp_kek-is-not-valid).
 
 ## The key file
 
@@ -138,8 +138,8 @@ email-mcp does not check the mode there.
 The command `ls -l` shows the mode in its first column. `-rw-------` is mode
 0600 (a macOS system may add a sign `@` after it). To fix a wrong mode, run
 `chmod 600` and the path of the file. `chmod` changes the mode of a file. See
-the entry "The master key file has the wrong mode" of
-[Troubleshooting](/manual/daily-use/troubleshooting/).
+the entry "The master key file has the wrong mode" of [Troubleshooting](
+/manual/daily-use/troubleshooting/#the-master-key-file-has-the-wrong-mode).
 
 ### Make a key file
 

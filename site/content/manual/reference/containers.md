@@ -44,9 +44,9 @@ image and try it.
    its network), not to its loopback address **[not verified]**. And email-mcp
    refuses to listen on any address that is not a loopback address: `serve
    --http 0.0.0.0:8765` stops at once. This is on purpose: local HTTP mode has
-   no TLS (Transport Layer Security: no encryption), so it must never be open to
-   a network.
-4. **The web interface is not reachable either.** `email-mcp setup` and the
+   no TLS (Transport Layer Security: the encryption of a connection), so it must
+   never be open to a network.
+4. **The web pages are not reachable either.** `email-mcp setup` and the
    approval links use the name `email-mcp.localhost`, which the server answers
    only on 127.0.0.1 inside the container. Your browser, outside the container,
    cannot open it.

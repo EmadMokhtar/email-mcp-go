@@ -25,10 +25,10 @@ pages run only while an email-mcp program serves them: if they are closed, see
 
 - **See your accounts.** The page **Accounts** lists them. Each account shows
   its status (**Connected**, or **Needs to be reconnected**), its mail level (a
-  number from 0 to 5 that says what the agent may do with its mail) and its
-  provider (the kind of server behind it, such as IMAP and SMTP). IMAP
-  (Internet Message Access Protocol) is the protocol for reading mail, and SMTP
-  (Simple Mail Transfer Protocol) is the protocol for sending mail. The command
+  number from 0 to 5 that says what the agent may do with its mail) and the
+  kind of server behind it. The page shows "IMAP and SMTP". IMAP (Internet
+  Message Access Protocol) is the protocol for reading mail, and SMTP (Simple
+  Mail Transfer Protocol) is the protocol for sending mail. The command
   `email-mcp account list` prints the same list. The agent is the AI program
   that uses the tools of email-mcp.
 - **Add an account.** See [Connect your first

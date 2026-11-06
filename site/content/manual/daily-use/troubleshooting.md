@@ -120,15 +120,16 @@ are in the database already (see the next entry).
 To make a key file for a new data folder, set `EMAIL_MCP_KEK` to a path where no
 file exists, and run any command that opens the data, such as `email-mcp account
 list`. email-mcp then makes a valid key file with mode 0600. You can also make
-one yourself. The first command writes 32 random bytes as base64, and the
-second command sets the mode 0600:
+one yourself. This command writes 32 random bytes as base64 text. `umask 077`
+makes new files that only you can read, and the round brackets keep this setting
+inside this one command:
 
 ```sh
-openssl rand -base64 32 > /home/you/.email-mcp.key
-chmod 600 /home/you/.email-mcp.key
+(umask 077; openssl rand -base64 32 > /home/you/.email-mcp.key)
 ```
 
-The page [The master key](/manual/reference/master-key/) says more.
+The page [The master key](/manual/reference/master-key/#make-a-key-file) says
+more.
 
 ### The master key file has the wrong mode
 
@@ -237,7 +238,7 @@ certificate changed](#the-password-or-the-certificate-changed).
 ### The agent says that it could not connect to the mail server
 
 The server refused the connection or closed it at once, or its host was not
-found. With a local bridge, such as ProtonMail Bridge, start the bridge.
+found. With a local bridge, such as Proton Mail Bridge, start the bridge.
 Otherwise check the network and the server settings. `email-mcp account test
 <id>` tests the connection. The status `ok` of `list_accounts` does not say that
 the server can be reached: it only says that the server did not refuse the
@@ -252,8 +253,9 @@ the browser and without a browser.
 ### The server settings changed
 
 A new host, port or security needs a new account. Remove the account and add it
-again. The page [Manage accounts](/manual/daily-use/manage-accounts/) shows how,
-in the section "Change the server settings of an account".
+again. The page [Manage accounts](
+/manual/daily-use/manage-accounts/#change-the-server-settings-of-an-account)
+shows how, in the section "Change the server settings of an account".
 
 ### A web page says to run `email-mcp setup`
 

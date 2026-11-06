@@ -117,6 +117,11 @@ address, so nobody else gets it.
    server accepted the message." Click **Reject** instead if you do not want to
    send the message. Then nothing is sent.
 
+   If you answered in the form of your AI app, there is no page to click. The
+   message is sent when you submit the form with the box ticked, and the result
+   goes to the agent. If you do not want to send the message, do not tick the
+   box: every other answer is a no, and nothing is sent.
+
 The email-mcp program that runs for your AI app serves the approval page.
 `email-mcp setup` does not need to run, so you can stop it. When the AI app
 starts email-mcp itself (over stdio: the AI app starts the program and talks to

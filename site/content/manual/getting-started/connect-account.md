@@ -218,7 +218,7 @@ again](/manual/daily-use/web-pages/#open-the-pages-again)).
 ## A local bridge
 
 A local bridge (a program on your own computer that offers IMAP and SMTP
-servers for a mail service), such as ProtonMail Bridge, uses a certificate that
+servers for a mail service), such as Proton Mail Bridge, uses a certificate that
 no known authority signed. An authority is an organization that your computer
 trusts to sign certificates. email-mcp then shows the SHA-256 fingerprint of
 the certificate (a short, unique code of it). Check it with the bridge, then

@@ -125,7 +125,9 @@ These are the other results that the page can show:
 - **Sending**: "The mail server is still working on it. Reload this page to see
   the result."
 - **Not sent**: "The mail server did not take the message, and it will not try
-  again. Ask the agent to send it again."
+  again. Ask the agent to send it again." After a long sleep of your computer,
+  the message may have gone out all the same. See [Known
+  limitations](/manual/reference/known-limitations/) before you send it again.
 - **Rejected**: "Nothing was done."
 - **Cancelled**: "The message was cancelled before it went out."
 - **Expired**: "It can no longer be approved."

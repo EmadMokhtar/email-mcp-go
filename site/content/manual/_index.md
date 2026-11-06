@@ -76,7 +76,8 @@ Read these four pages in order. After them, you have a working setup.
 - I want to [cancel a send](/manual/daily-use/activity-and-undo/#cancel-a-send).
 - I want to [see what the agent
   did](/manual/daily-use/activity-and-undo/).
-- I want to [fix a failed login](/manual/daily-use/troubleshooting/).
+- I want to [fix a failed
+  login](/manual/daily-use/troubleshooting/#an-account-fails).
 - I want to [use an AI app that cannot start a
   program](/manual/reference/local-http-mode/).
 - I want to [check a download](/manual/reference/verify-a-release/).
