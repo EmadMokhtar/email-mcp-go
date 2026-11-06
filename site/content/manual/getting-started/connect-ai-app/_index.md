@@ -9,10 +9,11 @@ code_areas:
 
 After this page, you know which page to follow for your AI (artificial
 intelligence) app. An AI app (such as Claude Code) is the program that starts
-email-mcp and calls its tools. A tool is one action that the agent can call,
-such as `search_messages`. An AI app that starts and uses MCP (Model Context
-Protocol) servers is also called a "harness". This part shows how to add
-email-mcp to Claude Code, Claude Desktop, Cursor, VS Code and the Codex CLI.
+email-mcp and calls its tools. The agent is the AI program that uses these
+tools. A tool is one action that the agent can call, such as `search_messages`.
+An AI app that starts and uses MCP (Model Context Protocol) servers is also
+called a "harness". This part shows how to add email-mcp to Claude Code, Claude
+Desktop, Cursor, VS Code and the Codex CLI.
 
 ## Before you start
 

@@ -8,7 +8,8 @@ code_areas:
 ---
 
 After this page, VS Code starts email-mcp, an MCP (Model Context Protocol)
-server, and can use its tools. A tool is one action that the agent can call,
+server, and can use its tools. The agent is the AI (artificial intelligence)
+program that uses these tools. A tool is one action that the agent can call,
 such as `search_messages`.
 
 ## Source and date
@@ -43,6 +44,10 @@ Notation: a text format for data):
   }
 }
 ```
+
+The path in this example is only an example: use the absolute path of your own
+program (the full path of the program file). Find it with `which email-mcp`, or
+`where email-mcp` on Windows.
 
 ## If your master key is a file
 
@@ -91,6 +96,13 @@ the token when the server starts for the first time:
 }
 ```
 
+## What you should see
+
+Ask the agent: "List my email accounts." The agent lists the accounts that you
+connected, with the level and the status of each. If the agent says that it has
+no email tools, see [Your first
+use](/manual/getting-started/first-use/#ask-the-first-question).
+
 ## Confirmation
 
 The extension guide lists elicitation ("request input from the user") among the
@@ -103,3 +115,5 @@ approval link (a link to a web page where you approve or reject the send).
 
 The page [How each AI app confirms](/manual/daily-use/app-confirmation/)
 compares the five apps.
+
+Next: [Your first use](/manual/getting-started/first-use/)

@@ -27,6 +27,10 @@ Moving mail to the Trash also needs level 5 first. A level is a number from 0 to
 5 that says what the agent may do with the mail of an account. See [Permission
 levels](/manual/daily-use/permission-levels/).
 
+One move to the Trash is outside these rules: the tool `discard_draft` moves a
+draft (a message that is saved but not sent) to the Trash at level 3, and it
+does not ask you. **Confirm deletes** does not apply to it.
+
 ## The path of a send
 
 A send goes through five steps. The agent asks to send. email-mcp checks that
@@ -69,11 +73,12 @@ The server asks in one of two ways:
   HTTP mode](/manual/reference/local-http-mode/)).
 - **With an approval link.** Otherwise the tool answers `pending_approval` with
   a link to the **Waiting for you** page (a web page where you approve or reject
-  the send). Open it in the browser that `email-mcp
-  setup` signed in, and click **Approve and send** (for a send) or **Approve and
-  move to Trash** (for a move to the Trash), or click **Reject**. The link
-  expires after 24 hours. The agent can check the result with
-  `get_send_status`. The page [The web pages](/manual/daily-use/web-pages/)
+  the send). Open it in the browser that `email-mcp setup` signed in. It must
+  also be a browser that no agent controls (see
+  [Security](/manual/daily-use/security/)). Click **Approve and send** (for a
+  send) or **Approve and move to Trash** (for a move to the Trash), or click
+  **Reject**. The link expires after 24 hours. The agent can check the result
+  with `get_send_status`. The page [The web pages](/manual/daily-use/web-pages/)
   lists every page of email-mcp.
 
 You must answer the form within 10 minutes. After that, nothing is done, and the

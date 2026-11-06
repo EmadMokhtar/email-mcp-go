@@ -33,6 +33,27 @@ page [Connect your first
 account](/manual/getting-started/connect-account/#sign-in-to-the-web-pages)
 has the steps.
 
+## Open the pages again
+
+The web pages run only while an email-mcp program serves them. `email-mcp setup`
+serves them for as long as it runs. The email-mcp program that your AI app
+started serves them too, but it starts them only when it gives you a link. Each
+time, the pages get a new port (the number that names one service on an
+address). So a tab or a bookmark from an earlier time finds nothing.
+
+To open the pages, run this in a terminal (a window where you type commands),
+and open the link that it prints. Keep the terminal open while you use the
+pages:
+
+```sh
+email-mcp setup
+```
+
+Press Ctrl-C (hold the Ctrl key and press C) when you are done. The page
+[Connect your first
+account](/manual/getting-started/connect-account/#sign-in-to-the-web-pages) has
+the steps.
+
 ## The menu
 
 After you sign in, every page has a menu. On a wide window the menu is at the

@@ -1,6 +1,6 @@
 ---
 title: User manual
-description: email-mcp gives an AI agent access to your email. This manual shows how to install it, connect an account, and use it every day.
+description: email-mcp gives an AI agent access to your email, and this manual shows how to install it, connect an account, and use it every day.
 weight: 2
 code_areas:
   - cmd/email-mcp/main.go
@@ -25,7 +25,8 @@ Claude Code, call tools that other programs offer.
   also write drafts, also send, also move mail to the Trash. Each choice is a
   level: a number from 0 (no access) to 5 (also move mail to the Trash).
 - By default, every send waits for your "yes". A move to the Trash needs level
-  5 first, and then it waits for your "yes" too.
+  5 first, and then it waits for your "yes" too. The one exception is a draft:
+  at level 3, the agent can move a draft to the Trash, and it does not ask you.
 - One server can hold several accounts.
 
 ## How the parts fit

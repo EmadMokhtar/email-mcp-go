@@ -46,15 +46,19 @@ before the agent moves mail to the Trash. So:
 - reading, organizing and writing drafts (messages that are saved but not sent)
   happen without questions;
 - every send asks you first;
-- moving mail to the Trash is not possible until you raise the level to 5.
+- moving mail to the Trash is not possible until you raise the level to 5. The
+  one exception is a draft: at level 3, the agent can move a draft to the Trash
+  with `discard_draft`, and it does not ask you.
 
 The page [Confirmations](/manual/daily-use/confirmations/) explains the two
 switches.
 
 ## Change a level
 
-Do these steps in the browser where you signed in with `email-mcp setup`. Each
-button name is written as the page shows it.
+Do these steps in the browser where you signed in with `email-mcp setup`. The
+web pages run only while an email-mcp program serves them: if they are closed,
+see [Open the pages again][open] first. Each button name is written as the page
+shows it.
 
 1. Click **Accounts** in the menu.
 
@@ -97,3 +101,9 @@ N**. **Save** never applies a requested level.
 The requested level shows in a box at the top of the page. It starts with "A
 request asks to set mail to level" and the number and the name of the level,
 and it says "Nothing has changed yet." Apply the level only if you agree.
+
+This holds for an agent that can only call the tools of email-mcp. It does not
+hold for an agent that runs shell commands as you, or for an agent that controls
+your browser. The page [Security](/manual/daily-use/security/) says more.
+
+[open]: /manual/daily-use/web-pages/#open-the-pages-again

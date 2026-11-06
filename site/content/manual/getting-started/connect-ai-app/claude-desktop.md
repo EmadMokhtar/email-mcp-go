@@ -8,8 +8,9 @@ code_areas:
 ---
 
 After this page, Claude Desktop starts email-mcp, an MCP (Model Context
-Protocol) server, and can use its tools. A tool is one action that the agent can
-call, such as `search_messages`.
+Protocol) server, and can use its tools. The agent is the AI (artificial
+intelligence) program that uses these tools. A tool is one action that the agent
+can call, such as `search_messages`.
 
 ## Source and date
 
@@ -81,3 +82,5 @@ If it does not, every send that needs a confirmation returns the approval link
 
 The page [How each AI app confirms](/manual/daily-use/app-confirmation/)
 compares the five apps.
+
+Next: [Your first use](/manual/getting-started/first-use/)

@@ -34,7 +34,8 @@ level is a number from 0 to 5 that says what the agent may do (see [Permission
 levels](/manual/daily-use/permission-levels/)). If the agent can already send
 without asking and stays that way, a change asks nothing new.
 
-To turn off **Confirm sends**, do these steps in the browser:
+To turn off **Confirm sends**, do these steps in the browser. If the web pages
+are closed, see [Open the pages again][open] first:
 
 1. Click **Accounts** in the menu, and then **Permissions and settings** on the
    account.
@@ -93,7 +94,7 @@ whole number of seconds from 0 to 300. A count of 0 allows nothing.
 |---|---|---|
 | **Mail level** | The level of the account: what the agent may do with its mail. The list has 0 Off, 1 Read, 2 Organize, 3 Draft, 4 Send and 5 Delete (moves mail to the Trash). | 4 Send |
 | **Confirm sends** | Asks you before the agent sends a message. | On |
-| **Confirm deletes** | Asks you before the agent moves mail to the Trash. | On |
+| **Confirm deletes** | Asks you before the agent moves mail to the Trash. It does not apply to `discard_draft`, which moves a draft to the Trash at level 3. | On |
 | **Sends per hour** | The most sends in one hour. | 20 |
 | **Sends per day** | The most sends in one day. | 200 |
 | **Recipients per message** | The most recipients in one message. | 50 |
@@ -106,3 +107,5 @@ whole number of seconds from 0 to 300. A count of 0 allows nothing.
 The settings page also has the section **Reconnect the account** and the section
 **Remove the account**. The page [Manage
 accounts](/manual/daily-use/manage-accounts/) explains them.
+
+[open]: /manual/daily-use/web-pages/#open-the-pages-again

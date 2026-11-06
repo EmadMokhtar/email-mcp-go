@@ -8,7 +8,8 @@ code_areas:
 ---
 
 After this page, Claude Code starts email-mcp, an MCP (Model Context Protocol)
-server, and can use its tools. A tool is one action that the agent can call,
+server, and can use its tools. The agent is the AI (artificial intelligence)
+program that uses these tools. A tool is one action that the agent can call,
 such as `search_messages`.
 
 ## Source and date
@@ -173,3 +174,5 @@ compares the five apps.
 
 Also add the recommended deny rules (see the page [Recommended Claude Code deny
 rules](/manual/daily-use/deny-rules/)).
+
+Next: [Your first use](/manual/getting-started/first-use/)

@@ -160,9 +160,23 @@ The line starts with `master key (...): FAIL app:` and says one of these:
 - `the master key file path must not have a ".." part`: write the path without
   `..`.
 
-A line that starts with `FAIL secrets: keychain` means that the keychain of your
-operating system (its password store) gave an error. The text after it is the
-answer of the keychain.
+### The keychain gives an error
+
+The line starts with `master key (keychain): FAIL secrets: keychain`, or
+another command stops with `secrets: keychain` and an error. The keychain of
+your operating system (its password store) gave an error. The text after it is
+the answer of the keychain. A computer with no keychain, such as WSL (Windows
+Subsystem for Linux) or a server that you reach over SSH (Secure Shell: a way to
+log in to another computer over a network), gives this error at the first
+command.
+
+The fix is a key file. Set `EMAIL_MCP_KEK` to `file:` and the absolute path of a
+key file, in this terminal and in the config of your AI app, and run the command
+again. The page [The master
+key](/manual/reference/master-key/#make-a-key-file) shows how to make the file.
+This fix is for a data folder that has no stored keys yet. A data folder with
+stored keys needs the master key that protects them, and a new key cannot open
+them.
 
 ### `database schema` fails
 

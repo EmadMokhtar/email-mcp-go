@@ -17,7 +17,9 @@ code_areas:
 
 After this page, you can add, reconnect, test and remove a mail account. Do the
 steps in the browser where you signed in with `email-mcp setup`, or in a
-terminal (a window where you type commands) if you have no browser.
+terminal (a window where you type commands) if you have no browser. The web
+pages run only while an email-mcp program serves them: if they are closed, see
+[Open the pages again](/manual/daily-use/web-pages/#open-the-pages-again).
 
 ## The other tasks
 

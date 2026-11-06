@@ -68,7 +68,8 @@ The agent or you can cancel a send during this window. You can cancel at any
 permission level (a level is a number from 0 to 5 that says what the agent may
 do with the mail of an account).
 
-To cancel in the browser:
+To cancel in the browser (if the web pages are closed, see [Open the pages
+again][open] first):
 
 1. Click **Activity** in the menu.
 
@@ -89,9 +90,9 @@ the tool `cancel_send`. The page then says **Cancelled**. See
 [Confirmations](/manual/daily-use/confirmations/).
 
 To cancel without a browser, run these two commands in a terminal (a window
-where you type commands). The first one lists the sends that wait to go out,
-with their ids. The second one stops one send. Replace `<id>` with the id of the
-send:
+where you type commands). They need no web page and no sign-in. The first one
+lists the sends that wait to go out, with their ids. The second one stops one
+send. Replace `<id>` with the id of the send:
 
 ```sh
 email-mcp outbox list
@@ -104,3 +105,4 @@ prints "Cancelled the send" and the id, and "It will not go out." The page
 [Commands](/manual/reference/commands/) lists every command of email-mcp.
 
 [all]: /manual/daily-use/full-autonomy-and-limits/#all-settings-of-an-account
+[open]: /manual/daily-use/web-pages/#open-the-pages-again

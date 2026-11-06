@@ -9,6 +9,7 @@ code_areas:
 
 After this page, the Codex CLI (the Codex program that you use in a terminal)
 starts email-mcp, an MCP (Model Context Protocol) server, and can use its
+tools. The agent is the AI (artificial intelligence) program that uses these
 tools. A tool is one action that the agent can call, such as `search_messages`.
 
 ## Source and date
@@ -86,6 +87,13 @@ url = "http://127.0.0.1:8765/mcp"
 bearer_token_env_var = "EMAIL_MCP_TOKEN"
 ```
 
+## What you should see
+
+Ask the agent: "List my email accounts." The agent lists the accounts that you
+connected, with the level and the status of each. If the agent says that it has
+no email tools, see [Your first
+use](/manual/getting-started/first-use/#ask-the-first-question).
+
 ## Confirmation
 
 **[not verified]**. The docs do not mention elicitation (a way for a server to
@@ -98,3 +106,5 @@ does not replace the confirmation of email-mcp, and it cannot turn it off.
 
 The page [How each AI app confirms](/manual/daily-use/app-confirmation/)
 compares the five apps.
+
+Next: [Your first use](/manual/getting-started/first-use/)

@@ -25,6 +25,26 @@ browser. You need your email address, and the password or the app password of
 the account. An app password is a separate password for one program. The
 section [App passwords](#app-passwords) says more.
 
+## If your computer has no keychain
+
+The first command makes your master key (the key that protects your stored
+passwords). By default, it keeps the key in the keychain (the password store of
+your operating system). A computer with no keychain, such as WSL (Windows
+Subsystem for Linux) or a server that you reach over SSH (Secure Shell: a way to
+log in to another computer over a network), stops with an error about the
+keychain. On such a computer, set the environment variable `EMAIL_MCP_KEK` (a
+named setting that a program reads from its surroundings) to a key file before
+the first command. The first command then makes the file. The folder of the
+path must exist, and the path is an example:
+
+```sh
+export EMAIL_MCP_KEK=file:/home/you/.email-mcp.key
+```
+
+Use the same value in the config of your AI app later. The page [The master
+key](/manual/reference/master-key/#make-a-key-file) says more about the key
+file.
+
 ## In the browser
 
 ### Sign in to the web pages
@@ -191,7 +211,9 @@ file, open the printed link yourself. The command reminds you of this.
 ## Stop `setup` when you are done
 
 The pages run until you press Ctrl-C (hold the Ctrl key and press C) in the
-terminal. Stop `setup` when you are done.
+terminal. Stop `setup` when you are done. The web pages close with it. To open
+them again later, run `email-mcp setup` again (see [Open the pages
+again](/manual/daily-use/web-pages/#open-the-pages-again)).
 
 ## A local bridge
 

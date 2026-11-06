@@ -36,7 +36,8 @@ ways:
     without the flag, the server does not accept the answer of the app.
 - **Approval link:** in every other case, the tool answers `pending_approval`
   with a link to the **Waiting for you** page. Open it in the browser that
-  `email-mcp setup` signed in.
+  `email-mcp setup` signed in. It must also be a browser that no agent controls
+  (see [Security](/manual/daily-use/security/)).
 
 Use stdio when the app supports it. Use local HTTP only for an app that cannot
 start a program.
