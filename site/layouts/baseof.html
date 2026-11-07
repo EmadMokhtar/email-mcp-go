@@ -33,7 +33,7 @@
   <meta name="theme-color" content="#f4f6f3" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#131414" media="(prefers-color-scheme: dark)">
   {{- /* The title of the landing page says what the tool is, so it does not repeat the name of the site. */}}
-  <title>{{ if .IsHome }}{{ .Title }}{{ else }}{{ .Title }} - {{ site.Title }}{{ end }}</title>
+  <title>{{ .Title }}{{ if not .IsHome }} - {{ site.Title }}{{ end }}</title>
   {{- with .Description }}
   <meta name="description" content="{{ . }}">
   {{- end }}
