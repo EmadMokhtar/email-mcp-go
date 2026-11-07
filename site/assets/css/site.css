@@ -598,8 +598,10 @@ svg {
   together, and this part has no colour value of its own.
 
   The page has four widths. Below 680px is a phone. From 680px the rows have
-  two columns. From 900px the first screen has two columns. From 1100px nothing
-  changes but the room around the column. The rules use min-width at 680px and
+  two columns. From 900px the first screen has two columns. The last width of
+  the spec, 1100px and wider, has no rule of its own: the column grows until
+  it is 66rem wide (a window of about 1144px with its gutters), and after that
+  only the room around it grows. The rules use min-width at 680px and
   900px, and max-width just under them (679.98px and 899.98px), so a window of
   exactly 680px or 900px gets the layout of the wider group.
 

@@ -12,16 +12,17 @@
 # request changes the code that a row names, read the words with that note
 # again.
 #
-# A few words differ from the spec, because the code wins. A comment next to
-# each says why. Three are in the body. In section 4, the heading says "You
-# see the message" and not "the whole message", and the paragraph says what an
-# AI app shows when it asks in its own window. Such a window shows only the
-# start of the text (previewBodyChars in internal/mcpserver/elicit.go), and
-# the approval page shows all of it. In section 3, a link to the Security page
-# of the manual follows "Only you can change a level": like the manual, the
-# page says where that holds. It holds for an agent that can only call the
-# tools of email-mcp, not for one that runs shell commands as you or controls
-# your browser.
+# A few words were first written differently in the spec. The code won, and
+# the spec was changed to match the page. A comment next to each says which
+# code the words follow. Three are in the body. In section 4, the heading says
+# "You see the message" and not "the whole message", and the paragraph says
+# what an AI app shows when it asks in its own window. Such a window shows
+# only the start of the text (previewBodyChars in
+# internal/mcpserver/elicit.go), and the approval page shows all of it. In
+# section 3, a link to the Security page of the manual follows "Only you can
+# change a level": like the manual, the page says where that holds. It holds
+# for an agent that can only call the tools of email-mcp, not for one that
+# runs shell commands as you or controls your browser.
 
 # The <title> of the page and its og:title.
 title: "email-mcp: let an AI agent use your email"  # T1
@@ -79,9 +80,8 @@ steps:
       Thursday and reply that 10:00 works." The agent uses the email tools to
       search, read, organize, write drafts and send.
   - title: Decide.
-    # The spec says "You see the whole message first". An AI app that asks in
-    # its own window shows only the start of the text, so the page says "the
-    # message" (T19, T24).
+    # An AI app that asks in its own window shows only the start of the text,
+    # so the page says "the message" and not "the whole message" (T19, T24).
     text: >-  # T3 T19
       By default, email-mcp holds each send until you approve it. You see the
       message first.
@@ -94,15 +94,15 @@ levels:
   - term: 1 Read
     text: Search and read messages and attachments.  # T13
   # move_messages refuses the Trash and every folder inside it, at every level
-  # (ErrMoveToTrash in internal/service/write.go). The spec says only "move
-  # messages", so the page adds "(not to the Trash)".
+  # (ErrMoveToTrash in internal/service/write.go), so the page adds "(not to
+  # the Trash)".
   - term: 2 Organize
     text: >-  # T13
       Mark as read, flag, tag, make folders and move messages (not to the
       Trash).
   # discard_draft moves a draft to the Trash at level 3, and it never asks
-  # (internal/service/write.go, DiscardDraft). The spec says only "Write
-  # drafts".
+  # (internal/service/write.go, DiscardDraft), so the page says so after
+  # "Write drafts".
   - term: 3 Draft
     text: >-  # T13 T16
       Write drafts, and move a draft to the Trash. Moving a draft does not ask
@@ -113,7 +113,7 @@ levels:
       send asks you first.
   # Confirm deletes covers trash_messages, the tool of this level, and not the
   # move of a draft at level 3. So the page says "each of these moves", not
-  # "every move" as the spec does.
+  # "every move".
   - term: 5 Delete
     text: >-  # T13 T16 T17
       Move messages to the Trash. By default, each of these moves asks you
