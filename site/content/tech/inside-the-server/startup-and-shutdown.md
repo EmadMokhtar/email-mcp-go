@@ -1,6 +1,6 @@
 ---
 title: Startup and shutdown
-description: The order in which email-mcp builds, runs and stops its parts, and why that order means that a send is never lost and never sent twice.
+description: The order in which email-mcp builds, runs and stops its parts, and why that order means that a send is never sent twice, and that a send that is cut off is recorded as failed (delivery unknown).
 weight: 50
 code_areas:
   - internal/app/app.go
@@ -17,9 +17,10 @@ code_areas:
 ---
 
 This page explains the order in which the program builds its parts, runs its
-background work and stops. The order matters for one reason: a send must never
-be lost and never be sent twice. Read it before you add a part that `app.Open`
-builds, a background job, or a step to the stop.
+background work and stops. The order matters because a send must never be sent
+twice, and a send that may not have gone out must show as failed and not
+disappear. Read it before you add a part that `app.Open` builds, a background
+job, or a step to the stop.
 
 The package `app` in {{< src "internal/app/app.go" >}} builds the parts and
 connects them. A command opens an `App`, and a long-running command (`serve`,
@@ -60,7 +61,7 @@ to go out.
 6. **The web server, then the service.** The web server is the local web site of
    the person, and the service runs the use cases. The service needs the links
    of the web server, so the web server comes first. Then `Attach` gives the
-   service to the web server, which closes the loop.
+   service to the web server, so each one has the other.
 
 `Open` writes to the database in steps 2 and 4: the migrations, the row of the
 local tenant and the server key, each only when it is missing. It starts no
@@ -119,10 +120,12 @@ and write its result. If it were cut off, its item would end as "delivery
 unknown". A send without an undo window runs inside its tool call or its web
 approval, which is why step 3 waits for those too.
 
-**Why the web server stays up in step 4.** The person can still reject an action
-that waits, and can still cancel a queued send on the Activity page. Nothing
-else in the process can cancel a queued send, because tool calls are refused.
-The command `email-mcp outbox cancel` also works from another process.
+**Why the web server stays up in step 4.** The web server starts only when a
+link needs it. When this program already runs it, the person can still reject an
+action that waits, and can still cancel a queued send on the Activity page.
+Nothing else in the process can cancel a queued send, because tool calls are
+refused. The command `email-mcp outbox cancel` works from another process in
+every case.
 
 **Why a stop has a budget.** `StopTimeout` is `drainWait` (5 minutes) plus
 `outbox.SendDeadline` (13 minutes) plus 2 minutes, which is 20 minutes. A stop
@@ -135,11 +138,12 @@ and the log says it.
 ## The signals and a second Ctrl-C
 
 `main` in {{< src "cmd/email-mcp/main.go" >}} listens for `os.Interrupt` (the
-signal that Ctrl-C sends) and SIGTERM (the signal that asks a program to stop).
-The first signal starts the clean stop. Then `main` gives the default handling
-back, so a second signal ends the program at once. A send that is cut off then
-stays `sending`, and it is never sent again. A program that runs the worker
-marks it `failed` ("delivery unknown") when it is 15 minutes old.
+signal that Ctrl-C sends: hold the Ctrl key and press C) and SIGTERM (the signal
+that asks a program to stop). The first signal starts the clean stop. Then
+`main` gives the default handling back, so a second signal ends the program at
+once. A send that is cut off then stays `sending`, and it is never sent again. A
+program that runs the worker marks it `failed` ("delivery unknown") when it is
+15 minutes old.
 
 ## Stdio and HTTP
 

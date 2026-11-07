@@ -62,7 +62,7 @@ purpose.
    the person answers. A MiB (mebibyte) is 1,048,576 bytes.
 3. **Limits that no wait can fix.** `checkSendLimits` refuses, with `ErrLimit`,
    a message with more recipients than the account allows, and a send limit of
-   0. It counts nothing. A full window is a different case: see step 9.
+   0. It counts nothing. A full limit is a different case: see step 9.
 4. **The question.** With no reason to ask, `deliver` runs at once with
    `UndoWindowAuto`. With a reason, `ask` stores the action and the person
    answers in one of two ways. Steps 5 to 8 depend on the channel. Steps 9 and
@@ -86,13 +86,14 @@ program log](/tech/inside-the-server/audit-and-logging/)).
   addresses that the mail goes to) is an address that the account never sent to.
 
 The known recipients are kept as keyed hashes, so the table holds no address.
-`recipientHashes` makes an HMAC-SHA-256 (HMAC is a hash-based message
-authentication code: a hash made with a secret key, here with the SHA-256 hash)
-of each lower-case address, with a key that is derived from the server key (see
-[Storage and secrets](/tech/inside-the-server/storage-and-secrets/)).
-`rememberRecipients` records the hashes after the outbox has accepted the
-message, also when the check is off. If that write fails, the program log gets a
-fixed code, and the next send to the address asks again.
+`recipientHashes` makes a keyed hash (HMAC-SHA-256: a hash made with a secret
+key; HMAC is hash-based message authentication code, and SHA-256 is Secure Hash
+Algorithm with a 256-bit result) of each lower-case address. The key is secret,
+and the database keeps it only in wrapped form (see [Storage and
+secrets](/tech/inside-the-server/storage-and-secrets/)). `rememberRecipients`
+records the hashes after the outbox has accepted the message, also when the
+check is off. If that write fails, the program log gets a fixed code, and the
+next send to the address asks again.
 
 ## Two ways to ask
 
@@ -129,11 +130,13 @@ that talks to the server). `canElicitInBand` in
   `RequestState` (a signed token that names the waiting action). The client
   shows the form to the person. `sendPreview` makes its text.
 - **Step 6a, the second call.** It is the same tool with the same arguments, the
-  answer and the state. `confirmAnswer` refuses a call that has only one of the
-  two. The answer is a yes only when it is an elicitation result with the action
-  `accept` and the field `confirm` set to the JSON (JavaScript Object Notation)
-  boolean true (`accepted`). Every other answer is a no, and so is the string
-  "true". Nothing in the arguments of a tool can say yes.
+  answer and the state. `Send` checks the permission and builds the message
+  again from these arguments (steps 1 and 2) before it looks at the answer.
+  `confirmAnswer` refuses a call that has only one of the two. The answer is a
+  yes only when it is an elicitation result with the action `accept` and the
+  field `confirm` set to the JSON (JavaScript Object Notation) boolean true
+  (`accepted`). Every other answer is a no, and so is the string "true". Nothing
+  in the arguments of a tool can say yes.
 - **A no** moves the action to `rejected` (`declineAnswer`), and the result is
   `declined`. A yes goes on to steps 7a and 8a.
 - A caller that may not confirm in band, and sends an answer, gets
@@ -184,9 +187,9 @@ The "yes" must be a yes to this message and no other. Five parts do this:
    message cannot be the payload, because `mime.Build` makes a different
    Message-ID and date each time. Every call builds the message from the payload
    that it reads back.
-2. **A hash.** `confirm.HashPayload` is the SHA-256 (Secure Hash Algorithm with
-   a 256-bit result: a fingerprint of bytes) of the kind of action, a zero byte
-   and the payload. It is stored with the action and in the `RequestState`.
+2. **A hash.** `confirm.HashPayload` makes a hash (a fingerprint of bytes) of
+   the kind of action, a zero byte and the payload. The action and the
+   `RequestState` both hold it.
 3. **A signed state.** `signing.Signer.Seal` in
    {{< src "internal/signing/signing.go" >}} makes the `RequestState` from the
    id of the action, the hash and the tenant, with an expiry of 10 minutes, and
@@ -210,13 +213,14 @@ The "yes" must be a yes to this message and no other. Five parts do this:
    the previews differ, the action is rejected and the error wraps
    `confirm.ErrPayloadChanged`.
 
-The order of the last two differs between the channels. In band, `answerSend`
-claims first and then compares. On the approval page (steps 7b and 8b),
-`approveSend` builds the message again with `rebuildApproval`, compares, checks
-the send limits, and only then moves the action to `approved` with `Transition`.
-`rebuildApproval` also makes the page, so the page shows exactly what Approve
-sends. If the page cannot build the whole message, Approve fails too, and the
-person can still reject.
+The order of the last two differs between the channels. In band, the second call
+builds the message first (step 6a), and then `answerSend` claims (step 7a) and
+compares (step 8a). On the approval page (steps 7b and 8b), `approveSend` builds
+the message again with `rebuildApproval`, compares, checks the send limits, and
+only then moves the action to `approved` with `Transition`. `rebuildApproval`
+also makes the page, so the page shows exactly what Approve sends. If the page
+cannot build the whole message, Approve fails too, and the person can still
+reject.
 
 A claim proves that the payload is the stored one, that the request is for this
 tenant, that it is in time, and that it happens once. It does not prove consent.
@@ -231,9 +235,9 @@ statement that ends the action deletes both.
 ## Delivery and the undo window
 
 `deliver` is step 9. It calls `Limiter.Reserve` for one send. The limiter (the
-part that counts sends in fixed windows) checks the hour window and the day
-window and counts in one transaction (a group of database steps that all happen
-or none do), so a declined or refused send uses no quota. A full window gives a
+part that counts sends per hour and per day) checks the hour limit and the day
+limit and counts in one transaction (a group of database steps that all happen
+or none do), so a declined or refused send uses no quota. A full limit gives a
 `*policy.RateLimitError` that says when to retry. Then `deliver` calls
 `Outbox.Enqueue` with the undo window: `UndoWindowAuto` when nobody confirmed,
 and `UndoWindowConfirmed` after a confirmation.
@@ -280,16 +284,22 @@ outbox item starts as `queued`, or as `sending` when the window is 0. It ends as
   try ends the item as `failed`.
 - **Unknown results.** `SendDeadline` is 13 minutes from the claim. A send that
   runs into it is marked `failed` and is not tried again, because the server may
-  have the message. The same holds for an error made with `outbox.Permanent`. An
-  item that stays `sending` for 15 minutes (`recoverAfter`) is marked `failed`
-  by `RecoverInterrupted`, which each program calls at its start and then about
-  once a minute (`recoverEvery`).
+  have the message. An error made with `outbox.Permanent` also ends the item as
+  `failed` with no retry. An item that stays `sending` for 15 minutes
+  (`recoverAfter`) is marked `failed` by `RecoverInterrupted`, which the
+  programs that run the worker (`serve` and `setup`) call at their start and
+  then about once a minute (`recoverEvery`).
 - **A send that does not start.** If the program was told to stop after the
   claim and before the send, or less than 30 seconds (`minSendBudget`) of the
   send time is left, the item goes back to the queue. It is not a failed try.
-- **Many accounts.** The worker looks every second (`outboxTick`). In one pass
-  it sends at most one message for each account and four in all, so a slow mail
-  server does not hold up the other accounts.
+- **Many accounts.** The worker looks every second (`outboxTick`). An account
+  has at most one send in progress, and at most four sends run at the same time
+  in all (`maxParallelSends`). So a slow mail server does not delay the other
+  accounts.
+- **A stop.** A stop waits for the sends that run, sends the queued messages
+  that are due within 5 minutes (`drainWait`), and leaves the others queued for
+  the next start. See [Startup and
+  shutdown](/tech/inside-the-server/startup-and-shutdown/).
 
 The sender in {{< src "internal/app/sender.go" >}} does the send. It checks the
 level of the account again at each try, because a message can wait for minutes.
@@ -311,7 +321,9 @@ the level to Off and then cancel what waits (`CancelQueuedSend` in
 {{< src "internal/service/queue.go" >}} and
 {{< src "cmd/email-mcp/outbox.go" >}}). Once a send is running, the cancel is
 too late (`outbox.ErrTooLate`). While the program stops, it refuses every tool
-call, `cancel_send` too, and the person can still cancel.
+call, `cancel_send` too. During the stop, the Activity page can cancel only when
+this program already runs its web server. Otherwise `email-mcp outbox cancel`
+works, from another process.
 
 ## Trash uses the same path
 
@@ -321,7 +333,8 @@ and the daily limit is counted when the messages move (`trashNow`). The preview
 lists up to 20 messages (`trashPreviewMessages`). The payload is the sorted list
 of refs (the opaque ids that name messages), and the action is tied to the refs
 themselves, so there is no compare: an IMAP (Internet Message Access Protocol)
-message does not change under its UID, the number that names it in a folder.
+message does not change under its UID (unique identifier), the number that names
+it in a folder.
 
 ## Related pages
 

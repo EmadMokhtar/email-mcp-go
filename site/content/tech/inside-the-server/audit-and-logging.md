@@ -65,13 +65,6 @@ A tenant is the owner of a set of accounts. To seal a value is to encrypt it
 with the key of the tenant. [Storage and
 secrets](/tech/inside-the-server/storage-and-secrets/) explains how.
 
-
-A tenant is the owner of a set of accounts. To seal a value is to encrypt it
-with the key of the tenant. [Storage and
-secrets](/tech/inside-the-server/storage-and-secrets/) explains how.
-
-
-
 | Field | What it holds | How it is stored |
 |---|---|---|
 | `Time` | The time from the clock of the log, in whole milliseconds | Plain |
@@ -96,24 +89,25 @@ The table repeats the rules of `Detail` and the others with `CHECK` conditions
   their size instead. A test makes sure that every argument of every tool is
   either in the list or not there on purpose.
 - **A call that passed the schema** (the description of the arguments that the
-  tool accepts) keeps its argument values. A text over 2 KiB (`maxArgumentText`)
-  is cut, with a mark that says how long it was. Arguments over 256 KiB
-  (`audit.MaxArgumentBytes`) become a mark with the size. A KiB (kibibyte) is
-  1,024 bytes.
+  tool accepts) keeps its argument values. A long text is cut, with a mark that
+  says how long it was (`maxArgumentText`). Arguments that are very large become
+  a mark with their size (`audit.MaxArgumentBytes`).
 - **A call that failed the schema** keeps only the names and the sizes of its
-  arguments, at most 4 KiB (`maxRejectedArgumentBytes`). The text of a message
-  could be under any name, so the log keeps no value. The name of an unknown
-  tool is text from the agent. It goes in the sealed arguments, and the column
-  holds `unknown_tool`.
+  arguments, at most 4 KiB (`maxRejectedArgumentBytes`; a KiB, kibibyte, is
+  1,024 bytes). The text of a message could be under any name, so the log keeps
+  no value. The name of an unknown tool is text from the agent. It goes in the
+  sealed arguments, and the column holds `unknown_tool`.
 - **`Client` is not trusted.** The client chooses its name, and the log watches
   the client. So `Record` cleans the name: invalid UTF-8 (Unicode Transformation
   Format, 8 bits) and control, format, line and paragraph separator characters
   become U+FFFD, and the name is cut to 128 bytes. `Record` never refuses an
   entry because of the name, because a bad name must never hide an action.
-- **`Detail` is a code, never free text.** It has at most 64 characters from
-  `a-z`, `0-9` and `_`. `Tool` and `TokenID` come from the server and are
-  checked in the same way. `Record` refuses an entry with a bad one
-  (`ErrInvalidEntry`), and its error never shows a value.
+- **`Detail` is a code, never free text.** It has 0 to 64 characters from `a-z`,
+  `0-9` and `_`. `Tool` is not empty, and it is at most 128 bytes (`maxText`) of
+  valid UTF-8 with no control, format, line or paragraph separator character.
+  `TokenID` has 0 to 64 characters from `a-z` and `0-9`. All three come from the
+  server. `Record` refuses an entry with a bad one (`ErrInvalidEntry`), and its
+  error never shows a value.
 
 ### Rules for writers
 
@@ -157,8 +151,8 @@ that text can hold text from a mail server. Five parts keep this true:
 - **`errtype.Chain`** in {{< src "internal/errtype/errtype.go" >}} returns the
   Go type names of an error and of the errors it wraps, at most six. A type name
   holds no text from the error. The log gets this, never the error.
-- **`secrets.Secret`** prints `[redacted]`, so a value of this type cannot reach
-  a line by mistake.
+- **`secrets.Secret`** prints `[redacted]`, so a value of this type is hidden in
+  a line in the normal cases. Its doc comment lists what it does not cover.
 - **The logger of the SDK is not set.** The SDK writes error texts to it.
   `mcpserver.New` gives it no logger, and `Options.Logger` is a different logger
   that only gets fixed codes.
@@ -179,7 +173,8 @@ entry.
 2. Add only ids, counts, fixed codes and the name of a tool. Never add a secret,
    an address, a subject, a body, a token or the text of an error.
 3. For an error, add `errtype.Chain(err)`.
-4. Keep a secret value in the type `secrets.Secret`.
+4. Keep a secret value in the type `secrets.Secret`, and check the comment of
+   the type.
 5. Write nothing to standard output.
 6. If the person should see what happened, add an audit entry too, with a
    `detail` code.

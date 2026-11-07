@@ -37,7 +37,7 @@ the only one with actions. A level includes every level under it.
 |---|---|---|---|
 | 0 | Off | none | Nothing. The agent cannot use the account. |
 | 1 | Read | `ActRead` | Read and search messages, folders and tags. Read an attachment. Read the status of a send. |
-| 2 | Organize | `ActOrganize` | Set flags, add and remove tags, create folders and tags, and move messages to a folder that is not the Trash. |
+| 2 | Organize | `ActOrganize` | Set flags, add and remove tags, create folders and tags, and move messages between folders. `move_messages` refuses a Trash folder that email-mcp recognizes. |
 | 3 | Draft | `ActDraft` | Save a draft, and move a draft to the Trash with `discard_draft`. |
 | 4 | Send | `ActSend` | Send a message, a reply or a forward. Cancel a send. |
 | 5 | Delete | `ActTrash` | Move messages to the Trash. |
@@ -73,12 +73,12 @@ allowed when that level is at least the level that the action needs.
 
 | Rule | Where | When |
 |---|---|---|
-| Level and scopes | `authorize` in `service.go` | Before every use case, and before any call to a mail backend |
+| Level and scopes | `authorize` in `service.go` | Before every use case that acts on the mail of an account, and before any call to a mail backend |
 | The level again | `begin`, from `approveSend` and `approveTrash` | When the person approves an action |
 | The level again | `newSender` in `internal/app/sender.go` | At each try of an outbox item |
 | Limits that no wait can fix | `checkLimit` in `write.go` | Before the person is asked, with no count |
 | Counted limits | `Limiter.Reserve`, from `deliver` and `trashNow` | When the send reaches the outbox, and when the messages move |
-| No move into the Trash | `Move` and `CreateFolder` | At every level |
+| No move into a Trash folder that email-mcp recognizes | `Move` and `CreateFolder` | At every level |
 
 A use case is one job of the program for a caller, such as "send this mail". A
 mail backend is the part that talks to the mail server of one account. The
@@ -86,6 +86,10 @@ outbox is the queue of messages that wait to go out. The undo window is the time
 that a send waits in the outbox, while it can still be cancelled. `authorize`
 returns the permission error before the error that the account must be
 reconnected, so a caller that may not act learns nothing about the connection.
+The use cases of the person for accounts and settings, such as `UpdateSettings`,
+`RemoveAccount` and `ProbeAccount`, check no level. No tool calls them (see [One
+tool call, step by
+step](/tech/start-here/tool-call/#where-the-permission-is-checked)).
 
 ## Who changes a level
 
@@ -93,8 +97,9 @@ Only the person changes a level, on the settings page of the account in the web
 portal (the local web site of the person). The use case is
 `Service.UpdateSettings` in {{< src "internal/service/accounts.go" >}}. No tool
 calls it. The test `TestNoToolReachesTheUserOnlyUseCases` in
-`internal/mcpserver` reads the Go files of `mcpserver` and fails when one of
-them names a use case that is for the person only.
+`internal/mcpserver` reads the Go files of `mcpserver`, without the tests, and
+fails when one of them names a use case in its list `userOnlyCalls`, or imports
+`web` or `tokens`.
 
 The agent can ask. `request_permission_change` calls `Service.PermissionLink`,
 which returns a link to the settings page of the account with the area and the
@@ -178,10 +183,8 @@ to 300 (`maxUndoWindow`).
 
 The new-recipient check is a switch in `Limits` and is off by default.
 
-- **Windows.** The windows are fixed. A fixed window is a block of time with a
-  set start, and the next block starts with a count of zero. The hour window
-  starts at the top of each hour in UTC (Coordinated Universal Time), and the
-  day window starts at 00:00 UTC. A limit of 0 allows nothing.
+- **Hour and day limits.** Each limit is counted for the hour or for the day, in
+  UTC (Coordinated Universal Time). A limit of 0 allows nothing.
 - **Counting.** `Limiter.Reserve` checks and counts in one database transaction
   (a group of database steps that all happen or none do). So two sends at the
   same time, in one program or in several that share the database, cannot pass a
@@ -189,7 +192,7 @@ The new-recipient check is a switch in `Limits` and is off by default.
 - **When to count.** A send counts when it reaches the outbox, so a send that
   the person declines uses no quota. A move to the Trash counts when the
   messages move.
-- **A full window.** The error is a `*policy.RateLimitError`. Its text is fixed.
+- **A full limit.** The error is a `*policy.RateLimitError`. Its text is fixed.
   It names the kind of limit and the wait in whole minutes, rounded up, and it
   names no account.
 - **A limit that no wait can fix.** `checkLimit` returns `ErrLimit` for a
@@ -203,10 +206,11 @@ The new-recipient check is a switch in `Limits` and is off by default.
 - **Deleting mail for good.** `mail.Backend` has no method for it, and its
   comment asks each implementation to keep it so. `Trash` moves messages to the
   Trash folder and nothing more.
-- **A move into the Trash.** `move_messages` cannot move mail to the Trash or to
-  a folder inside it, and `create_folder` cannot make a folder inside the Trash
-  (`ErrMoveToTrash`). The tool `trash_messages` is the one way, and it counts
-  toward the Trash limit and asks the person when the account wants it.
+- **A move into the Trash.** `move_messages` refuses a target that email-mcp
+  recognizes as the Trash folder or as a folder inside it, and `create_folder`
+  refuses to make a folder inside such a folder (`ErrMoveToTrash`). The tool
+  `trash_messages` is the way to move mail to the Trash. It counts toward the
+  Trash limit and asks the person when the account wants it.
 - **A file path as an attachment.** The tools take base64 data only
   (`AttachmentIn`: base64 is text made of letters, digits and a few signs, that
   stands for bytes). A path would make the program read a file of the computer

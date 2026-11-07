@@ -28,5 +28,5 @@ Read them when you change one of these areas.
 - [Activity log and program log](/tech/inside-the-server/audit-and-logging/):
   what the two logs hold and the rules for writing to them.
 - [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/): the
-  order of `Open`, `Run` and `Close`, and why a send is never lost and never
-  sent twice.
+  order of `Open`, `Run` and `Close`, and why a send is never sent twice, and
+  why a send that is cut off is recorded as failed (delivery unknown).

@@ -42,10 +42,12 @@ the owner of a set of accounts, and a local install has one, with the id
   together) next to it, in `email-mcp.db-wal` and `email-mcp.db-shm`. The lock
   file for the first master key is `kek.lock`.
 - **The modes.** A mode says who may read and write a file. `store.Open` creates
-  a missing folder with mode 0700 (only the owner), and leaves an existing
-  folder as it is. It creates the database file with mode 0600 (only the owner)
-  before SQLite opens it, because SQLite would use 0644. SQLite gives its other
-  two files the mode of the database file.
+  a missing folder with mode 0700 (only the owner can use it), and makes the
+  database file, when it is missing, with mode 0600 before SQLite opens it,
+  because SQLite would use 0644. SQLite gives its other two files the mode of
+  the database file. Keep the data folder private to your user account.
+  `email-mcp doctor` checks the modes of the folder and of the database files,
+  on systems that have file modes.
 
 ## How the database opens
 
@@ -59,16 +61,15 @@ each setting matters for that:
 | `journal_mode(WAL)` | Readers do not block the writer. | Several programs read and write at once. |
 | `busy_timeout(5000)` | A statement waits up to 5 seconds for a lock. | A short wait is not an error. |
 | `foreign_keys(1)` | SQLite checks foreign keys (a column that must match a row of another table). | The rules that delete the rows of a deleted account (`ON DELETE CASCADE`) depend on it. |
-| `secure_delete(1)` | SQLite overwrites deleted content with zeros. | A cleared message does not stay in a free page. |
+| `secure_delete(1)` | SQLite overwrites deleted content with zeros. | Free space in the database file does not keep old rows. |
 | `synchronous(FULL)` | The log is flushed to disk at each commit. | Sending a message once, also after a power loss, depends on it. |
 | `_txlock=immediate` | A transaction takes the write lock when it starts. | A read followed by a write could fail at once with "database is locked", and the busy timeout would not help. |
 
-The daily job cuts the write-ahead log with a `TRUNCATE` checkpoint (a step that
-copies the log into the database file and then empties the log), so that deleted
-data does not stay in old frames of the log (see "How long data is kept"). The
-first connection to a file that was just made switches it to WAL mode, and two
-programs that do this together can get `SQLITE_BUSY` at once. `connect` tries
-again (`connectAttempts`, `connectDelay`).
+The daily job also runs a checkpoint of the write-ahead log (a step that copies
+the log into the database file). The first connection to a file that was just
+made switches it to WAL mode, and two programs that do this together can get
+`SQLITE_BUSY` at once. `connect` tries again (`connectAttempts`,
+`connectDelay`).
 
 ## Migrations
 
@@ -112,7 +113,8 @@ To add a migration:
 A table keeps some rules itself, with `CHECK` conditions. A pending action that
 waits has its payload and preview, and one that has ended has neither. An outbox
 item that waits or sends has its message, and one that has ended has none. A bug
-cannot leave a secret on disk, or lose one that is still needed.
+cannot keep the payload or the message of an ended item in its row, or lose one
+that is still needed.
 
 ## Sealed, hashed or plain
 
@@ -121,8 +123,8 @@ it. SHA-256 (Secure Hash Algorithm with a 256-bit result) makes a fingerprint of
 bytes. A token has 256 random bits, so nobody can find it from its hash, and a
 slow password hash is not needed. An address has few bits, so the table keeps it
 as an HMAC-SHA-256 (HMAC is a hash-based message authentication code: a hash
-made with a secret key, here with SHA-256) with a key from the server key.
-Without that key, nobody can test an address against the stored hashes.
+made with a secret key, here with SHA-256). Without the secret key, nobody can
+test an address against the stored hashes.
 
 | How | What | Where |
 |---|---|---|
@@ -131,7 +133,6 @@ Without that key, nobody can test an address against the stored hashes.
 | Sealed | The message of an outbox item | `outbox.message` |
 | Sealed | The recipients and the arguments of an audit entry | `audit_log.recipients`, `audit_log.arguments` |
 | Hashed (SHA-256) | Access tokens, setup tokens and session ids | `hash` of `api_tokens`, `web_setup_tokens`, `web_sessions` |
-| Hashed (SHA-256) | The kind and the payload of a pending action | `pending_actions.hash` |
 | Hashed (HMAC-SHA-256) | Known recipients | `known_recipients.hash` |
 | Plain | Everything else, such as the address, the server settings, the levels, the limits, the times and the states | the other columns |
 
@@ -150,19 +151,20 @@ data.
   store with the value. The first time that the vault sees a tenant, it makes
   version 1.
 - **The associated data.** `secrets.AAD` ties a value to its tenant, account and
-  field. It is not stored, and `Open` needs the same text. So a row that is
-  copied to another place cannot be opened there. An id must not contain `|`,
-  because the format has no escaping.
+  field. It is not stored, and `Open` needs the same text. So a value that is
+  sealed for one tenant, account and field cannot be opened as another tenant,
+  account or field. An id must not contain `|`, because the format has no
+  escaping.
 - **The master key (KEK, key encryption key).** It wraps the data keys and the
   server key, so the database holds only wrapped keys.
-- **The server key.** One random key for values that belong to the server and
-  not to a tenant. The raw server key is never used as a key itself.
-  `DerivedServerKey` gives the HMAC-SHA-256 of a label under it. The label
-  `signing/v1` gives the key of the signer, which signs request states (they
-  name a waiting action), page tokens (they name the next page of a search),
-  cursors (they mark where the last check for arrived messages stopped) and the
-  tokens of the web forms. The label `known-recipients/v1` gives the key of the
-  recipient hashes. A change of a label makes the old values useless.
+- **The server key.** One random key, wrapped by the master key. The raw server
+  key is never used as a key itself. `DerivedServerKey` gives the HMAC-SHA-256
+  of a label under it. The label `signing/v1` gives the key of the signer, which
+  signs request states (they name a waiting action), page tokens (they name the
+  next page of a search), cursors (they mark where the last check for arrived
+  messages stopped) and the tokens of the web forms. Other labels give the keys
+  of other values of the server. A change of a label makes the old values
+  useless.
 
 ## The master key
 
@@ -172,8 +174,10 @@ operating system, and the default) or `file:` and an absolute path.
 where the AI (artificial intelligence) app starts the server. It refuses a path
 with a `..` part too. The keychain entry has the service `email-mcp` and the
 account `master-key`. A key file holds the key as standard base64 text (32
-bytes, 44 characters). `NewFileKEK` refuses a file that group or other users can
-access, and it skips this check on Windows, which has no such modes.
+bytes, 44 characters). Base64 is text made of letters, digits and a few signs,
+that stands for bytes. `NewFileKEK` refuses a file that the group or other users
+can access, on systems that have file modes. On Windows, keep the key file in a
+folder that only your user account can read.
 
 ### The first start
 
@@ -188,9 +192,9 @@ The program makes a key only when the database holds no wrapped key
 (`databaseHasKeys`). If the database has keys and the key is missing, the start
 is refused with a message. Another random key could never open the stored keys,
 and a replacement keychain entry would block a later restore of the real one.
-The vault handles a race between two programs too: the store inserts a data key
-or the server key only if none exists, and the program that loses the race uses
-the stored key.
+Two programs can try to make the same key at the same moment. The store inserts
+a data key or the server key only if none exists, and the program that finds a
+key already there uses the stored key.
 
 ### Rotation
 
@@ -200,17 +204,19 @@ file of the target (never over an existing file) and puts it on disk first. Then
 `Vault.RewrapAll` wraps all stored keys again with the target key in one
 transaction. The store checks in that transaction that the stored keys are
 exactly the keys that were listed, so a key that another program added makes it
-fail with `ErrConflict`. It is all or nothing. The sealed values do not change,
-because the data keys stay the same. The old key file or keychain entry is never
-deleted. The other programs must be stopped first, because they hold the old key
-in memory.
+fail with `ErrConflict`. It is all or nothing. The sealed values do not change.
+If the old master key may have leaked, rotation is not enough: also change the
+mail passwords at your mail provider. The old key file or keychain entry is
+never deleted. The other programs must be stopped first, because they hold the
+old key in memory.
 
 ### Secrets in output
 
 `secrets.Secret` is a string type that prints `[redacted]` in `fmt`, in
-`log/slog` and in JSON (JavaScript Object Notation) inside a struct, a slice or
-a map. Only `Reveal` gives the value, so each place that uses a value is easy to
-find in a review. The same holds for the `Vault`.
+`log/slog` and in JSON (JavaScript Object Notation) in the normal cases. The doc
+comment of `Secret` lists the cases that it does not cover. Only `Reveal` gives
+the value, so each place that uses a value is easy to find in a review. The same
+holds for the `Vault`.
 
 ## How long data is kept
 
@@ -225,15 +231,13 @@ find in a review. The same holds for the `Vault`.
 | Everything of an account | Until the account is removed | `ON DELETE CASCADE` |
 
 `App.dailyJobs` runs the prune of the first two rows and a checkpoint of the
-write-ahead log. It runs when `Run` starts and then every 24 hours (`jobEvery`).
-The first run uses a passive checkpoint, because a `TRUNCATE` checkpoint holds
-up the writes of the other programs, and every program runs the job at its
-start. The daily run cuts the log. The page [Startup and
+write-ahead log (`store.CheckpointWAL`). It runs when `Run` starts, and then
+every 24 hours (`jobEvery`). The page [Startup and
 shutdown](/tech/inside-the-server/startup-and-shutdown/) explains `Run`.
 
 ## Related pages
 
-- [Audit log and program log](/tech/inside-the-server/audit-and-logging/)
+- [Activity log and program log](/tech/inside-the-server/audit-and-logging/)
 - [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/)
 - [Architecture overview](/tech/start-here/overview/)
 - [Where the data lives](/manual/reference/data-folder/) in the user manual

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 650" role="img">
   <title>The order of Open and Close</title>
-  <desc>Two lists side by side. On the left, app.Open builds the parts in six steps: 1, the default logger, a text log on standard error. 2, the store, with its migrations and the local tenant. 3, the master key and the vault: loadKEK runs under a lock, and the first start makes the key. 4, the signer, with a key derived from the server key. 5, the other parts: the limiter, the confirm manager, the backend factory, the outbox, which comes after the backend factory because its sender uses it, the audit log, the tokens and the discovery. 6, the web server first, then the service with the links of the web server, then Attach closes the loop. After Open, App.Run recovers interrupted sends, expires stale approvals, and starts the outbox worker, the daily jobs and the sweep of idle backends. On the right, App.Close stops them in six steps, within the budget StopTimeout. 1, BeginStop: no send, Trash move, approval or tool call can start. This does not wait. 2, stop the work of Run and wait for it: the send in progress finishes and writes its result. This waits and does not stop at the deadline. 3, wait for the tool calls and the service actions that run. This waits and does not stop at the deadline. 4, Outbox.Drain for up to drainWait, 5 minutes: it sends the queued messages that are due, and it stops at the deadline. 5, shut down the web server. 6, close the mail backends and the store. StopTimeout is drainWait, 5 minutes, plus SendDeadline, 13 minutes, plus 2 minutes: 20 minutes.</desc>
+  <desc>Two lists side by side. On the left, app.Open builds the parts in six steps: 1, the default logger, a text log on standard error. 2, the store, with its migrations and the local tenant. 3, the master key and the vault: loadKEK runs under a lock, and the first start makes the key. 4, the signer, with a key derived from the server key. 5, the other parts: the limiter, the confirm manager, the backend factory, the outbox, which comes after the backend factory because its sender uses it, the audit log, the tokens and the discovery. 6, the web server first, then the service with the links of the web server, then Attach gives the service to the web server. After Open, App.Run recovers interrupted sends, expires stale approvals, and starts the outbox worker, the daily jobs and the sweep of idle backends. On the right, App.Close stops them in six steps, within the budget StopTimeout. 1, BeginStop: no send, Trash move, approval or tool call can start. This does not wait. 2, stop the work of Run and wait for it: the send in progress finishes and writes its result. This waits and does not stop at the deadline. 3, wait for the tool calls and the service actions that run. This waits and does not stop at the deadline. 4, Outbox.Drain for up to drainWait, 5 minutes: it sends the queued messages that are due, and it stops at the deadline. 5, shut down the web server. 6, close the mail backends and the store. StopTimeout is drainWait, 5 minutes, plus SendDeadline, 13 minutes, plus 2 minutes: 20 minutes.</desc>
 
   <!-- This file is the source of the drawing: edit it by hand. A short script
        placed the first coordinates, and that script is not kept. The
@@ -26,8 +26,8 @@
   <text class="d-soft" x="185" y="429" text-anchor="middle" dominant-baseline="central">outbox, audit log, tokens, discovery</text>
   <rect class="d-box" x="20" y="464" width="330" height="64" rx="8"/>
   <text class="d-text" x="185" y="479" text-anchor="middle" dominant-baseline="central">6 The web server, then the service</text>
-  <text class="d-soft" x="185" y="496" text-anchor="middle" dominant-baseline="central">the service gets the links of the web</text>
-  <text class="d-soft" x="185" y="513" text-anchor="middle" dominant-baseline="central">server; Attach closes the loop</text>
+  <text class="d-soft" x="185" y="496" text-anchor="middle" dominant-baseline="central">the service gets its links from the web</text>
+  <text class="d-soft" x="185" y="513" text-anchor="middle" dominant-baseline="central">server; Attach gives the service to it</text>
   <rect class="d-box" x="370" y="44" width="330" height="64" rx="8"/>
   <text class="d-text" x="535" y="59" text-anchor="middle" dominant-baseline="central">1 BeginStop</text>
   <text class="d-soft" x="535" y="76" text-anchor="middle" dominant-baseline="central">no send, Trash move, approval or tool call</text>
@@ -46,7 +46,7 @@
   <text class="d-soft" x="535" y="345" text-anchor="middle" dominant-baseline="central">waits, and stops at the deadline</text>
   <rect class="d-box" x="370" y="380" width="330" height="64" rx="8"/>
   <text class="d-text" x="535" y="403.5" text-anchor="middle" dominant-baseline="central">5 Shut down the web server</text>
-  <text class="d-soft" x="535" y="420.5" text-anchor="middle" dominant-baseline="central">it stays up in step 4: the person can reject</text>
+  <text class="d-soft" x="535" y="420.5" text-anchor="middle" dominant-baseline="central">when it runs, it stays up in step 4</text>
   <rect class="d-box" x="370" y="464" width="330" height="64" rx="8"/>
   <text class="d-text" x="535" y="496" text-anchor="middle" dominant-baseline="central">6 Close the backends and the store</text>
   <path class="d-line" d="M185 108V128M179 120L185 128L191 120"/>

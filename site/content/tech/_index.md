@@ -30,7 +30,10 @@ program. A level is a number from 0 to 5 that says what the agent may do with an
 account. A scope is a permission that an access token carries. The undo window
 is the time that a send waits before it goes out, while it can still be
 cancelled. The master key is the key that protects the other keys. A migration
-is a numbered file that changes the structure of the database.
+is a numbered file that changes the structure of the database. Full autonomy
+means that both confirmation switches of an account are off, so the agent sends
+and moves mail to the Trash with no question. Ctrl-C is the keys that stop a
+program in a terminal: hold the Ctrl key and press C.
 
 | If you want to know... | read... |
 |---|---|
