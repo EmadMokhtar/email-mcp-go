@@ -1,0 +1,10 @@
+{{- /*
+  The main button of the landing page, "Install and set up": {{< install >}}.
+  The label and the address are in the front matter (see the partial
+  landing-button.html).
+
+  Inside a section, write it alone in its paragraph, with an empty line before
+  and after it. See the partial landing-block.html for why.
+*/ -}}
+{{- $html := printf `<div class="landing-actions">%s</div>` (partial "landing-button.html" .Page) -}}
+{{- partial "landing-block.html" (dict "shortcode" . "html" $html) | safeHTML -}}

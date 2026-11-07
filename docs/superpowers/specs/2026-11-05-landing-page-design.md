@@ -181,7 +181,7 @@ There are seven sections, between the shared menu and the shared footer.
 | 1 | `top` | Your agent asks. You decide. | Say what it is |
 | 2 | `how-it-works` | How it works | Say how it fits together |
 | 3 | `levels` | You choose how far each account may go | Show the limit |
-| 4 | `decide` | You see the whole message before you decide | Show the choice |
+| 4 | `decide` | You see the message before you decide | Show the choice |
 | 5 | `local` | email-mcp runs on your computer | Say where things are |
 | 6 | `covers` | What it covers today | Say the limits of this release |
 | 7 | `start` | Start with the manual | Give the next step |
@@ -252,7 +252,9 @@ first decision.
      Anna's message about Thursday and reply that 10:00 works.” The agent
      uses the email tools to search, read, organize, write drafts and send."
   4. "Decide." "By default, email-mcp holds each send until you approve it. You
-     see the whole message first."
+     see the message first." (The spec said "the whole message". An AI app that
+     asks in its own window shows only the start of the text. The code is the
+     source of truth, so the page says "the message". See T19 and T24.)
 
 **Beside it.** Nothing. The empty space on the right is intended (DESIGN.md:
 left aligned, nothing centred).
@@ -273,16 +275,20 @@ in step 3. (My call.)
 - A list of six rows. The names are the names that the portal shows:
   - "0 Off". "The agent cannot use the account."
   - "1 Read". "Search and read messages and attachments."
-  - "2 Organize". "Mark as read, flag, tag, make folders and move messages."
-  - "3 Draft". "Write drafts."
+  - "2 Organize". "Mark as read, flag, tag, make folders and move messages (not
+    to the Trash)."
+  - "3 Draft". "Write drafts, and move a draft to the Trash. Moving a draft does
+    not ask you."
   - "4 Send". "Send, reply and forward. A new account starts here. By default,
     every send asks you first."
-  - "5 Delete". "Move messages to the Trash. By default, every move asks you
-    first. email-mcp has no tool that deletes mail for good."
+  - "5 Delete". "Move messages to the Trash. By default, each of these moves
+    asks you first. email-mcp has no tool that deletes mail for good."
 
 - Closing paragraph: "Only you can change a level, on a page in your browser.
   The agent has no tool for this. It can ask for more access. That only gives
-  you a link to the settings page, and nothing changes until you choose."
+  you a link to the settings page, and nothing changes until you choose. The
+  manual page [Security] says when this holds." The link goes to
+  `/manual/daily-use/security/`.
 
 **Beside it.** Nothing.
 
@@ -293,27 +299,40 @@ in step 3. (My call.)
   (My call.)
 - Level 5 is called "Delete" in the portal and "Move to Trash" in the README.
   The page uses the portal name and explains it in the same row.
+- Three rows changed after review, to match the code, which is the source of
+  truth. `move_messages` refuses the Trash and every folder inside it at every
+  level (`ErrMoveToTrash` in `internal/service/write.go`), so level 2 says
+  "(not to the Trash)". `discard_draft` moves a draft to the Trash at level 3 and never
+  asks (`DiscardDraft`), so level 3 names that move, and level 5 says "each of
+  these moves" and not "every move" (T16).
+- "Only you can change a level" holds for an agent that can only call the
+  tools of email-mcp, and not for one that runs shell commands as you or
+  controls your browser. The manual says so each time. The page adds no claim:
+  it links to the Security page of the manual, which says when it holds (T18).
 
-### 4. You see the whole message before you decide
+### 4. You see the message before you decide
 
 **Job.** Show what the person gets to see and what the page promises about
 that moment.
 
 **Words.**
 
-- Heading: "You see the whole message before you decide".
+- Heading: "You see the message before you decide".
 - Paragraph: "By default, email-mcp holds a message when your agent wants to
-  send it. You see who will get it, including hidden copies (Bcc), the subject,
-  the attachments and the full text. Then you press Reject or Approve and
-  send."
+  send it. On the approval page, you see who will get it, including hidden
+  copies (Bcc), the subject, the attachments and the whole text as the
+  recipient will see it. If the message also has characters that cannot be
+  seen, the page says so. Then you press Reject or Approve and send."
 - Four rows, one sentence each:
-  - "Approve and send appears only when the page shows the whole message."
+  - "Approve and send appears only when the page can show the whole text that
+    the recipient will see."
   - "If the message changes after you look at it, it does not go out."
   - "After you decide, the page tells you what happened. It says Sent only when
     the mail server accepted the message."
   - "If you do nothing, the request expires and nothing is sent."
-- Paragraph: "Some AI apps can ask you in their own window. For the others, your
-  agent gives you a link to the approval page."
+- Paragraph: "Some AI apps can ask you in their own window. There, email-mcp
+  shows the start of the text, and says how much of it is not shown. For the
+  others, your agent gives you a link to the approval page."
 - Paragraph: "You can turn this question off for an account. email-mcp then asks
   you to tick a box that accepts the risk. Limits still apply when it is off:
   sends per hour and per day, and recipients per message."
@@ -327,6 +346,17 @@ that moment.
   active risk, and the Real Risk Rule keeps amber for that.
 - The numbers of the limits are not on the page, because each account can change
   them and the page would become wrong.
+- The heading said "the whole message" before review. That is true on the
+  approval page only. An AI app that asks in its own window shows the first
+  part of the text and a count of what it leaves out, so the heading says "the
+  message", the first paragraph says "On the approval page", and the paragraph
+  on AI apps says what such a window shows (T19, T24).
+- The approval page shows the text as the recipient will see it, not every
+  character that goes out. So the page says "the whole text as the recipient
+  will see it" and not "the full text", and it says that the page tells you
+  when the message also has characters that cannot be seen (T19, T20). This is
+  the meaning of the manual (`daily-use/confirmations`: "The approval page
+  shows the whole text").
 
 ### 5. email-mcp runs on your computer
 
@@ -780,7 +810,8 @@ not replace the passes above.
 Each claim of the page, with the proof. Paths are in the repository. "README"
 names a section of `README.md`, which moves to the manual, so the builder reads
 the section of the same name in the manual too. If the code and the README
-disagree, the code wins and the difference is reported (foundation).
+disagree, the code is the source of truth, and the difference is reported
+(foundation).
 
 "Qualifier" is a word that must stay on the page.
 
@@ -862,6 +893,12 @@ the email tools.**
   `internal/web/settings.go` (`levelAllows`);
   `internal/policy/policy.go` (`RequiredMailLevel`).
 - The portal names level 5 "Delete". It moves mail to the Trash (T17).
+- Level 2 "(not to the Trash)": `internal/service/write.go`
+  (`ErrMoveToTrash`: `move_messages` refuses the Trash and every folder inside
+  it, at every level).
+- Level 3 includes moving a draft to the Trash:
+  `internal/mcpserver/write_tools.go` (`discard_draft`, "Needs Mail 3");
+  `internal/service/write.go` (`DiscardDraft` uses the draft action).
 
 **T14. A higher level includes the levels below it.**
 - Code: `internal/domain/account/account.go` (comment on `Level`);
@@ -872,12 +909,18 @@ the email tools.**
 - Code: `internal/domain/account/account.go` (`NewIMAPAccount`:
   `AreaMail: MailSend`).
 
-**T16. By default, every move to the Trash asks you first.**
-- README: "Confirmations and full autonomy" (Confirm deletes).
+**T16. By default, each move to the Trash at level 5 asks you first. Moving a
+draft to the Trash at level 3 does not ask.**
+- README: "Confirmations and full autonomy" (Confirm deletes). The README
+  opening says "every move to the Trash" waits; the code has one exception, and
+  the manual (`daily-use/confirmations`, `daily-use/permission-levels`) states
+  it.
 - Code: `NewIMAPAccount` (`ConfirmDeletes: true`);
-  `internal/policy/policy.go` (`Decide`);
-  `internal/service/write.go` (`Trash`).
-- Qualifier: "By default".
+  `internal/policy/policy.go` (`Decide` asks only for `ActTrash`);
+  `internal/service/write.go` (`Trash`; `DiscardDraft` uses `ActDraft`, which
+  never asks).
+- Qualifier: "By default", and "each of these moves" for level 5. Do not write
+  "every move to the Trash".
 
 **T17. email-mcp has no tool that deletes mail for good.**
 - README: "What the agent can do" (`trash_messages`); the list of guardrails.
@@ -895,17 +938,34 @@ for access, which only gives a link, and nothing changes until you choose.**
   `internal/web/templates/settings.html` ("Nothing has changed yet.").
 - Qualifier: "The agent has no tool for this." Keep exactly this scope. Do not
   rewrite it as "the agent cannot".
+- Limit: it holds for an agent that can only call the tools of email-mcp
+  (manual `daily-use/security`, `daily-use/permission-levels`). The page links
+  to the Security page of the manual right after the paragraph, and adds no
+  claim.
 
-**T19. You see who gets it (Bcc included), the subject, the attachments and the
-full text.**
+**T19. On the approval page, you see who gets it (Bcc included), the subject,
+the attachments and the whole text as the recipient will see it. If the
+message also has characters that cannot be seen, the page says so.**
 - README: "Confirmations and full autonomy" (the approval page shows the whole
-  text).
+  text; the preview of the AI app shows the first 500 characters).
 - Code: `internal/web/templates/approval.html` (the labels `From`, `To, every
-  recipient (Bcc included)` and `Attachments`, and `message-body`).
+  recipient (Bcc included)` and `Attachments`, and `message-body`);
+  `internal/service/approvals.go` (`Body`: "the whole text that the recipient
+  sees"; `MoreChars`: the count of the characters that cannot be seen);
+  `internal/service/send.go` (`sendContent`: `body` and `hidden`;
+  `draftUnseen`); `internal/web/approvals.go` (the page shows `Body` and adds
+  the `MoreChars` line).
+- Scope: the approval page only. An AI app that asks in its own window shows
+  the start of the text (T24), so the heading of section 4 and step 4 of
+  section 2 say "the message", not "the whole message".
 
-**T20. Approve and send appears only when the page shows the whole message.**
+**T20. Approve and send appears only when the page can show the whole text that
+the recipient will see.**
 - Code: `internal/web/templates/approval.html` (`{{if .CanApprove}}`);
-  `internal/web/approvals.go` (`CanApprove`, `msgDetailUnavailable`).
+  `internal/web/approvals.go` (`CanApprove` is set only with the detail of
+  the message, which holds `Body` and `MoreChars`; otherwise
+  `msgDetailUnavailable` and only Reject);
+  `internal/service/approvals.go` (`Body`, `MoreChars`).
 
 **T21. If the message changes after you look at it, it does not go out.**
 - README: "Security: what local mode protects against" ("What you approve is
@@ -927,12 +987,16 @@ accepted the message.**
   `internal/web/approvals.go` (`outcomeExpired`).
 - The page gives no number of hours.
 
-**T24. Some AI apps can ask you in their own window. For the others, your agent
-gives you a link to the approval page.**
+**T24. Some AI apps can ask you in their own window. There, email-mcp shows the
+start of the text, and says how much of it is not shown. For the others, your
+agent gives you a link to the approval page.**
 - README: "Confirmations and full autonomy" ("In the AI app" and "With an
   approval link"); `docs/harnesses.md`, "How each app confirms a send".
 - Code: `internal/mcpserver/elicit.go` (the form, and the fallback
-  `pending_approval` with a link).
+  `pending_approval` with a link; `previewBodyChars` and `sendPreview`: the
+  first 500 characters of the text, and a last line that says how many
+  characters are not shown).
+- The page gives no number of characters.
 - Qualifier: "Some" and "for the others". Which app does which is a fact about
   the app, and the page does not name apps here.
 

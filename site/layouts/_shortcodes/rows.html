@@ -1,0 +1,10 @@
+{{- /*
+  A list of rows of the landing page, from the front matter:
+  {{< rows "levels" "dl" >}} shows the list "levels" as a list of terms. The
+  second word is dl, ol or ul (see the partial landing-rows.html).
+
+  Inside a section, write it alone in its paragraph, with an empty line before
+  and after it. See the partial landing-block.html for why.
+*/ -}}
+{{- $html := partial "landing-rows.html" (dict "page" .Page "name" (.Get 0) "as" (.Get 1)) -}}
+{{- partial "landing-block.html" (dict "shortcode" . "html" $html) -}}

@@ -1,0 +1,31 @@
+{{- /*
+  The Markdown between the tags of a paired shortcode of the landing page (hero
+  or section), as HTML, with each block in its place. A block is the output of
+  the shortcode rows or install inside it.
+
+  Why the blocks need this: Hugo renders a shortcode inside another one first,
+  and puts its output in the .Inner of the outer one. The outer one renders
+  .Inner as Markdown, and Markdown leaves out raw HTML, because the site keeps
+  the safe default of Hugo (markup.goldmark.renderer.unsafe is false). So a
+  block does not print its HTML. It saves the HTML in the store of the outer
+  shortcode, and prints a marker in its place. The marker becomes a paragraph
+  of its own, and this partial puts the saved HTML in the place of that
+  paragraph. See landing-block.html.
+
+  Call it from the outer shortcode, which must read .Inner itself (Hugo checks
+  that a paired shortcode reads it):
+
+    partial "landing-markdown.html" (dict
+      "inner" .Inner "page" .Page "blocks" .Store.Values "position" .Position)
+
+  It returns the HTML.
+*/ -}}
+{{- $html := .inner | .page.RenderString (dict "display" "block") | string -}}
+{{- range $marker, $block := .blocks -}}
+  {{- $paragraph := printf "<p>%s</p>" $marker -}}
+  {{- if not (strings.Contains $html $paragraph) -}}
+    {{- errorf "%s: a block shortcode (rows or install) must be alone in its paragraph, with an empty line before and after it" $.position -}}
+  {{- end -}}
+  {{- $html = replace $html $paragraph $block -}}
+{{- end -}}
+{{- return ($html | safeHTML) -}}

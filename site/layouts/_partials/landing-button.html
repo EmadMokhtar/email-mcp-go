@@ -1,0 +1,21 @@
+{{- /*
+  The main button of the landing page, "Install and set up". Section 1 and
+  section 7 show it, with the same label and the same address, so the page
+  never gives two names to one action. Both come from "install" in the front
+  matter of content/_index.md.
+
+  The address is a page of the site. GetPage finds it, and .RelPermalink adds
+  the base path of the site. A page that does not exist stops the build, as a
+  link of the body does.
+
+  Call it with the page: partial "landing-button.html" .Page
+*/ -}}
+{{- $install := .Params.install -}}
+{{- if not (and $install $install.label $install.page) -}}
+  {{- errorf "the landing page: the front matter needs install.label and install.page" -}}
+{{- end -}}
+{{- with site.GetPage $install.page -}}
+<a class="landing-button" href="{{ .RelPermalink }}">{{ $install.label }}</a>
+{{- else -}}
+  {{- errorf "the landing page: install.page %q is not a page of the site" $install.page -}}
+{{- end -}}

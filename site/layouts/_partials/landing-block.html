@@ -1,0 +1,25 @@
+{{- /*
+  Puts the HTML of a block of the landing page in its place. A block is the
+  output of the shortcode rows or install.
+
+  Inside a paired shortcode (hero or section), the block saves its HTML in the
+  store of that shortcode, and returns a marker that stands for it. Markdown
+  would leave out the HTML (see landing-markdown.html), but it keeps the
+  marker. landing-markdown.html then puts the HTML in the place of the marker.
+  The marker has the number of the block inside its parent, so each marker is
+  different.
+
+  Outside a paired shortcode, the HTML is returned as it is: Hugo keeps the
+  output of a shortcode that stands alone in the page.
+
+  Call it from the block shortcode, with that shortcode and its HTML:
+    partial "landing-block.html" (dict "shortcode" . "html" $html)
+*/ -}}
+{{- $sc := .shortcode -}}
+{{- $out := .html -}}
+{{- with $sc.Parent -}}
+  {{- $marker := printf "LANDING-BLOCK-%d" $sc.Ordinal -}}
+  {{- .Store.Set $marker $out -}}
+  {{- $out = $marker -}}
+{{- end -}}
+{{- return $out -}}

@@ -1,7 +1,13 @@
-{{- /* The landing page. */ -}}
+{{- /*
+  The landing page, at the root of the site. The words are in
+  content/_index.md: the prose in the body, and the lists in the front matter.
+  The body is the page in order. Its shortcodes give each part its shape:
+  hero (section 1), section (sections 2 to 7), rows and install.
+
+  The page sits on the ground colour (the class page-landing in site.css). The
+  hero stays on it, and each section below is a band on the pane colour.
+*/ -}}
+{{ define "main-class" }} page-landing{{ end }}
 {{ define "main" }}
-<article class="doc">
-  <h1>{{ .Title }}</h1>
-  {{ .Content }}
-</article>
+{{ .Content }}
 {{ end }}

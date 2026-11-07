@@ -34,7 +34,7 @@ SITE_BASE_PATH ?= /email-mcp-go/
 # last quote of the line, when the manifest has a second entry on that line.
 SITE_VERSION := $(shell sed -n 's/.*"\.": "\([^"]*\)".*/\1/p' .release-please-manifest.json)
 
-.PHONY: build test lint vuln screenshots site site-serve
+.PHONY: build test lint vuln screenshots site site-serve social-card
 
 # build: compile a static binary into bin/
 build:
@@ -101,3 +101,20 @@ site: screenshots site/static/icon.svg
 # a file changes.
 site-serve: screenshots site/static/icon.svg
 	HUGO_PARAMS_VERSION=$(SITE_VERSION) $(HUGO) server --source site
+
+# social-card: make site/assets/social-card.png, the preview card of the
+# landing page (its og:image), from site/assets/social-card.svg. The program
+# test/socialcard opens the SVG in Chrome with no window and saves a picture of
+# exactly 1200 by 630 pixels, at one pixel for each point. Chrome runs with a
+# new empty profile, so your own Chrome profile is not touched. The PNG is in
+# git, so a build of the site uses the card as it is and does not make it
+# again: run this only after a change of the SVG. It also writes
+# site/assets/social-card.png.sha256, the SHA-256 of the SVG that it used. A
+# test in test/sitecheck fails when the SVG changed and that record did not.
+#
+# Chrome is found as the tests that use Chrome find it (chrometest.Find): the
+# program that CHROME_PATH names when it is set, for example
+# CHROME_PATH=google-chrome, or else the first of the usual places on Linux and
+# macOS.
+social-card:
+	go run -tags screenshots ./test/socialcard -svg site/assets/social-card.svg -png site/assets/social-card.png
