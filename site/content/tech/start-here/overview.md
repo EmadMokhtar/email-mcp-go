@@ -1,6 +1,6 @@
 ---
 title: Architecture overview
-description: The whole program on one page, with its layers, its two doors, its run modes and the rules that hold in all code.
+description: The whole program on one page, with its parts, its two doors, its run modes and the rules that hold in all code.
 weight: 10
 code_areas:
   - cmd/email-mcp/main.go
@@ -16,7 +16,7 @@ code_areas:
   - internal/domain/mail/backend.go
 ---
 
-This page shows the whole program on one page: the layers, the two doors into
+This page shows the whole program on one page: the parts, the two doors into
 the use cases, the run modes, and the rules that every part follows. A door
 here is a way into the program: the code that a caller goes through to reach
 the use cases. Read it
@@ -43,12 +43,15 @@ what the agent may do, and answers the actions that wait. The user manual calls
 it the web pages. See [The web pages](/manual/daily-use/web-pages/) for what the
 person sees.
 
-## The layers
+## The parts, from the outside in
 
 {{< diagram "layers-and-doors" >}}
 
-The program has these layers, from the top. A use case is one job of the
-program for a caller, such as "read one message" or "send this mail".
+The program has these parts, from the outside in. They are roles, not the
+import layers of the packages: the page
+[Map of packages](/tech/start-here/package-map/) has those. A use case is one
+job of the program for a caller, such as "read one message" or "send this
+mail".
 
 1. The transport carries the MCP messages. On stdio (standard input and
    output: the client starts the server and talks to it through two pipes) it
@@ -103,12 +106,10 @@ The agent and the person reach `service` through different doors:
 - The person uses the web portal (`web`) in a browser, and the other commands
   of `cmd/email-mcp` at a terminal (a window where you type commands).
 
-Some use cases are only for the person. The list `userOnlyCalls` in
-{{< src "internal/mcpserver/useronly_test.go" >}} names them:
-`UpdateSettings`, `RemoveAccount`, `ReconnectIMAPAccount`, `ApprovePending`,
-`RejectPending`, `PendingDetail`, `PendingApprovals`, `CreateToken` and
-`RevokeToken`. In the drawing, the dashed box holds them. The person's door
-reaches them, and the agent's door does not.
+Some use cases are only for the person, for example `ApprovePending`. The
+list `userOnlyCalls` in {{< src "internal/mcpserver/useronly_test.go" >}} names
+all of them, and it is the list to trust. In the drawing, the dashed box holds
+them. The person's door reaches them, and the agent's door does not.
 
 Two tests in that file keep tools away from them.
 `TestNoToolReachesTheUserOnlyUseCases` reads the Go files of `mcpserver`,

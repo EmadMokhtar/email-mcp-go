@@ -29,7 +29,7 @@ ways that a client talks to the server.
 
 | If you want to know... | read... |
 |---|---|
-| What are the main parts, and what does each one do? | [Architecture overview](/tech/start-here/overview/#the-layers) |
+| What are the main parts, and what does each one do? | [Architecture overview](/tech/start-here/overview/#the-parts-from-the-outside-in) |
 | Which code can an agent reach, and which code only a person can reach? | [Architecture overview](/tech/start-here/overview/#two-doors-into-the-use-cases) |
 | Who is the caller, and what is a tenant in a local install? | [Architecture overview](/tech/start-here/overview/#the-caller-and-the-tenant) |
 | What starts when I run `serve`, and what can run at the same time? | [Architecture overview](/tech/start-here/overview/#run-modes) |

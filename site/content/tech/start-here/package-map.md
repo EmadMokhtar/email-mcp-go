@@ -44,29 +44,20 @@ go list -f '{{.ImportPath}} {{join .Imports " "}}' ./cmd/... ./internal/...
 
 `-f` gives the template of each output line: the path of the package, then the
 paths that it imports, with a space between them. The command reads the code
-that a normal build uses, without the test files. Run it again after you
-change an import, and compare the output with the layers below.
+that a normal build uses, without the test files.
+
+The output of this command is the source of truth for the layers. The layers
+on this page come from it. When the page and the output differ, the output is
+right, and the page needs a fix. Run the command again after you change an
+import.
 
 {{< diagram "dependency-layers" >}}
 
-The layers, from the top:
-
-- Layer 9: `cmd/email-mcp`.
-- Layer 8: `app`.
-- Layer 7: `web`.
-- Layer 6: `httpserve`.
-- Layer 5: `connect`, `mcpserver` and `tokens`.
-- Layer 4: `service`.
-- Layer 3: `audit`, `confirm`, `outbox` and `provider/imapsmtp`.
-- Layer 2: `policy` and `secrets`.
-- Layer 1: `discovery`, `mime` and `store`.
-- Layer 0, with no imports of this module: `domain/account`, `domain/mail`,
-  `errtype`, `inflight`, `signing`, `thirdparty/xhtml` and `version`.
-- Tests only: `testutil/imaptest`, `testutil/smtptest`, `testutil/webtest`,
-  `testutil/chrometest` and `e2e`. They import no package of this module
-  outside their tests. `testutil/chrometest` builds only with the build tag
-  `screenshots`, so the command above does not list it. `e2e` has test files
-  only.
+The drawing shows the layers, and the column "Layer" of the table below holds
+the same facts. The packages for tests only import no package of this module
+outside their tests, so they have no place in the order. `testutil/chrometest`
+builds only with the build tag `screenshots`, so the command above does not
+list it. `e2e` has test files only.
 
 ## All packages
 

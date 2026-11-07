@@ -14,7 +14,7 @@ of email-mcp fit together, where each package sits, and what happens in one
 tool call, from the MCP (Model Context Protocol) client to the mail server and
 back.
 
-- [Architecture overview](/tech/start-here/overview/): the layers, the two
+- [Architecture overview](/tech/start-here/overview/): the parts, the two
   doors, the run modes and the rules that hold in all code.
 - [Map of packages](/tech/start-here/package-map/): one row for each package,
   its layer, and where to add code.

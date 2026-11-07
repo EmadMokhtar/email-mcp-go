@@ -22,22 +22,22 @@
   <text class="d-text" x="129" y="40" text-anchor="middle" dominant-baseline="central">Transport</text>
   <rect class="d-box" x="174" y="16" width="82" height="48" rx="8"/>
   <text class="d-text" x="215" y="31" text-anchor="middle" dominant-baseline="central">SDK</text>
-  <text class="d-text" x="215" y="49" text-anchor="middle" dominant-baseline="central">middleware</text>
+  <text class="d-soft" x="215" y="49" text-anchor="middle" dominant-baseline="central">middleware</text>
   <rect class="d-box" x="260" y="16" width="82" height="48" rx="8"/>
   <text class="d-text" x="301" y="40" text-anchor="middle" dominant-baseline="central">mcpserver</text>
   <rect class="d-box" x="346" y="16" width="82" height="48" rx="8"/>
   <text class="d-text" x="387" y="40" text-anchor="middle" dominant-baseline="central">service</text>
   <rect class="d-box" x="432" y="16" width="82" height="48" rx="8"/>
   <text class="d-text" x="473" y="31" text-anchor="middle" dominant-baseline="central">Backend</text>
-  <text class="d-text" x="473" y="49" text-anchor="middle" dominant-baseline="central">cache</text>
+  <text class="d-soft" x="473" y="49" text-anchor="middle" dominant-baseline="central">cache</text>
   <rect class="d-box" x="518" y="16" width="82" height="48" rx="8"/>
   <text class="d-text" x="559" y="40" text-anchor="middle" dominant-baseline="central">imapsmtp</text>
   <rect class="d-box" x="604" y="16" width="82" height="48" rx="8"/>
   <text class="d-text" x="645" y="31" text-anchor="middle" dominant-baseline="central">IMAP</text>
-  <text class="d-text" x="645" y="49" text-anchor="middle" dominant-baseline="central">server</text>
+  <text class="d-soft" x="645" y="49" text-anchor="middle" dominant-baseline="central">server</text>
   <rect class="d-box" x="690" y="16" width="82" height="48" rx="8"/>
   <text class="d-text" x="731" y="31" text-anchor="middle" dominant-baseline="central">Audit</text>
-  <text class="d-text" x="731" y="49" text-anchor="middle" dominant-baseline="central">log</text>
+  <text class="d-soft" x="731" y="49" text-anchor="middle" dominant-baseline="central">log</text>
 
   <path class="d-line" d="M43 90H129M121 84L129 90L121 96"/>
   <text class="d-soft" x="86" y="80" text-anchor="middle">1 tools/call</text>
