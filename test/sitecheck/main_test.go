@@ -512,6 +512,78 @@ func TestImageWithoutAltFails(t *testing.T) {
 	}
 }
 
+// TestTableNeedsNamedScrollBox guards the access of the tables. A table that
+// scrolls by itself needs display:block, and then a browser or a screen reader
+// may stop reading it as a table. The table hook puts each table in a scroll
+// box, and the box must be a region with a name, which the keyboard can focus
+// and scroll. Each page here is an in-memory copy of good or bad markup: the
+// test writes it to a temporary folder and never changes the real site.
+func TestTableNeedsNamedScrollBox(t *testing.T) {
+	const table = `<table><thead><tr><th scope="col">A</th></tr></thead>` +
+		`<tbody><tr><td>1</td></tr></tbody></table>`
+	box := func(attrs, inside string) string {
+		return "<div " + attrs + ">\n" + inside + "\n</div>"
+	}
+	const good = `class="table-scroll" role="region" tabindex="0" aria-label="Table: A"`
+	for _, tc := range []struct{ name, body, want string }{
+		{"box with all parts", box(good, table), ""},
+		{"box with more classes", box(`class="a table-scroll b" role="region" tabindex="0" aria-label="Table: A"`, table), ""},
+		{"box with text around the table", "<div " + good + "> " + table + " </div>", ""},
+		{"no table", "<p>Text</p>", ""},
+		{"table with no box", table, "table 1 is not the child of a box with the class table-scroll"},
+		{"table in a box with no class", box(`role="region" tabindex="0" aria-label="Table: A"`, table),
+			"table 1 is not the child of a box with the class table-scroll"},
+		{"table in a box with another class", box(`class="table-scrolls" role="region" tabindex="0" aria-label="Table: A"`, table),
+			"table 1 is not the child of a box with the class table-scroll"},
+		{"table deeper in the box", box(good, "<div>"+table+"</div>"),
+			"table 1 is not the child of a box with the class table-scroll"},
+		{"box with no role", box(`class="table-scroll" tabindex="0" aria-label="Table: A"`, table),
+			`its box has role="", and it must be "region"`},
+		{"box with another role", box(`class="table-scroll" role="group" tabindex="0" aria-label="Table: A"`, table),
+			`its box has role="group", and it must be "region"`},
+		{"box with no tabindex", box(`class="table-scroll" role="region" aria-label="Table: A"`, table),
+			`its box has tabindex="", and it must be "0"`},
+		{"box with tabindex -1", box(`class="table-scroll" role="region" tabindex="-1" aria-label="Table: A"`, table),
+			`its box has tabindex="-1", and it must be "0"`},
+		{"box with no aria-label", box(`class="table-scroll" role="region" tabindex="0"`, table),
+			"its box has no aria-label"},
+		{"box with an empty aria-label", box(`class="table-scroll" role="region" tabindex="0" aria-label=""`, table),
+			"its box has no aria-label"},
+		{"box with a blank aria-label", box(`class="table-scroll" role="region" tabindex="0" aria-label="  "`, table),
+			"its box has no aria-label"},
+		{"table with another element in the box", box(good, table+"\n<p>Note</p>"),
+			"its box has 2 child elements, and the table must be the only one"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := newSite(t, subPath, map[string]string{
+				"site/public/index.html": htmlPage("", tc.body),
+			})
+			requireOutcome(t, cfg, "site/public/index.html", tc.want)
+		})
+	}
+
+	t.Run("each table of a page is checked", func(t *testing.T) {
+		cfg := newSite(t, subPath, map[string]string{
+			"site/public/index.html": htmlPage("", box(good, table)+"\n"+table+"\n"+box(good, table)+"\n"+table),
+		})
+		got := check(cfg)
+		require.Len(t, got, 2, "problems: %v", got)
+		require.Contains(t, got[0].Text, "table 2 is not the child of a box")
+		require.Contains(t, got[1].Text, "table 4 is not the child of a box")
+	})
+
+	t.Run("two tables in one box", func(t *testing.T) {
+		cfg := newSite(t, subPath, map[string]string{
+			"site/public/index.html": htmlPage("", box(good, table+"\n"+table)),
+		})
+		got := check(cfg)
+		require.Len(t, got, 2, "problems: %v", got)
+		for _, p := range got {
+			require.Contains(t, p.Text, "its box has 2 child elements")
+		}
+	})
+}
+
 func TestUnusedScreenshotFails(t *testing.T) {
 	page := htmlPage("", "")
 	for _, tc := range []struct {

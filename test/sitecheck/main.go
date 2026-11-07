@@ -14,6 +14,11 @@
 //     a media file, event attributes (onclick and the like), javascript:
 //     addresses, and the @import and url() of the stylesheets.
 //   - Every image has alt text.
+//   - Every <table> is the only child element of a scroll box: an element with
+//     the class table-scroll, role="region", tabindex="0" and an aria-label that
+//     is not empty. A table that scrolls by itself needs display:block, and then
+//     a browser or a screen reader may stop reading it as a table. The box
+//     scrolls, and the box can take the focus, so the keyboard can scroll it.
 //   - Every link to the source code (blob or tree) goes to a path that exists
 //     in the repository, and so does every code-area meta tag.
 //   - Every regular page of the manual and the tech docs has a code-area, and a
@@ -186,7 +191,7 @@ func (c *checker) page(file, rel string) {
 	}
 	pageURL := c.base + pagePath(rel)
 	var kind string
-	var codeAreas int
+	var codeAreas, tables int
 	for n := range doc.Descendants() {
 		if n.Type != html.ElementNode {
 			continue
@@ -204,6 +209,9 @@ func (c *checker) page(file, rel string) {
 			}
 		case "script":
 			c.add(file, "<script> found: the site has no script")
+		case "table":
+			tables++
+			c.table(file, n, tables)
 		case "img":
 			src, _ := attr(n, "src")
 			if src != "" {
@@ -249,6 +257,49 @@ func (c *checker) page(file, rel string) {
 		c.add(file, "the page is not in the page list (nav.docs-nav has no link to it). "+
 			"Is it outside the groups, and the one level under them, that page-order.html walks?")
 	}
+}
+
+// scrollBox is the class of the box around every table. The table hook of the
+// site (layouts/_markup/render-table.html) writes the box, and the stylesheet
+// makes it scroll.
+const scrollBox = "table-scroll"
+
+// table checks that a <table> is the only child element of a scroll box that a
+// keyboard and a screen reader can use: it can take the focus (tabindex="0"),
+// and it is a region with a name (role="region" and an aria-label). number is
+// the place of the table in the page, to tell the tables apart in a message.
+// Each missing part is a problem of its own.
+func (c *checker) table(file string, n *html.Node, number int) {
+	box := n.Parent
+	if box == nil || box.Type != html.ElementNode || !hasClass(box, scrollBox) {
+		c.add(file, "table %d is not the child of a box with the class %s. "+
+			"Does the table hook (render-table.html) still draw it?", number, scrollBox)
+		return
+	}
+	if role, _ := attr(box, "role"); role != "region" {
+		c.add(file, `table %d: its box has role=%q, and it must be "region"`, number, role)
+	}
+	if index, _ := attr(box, "tabindex"); strings.TrimSpace(index) != "0" {
+		c.add(file, `table %d: its box has tabindex=%q, and it must be "0", so the keyboard can scroll it`, number, index)
+	}
+	if label, _ := attr(box, "aria-label"); strings.TrimSpace(label) == "" {
+		c.add(file, "table %d: its box has no aria-label, so a screen reader cannot name it", number)
+	}
+	elements := 0
+	for child := box.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == html.ElementNode {
+			elements++
+		}
+	}
+	if elements != 1 {
+		c.add(file, "table %d: its box has %d child elements, and the table must be the only one", number, elements)
+	}
+}
+
+// hasClass tells if the class attribute of n has name as one of its words.
+func hasClass(n *html.Node, name string) bool {
+	class, _ := attr(n, "class")
+	return slices.Contains(strings.Fields(class), name)
 }
 
 // loaders lists, for each element that loads a page or a media file, the
