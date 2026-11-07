@@ -15,6 +15,11 @@ code_areas:
   - internal/service/read.go
   - internal/service/backends.go
   - internal/service/calls.go
+  - internal/service/write.go
+  - internal/service/accounts.go
+  - internal/service/send.go
+  - internal/service/approvals.go
+  - internal/policy/limiter.go
   - internal/provider/imapsmtp/backend.go
   - internal/provider/imapsmtp/fetch.go
   - internal/provider/imapsmtp/pool.go
@@ -143,9 +148,10 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
    {{< src "internal/mcpserver/shape.go" >}} shapes the result. See "Where text
    from the mail is cleaned" below.
 10. **The call entry.** When the call ends, `capture` writes one call entry in
-    the activity log: the log of what the agent did, which the person reads in
-    the web portal (the local web site of the person). See "Where the call is
-    recorded" below.
+    the activity log: the log of the tool calls of the agent and of the actions
+    of the use cases, also those that the person did on a page. The person reads
+    it in the web portal (the local web site of the person). See "Where the call
+    is recorded" below.
 
 ## Where the permission is checked
 
@@ -153,21 +159,26 @@ In `service`, never in `mcpserver`. A tool handler checks no permission
 itself.
 
 - The use cases that a tool calls to read or change the mail of one account
-  start with `authorize` (step 5). The reads call it through `mailBackend`.
+  call `authorize` (step 5) before they read the account or its mail. Some,
+  such as `Send`, first check that the program is not stopping
+  (`beginAction`). The reads call it through `mailBackend`.
   The writes, `Send`, `Trash` and `CancelSend` among them, call it through
   `authorizeWrite` in `write.go`, which `begin` calls. `SendStatus` calls it
   itself. So `authorize` runs before any of these use cases calls a mail
   backend.
 - `ListAccounts` has no account id. It lists the accounts of the tenant of the
-  caller. It asks the backend of an account for its capabilities only when
+  caller. It asks the backend of an account for its capabilities (what the
+  backend supports, such as tags, and the most refs in one batch call) only when
   `policy.Decide` allows reading and the account needs no reconnect
   (`worthAsking` in `read.go`).
 - `PermissionLink` and `ConnectLink` change nothing and return a link.
   `PermissionLink` checks that the account is in the tenant of the caller.
-- The use cases of the person, such as `UpdateSettings`, `RemoveAccount` and
-  `ProbeAccount` in `accounts.go`, do not call `authorize`. They work only in
-  the tenant of the caller, and no tool calls them (see
-  [Architecture overview][doors]).
+- No tool calls the use cases of the person (see
+  [Architecture overview][doors]). They work only in the tenant of the caller.
+  Some, such as `UpdateSettings`, `RemoveAccount` and `ProbeAccount` in
+  `accounts.go`, check no level. Others also call `authorize` for the account
+  of the action: `ApprovePending` through `begin` and `authorizeWrite`, and
+  `PendingDetail` for a send that waits (`sendDetail` in `approvals.go`).
 
 So a tool that you add gets the check from its use case. That use case must
 call `authorize`, or, for a write, `authorizeWrite` (alone or through

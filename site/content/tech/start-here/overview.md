@@ -63,10 +63,11 @@ import layers of the packages: the page
    is the function that runs one tool. It checks no permission itself. See
    [One tool call, step by step](/tech/start-here/tool-call/).
 3. `service` runs the use cases. A use case that a tool calls on the mail of
-   one account finds the caller, finds the account in the tenant of the
-   caller, checks the permission (`authorize`), and only then calls the mail
-   backend. The use cases of the person are guarded in another way (see "Two
-   doors into the use cases" below). See
+   one account finds the caller, finds the account in the tenant of the caller
+   (the owner of a set of accounts), checks the permission (`authorize`), and
+   only then calls the mail backend. The use cases of the person are guarded
+   by their door, and some also call `authorize` (see "Two doors into the use
+   cases" below). See
    [One tool call, step by step][permission].
 4. Under `service` are the parts that it uses:
    - `policy` decides what the agent may do with an account, and limits how
@@ -105,10 +106,13 @@ The agent and the person reach `service` through different doors:
 - The person uses the web portal (`web`) in a browser, and the other commands
   of `cmd/email-mcp` at a terminal (a window where you type commands).
 
-Some use cases are only for the person, for example `ApprovePending`. The
-list `userOnlyCalls` in {{< src "internal/mcpserver/useronly_test.go" >}} names
-all of them, and it is the list to trust. In the drawing, the dashed box holds
-them. The person's door reaches them, and the agent's door does not.
+Some use cases are only for the person, for example `ApprovePending`. The list
+`userOnlyCalls` in {{< src "internal/mcpserver/useronly_test.go" >}} names the
+ones that a test guards, and it is the list to trust for them. Other use cases,
+such as `ProbeAccount` and `QueuedSends`, are called only by the web portal or
+the commands, and no test names them. In the drawing, the dashed box holds the
+user-only use cases. The person's door reaches them, and the agent's door does
+not.
 
 Two tests in that file keep tools away from them.
 `TestNoToolReachesTheUserOnlyUseCases` reads the Go files of `mcpserver`,
@@ -117,10 +121,12 @@ without the tests. It fails when a file names one of these calls, or imports
 the server and fails when a tool name has a word such as `approve` or
 `settings`.
 
-The use cases of the person, such as `UpdateSettings` and `RemoveAccount`,
-do not call `authorize` and check no level. They read the principal (see
-below) and work only in its tenant. Their guard is the door: no tool calls
-them.
+The use cases of the person are guarded by their door: no tool calls them.
+They read the principal (see below) and work only in its tenant. Some of them,
+such as `UpdateSettings`, `RemoveAccount` and `ProbeAccount`, check no level.
+Others also call `authorize` for the account of the action: `ApprovePending`
+reaches it through `begin` and `authorizeWrite`, and `PendingDetail` calls it
+for a send that waits, because it builds the message again.
 
 The web portal reads the store itself for its sign-in sessions and for some
 lists, such as the accounts. Every change of an account or a setting goes
