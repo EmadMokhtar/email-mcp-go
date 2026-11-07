@@ -117,5 +117,7 @@ func makeCard(svgPath, pngPath string) error {
 		return err
 	}
 	record := fmt.Sprintf("%x  %s\n", sha256.Sum256(source), filepath.Base(svgPath))
-	return os.WriteFile(pngPath+".sha256", []byte(record), 0o600)
+	// G703 flags this path because it comes from a flag. The person who runs
+	// this tool chooses the flag, and the file goes next to the PNG.
+	return os.WriteFile(pngPath+".sha256", []byte(record), 0o600) //nolint:gosec // G703: see above
 }
