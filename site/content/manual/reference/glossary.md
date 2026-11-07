@@ -23,11 +23,11 @@ alphabetical order.
   a move to the Trash.
 - **Base64:** a way to write bytes with letters, digits, `+`, `/` and `=`. A key
   file holds the master key as base64 text.
-- **Certificate pinning:** storing the fingerprint of a server certificate and
-  refusing any other certificate later.
 - **Certificate:** the proof of identity that a server shows. email-mcp checks
   it, and it can pin it. See [A local
   bridge](/manual/getting-started/connect-account/#a-local-bridge).
+- **Certificate pinning:** storing the fingerprint of a server certificate and
+  refusing any other certificate later.
 - **Checksum:** a short code that a function makes from the content of a file.
   Another content gives another code.
 - **Confirmation:** your "yes" before the agent can send mail or move mail to
@@ -71,11 +71,11 @@ alphabetical order.
   levels](/manual/daily-use/permission-levels/).
 - **Local bridge:** a program on your own computer that offers IMAP and SMTP
   servers for a mail service.
-- **Local mode:** how email-mcp runs today: on your own computer, for you. See
-  [Security](/manual/daily-use/security/).
 - **Local HTTP mode:** email-mcp runs a small server on your own computer, and
   an AI app that cannot start a program connects to it with a token. See [Local
   HTTP mode](/manual/reference/local-http-mode/).
+- **Local mode:** how email-mcp runs today: on your own computer, for you. See
+  [Security](/manual/daily-use/security/).
 - **Loopback address:** an address, such as 127.0.0.1, that only the same
   computer can reach.
 - **Master key (KEK, key encryption key):** the key that encrypts the keys that

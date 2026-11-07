@@ -239,10 +239,30 @@ When the account is saved, the command prints `Connected`, your address and the
 id of the account.
 
 Without `--imap-host` and `--smtp-host`, it looks up the server settings and
-asks you to confirm them before it sends the password anywhere. The question is
-`Send the password to these servers? [y/N]`. With the flags, it uses your
-settings. The flag `--imap-host` is your IMAP server, and `--smtp-host` is your
-SMTP server. A flag is an option that starts with `--`:
+asks you to confirm them before it sends the password anywhere. On a terminal,
+it first prints the suggestions, one on each line, and then the lines "The
+password goes only to the servers that you choose. Choose them only if you know
+these hosts."
+
+- With one suggestion, the question is `Send the password to these servers?
+  [y/N]`.
+- With more than one suggestion, the question is `Choose the settings to use
+  [1-3], or press Enter to stop:`. The number after `1-` is the number of
+  suggestions (3 is an example). Type the number of the suggestion that you
+  want.
+
+If you press Enter, or you answer in another way, the command prints
+"account add: stopped. Nothing was saved."
+
+Without a terminal (for example, when a pipe gives it the password), nobody can
+answer. The command then prints the suggestions and stops, and it saves
+nothing. It says: "account add: suggested settings need a confirmation, and
+without a terminal nobody can confirm them. Run again with --imap-host and
+--smtp-host to choose the servers that get the password."
+
+With the flags, it uses your settings. The flag `--imap-host` is your IMAP
+server, and `--smtp-host` is your SMTP server. A flag is an option that starts
+with `--`:
 
 ```sh
 email-mcp account add --email you@example.com \

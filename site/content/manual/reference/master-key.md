@@ -188,11 +188,17 @@ is quick.
 
 1. Stop every program that uses the data folder: `serve`, `setup`, and the AI
    apps that start email-mcp.
-2. Run the rotation, to a new key file (it must not exist yet) or to the
-   keychain:
+2. Run the rotation. Run only one of the two commands below, the one that
+   fits the master key that you want. To change to a new key file (it must not
+   exist yet), run this command:
 
    ```sh
    email-mcp key rotate --to file:/home/you/.email-mcp-2.key
+   ```
+
+   To change to the keychain, run this command instead:
+
+   ```sh
    email-mcp key rotate --to keychain
    ```
 

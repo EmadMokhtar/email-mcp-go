@@ -12,7 +12,30 @@ the new version, with one command.
 The first version of email-mcp read its settings from a `.env` file (a text file
 of settings), or from the `env` block of the AI app config (`IMAP_HOST`,
 `IMAP_USERNAME`, and so on). That version is gone. One command moves its account
-into the new database. Run it in a terminal (a window where you type commands):
+into the new database. The command reads only a file, never the config of an AI
+app.
+
+If your settings are only in the `env` block of the config of your AI app, make
+the file first. Open the config, and find the `env` block of the old email-mcp.
+Then make a new text file called `.env`, and write one line `NAME=VALUE` for
+each variable of the block. These four names are required:
+
+```text
+IMAP_HOST=imap.example.com
+IMAP_USERNAME=you@example.com
+IMAP_PASSWORD=your-password
+SMTP_HOST=smtp.example.com
+```
+
+Add `IMAP_PORT`, `IMAP_TLS`, `SMTP_PORT`, `SMTP_TLS`, `SMTP_USERNAME` and
+`SMTP_PASSWORD` only when the block has them. When `IMAP_PORT` is missing, the
+command uses 993, and when `SMTP_PORT` is missing, it uses 587. When `IMAP_TLS`
+or `SMTP_TLS` is missing, it is `true`. A name may come only once in the file. A
+line that starts with `#` is a comment (a note that the command skips). The file
+holds your password in plain text, so you delete it after the import (see the
+end of this page).
+
+Then run the command in a terminal (a window where you type commands):
 
 ```sh
 email-mcp import-env path/to/.env
@@ -49,7 +72,8 @@ This .env uses OAuth (USE_OAUTH=true). OAuth accounts are not supported until Go
 
 After the import:
 
-1. Delete the `.env` file. It holds your password in plain text.
+1. Delete the `.env` file. It holds your password in plain text. This is also
+   true of a file that you made from the `env` block.
 2. Remove the old `env` block (the `IMAP_*` and `SMTP_*` variables) from the
    config of your AI app, and register the server again as shown on the page
    [Claude Code](/manual/getting-started/connect-ai-app/claude-code/), or on the

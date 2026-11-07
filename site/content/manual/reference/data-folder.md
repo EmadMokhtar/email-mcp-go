@@ -33,7 +33,9 @@ mode 0700 (only you can open it) and the database file `email-mcp.db` has mode
 0600 (only you can read and write it). The database is SQLite (a database that
 lives in one file) in WAL mode (write-ahead log: a mode that lets several
 programs use one database file safely), so several email-mcp programs can use
-it at once.
+it at once. On Windows, `email-mcp doctor` (the command that checks the
+install) does not check these two modes. See
+[Troubleshooting](/manual/daily-use/troubleshooting/#start-with-doctor).
 
 ## What is stored
 

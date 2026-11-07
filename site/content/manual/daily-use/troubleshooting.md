@@ -46,6 +46,11 @@ number means that it failed.) It checks:
    the protocol for reading mail) and SMTP (Simple Mail Transfer Protocol: the
    protocol for sending mail) servers.
 
+On Windows, `doctor` skips the mode part of checks 1 and 2. It does not check
+the mode 0700 of the data folder, and it does not check the mode 0600 of the
+database file and its write-ahead log files. It still checks that the folder and
+the database file exist.
+
 A line with `FAIL` has the reason after it. Find the reason in the list below.
 After a wrong mode and after a failed account, `doctor` goes on with the next
 check. After a missing folder, a missing database file, a failure of the master

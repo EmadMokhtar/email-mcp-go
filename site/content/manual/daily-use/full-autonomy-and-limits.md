@@ -32,7 +32,9 @@ You must tick the same box when you raise the level to Send or above while
 Confirm sends is off, because that also lets the agent send without asking. A
 level is a number from 0 to 5 that says what the agent may do (see [Permission
 levels](/manual/daily-use/permission-levels/)). If the agent can already send
-without asking and stays that way, a change asks nothing new.
+without asking and stays that way, a change asks nothing new, unless both
+confirmations are off. With both off, every save needs the box (see [Full
+autonomy](#full-autonomy)).
 
 To turn off **Confirm sends**, do these steps in the browser. If the web pages
 are closed, see [Open the pages again][open] first:
