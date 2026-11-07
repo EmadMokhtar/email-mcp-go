@@ -300,15 +300,26 @@ pre code {
 }
 
 /*
-  A table has rules between rows and no fill. As a block it scrolls sideways
-  inside its own box when it is wider than the column. Its words stay whole,
-  so a narrow screen scrolls the table and does not break the words of a cell.
+  A table has rules between rows and no fill. It keeps its normal display, so
+  a browser and a screen reader still see a table (with display:block they may
+  not). The box around it (layouts/_markup/render-table.html) scrolls sideways
+  when the table is wider than the column. The box can take the focus, so the
+  keyboard can scroll it, and it has the focus ring from above. The words of
+  the table stay whole, so a narrow screen scrolls the box and does not break
+  the words of a cell.
 */
-table {
-  display: block;
+.table-scroll {
   max-width: 100%;
   margin: 0 0 1rem;
   overflow-x: auto;
+}
+
+.table-scroll:focus-visible {
+  outline: 2px solid var(--go);
+  outline-offset: 2px;
+}
+
+table {
   overflow-wrap: normal;
   border-collapse: collapse;
   font-size: 0.9375rem;

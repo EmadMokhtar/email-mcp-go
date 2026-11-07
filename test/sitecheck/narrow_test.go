@@ -39,12 +39,12 @@ const (
 // The subtests share it:
 //
 //   - "built pages": every page of the built site.
-//   - "wide content": pages that hold wide things. The built site holds none
-//     today: it has no table and no long line of code. So the test makes its own
-//     pages. Each one is a real page of the built site, with its real layout and
-//     its real stylesheet, and one wide thing in the place of the text. Each wide
-//     thing has a page of its own, so a failure names the thing that broke out
-//     of its box.
+//   - "wide content": pages that hold wide things. The built site may not hold
+//     the widest case of each kind: a table with twelve columns, or a code line
+//     of 200 characters. So the test makes its own pages. Each one is a real page
+//     of the built site, with its real layout and its real stylesheet, and one
+//     wide thing in the place of the text. Each wide thing has a page of its
+//     own, so a failure names the thing that broke out of its box.
 func TestNoSidewaysScroll(t *testing.T) {
 	public, base := builtSite(t)
 
@@ -151,15 +151,18 @@ const (
 	wideColumns = 12
 )
 
-// wideTable returns a table with wideColumns columns, in the markup that Hugo
-// writes for a table of a Markdown file.
+// wideTable returns a table with wideColumns columns, in the scroll box that
+// the table hook of the site writes (layouts/_markup/render-table.html). The
+// table scrolls in its box and not in the page, so the box is part of what this
+// test checks.
 func wideTable() string {
 	var head, row strings.Builder
 	for i := 1; i <= wideColumns; i++ {
 		_, _ = fmt.Fprintf(&head, "<th>Column %d</th>", i)
 		_, _ = fmt.Fprintf(&row, "<td>Value %d</td>", i)
 	}
-	return "<table><thead><tr>" + head.String() + "</tr></thead><tbody><tr>" + row.String() + "</tr></tbody></table>"
+	return `<div class="table-scroll" role="region" tabindex="0" aria-label="Table: wide">` +
+		"<table><thead><tr>" + head.String() + "</tr></thead><tbody><tr>" + row.String() + "</tr></tbody></table></div>"
 }
 
 // pageWithContent returns the HTML of one real page of the built site, with the
