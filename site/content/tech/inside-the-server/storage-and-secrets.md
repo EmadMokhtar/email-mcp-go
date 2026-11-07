@@ -65,8 +65,8 @@ each setting matters for that:
 | `synchronous(FULL)` | The log is flushed to disk at each commit. | Sending a message once, also after a power loss, depends on it. |
 | `_txlock=immediate` | A transaction takes the write lock when it starts. | A read followed by a write could fail at once with "database is locked", and the busy timeout would not help. |
 
-The daily job also runs a checkpoint of the write-ahead log (a step that copies
-the log into the database file). The first connection to a file that was just
+The daily job also runs a checkpoint (a step that copies the write-ahead log
+into the database file). The first connection to a file that was just
 made switches it to WAL mode, and two programs that do this together can get
 `SQLITE_BUSY` at once. `connect` tries again (`connectAttempts`,
 `connectDelay`).
@@ -137,6 +137,10 @@ test an address against the stored hashes.
 | Plain | Everything else, such as the address, the server settings, the levels, the limits, the times and the states | the other columns |
 
 ## Keys
+
+The drawing uses three short names. KEK is the key encryption key (the master
+key), DEK is a data encryption key, and AES-256-GCM is the cipher. The list
+below explains each one.
 
 {{< diagram "key-hierarchy" >}}
 

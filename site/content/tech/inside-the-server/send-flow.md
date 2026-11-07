@@ -131,7 +131,7 @@ that talks to the server). `canElicitInBand` in
   shows the form to the person. `sendPreview` makes its text.
 - **Step 6a, the second call.** It is the same tool with the same arguments, the
   answer and the state. `Send` checks the permission and builds the message
-  again from these arguments (steps 1 and 2) before it looks at the answer.
+  again from these arguments (steps 1 and 2) before it acts on the answer.
   `confirmAnswer` refuses a call that has only one of the two. The answer is a
   yes only when it is an elicitation result with the action `accept` and the
   field `confirm` set to the JSON (JavaScript Object Notation) boolean true
@@ -292,10 +292,10 @@ outbox item starts as `queued`, or as `sending` when the window is 0. It ends as
 - **A send that does not start.** If the program was told to stop after the
   claim and before the send, or less than 30 seconds (`minSendBudget`) of the
   send time is left, the item goes back to the queue. It is not a failed try.
-- **Many accounts.** The worker looks every second (`outboxTick`). An account
-  has at most one send in progress, and at most four sends run at the same time
-  in all (`maxParallelSends`). So a slow mail server does not delay the other
-  accounts.
+- **Many accounts.** The worker looks every second (`outboxTick`). Each worker
+  has at most one send in progress for an account, and at most four sends run
+  at the same time in all (`maxParallelSends`). So a slow mail server does
+  not delay the other accounts.
 - **A stop.** A stop waits for the sends that run, sends the queued messages
   that are due within 5 minutes (`drainWait`), and leaves the others queued for
   the next start. See [Startup and

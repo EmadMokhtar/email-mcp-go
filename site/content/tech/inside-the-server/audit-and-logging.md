@@ -93,10 +93,10 @@ The table repeats the rules of `Detail` and the others with `CHECK` conditions
   says how long it was (`maxArgumentText`). Arguments that are very large become
   a mark with their size (`audit.MaxArgumentBytes`).
 - **A call that failed the schema** keeps only the names and the sizes of its
-  arguments, at most 4 KiB (`maxRejectedArgumentBytes`; a KiB, kibibyte, is
-  1,024 bytes). The text of a message could be under any name, so the log keeps
-  no value. The name of an unknown tool is text from the agent. It goes in the
-  sealed arguments, and the column holds `unknown_tool`.
+  arguments, up to a small size (`maxRejectedArgumentBytes`). The text of a
+  message could be under any name, so the log keeps no value. The name of an
+  unknown tool is text from the agent. It goes in the sealed arguments, and the
+  column holds `unknown_tool`.
 - **`Client` is not trusted.** The client chooses its name, and the log watches
   the client. So `Record` cleans the name: invalid UTF-8 (Unicode Transformation
   Format, 8 bits) and control, format, line and paragraph separator characters
@@ -127,7 +127,8 @@ The table repeats the rules of `Detail` and the others with `CHECK` conditions
 (`ON DELETE CASCADE` is a rule that deletes the rows that belong to a deleted
 row). The Activity page in {{< src "internal/web/activity.go" >}} calls
 `audit.Log.List`, newest first. It shows 50 entries by default and at most 200,
-and at most 4 KiB of the arguments of an entry (`maxArgumentsShown`). `List`
+and at most 4 KiB of the arguments of an entry (`maxArgumentsShown`; a KiB,
+kibibyte, is 1,024 bytes). `List`
 fails if it cannot open the recipients of an entry. It never leaves them out
 without a sign. Arguments that it cannot open do not stop the list: `List` sets
 `ArgumentsUnreadable` on the entry, so one bad row does not hide what the agent
