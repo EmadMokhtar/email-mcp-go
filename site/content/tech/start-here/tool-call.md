@@ -70,8 +70,9 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
    `capture`, and `App.MCPServer` adds `trackToolCalls` after it. The SDK adds
    its own middleware in `mcp.NewServer`, before both, so it runs inside both.
    A call to an unknown tool, or with arguments that do not match the schema,
-   stops here. No code of `mcpserver` runs for it, but `capture` still records
-   it.
+   stops here. `safe` and the tool handler do not run for it. `capture`, which
+   is also code of `mcpserver`, has already run, and it still records the
+   call.
 3. **`safe`.** The function `safe` in
    {{< src "internal/mcpserver/server.go" >}} wraps every tool handler. It asks
    `Options.Principal` for the principal: the caller of the request, with its
@@ -107,12 +108,14 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
    error first, so it learns nothing about the connection of the account.
 6. **The backend cache.** `mailBackend` gets the backend of the account from
    `BackendCache.Mail` in {{< src "internal/service/backends.go" >}}. The cache
-   has one slot for each account, so calls for one account take turns. On every
-   call it reads the sealed (encrypted) password from the store and makes a
-   fingerprint: a SHA-256 (Secure Hash Algorithm with a 256-bit result) hash of
-   the server settings, the key version and the sealed password. When the
-   fingerprint is the one of the cached backend, it returns that backend.
-   Otherwise it decrypts the password and builds the backend again with
+   has one slot for each account. A call holds the slot only while it gets or
+   builds the backend (`mailOn`), so two calls for one account wait for each
+   other only then. After that, they can use the same backend at the same time.
+   On every call the cache reads the sealed (encrypted) password from the store
+   and makes a fingerprint: a SHA-256 (Secure Hash Algorithm with a 256-bit
+   result) hash of the server settings, the key version and the sealed password.
+   When the fingerprint is the one of the cached backend, it returns that
+   backend. Otherwise it decrypts the password and builds the backend again with
    `imapsmtp.New`. It decrypts the password only then. The old backend closes
    after 2 minutes (`retireAfter`), because a call that started on it may still
    use it.
@@ -139,12 +142,30 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
 
 ## Where the permission is checked
 
-In `service`, never in `mcpserver`. Every use case that works on one account
-starts with `authorize` (step 5), and `authorize` runs before any call to a
-mail backend. A tool
-handler checks no permission itself. So a tool that you add gets the check from
-its use case. The page "Permissions" in the group "Inside the server" explains
-`policy.Decide`.
+In `service`, never in `mcpserver`. A tool handler checks no permission
+itself.
+
+- The use cases that a tool calls to read or change the mail of one account
+  start with `authorize` (step 5). The reads call it through `mailBackend`.
+  The writes, `Send`, `Trash` and `CancelSend` among them, call it through
+  `authorizeWrite` in `write.go`, which `begin` calls. `SendStatus` calls it
+  itself. So `authorize` runs before any of these use cases calls a mail
+  backend.
+- `ListAccounts` has no account id. It lists the accounts of the tenant of the
+  caller. It asks the backend of an account for its capabilities only when
+  `policy.Decide` allows reading and the account needs no reconnect
+  (`worthAsking` in `read.go`).
+- `PermissionLink` and `ConnectLink` change nothing and return a link.
+  `PermissionLink` checks that the account is in the tenant of the caller.
+- The use cases of the person, such as `UpdateSettings`, `RemoveAccount` and
+  `ProbeAccount` in `accounts.go`, do not call `authorize`. They work only in
+  the tenant of the caller, and no tool calls them (see
+  [Architecture overview][doors]).
+
+So a tool that you add gets the check from its use case. That use case must
+call `authorize`, or, for a write, `authorizeWrite` (alone or through
+`begin`). The page "Permissions" in the group
+"Inside the server" explains `policy.Decide`.
 
 ## Where text from the mail is cleaned
 
@@ -174,9 +195,12 @@ the cleaning.
 An error that a use case returns goes back up to `safe`. There `toolError` in
 {{< src "internal/mcpserver/errors.go" >}} matches it with `errors.Is` and
 `errors.As`, never by its text, and picks a fixed text for the agent. The text
-of the error itself never reaches the agent, because it can hold text from the
-mail server or the name of an account. The only parts that come from an error
-are fields that the service filled for the agent: the reason and the link of a
+of the error itself does not reach the agent, because it can hold text from
+the mail server or the name of an account. There is one exception: for a
+`*policy.RateLimitError`, `rateLimitFailure` sends the text of the error. That
+text is a fixed sentence that `policy` builds from the kind of limit and the
+wait, and it names no account. The other parts that come from an error are
+fields that the service filled for the agent: the reason and the link of a
 `*service.PermissionError`, and the link of a `*service.ReauthError`.
 
 An error with no known text becomes "internal error". The program log then gets
@@ -236,3 +260,5 @@ The page "The send flow" in the group "Inside the server" explains this path.
 - [What the agent can do](/manual/daily-use/what-the-agent-can-do/) in the
   user manual
 - [Confirmations](/manual/daily-use/confirmations/) in the user manual
+
+[doors]: /tech/start-here/overview/#two-doors-into-the-use-cases

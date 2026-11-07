@@ -53,15 +53,19 @@ program for a caller, such as "read one message" or "send this mail".
 1. The transport carries the MCP messages. On stdio (standard input and
    output: the client starts the server and talks to it through two pipes) it
    is `serveStdio` in {{< src "cmd/email-mcp/serve.go" >}}. On local HTTP
-   (HyperText Transfer Protocol) it is the package `httpserve`. The page "Local
+   (HyperText Transfer Protocol) it is the HTTP server in the same file, with
+   `limitRequests`, and the checks of the package `httpserve`. The page "Local
    HTTP mode" in the group "Ways in" goes deeper.
 2. `mcpserver` holds the tools. A tool handler turns its arguments into one
    call of `service`, and turns the answer into a tool result. It checks no
    permission itself. See
    [One tool call, step by step](/tech/start-here/tool-call/).
-3. `service` runs the use cases. For each request it finds the caller, finds
-   the account of that caller, checks the permission, and only then calls the
-   mail backend. See [One tool call, step by step](/tech/start-here/tool-call/).
+3. `service` runs the use cases. A use case that a tool calls on the mail of
+   one account finds the caller, finds the account in the tenant of the
+   caller, checks the permission (`authorize`), and only then calls the mail
+   backend. The use cases of the person are guarded in another way (see "Two
+   doors into the use cases" below). See
+   [One tool call, step by step][permission].
 4. Under `service` are the parts that it uses:
    - `policy` decides what the agent may do with an account, and limits how
      often it may send mail and move mail to the Trash. The page "Permissions"
@@ -82,19 +86,22 @@ program for a caller, such as "read one message" or "send this mail".
      `mail.Backend`, and `provider/imapsmtp` implements it. The page "The mail
      backend" goes deeper.
 
-Two parts serve the person and not the agent: `web` is the web portal, and
-`cmd/email-mcp` holds the commands. The package `app` builds all the parts and
-connects them. Its function `app.Open` does this. `serve`, `setup` and every
-command that reads the data call it. The page "Startup and shutdown" goes
-deeper.
+`web` serves only the person: it is the web portal. `cmd/email-mcp` serves both.
+Its command `serve` holds the transport of the agent: `serveStdio`,
+`localPrincipal`, `limitRequests` and the HTTP server, in `serve.go`. Its other
+commands, such as `setup` and `account`, are for the person. The package `app`
+builds all the parts and connects them. Its function `app.Open` does this.
+`serve`, `setup` and every command that reads the data call it. The page
+"Startup and shutdown" goes deeper.
 
 ## Two doors into the use cases
 
 The agent and the person reach `service` through different doors:
 
-- The agent uses the tools of `mcpserver`, through the transport.
-- The person uses the web portal (`web`) in a browser, and the commands
-  (`cmd/email-mcp`) at a terminal (a window where you type commands).
+- The agent uses the tools of `mcpserver`, through the transport that
+  `email-mcp serve` runs.
+- The person uses the web portal (`web`) in a browser, and the other commands
+  of `cmd/email-mcp` at a terminal (a window where you type commands).
 
 Some use cases are only for the person. The list `userOnlyCalls` in
 {{< src "internal/mcpserver/useronly_test.go" >}} names them:
@@ -109,6 +116,11 @@ without the tests. It fails when a file names one of these calls, or imports
 `web` or `tokens`. `TestNoToolIsNamedForAUserOnlyUseCase` lists the tools of
 the server and fails when a tool name has a word such as `approve` or
 `settings`.
+
+The use cases of the person, such as `UpdateSettings` and `RemoveAccount`,
+do not call `authorize` and check no level. They read the principal (see
+below) and work only in its tenant. Their guard is the door: no tool calls
+them.
 
 The web portal reads the store itself for its sign-in sessions and for some
 lists, such as the accounts. Every change of an account or a setting goes
@@ -190,9 +202,10 @@ directory and one database. These parts make that safe:
 
 ## Rules that hold in all code
 
-- The agent gets fixed error texts, never the text of an error, which can hold
-  text from a mail server. See
-  [One tool call, step by step][errors].
+- The agent gets fixed error texts, not the text of an error, which can hold
+  text from a mail server. The one exception is a reached limit
+  (`*policy.RateLimitError`): its text is a fixed sentence with the kind of
+  limit and the wait. See [One tool call, step by step][errors].
 - The program log has ids, counts and fixed codes only: never a secret, an
   address, a subject or a body. The page "Activity log and program log" goes
   deeper.
@@ -232,4 +245,5 @@ design spec of the rewrite:
 - [User manual](/manual/)
 
 [errors]: /tech/start-here/tool-call/#errors-become-fixed-texts
+[permission]: /tech/start-here/tool-call/#where-the-permission-is-checked
 [cleaned]: /tech/start-here/tool-call/#where-text-from-the-mail-is-cleaned

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 528" role="img">
   <title>The layers and the two doors</title>
-  <desc>On the left, the agent goes through the transport, stdio or HTTP, to mcpserver, which holds the tools. mcpserver calls the use cases of service. On the right, the person goes through the browser to web, the web portal, and through the terminal to cmd/email-mcp, the commands. Both reach service, and only they reach the user-only use cases, such as UpdateSettings and ApprovePending, drawn as a dashed box inside service. Under service are policy, confirm, outbox, audit, store with secrets, and the mail backend, mail.Backend, which provider/imapsmtp implements. The mail backend talks to the mail servers over IMAP and SMTP.</desc>
+  <desc>On the left, the agent goes through the transport, stdio or HTTP, which the command serve of cmd/email-mcp runs with the checks of httpserve, to mcpserver, which holds the tools. mcpserver calls the use cases of service. On the right, the person goes through the browser to web, the web portal, and through the terminal to the other commands of cmd/email-mcp. Both reach service, and only they reach the user-only use cases, such as UpdateSettings and ApprovePending, drawn as a dashed box inside service. Under service are policy, confirm, outbox, audit, store with secrets, and the mail backend, mail.Backend, which provider/imapsmtp implements. The mail backend talks to the mail servers over IMAP and SMTP.</desc>
 
   <!-- The two callers. -->
   <rect class="d-box" x="20" y="16" width="260" height="40" rx="8"/>
@@ -12,7 +12,7 @@
   <path class="d-line" d="M150 56V96M144 88L150 96L156 88"/>
   <rect class="d-box" x="20" y="96" width="260" height="48" rx="8"/>
   <text class="d-text" x="150" y="114" text-anchor="middle" dominant-baseline="central">Transport</text>
-  <text class="d-soft" x="150" y="133" text-anchor="middle" dominant-baseline="central">stdio or HTTP (httpserve)</text>
+  <text class="d-soft" x="150" y="133" text-anchor="middle" dominant-baseline="central">serve (cmd/email-mcp), httpserve</text>
   <path class="d-line" d="M150 144V176M144 168L150 176L156 168"/>
   <rect class="d-box" x="20" y="176" width="260" height="48" rx="8"/>
   <text class="d-text" x="150" y="194" text-anchor="middle" dominant-baseline="central">mcpserver</text>
@@ -33,7 +33,7 @@
   <text class="d-soft" x="502" y="213" text-anchor="middle" dominant-baseline="central">the web portal</text>
   <rect class="d-box" x="575" y="176" width="125" height="48" rx="8"/>
   <text class="d-text" x="637" y="194" text-anchor="middle" dominant-baseline="central">cmd/email-mcp</text>
-  <text class="d-soft" x="637" y="213" text-anchor="middle" dominant-baseline="central">the commands</text>
+  <text class="d-soft" x="637" y="213" text-anchor="middle" dominant-baseline="central">other commands</text>
   <path class="d-line" d="M502 224V288M496 280L502 288L508 280"/>
   <path class="d-line" d="M637 224V288M631 280L637 288L643 280"/>
 

@@ -83,14 +83,14 @@ of web pages, and of the body of many mails.
 
 | Package | Layer | Job | Main entry point |
 |---|---|---|---|
-| {{< src "cmd/email-mcp/" >}} | 9 | The program and its commands. | `commands`, `runServe` |
+| {{< src "cmd/email-mcp/" >}} | 9 | The program and its commands. The command `serve` also holds the transport of the agent (`serve.go`). | `commands`, `runServe` |
 | {{< src "internal/app/" >}} | 8 | Builds all parts and connects them. Runs the background work, and stops the parts in an order that never loses a send. | `app.Open`, `app.App` |
 | {{< src "internal/web/" >}} | 7 | The web portal of the person: sign-in, accounts, settings, approvals, activity and connections. | `web.New`, `web.Server` |
 | {{< src "internal/httpserve/" >}} | 6 | MCP over local, stateless HTTP, with the checks of each request. | `httpserve.Handler`, `httpserve.Principal` |
 | {{< src "internal/connect/" >}} | 5 | The parts of connecting an account that the portal and the commands share: fixed error texts, and the decision to offer a certificate pin (to trust one certificate by its fingerprint). | `connect.ErrorText`, `connect.CheckCertificate` |
 | {{< src "internal/mcpserver/" >}} | 5 | The tools of the agent, and the shape of their results and errors. | `mcpserver.New` |
 | {{< src "internal/tokens/" >}} | 5 | Makes and checks the access tokens of local HTTP. The store keeps only a hash of each token. | `tokens.Manager` |
-| {{< src "internal/service/" >}} | 4 | The use cases. Finds the caller and the account, checks the permission, and only then calls the mail backend. | `service.Service`, `service.Principal` |
+| {{< src "internal/service/" >}} | 4 | The use cases. A use case that a tool calls on the mail of one account checks the permission (`authorize`) before it calls the mail backend. | `service.Service`, `service.Principal` |
 | {{< src "internal/audit/" >}} | 3 | The activity log: one entry for each tool call, and one for each action of a use case. | `audit.Log` |
 | {{< src "internal/confirm/" >}} | 3 | The actions that wait for the "yes" of the person, bound to the exact request. | `confirm.Manager` |
 | {{< src "internal/outbox/" >}} | 3 | The queue of outgoing mail with its undo window, and the worker that sends it at most once. | `outbox.Outbox` |
