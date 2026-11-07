@@ -16,7 +16,8 @@ tools. A tool is one action that the agent can call, such as `search_messages`.
 
 Source: <https://developers.openai.com/codex/mcp> (it redirects to
 <https://learn.chatgpt.com/docs/extend/mcp?surface=cli>), checked on
-2026-10-29.
+2026-10-29. The text about `bearer_token_env_var` and about a connection with no
+credential is on the same page, checked on 2026-11-07.
 
 ## Add email-mcp (stdio)
 
@@ -38,10 +39,6 @@ Minimal Language: a text format for settings):
 [mcp_servers.email]
 command = "email-mcp"
 args = ["serve"]
-
-# Only with a key file as the master key:
-[mcp_servers.email.env]
-EMAIL_MCP_KEK = "file:/home/you/.email-mcp.key"
 ```
 
 A project can also have `.codex/config.toml`, but Codex reads it only in
@@ -62,8 +59,17 @@ codex mcp add email --env EMAIL_MCP_KEK=file:/home/you/.email-mcp.key \
   -- email-mcp serve
 ```
 
-In the file `config.toml`, the section `[mcp_servers.email.env]` of the block
-above does the same.
+In the file `config.toml`, a section does the same. Only if your master key is
+a file, add:
+
+```toml
+[mcp_servers.email.env]
+EMAIL_MCP_KEK = "file:/home/you/.email-mcp.key"
+```
+
+Put it below the `[mcp_servers.email]` block. Without a key file, do not add
+it: the server would look for a file that does not exist, and it would stop
+with a master key error.
 
 ## Local HTTP
 
@@ -86,6 +92,17 @@ variable that holds the token):
 url = "http://127.0.0.1:8765/mcp"
 bearer_token_env_var = "EMAIL_MCP_TOKEN"
 ```
+
+Codex reads the token from the environment variable `EMAIL_MCP_TOKEN`, which
+you set in the shell that starts Codex (for example from your password
+manager). Set it before you start Codex. For example, on macOS and Linux,
+`export EMAIL_MCP_TOKEN=<token>` sets it for that terminal. Replace `<token>`
+with the token of step 1, the text that starts with `emcp_`. Then start Codex
+from the same terminal.
+
+Without the variable, the server answers HTTP 401 (the answer "not
+authorized"), because the request has no `Authorization` header. The docs say
+that Codex can connect without authentication when no credential is found.
 
 ## What you should see
 

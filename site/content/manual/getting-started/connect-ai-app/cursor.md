@@ -14,7 +14,9 @@ such as `search_messages`.
 
 ## Source and date
 
-Source: <https://cursor.com/docs/context/mcp>, checked on 2026-10-29.
+Source: <https://cursor.com/docs/context/mcp>, checked on 2026-10-29. The text
+about `${env:NAME}` in `url` and `headers` is on the same page, checked on
+2026-11-07.
 
 ## Add email-mcp (stdio)
 
@@ -74,7 +76,7 @@ The docs show a remote server with `url` and a `headers` object. A token written
 into `headers` is stored **in plain text** in `mcp.json`. Cursor replaces
 `${env:NAME}` with an environment variable in `url` and `headers`, so keep the
 token in a variable instead, set in the shell or the system environment that
-starts Cursor:
+starts Cursor. The variable here is `EMAIL_MCP_TOKEN`:
 
 ```json
 {
@@ -86,6 +88,16 @@ starts Cursor:
   }
 }
 ```
+
+Cursor reads the token from the environment variable `EMAIL_MCP_TOKEN`, which
+you set in the shell that starts Cursor (for example from your password
+manager). Set it before you start Cursor. For example, on macOS and Linux,
+`export EMAIL_MCP_TOKEN=<token>` sets it for that terminal. Replace `<token>`
+with the token of step 1, the text that starts with `emcp_`. If Cursor is
+already running, close it and start it again after you set the variable.
+
+Without a valid token, the server answers HTTP 401 (the answer "not
+authorized").
 
 ## What you should see
 
