@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 952" role="img">
+  <title>The decisions of a send</title>
+  <desc>The steps of Service.Send, from top to bottom. 1: the permission, begin and policy.Decide, which needs level Send. 2: the message and its preview are built, prepareSend. 3: the limits that no wait can fix: too many recipients, or a send limit of 0. 4: the question, does the person need to be asked. There are three reasons: the account asks (confirm_sends), a recipient has a character outside printable ASCII (new_recipient), or the new-recipient check is on and an address was never written to (new_recipient). With no reason, the message goes to deliver with UndoWindowAuto. With a reason, the action is stored and there are two channels. In band: 5a the client asks in the chat with a form and a RequestState, 6a the client calls again with the answer and the state, 7a Claim moves the action from pending to approved, 8a the message built again is compared with the stored preview. Approval page: 5b the tool returns pending_approval with a link, 6b the person presses Approve, 7b the message is built again, compared with the preview and checked against the send limits, 8b Transition moves the action from pending to approved. A no, a changed message or a refusal rejects the action and nothing is sent. 9: deliver, where Limiter.Reserve counts the send and Outbox.Enqueue stores the message with the undo window, UndoWindowConfirmed after a confirmation. 10a: a window of 0 sends the message before Enqueue returns. 10b: a window above 0 queues the message, and the worker sends it when it is due.</desc>
+
+  <!-- This file is the source of the drawing: edit it by hand. A short script
+       placed the first coordinates, and that script is not kept. The
+       classes are in site/assets/css/site.css. -->
+
+  <rect class="d-box" x="160" y="16" width="400" height="48" rx="8"/>
+  <text class="d-text" x="360" y="31" text-anchor="middle" dominant-baseline="central">1 Permission</text>
+  <text class="d-soft" x="360" y="49" text-anchor="middle" dominant-baseline="central">begin, then policy.Decide: level Send</text>
+  <path class="d-line" d="M360 64V88M354 80L360 88L366 80"/>
+  <rect class="d-box" x="160" y="88" width="400" height="48" rx="8"/>
+  <text class="d-text" x="360" y="103" text-anchor="middle" dominant-baseline="central">2 Build the message</text>
+  <text class="d-soft" x="360" y="121" text-anchor="middle" dominant-baseline="central">mime.Build, or the saved draft (prepareSend)</text>
+  <path class="d-line" d="M360 136V160M354 152L360 160L366 152"/>
+  <rect class="d-box" x="160" y="160" width="400" height="48" rx="8"/>
+  <text class="d-text" x="360" y="175" text-anchor="middle" dominant-baseline="central">3 Limits that no wait can fix</text>
+  <text class="d-soft" x="360" y="193" text-anchor="middle" dominant-baseline="central">too many recipients, a send limit of 0</text>
+  <path class="d-line" d="M360 208V232M354 224L360 232L366 224"/>
+  <rect class="d-box" x="160" y="232" width="400" height="96" rx="8"/>
+  <text class="d-text" x="360" y="253" text-anchor="middle" dominant-baseline="central">4 Does the person need to be asked?</text>
+  <text class="d-soft" x="360" y="271" text-anchor="middle" dominant-baseline="central">confirm_sends: the account asks</text>
+  <text class="d-soft" x="360" y="289" text-anchor="middle" dominant-baseline="central">new_recipient: a character outside ASCII</text>
+  <text class="d-soft" x="360" y="307" text-anchor="middle" dominant-baseline="central">new_recipient: the check is on, address unknown</text>
+  <path class="d-line" d="M560 280H706V776H560M568 770L560 776L568 782"/>
+  <text class="d-soft" x="570" y="270" text-anchor="start" dominant-baseline="central">no</text>
+  <text class="d-soft" x="633" y="748" text-anchor="middle" dominant-baseline="central">no question:</text>
+  <text class="d-soft" x="633" y="762" text-anchor="middle" dominant-baseline="central">UndoWindowAuto</text>
+  <path class="d-line" d="M360 328V344"/>
+  <path class="d-line" d="M185 344H535"/>
+  <path class="d-line" d="M185 344V368M179 360L185 368L191 360"/>
+  <path class="d-line" d="M535 344V368M529 360L535 368L541 360"/>
+  <text class="d-soft" x="372" y="338" text-anchor="start" dominant-baseline="central">yes: the action is stored</text>
+  <rect class="d-box" x="20" y="368" width="330" height="56" rx="8"/>
+  <text class="d-text" x="185" y="387" text-anchor="middle" dominant-baseline="central">5a Ask in the chat</text>
+  <text class="d-soft" x="185" y="405" text-anchor="middle" dominant-baseline="central">a form with one box, and a RequestState</text>
+  <rect class="d-box" x="20" y="448" width="330" height="56" rx="8"/>
+  <text class="d-text" x="185" y="467" text-anchor="middle" dominant-baseline="central">6a The client calls again</text>
+  <text class="d-soft" x="185" y="485" text-anchor="middle" dominant-baseline="central">same arguments, the answer, the state</text>
+  <rect class="d-box" x="20" y="528" width="330" height="56" rx="8"/>
+  <text class="d-text" x="185" y="547" text-anchor="middle" dominant-baseline="central">7a Claim: pending to approved</text>
+  <text class="d-soft" x="185" y="565" text-anchor="middle" dominant-baseline="central">state, tenant and payload hash checked</text>
+  <rect class="d-box" x="20" y="608" width="330" height="56" rx="8"/>
+  <text class="d-text" x="185" y="627" text-anchor="middle" dominant-baseline="central">8a Compare with the preview</text>
+  <text class="d-soft" x="185" y="645" text-anchor="middle" dominant-baseline="central">message built again, samePreview</text>
+  <rect class="d-box" x="370" y="368" width="330" height="56" rx="8"/>
+  <text class="d-text" x="535" y="387" text-anchor="middle" dominant-baseline="central">5b Return pending_approval</text>
+  <text class="d-soft" x="535" y="405" text-anchor="middle" dominant-baseline="central">with a link to the approval page</text>
+  <rect class="d-box" x="370" y="448" width="330" height="56" rx="8"/>
+  <text class="d-text" x="535" y="467" text-anchor="middle" dominant-baseline="central">6b The person presses Approve</text>
+  <text class="d-soft" x="535" y="485" text-anchor="middle" dominant-baseline="central">the agent polls get_send_status</text>
+  <rect class="d-box" x="370" y="528" width="330" height="56" rx="8"/>
+  <text class="d-text" x="535" y="547" text-anchor="middle" dominant-baseline="central">7b Build again and compare</text>
+  <text class="d-soft" x="535" y="565" text-anchor="middle" dominant-baseline="central">samePreview, then the send limits</text>
+  <rect class="d-box" x="370" y="608" width="330" height="56" rx="8"/>
+  <text class="d-text" x="535" y="627" text-anchor="middle" dominant-baseline="central">8b Approve: pending to approved</text>
+  <text class="d-soft" x="535" y="645" text-anchor="middle" dominant-baseline="central">Transition, one database step</text>
+  <path class="d-line" d="M185 424V448M179 440L185 448L191 440"/>
+  <path class="d-line" d="M535 424V448M529 440L535 448L541 440"/>
+  <path class="d-line" d="M185 504V528M179 520L185 528L191 520"/>
+  <path class="d-line" d="M535 504V528M529 520L535 528L541 520"/>
+  <path class="d-line" d="M185 584V608M179 600L185 608L191 600"/>
+  <path class="d-line" d="M535 584V608M529 600L535 608L541 600"/>
+  <text class="d-soft" x="360" y="688" text-anchor="middle" dominant-baseline="central">confirmed: UndoWindowConfirmed</text>
+  <path class="d-line" d="M185 664V704H300V728M294 720L300 728L306 720"/>
+  <path class="d-line" d="M535 664V704H420V728M414 720L420 728L426 720"/>
+  <rect class="d-box" x="160" y="728" width="400" height="72" rx="8"/>
+  <text class="d-text" x="360" y="746" text-anchor="middle" dominant-baseline="central">9 deliver</text>
+  <text class="d-soft" x="360" y="764" text-anchor="middle" dominant-baseline="central">Limiter.Reserve counts the send,</text>
+  <text class="d-soft" x="360" y="782" text-anchor="middle" dominant-baseline="central">then Outbox.Enqueue(window)</text>
+  <path class="d-line" d="M360 800V816"/>
+  <path class="d-line" d="M185 816H535"/>
+  <path class="d-line" d="M185 816V840M179 832L185 840L191 832"/>
+  <path class="d-line" d="M535 816V840M529 832L535 840L541 832"/>
+  <rect class="d-box" x="20" y="840" width="330" height="56" rx="8"/>
+  <text class="d-text" x="185" y="859" text-anchor="middle" dominant-baseline="central">10a A window of 0</text>
+  <text class="d-soft" x="185" y="877" text-anchor="middle" dominant-baseline="central">sent before Enqueue returns</text>
+  <rect class="d-box" x="370" y="840" width="330" height="56" rx="8"/>
+  <text class="d-text" x="535" y="859" text-anchor="middle" dominant-baseline="central">10b A window above 0</text>
+  <text class="d-soft" x="535" y="877" text-anchor="middle" dominant-baseline="central">queued, the worker sends it when due</text>
+  <text class="d-soft" x="360" y="924" text-anchor="middle" dominant-baseline="central">A no, a changed message or a refusal rejects the action. Nothing is sent.</text>
+</svg>

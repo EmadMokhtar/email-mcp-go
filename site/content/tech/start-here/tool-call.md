@@ -182,8 +182,8 @@ itself.
 
 So a tool that you add gets the check from its use case. That use case must
 call `authorize`, or, for a write, `authorizeWrite` (alone or through
-`begin`). The page "Permissions" in the group
-"Inside the server" explains `policy.Decide`.
+`begin`). The page [Permissions](/tech/inside-the-server/permissions/) in the
+group "Inside the server" explains `policy.Decide`.
 
 ## Where text from the mail is cleaned
 
@@ -238,8 +238,9 @@ The arguments are sealed with the key of the tenant. The arguments `body`,
 `html_body` and `data_base64` are never kept (`omittedArguments`). A failure to
 write the entry does not change the answer of the call. A call without a
 principal has no entry either, because the table needs a tenant, and the
-program log gets a fixed code instead. The page "Activity log and program log"
-in the group "Inside the server" explains the log.
+program log gets a fixed code instead. The page
+[Activity log and program log](/tech/inside-the-server/audit-and-logging/) in
+the group "Inside the server" explains the log.
 
 ## What differs between stdio and HTTP
 
@@ -269,7 +270,8 @@ additions:
   A send with no undo window runs inside its tool call, and that is why
   `trackToolCalls` counts the call.
 
-The page "The send flow" in the group "Inside the server" explains this path.
+The page [The send flow](/tech/inside-the-server/send-flow/) in the group
+"Inside the server" explains this path.
 
 ## Related pages
 

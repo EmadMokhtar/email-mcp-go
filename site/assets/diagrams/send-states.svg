@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 576" role="img">
+  <title>The states of a pending action and of an outbox item</title>
+  <desc>Two state diagrams. First, the pending action of the confirm package. It starts as pending. A pending action becomes approved when the person's yes is claimed in band or when the person presses Approve on the page. It becomes rejected after a no, a cancel by the agent, or a message that changed. It becomes expired when its time is over. An approved action becomes done when the work is done, rejected when a refusal comes after the claim (a send limit, or an outbox that cannot store the message), and expired when nothing finished it. Done, rejected and expired are final, and the payload and the preview are deleted at that point. Second, the outbox item. A queued item becomes sending when a worker claims it, and cancelled when it is cancelled in its undo window. A sending item becomes sent when the mail server takes the message. It becomes queued again after a transient error, with a wait of 30 seconds, 2 minutes or 10 minutes. It becomes failed after a permanent error, after the fourth failed try, or when nobody can know the result. An item with a window of 0 is stored as sending at once. Sent, failed and cancelled are final, and the message is deleted at that point.</desc>
+
+  <!-- This file is the source of the drawing: edit it by hand. A short script
+       placed the first coordinates, and that script is not kept. The
+       classes are in site/assets/css/site.css. -->
+
+  <text class="d-text" x="20" y="24" text-anchor="start" dominant-baseline="central">Pending action (confirm)</text>
+  <rect class="d-box" x="20" y="60" width="110" height="40" rx="8"/>
+  <text class="d-text" x="75" y="80" text-anchor="middle" dominant-baseline="central">pending</text>
+  <rect class="d-box" x="245" y="60" width="110" height="40" rx="8"/>
+  <text class="d-text" x="300" y="80" text-anchor="middle" dominant-baseline="central">approved</text>
+  <rect class="d-box" x="570" y="60" width="110" height="40" rx="8"/>
+  <text class="d-text" x="625" y="80" text-anchor="middle" dominant-baseline="central">done</text>
+  <rect class="d-box" x="245" y="170" width="110" height="40" rx="8"/>
+  <text class="d-text" x="300" y="190" text-anchor="middle" dominant-baseline="central">rejected</text>
+  <rect class="d-box" x="570" y="170" width="110" height="40" rx="8"/>
+  <text class="d-text" x="625" y="190" text-anchor="middle" dominant-baseline="central">expired</text>
+  <path class="d-line" d="M130 80H245M237 74L245 80L237 86"/>
+  <text class="d-soft" x="188" y="66" text-anchor="middle">claim, or Approve</text>
+  <path class="d-line" d="M355 80H570M562 74L570 80L562 86"/>
+  <text class="d-soft" x="462" y="66" text-anchor="middle">the work is done</text>
+  <path class="d-line" d="M300 100V170M294 162L300 170L306 162"/>
+  <text class="d-soft" x="310" y="140" text-anchor="start">refused after the claim</text>
+  <path class="d-line" d="M355 100L570 190M562 184L570 190L562 196"/>
+  <text class="d-soft" x="450" y="182" text-anchor="middle">nothing finished it</text>
+  <path class="d-line" d="M100 100L100 190L245 190M237 184L245 190L237 196"/>
+  <text class="d-soft" x="110" y="164" text-anchor="start">a no, a cancel,</text>
+  <text class="d-soft" x="110" y="180" text-anchor="start">a change</text>
+  <path class="d-line" d="M50 100L50 250L625 250L625 210M619 218L625 210L631 218"/>
+  <text class="d-soft" x="340" y="242" text-anchor="middle">the time is over</text>
+  <text class="d-soft" x="20" y="278" text-anchor="start">Final: done, rejected, expired. The payload and the preview are deleted when an action ends.</text>
+  <text class="d-text" x="20" y="324" text-anchor="start" dominant-baseline="central">Outbox item (outbox)</text>
+  <rect class="d-box" x="20" y="384" width="110" height="40" rx="8"/>
+  <text class="d-text" x="75" y="404" text-anchor="middle" dominant-baseline="central">queued</text>
+  <rect class="d-box" x="245" y="384" width="110" height="40" rx="8"/>
+  <text class="d-text" x="300" y="404" text-anchor="middle" dominant-baseline="central">sending</text>
+  <rect class="d-box" x="570" y="384" width="110" height="40" rx="8"/>
+  <text class="d-text" x="625" y="404" text-anchor="middle" dominant-baseline="central">sent</text>
+  <rect class="d-box" x="20" y="490" width="110" height="40" rx="8"/>
+  <text class="d-text" x="75" y="510" text-anchor="middle" dominant-baseline="central">cancelled</text>
+  <rect class="d-box" x="570" y="490" width="110" height="40" rx="8"/>
+  <text class="d-text" x="625" y="510" text-anchor="middle" dominant-baseline="central">failed</text>
+  <path class="d-line" d="M130 404H245M237 398L245 404L237 410"/>
+  <text class="d-soft" x="188" y="390" text-anchor="middle">claim</text>
+  <path class="d-line" d="M355 404H570M562 398L570 404L562 410"/>
+  <text class="d-soft" x="462" y="390" text-anchor="middle">the mail server took it</text>
+  <path class="d-line" d="M270 384L270 358L95 358L95 384M89 376L95 384L101 376"/>
+  <text class="d-soft" x="182" y="350" text-anchor="middle">a transient error: wait, then try again</text>
+  <path class="d-line" d="M50 424V490M44 482L50 490L56 482"/>
+  <text class="d-soft" x="60" y="452" text-anchor="start">cancel in the</text>
+  <text class="d-soft" x="60" y="468" text-anchor="start">undo window</text>
+  <path class="d-line" d="M330 424L330 510L570 510M562 504L570 510L562 516"/>
+  <text class="d-soft" x="450" y="462" text-anchor="middle">a permanent error,</text>
+  <text class="d-soft" x="450" y="478" text-anchor="middle">the fourth failed try,</text>
+  <text class="d-soft" x="450" y="494" text-anchor="middle">or a result nobody knows</text>
+  <text class="d-soft" x="20" y="548" text-anchor="start">A window of 0 stores the item as sending at once. Final: sent, failed, cancelled.</text>
+  <text class="d-soft" x="20" y="566" text-anchor="start">The sealed message is deleted when an item ends.</text>
+</svg>

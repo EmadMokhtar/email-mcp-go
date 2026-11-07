@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 524" role="img">
+  <title>The keys of email-mcp</title>
+  <desc>The keys of email-mcp, from top to bottom. The master key (KEK) is in the keychain of the operating system, or in a key file, as EMAIL_MCP_KEK says. It is never stored in the database. It wraps, with AES-256-GCM, two kinds of key that the database stores: the data keys (DEK), one for each tenant and version, in the table tenant_keys, and the server key, one key, in the table server_keys. A data key seals fields with AES-256-GCM, and the associated data ties each value to its tenant, account and field: the account password, the payload and the preview of a pending action, the message of an outbox item, and the recipients and the arguments of an audit entry. The server key does not seal fields. It gives two derived keys, each the HMAC-SHA-256 of a label under the server key. The label signing/v1 gives the key of the Signer, which signs request states, page tokens, cursors and CSRF tokens. The label known-recipients/v1 gives the key of the hashes of known recipients.</desc>
+
+  <!-- This file is the source of the drawing: edit it by hand. A short script
+       placed the first coordinates, and that script is not kept. The
+       classes are in site/assets/css/site.css. -->
+
+  <rect class="d-box" x="170" y="16" width="380" height="72" rx="8"/>
+  <text class="d-text" x="360" y="34" text-anchor="middle" dominant-baseline="central">Master key (KEK)</text>
+  <text class="d-soft" x="360" y="52" text-anchor="middle" dominant-baseline="central">the keychain, or a key file: EMAIL_MCP_KEK</text>
+  <text class="d-soft" x="360" y="70" text-anchor="middle" dominant-baseline="central">never stored in the database</text>
+  <path class="d-line" d="M360 88V108"/>
+  <path class="d-line" d="M195 108H525"/>
+  <path class="d-line" d="M195 108V168M189 160L195 168L201 160"/>
+  <path class="d-line" d="M525 108V168M519 160L525 168L531 160"/>
+  <text class="d-soft" x="330" y="128" text-anchor="end" dominant-baseline="central">wraps (AES-256-GCM)</text>
+  <rect class="d-box d-dash" x="20" y="144" width="680" height="148" rx="8"/>
+  <text class="d-soft" x="34" y="162" text-anchor="start" dominant-baseline="central">In the database</text>
+  <rect class="d-box" x="40" y="168" width="310" height="56" rx="8"/>
+  <text class="d-text" x="195" y="187" text-anchor="middle" dominant-baseline="central">Data keys (DEK)</text>
+  <text class="d-soft" x="195" y="205" text-anchor="middle" dominant-baseline="central">one for each tenant and version: tenant_keys</text>
+  <rect class="d-box" x="370" y="168" width="310" height="56" rx="8"/>
+  <text class="d-text" x="525" y="187" text-anchor="middle" dominant-baseline="central">Server key</text>
+  <text class="d-soft" x="525" y="205" text-anchor="middle" dominant-baseline="central">one key: server_keys</text>
+  <path class="d-line" d="M195 224V316M189 308L195 316L201 308"/>
+  <text class="d-soft" x="205" y="262" text-anchor="start" dominant-baseline="central">seals (AES-256-GCM)</text>
+  <path class="d-line" d="M525 224V316M519 308L525 316L531 308"/>
+  <text class="d-soft" x="535" y="262" text-anchor="start" dominant-baseline="central">derives (HMAC-SHA-256)</text>
+  <rect class="d-box" x="40" y="316" width="310" height="140" rx="8"/>
+  <text class="d-text" x="195" y="338" text-anchor="middle" dominant-baseline="central">Sealed fields</text>
+  <text class="d-soft" x="195" y="362" text-anchor="middle" dominant-baseline="central">the account password</text>
+  <text class="d-soft" x="195" y="386" text-anchor="middle" dominant-baseline="central">payload and preview of a pending action</text>
+  <text class="d-soft" x="195" y="410" text-anchor="middle" dominant-baseline="central">the message of an outbox item</text>
+  <text class="d-soft" x="195" y="434" text-anchor="middle" dominant-baseline="central">recipients and arguments of an audit entry</text>
+  <rect class="d-box" x="370" y="316" width="310" height="64" rx="8"/>
+  <text class="d-text" x="525" y="331" text-anchor="middle" dominant-baseline="central">signing/v1</text>
+  <text class="d-soft" x="525" y="348" text-anchor="middle" dominant-baseline="central">the key of the Signer: request states,</text>
+  <text class="d-soft" x="525" y="365" text-anchor="middle" dominant-baseline="central">page tokens, cursors, CSRF tokens</text>
+  <rect class="d-box" x="370" y="392" width="310" height="64" rx="8"/>
+  <text class="d-text" x="525" y="407" text-anchor="middle" dominant-baseline="central">known-recipients/v1</text>
+  <text class="d-soft" x="525" y="424" text-anchor="middle" dominant-baseline="central">the key of the known-recipient</text>
+  <text class="d-soft" x="525" y="441" text-anchor="middle" dominant-baseline="central">hashes (HMAC-SHA-256)</text>
+  <text class="d-soft" x="40" y="484" text-anchor="start" dominant-baseline="central">The associated data of a sealed value names its tenant, account and field.</text>
+  <text class="d-soft" x="40" y="502" text-anchor="start" dominant-baseline="central">The version of the data key is stored next to each sealed value.</text>
+</svg>

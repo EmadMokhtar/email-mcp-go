@@ -25,7 +25,12 @@ whole program on one page.
 The questions use a few terms. A tenant is the owner of a set of accounts.
 IMAP (Internet Message Access Protocol) is the protocol for reading mail. Stdio
 (standard input and output) and HTTP (HyperText Transfer Protocol) are the two
-ways that a client talks to the server.
+ways that a client talks to the server. Stdin is the standard input of a
+program. A level is a number from 0 to 5 that says what the agent may do with an
+account. A scope is a permission that an access token carries. The undo window
+is the time that a send waits before it goes out, while it can still be
+cancelled. The master key is the key that protects the other keys. A migration
+is a numbered file that changes the structure of the database.
 
 | If you want to know... | read... |
 |---|---|
@@ -44,3 +49,33 @@ ways that a client talks to the server.
 | Where is text from the mail cleaned? | [One tool call, step by step](/tech/start-here/tool-call/#where-text-from-the-mail-is-cleaned) |
 | Where do errors become the texts that the agent sees? | [One tool call, step by step](/tech/start-here/tool-call/#errors-become-fixed-texts) |
 | What differs between stdio and HTTP? | [One tool call, step by step](/tech/start-here/tool-call/#what-differs-between-stdio-and-http) |
+| What happens when an agent calls `send_message`? | [The send flow](/tech/inside-the-server/send-flow/#the-steps) |
+| When is the person asked, and how? | [The send flow](/tech/inside-the-server/send-flow/#when-the-person-is-asked) |
+| How does the "yes" of the person bind to the exact message? | [The send flow](/tech/inside-the-server/send-flow/#how-the-yes-is-tied-to-the-message) |
+| What is the undo window, and who can cancel? | [The send flow](/tech/inside-the-server/send-flow/#delivery-and-the-undo-window) |
+| What if the program stops, or the connection breaks, during a send? | [The send flow](/tech/inside-the-server/send-flow/#the-outbox) |
+| How is a double send prevented? | [The send flow](/tech/inside-the-server/send-flow/#the-outbox) |
+| What can an agent do at each level? | [Permissions](/tech/inside-the-server/permissions/#levels) |
+| Who changes a level, and how? | [Permissions](/tech/inside-the-server/permissions/#who-changes-a-level) |
+| What do token scopes change? | [Permissions](/tech/inside-the-server/permissions/#token-scopes) |
+| What are the limits, and when do they apply? | [Permissions](/tech/inside-the-server/permissions/#limits) |
+| What is full autonomy, and what does it need? | [Permissions](/tech/inside-the-server/permissions/#full-autonomy-and-the-risk-acceptance) |
+| What can never be done, at any level? | [Permissions](/tech/inside-the-server/permissions/#what-no-level-allows) |
+| Where are the files, and who may read them? | [Storage and secrets](/tech/inside-the-server/storage-and-secrets/#where-the-data-lives) |
+| Which fields are encrypted, hashed or plain? | [Storage and secrets](/tech/inside-the-server/storage-and-secrets/#sealed-hashed-or-plain) |
+| What is the master key, and where does it live? | [Storage and secrets](/tech/inside-the-server/storage-and-secrets/#the-master-key) |
+| How does the first start make the key, and what if two programs start at once? | [Storage and secrets](/tech/inside-the-server/storage-and-secrets/#the-first-start) |
+| How do I rotate the master key? | [Storage and secrets](/tech/inside-the-server/storage-and-secrets/#rotation) |
+| How long is data kept? | [Storage and secrets](/tech/inside-the-server/storage-and-secrets/#how-long-data-is-kept) |
+| How do I add a migration? | [Storage and secrets](/tech/inside-the-server/storage-and-secrets/#migrations) |
+| What does the activity log record, and where do the entries come from? | [Activity log and program log](/tech/inside-the-server/audit-and-logging/#the-activity-log) |
+| What is never recorded? | [Activity log and program log](/tech/inside-the-server/audit-and-logging/#what-is-kept-and-what-is-dropped) |
+| How long are activity log entries kept? | [Activity log and program log](/tech/inside-the-server/audit-and-logging/#how-long-entries-stay-and-who-reads-them) |
+| What goes in the program log, and where does it go? | [Activity log and program log](/tech/inside-the-server/audit-and-logging/#the-program-log) |
+| How do I add a log line safely? | [Activity log and program log](/tech/inside-the-server/audit-and-logging/#add-a-log-line) |
+| What does `app.Open` build, and in what order? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#open-six-steps) |
+| What background work runs? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#run-clean-up-then-three-jobs) |
+| What happens when I press Ctrl-C, or the client closes stdin? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#the-signals-and-a-second-ctrl-c) |
+| How long can a stop take, and why? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#close-six-steps) |
+| What happens at the next start after a crash? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#after-a-crash) |
+| Why does a short command not wait for the queue? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#short-commands) |
