@@ -109,8 +109,11 @@ site-serve: screenshots site/static/icon.svg
 # point). It runs with a new empty profile (--user-data-dir), so it does not
 # touch your own Chrome profile. The PNG is in git, so "make site" does not
 # need Chrome: run this only after a change of the SVG. CHROME_PATH is the path
-# of Chrome or Chromium, as for the tests that use Chrome, for example
-# CHROME_PATH=google-chrome on Linux.
+# or the name of Chrome or Chromium, for example CHROME_PATH=google-chrome on
+# Linux. The tests that use Chrome read the same variable
+# (internal/testutil/chrometest), but when it is not set they search several
+# places. This target does not search: without CHROME_PATH it uses the Chrome
+# application of macOS.
 CHROME_PATH ?= /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 
 social-card:

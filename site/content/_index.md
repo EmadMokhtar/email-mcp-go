@@ -7,7 +7,8 @@
 #
 # Each claim has a note with its row in the truth table of that spec: a YAML
 # comment such as "# T13" here, and the shortcode truth with the same name in
-# the body, just after the sentence. The shortcode prints nothing. When a pull
+# the body, right after the sentence with no space before it (a space would
+# stay in the page as a double space). The shortcode prints nothing. When a pull
 # request changes the code that a row names, read the words with that note
 # again.
 #
@@ -88,8 +89,13 @@ levels:
     text: The agent cannot use the account.  # T13
   - term: 1 Read
     text: Search and read messages and attachments.  # T13
+  # move_messages refuses the Trash and every folder inside it, at every level
+  # (ErrMoveToTrash in internal/service/write.go). The spec says only "move
+  # messages", so the page adds "(not to the Trash)".
   - term: 2 Organize
-    text: Mark as read, flag, tag, make folders and move messages.  # T13
+    text: >-  # T13
+      Mark as read, flag, tag, make folders and move messages (not to the
+      Trash).
   # discard_draft moves a draft to the Trash at level 3, and it never asks
   # (internal/service/write.go, DiscardDraft). The spec says only "Write
   # drafts".
@@ -172,17 +178,17 @@ covers:
 ---
 
 {{< hero >}}
-email-mcp connects an AI agent, such as Claude Code, to your email.
-{{< truth "T1" >}} The agent can read, organize and write mail.
-{{< truth "T2" >}} By default, every send waits until you approve it.
-{{< truth "T3" >}}
+email-mcp connects an AI agent, such as Claude Code, to your
+email.{{< truth "T1" >}} The agent can read, organize and write
+mail.{{< truth "T2" >}} By default, every send waits until you approve
+it.{{< truth "T3" >}}
 {{< /hero >}}
 
 {{< section id="how-it-works" heading="How it works" >}}
 
 Your AI app can use tools that other programs offer. MCP (Model Context
 Protocol) is the open standard for this. email-mcp is an MCP server: a program
-that offers email tools to your AI app. {{< truth "T9" >}}
+that offers email tools to your AI app.{{< truth "T9" >}}
 
 {{< rows "steps" "ol" >}}
 
@@ -190,33 +196,33 @@ that offers email tools to your AI app. {{< truth "T9" >}}
 
 {{< section id="levels" heading="You choose how far each account may go" >}}
 
-Each mail account has its own level. {{< truth "T7" >}} A higher level
-includes the levels below it. {{< truth "T14" >}}
+Each mail account has its own level.{{< truth "T7" >}} A higher level
+includes the levels below it.{{< truth "T14" >}}
 
 {{< rows "levels" "dl" >}}
 
 Only you can change a level, on a page in your browser. The agent has no tool
 for this. It can ask for more access. That only gives you a link to the
-settings page, and nothing changes until you choose. {{< truth "T18" >}}
+settings page, and nothing changes until you choose.{{< truth "T18" >}}
 
 {{< /section >}}
 
 {{< section id="decide" heading="You see the message before you decide" >}}
 
-By default, email-mcp holds a message when your agent wants to send it.
-{{< truth "T3" >}} On the approval page, you see who will get it, including
-hidden copies (Bcc), the subject, the attachments and the full text. Then you
-press **Reject** or **Approve and send**. {{< truth "T19" >}}
+By default, email-mcp holds a message when your agent wants to send
+it.{{< truth "T3" >}} On the approval page, you see who will get it,
+including hidden copies (Bcc), the subject, the attachments and the full text.
+Then you press **Reject** or **Approve and send**.{{< truth "T19" >}}
 
 {{< rows "decide" "ul" >}}
 
 Some AI apps can ask you in their own window. There, email-mcp shows the start
 of the text, and says how much of it is not shown. For the others, your agent
-gives you a link to the approval page. {{< truth "T24" >}}
+gives you a link to the approval page.{{< truth "T24" >}}
 
 You can turn this question off for an account. email-mcp then asks you to tick
 a box that accepts the risk. Limits still apply when it is off: sends per hour
-and per day, and recipients per message. {{< truth "T25" >}}
+and per day, and recipients per message.{{< truth "T25" >}}
 
 {{< /section >}}
 
@@ -235,7 +241,7 @@ and per day, and recipients per message. {{< truth "T25" >}}
 {{< section id="start" heading="Start with the manual" >}}
 
 The manual shows you how to install email-mcp, connect an account and add it
-to your AI app. {{< truth "T36" >}}
+to your AI app.{{< truth "T36" >}}
 
 {{< install >}}
 
