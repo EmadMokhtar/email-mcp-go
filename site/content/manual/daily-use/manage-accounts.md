@@ -115,7 +115,8 @@ In the browser:
 
 2. Go to the section **Remove the account**. It says: "Removing the account also
    deletes its messages that wait in the outbox and are not sent yet. They are
-   never sent." The outbox is the queue where a message waits until it is sent.
+   never sent. The activity history of the account is deleted too." The outbox
+   is the queue where a message waits until it is sent.
 
    {{< screenshot
      name="account-settings"
@@ -123,11 +124,12 @@ In the browser:
        shows the Mail level list with 4 Send chosen. The groups Limits and
        Sent mail and the button Save follow. At the bottom are the section
        Reconnect the account, with its button, and the section Remove the
-       account, with the box Yes, remove this account and its queued messages
-       and the button Remove account.`
+       account, with the box Yes, remove this account, its queued messages
+       and its activity history, and the button Remove account.`
    >}}
 
-3. Tick the box "Yes, remove this account and its queued messages".
+3. Tick the box "Yes, remove this account, its queued messages and its
+   activity history".
 
 4. Click **Remove account**. The page then shows **Accounts**, and the account
    is gone.

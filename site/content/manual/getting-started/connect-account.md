@@ -159,9 +159,10 @@ it.
    password field, so scroll down. Read the SHA-256 (Secure Hash Algorithm with
    256 bits) fingerprint (a short, unique code of the certificate) and check it
    with your provider or with your local bridge (see
-   [A local bridge](#a-local-bridge)). To go on, tick **Trust this certificate**
-   for each server. Then type the password again, and click **Test the
-   connection and save** again.
+   [A local bridge](#a-local-bridge)). To go on, tick the box of each server. It
+   reads **Trust this certificate for the IMAP server**, or **for the SMTP
+   server**, then the host name. Then type the password again, and click **Test
+   the connection and save** again.
 
    For a certificate that no known authority signed, the page also says: "Trust
    it only if you expect it." A server that is not on your own computer also
@@ -174,8 +175,8 @@ it.
    > someone on the network reads your mail and your password. Trust it only if
    > your provider gave you this fingerprint.
 
-   If the page says "This certificate cannot be trusted here.", it has no box
-   **Trust this certificate**, and you cannot go on with this server. A
+   If the page says "This certificate cannot be trusted here.", it has no box to
+   trust the certificate, and you cannot go on with this server. A
    certificate for another host name, or one that has expired or is not valid
    yet, is never accepted.
 
