@@ -51,6 +51,7 @@ const (
 	textBadTrust        = "The choice to trust a certificate is not valid: the server settings changed after the offer, or the offer is older than 10 minutes. Test the connection again to see the certificate."
 	textPlainUnderstand = "You chose a connection without encryption. To use it, also tick “I understand that this connection is not encrypted”."
 	textPlainWarning    = "Without encryption, your password and your messages travel as plain text."
+	textPlainBox        = "I understand that this connection is not encrypted: my password and my messages travel over it as plain text."
 	textWrongHost       = "The certificate is not for this host name. Check the host name. This certificate cannot be trusted here."
 	textExpired         = "The certificate has expired or is not valid yet. This certificate cannot be trusted here."
 	textPinChanged      = "The certificate is not the one you chose to trust. Someone on the network may have changed it. This certificate cannot be trusted here."
@@ -399,6 +400,18 @@ func (c *connectFixture) requireTrustOffered(page, protocol, host string, port i
 	return token
 }
 
+// boxLabel returns the text of the label of the one box with the name. The
+// label must point at the box by its id (label for="..."), as on the other
+// pages.
+func boxLabel(t *testing.T, page, name string) string {
+	t.Helper()
+	boxes := inputNamed(t, page, name)
+	require.Len(t, boxes, 1, "one %s box", name)
+	id := boxes[0].attrs["id"]
+	require.NotEmpty(t, id, "the %s box has an id for its label", name)
+	return labelFor(t, page, id)
+}
+
 // requireTrustNotOffered checks that the page has no way to trust the
 // certificate of the protocol.
 func requireTrustNotOffered(t *testing.T, page, protocol string) {
@@ -652,6 +665,20 @@ func TestConnectOffersPinForLoopbackSelfSigned(t *testing.T) {
 	require.Len(t, c.accounts(), 1)
 }
 
+// Each certificate box has its own label, and the label names the server. So
+// a screen reader can tell the box of the IMAP server from the box of the SMTP
+// server.
+func TestConnectCertificateBoxesNameTheirServer(t *testing.T) {
+	c := newConnectFixture(t)
+	imapSrv := imaptest.New(t)
+	smtpSrv := smtptest.New(t)
+
+	resp, body := c.post("/connect/save", saveForm(imapSrv, smtpSrv, imapSrv.Pass))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "Trust this certificate for the IMAP server "+imapSrv.Host, boxLabel(t, body, "trust_imap"))
+	require.Equal(t, "Trust this certificate for the SMTP server "+smtpSrv.Host, boxLabel(t, body, "trust_smtp"))
+}
+
 func TestConnectTrustRules(t *testing.T) {
 	imapSrv := imaptest.New(t)
 	smtpSrv := smtptest.New(t)
@@ -729,6 +756,7 @@ func TestConnectTrustRules(t *testing.T) {
 		require.Len(t, understand, 1, "a remote server needs the extra box")
 		require.Equal(t, "checkbox", understand[0].attrs["type"])
 		require.False(t, understand[0].has["checked"])
+		require.Equal(t, "I understand the risk", boxLabel(t, body, "understand"))
 		require.Equal(t, 1, c.probe.count())
 
 		// The trust box alone is refused before any test.
@@ -850,6 +878,7 @@ func TestConnectPlainTextNeedsConsent(t *testing.T) {
 		require.Len(t, box, 1)
 		require.Equal(t, "checkbox", box[0].attrs["type"])
 		require.False(t, box[0].has["checked"])
+		require.Equal(t, textPlainBox, boxLabel(t, body, "plain_understand"))
 		require.Zero(t, c.probe.count(), "nothing was tested")
 		require.Zero(t, smtpSrv.AuthAttempts(), "the password was not sent")
 		require.Empty(t, c.accounts())

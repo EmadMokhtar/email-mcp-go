@@ -553,6 +553,16 @@ strong {
   max-width: 60rem;
 }
 
+/* Connections: its token table has many columns. The form of the page stays as
+   wide as the forms of the other pages (44rem less the side padding). */
+.sheet.wide {
+  max-width: 66rem;
+}
+
+.sheet.wide .group > * {
+  max-width: 38.5rem;
+}
+
 .sheet-head {
   display: flex;
   flex-wrap: wrap;
@@ -1069,13 +1079,13 @@ fieldset.notice .check input {
   font-size: 0.875rem;
   font-weight: 500;
   text-align: left;
-  white-space: nowrap;
+  /* A header can wrap. Each header then sits on the rule below it. */
+  vertical-align: bottom;
 }
 
 .table th,
 .table td {
   padding: 8px 16px 8px 0;
-  vertical-align: top;
 }
 
 .table th:last-child,
@@ -1086,6 +1096,7 @@ fieldset.notice .check input {
 .table td {
   border-bottom: 1px solid var(--line);
   overflow-wrap: break-word;
+  vertical-align: top;
 }
 
 .table form {
@@ -1094,6 +1105,12 @@ fieldset.notice .check input {
 
 .nowrap {
   white-space: nowrap;
+}
+
+/* A time in a table, such as "2026-11-07 10:06 CET". It can break before the
+   hour when the column is narrow, but the date stays on one line. */
+.when {
+  min-width: 6.5rem;
 }
 
 .number {

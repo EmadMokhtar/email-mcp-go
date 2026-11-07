@@ -70,14 +70,15 @@ site/static/icon.svg: internal/web/static/icon.svg
 # images are not in git. The stamp file makes the test run only when the code
 # changed, so a change of the text of the site does not start Chrome.
 # "make -B screenshots" forces a new run. It needs Chrome: see
-# internal/testutil/chrometest.
+# internal/testutil/chrometest. The same run checks the layout of the pages in
+# Chrome (internal/e2e/layout_test.go).
 SCREENSHOT_INPUTS := $(shell find cmd internal -type f) go.mod go.sum
 SCREENSHOT_STAMP := site/assets/screenshots/.done
 
 $(SCREENSHOT_STAMP): $(SCREENSHOT_INPUTS)
 	EMAIL_MCP_SCREENSHOT_DIR=$(CURDIR)/site/assets/screenshots go test \
 		-tags screenshots -count=1 \
-		-run 'TestScreenshots|TestClearShots|TestFindChrome|TestShotRefuses' \
+		-run 'TestScreenshots|TestClearShots|TestFindChrome|TestShotRefuses|TestConnectionsTableFits' \
 		./internal/e2e/ ./internal/testutil/chrometest/
 	touch $@
 

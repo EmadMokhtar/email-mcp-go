@@ -21,7 +21,8 @@ import (
 // The fixed texts of the settings page.
 const (
 	textAutonomyNeeded = "To turn off Confirm sends, to let the agent send with it off, or to keep both confirmations off, tick the box that accepts the risk."
-	textRemoveWarning  = "Removing the account also deletes its messages that wait in the outbox and are not sent yet. They are never sent."
+	textRemoveWarning  = "Removing the account also deletes its messages that wait in the outbox and are not sent yet. They are never sent. Its activity history is deleted too."
+	textRemoveBox      = "Yes, remove this account, its queued messages and its activity history"
 	textRemoveConfirm  = "To remove the account, tick the box that confirms it."
 	textBadLevel       = "Choose a mail level from 0 to 5."
 	textBadLimits      = "The limits are not valid."
@@ -74,6 +75,7 @@ func TestSettingsPageShowsTheAccount(t *testing.T) {
 	text := visibleText(t, body)
 	require.Contains(t, text, "me@example.com")
 	require.Contains(t, text, textRemoveWarning)
+	require.Equal(t, textRemoveBox, labelFor(t, body, "confirm_remove"))
 	require.Equal(t, autonomyText, labelFor(t, body, "accept_autonomy_risk"), "the label is the warning of spec 7.3")
 	risk := element(t, body, atom.Input, "accept_autonomy_risk")
 	require.NotNil(t, risk)
@@ -649,6 +651,11 @@ func TestRemoveAccount(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "queued", res.Status, "the message waits for its undo window")
 	removePath := "/accounts/" + string(a.ID) + "/remove"
+	// The warning says that the activity history of the account goes too. The
+	// history of the other accounts, and the entries of the tenant, stay.
+	p.record(audit.Entry{Account: a.ID, Tool: "list_folders"})
+	p.record(audit.Entry{Account: keep.ID, Tool: "list_folders"})
+	p.record(audit.Entry{Tool: "list_accounts"})
 
 	resp, body := p.post(removePath, nil)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
@@ -674,6 +681,12 @@ func TestRemoveAccount(t *testing.T) {
 	require.Empty(t, last.Account)
 	require.Empty(t, last.Recipients)
 	require.Empty(t, p.sender.sent(), "the queued message is never sent")
+	var left []string
+	for _, e := range p.entries()[1:] {
+		left = append(left, string(e.Account)+" "+e.Tool)
+	}
+	require.ElementsMatch(t, []string{string(keep.ID) + " list_folders", " list_accounts"}, left,
+		"the activity history of the removed account is deleted, and nothing else")
 
 	resp, _ = p.get("/accounts")
 	require.Equal(t, http.StatusOK, resp.StatusCode)

@@ -54,7 +54,7 @@ const (
 	msgBadLevel        = "Choose a mail level from 0 to 5."
 	msgBadLimits       = "The limits are not valid. Each count must be a whole number from 0 to 1000000, and each undo window from 0 to 300 seconds."
 	msgRemoveConfirm   = "To remove the account, tick the box that confirms it."
-	msgRemoveWarning   = "Removing the account also deletes its messages that wait in the outbox and are not sent yet. They are never sent."
+	msgRemoveWarning   = "Removing the account also deletes its messages that wait in the outbox and are not sent yet. They are never sent. Its activity history is deleted too."
 	titleAccountAbsent = "Account not found"
 )
 
