@@ -391,7 +391,7 @@ Quiet, direct, and honest about state. A control looks ordinary until it is work
 A column of full-width rows split by hairlines, with no cards. Each row has a bold title, an optional recipient line, and a foot with the account and the time left. Long text is cut with an ellipsis, on one line. The open row has a green wash. Hover uses the pale wash.
 
 ### Lists and Tables
-Accounts and the activity log are rows split by hairlines, with a main column and an action or time at the right. Tables exist only for lists with many columns: the tokens and the signed-in browsers on the Connections page. A table has hairlines between rows and no fill, and it scrolls sideways alone. A header may wrap, and then sits on the rule below it. A time may wrap before the hour, but the date stays on one line.
+Accounts and the activity log are rows split by hairlines, with a main column and an action or time at the right. Tables exist only for lists with many columns: the tokens and the signed-in browsers on the Connections page. A table has hairlines between rows and no fill, and it scrolls sideways alone. Its last column holds the action (Revoke, Sign out, Cancel): it stays at the right edge while the other columns scroll under it. A header may wrap, and then sits on the rule below it. A time may wrap before the hour, but the date stays on one line.
 
 ### Empty States
 A centred block of up to 30rem, with a heading, one soft sentence, and at most one button.

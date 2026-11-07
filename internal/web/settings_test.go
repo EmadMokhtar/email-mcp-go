@@ -21,7 +21,7 @@ import (
 // The fixed texts of the settings page.
 const (
 	textAutonomyNeeded = "To turn off Confirm sends, to let the agent send with it off, or to keep both confirmations off, tick the box that accepts the risk."
-	textRemoveWarning  = "Removing the account also deletes its messages that wait in the outbox and are not sent yet. They are never sent. Its activity history is deleted too."
+	textRemoveWarning  = "Removing the account also deletes its messages that wait in the outbox and are not sent yet. They are never sent. The activity history of the account is deleted too."
 	textRemoveBox      = "Yes, remove this account, its queued messages and its activity history"
 	textRemoveConfirm  = "To remove the account, tick the box that confirms it."
 	textBadLevel       = "Choose a mail level from 0 to 5."

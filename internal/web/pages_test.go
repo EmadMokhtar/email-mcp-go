@@ -372,6 +372,20 @@ func element(t *testing.T, page string, tag atom.Atom, id string) *html.Node {
 	return nil
 }
 
+// elementWithID returns the element of the page with the id, whatever its tag,
+// or nil.
+func elementWithID(t *testing.T, page, id string) *html.Node {
+	t.Helper()
+	doc, err := html.Parse(strings.NewReader(page))
+	require.NoError(t, err)
+	for n := range doc.Descendants() {
+		if n.Type == html.ElementNode && attr(n, "id") == id {
+			return n
+		}
+	}
+	return nil
+}
+
 // labelFor returns the text of the <label> of a form field, with each run of
 // white space made one space.
 func labelFor(t *testing.T, page, id string) string {

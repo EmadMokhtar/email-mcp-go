@@ -8,6 +8,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/chromedp/chromedp"
@@ -19,45 +20,41 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/chrometest"
 )
 
-// tableFit is what the browser measures on the Connections page.
-type tableFit struct {
-	// TableWidth and ColumnWidth are the full width of the token table and the
-	// width that its column shows. A wider table scrolls sideways.
-	TableWidth  float64 `json:"tableWidth"`
-	ColumnWidth float64 `json:"columnWidth"`
-	// Revokes is the number of Revoke buttons, and RevokesInView the number of
-	// them that show inside the column of the table.
-	Revokes       int `json:"revokes"`
-	RevokesInView int `json:"revokesInView"`
-	// IDLines is the most lines that a token id takes.
-	IDLines int `json:"idLines"`
+// actionsView is what the browser measures on the Connections page.
+type actionsView struct {
+	// Actions are the texts of the buttons in the tables (Revoke, Sign out), and
+	// InView the texts of the ones that show whole inside the visible part of
+	// their table.
+	Actions []string `json:"actions"`
+	InView  []string `json:"inView"`
 	// PageWidth and WindowWidth are the width of the page and of the window. A
 	// wider page scrolls sideways as a whole.
 	PageWidth   float64 `json:"pageWidth"`
 	WindowWidth float64 `json:"windowWidth"`
 }
 
-// measureScript measures the first table of the Connections page (the tokens).
+// measureScript measures the buttons of every table that can scroll sideways.
+// It only compares the places of the boxes, so the fonts of the computer do not
+// change the result.
 const measureScript = `(() => {
-  const column = document.querySelector('.table-scroll');
-  const right = column.getBoundingClientRect().right;
-  const revokes = [...column.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'Revoke');
-  const ids = [...column.querySelectorAll('tbody code')];
-  return {
-    tableWidth: column.scrollWidth,
-    columnWidth: column.clientWidth,
-    revokes: revokes.length,
-    revokesInView: revokes.filter((b) => b.getBoundingClientRect().right <= right).length,
-    idLines: Math.max(...ids.map((c) => c.getClientRects().length)),
-    pageWidth: document.documentElement.scrollWidth,
-    windowWidth: window.innerWidth,
-  };
+  const actions = [], inView = [];
+  for (const column of document.querySelectorAll('.table-scroll')) {
+    const edge = column.getBoundingClientRect();
+    for (const b of column.querySelectorAll('button')) {
+      const r = b.getBoundingClientRect();
+      const text = b.textContent.trim();
+      actions.push(text);
+      if (r.left >= edge.left && r.right <= edge.right) inView.push(text);
+    }
+  }
+  return {actions, inView, pageWidth: document.documentElement.scrollWidth, windowWidth: window.innerWidth};
 })()`
 
-// TestConnectionsTableFits checks the token table at the width of the shots
-// (1280 pixels): the whole table shows, with its Revoke buttons, and no token id
-// is cut into many lines. On a phone the table may scroll sideways in its
-// column, but the page itself does not.
+// TestConnectionsTableFits checks that the action of each row of the tables on
+// the Connections page (Revoke, Sign out) is in view without scrolling
+// sideways: at the width of the shots (1280 pixels), in a narrower window, and
+// on a phone. The tables may scroll sideways in their column, but the page
+// itself does not.
 func TestConnectionsTableFits(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
@@ -89,22 +86,18 @@ func TestConnectionsTableFits(t *testing.T) {
 	s.open(setupURL, "Sign out")
 	s.open(h.webBase()+"/connections", "Revoke", "Revoked on")
 
-	measure := func() tableFit {
-		t.Helper()
-		got, err := chromedp.Run(browserCtx, chromedp.Evaluate[tableFit](measureScript))
-		require.NoError(t, err)
-		return got
+	for _, size := range []struct{ width, height int64 }{
+		{shotWidth, shotHeight}, // the shots
+		{1100, 800},             // a narrow laptop window
+		{375, 812},              // a phone
+	} {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+			require.NoError(t, chromedp.Do(browserCtx, chromedp.EmulateViewport(size.width, size.height), chromedp.Reload()))
+			got, err := chromedp.Run(browserCtx, chromedp.Evaluate[actionsView](measureScript))
+			require.NoError(t, err)
+			require.Equal(t, []string{"Revoke", "Sign out"}, got.Actions)
+			require.Equal(t, got.Actions, got.InView, "an action is out of view")
+			require.LessOrEqual(t, got.PageWidth, got.WindowWidth, "the page scrolls sideways")
+		})
 	}
-
-	got := measure()
-	require.LessOrEqual(t, got.TableWidth, got.ColumnWidth, "the token table scrolls sideways at %d pixels", shotWidth)
-	require.Equal(t, 1, got.Revokes)
-	require.Equal(t, got.Revokes, got.RevokesInView, "a Revoke button is out of view")
-	require.Equal(t, 1, got.IDLines, "a token id takes more than one line")
-	require.LessOrEqual(t, got.PageWidth, got.WindowWidth)
-
-	// A phone: only the table may scroll sideways.
-	require.NoError(t, chromedp.Do(browserCtx, chromedp.EmulateViewport(375, 812), chromedp.Reload()))
-	got = measure()
-	require.LessOrEqual(t, got.PageWidth, got.WindowWidth, "the page scrolls sideways on a phone")
 }

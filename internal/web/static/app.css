@@ -559,7 +559,7 @@ strong {
   max-width: 66rem;
 }
 
-.sheet.wide .group > * {
+.sheet.wide .group {
   max-width: 38.5rem;
 }
 
@@ -1068,7 +1068,8 @@ fieldset.notice .check input {
 
 .table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 0.9375rem;
   font-variant-numeric: tabular-nums;
 }
@@ -1101,6 +1102,18 @@ fieldset.notice .check input {
 
 .table form {
   margin: 0;
+}
+
+/* The last column of each table holds its action: Revoke, Sign out or Cancel.
+   When the table is wider than its column and scrolls sideways, this column
+   stays at the right edge, and the other columns pass under it. So the action
+   is in view at any width. */
+.table-scroll .table th:last-child,
+.table-scroll .table td:last-child {
+  position: sticky;
+  right: 0;
+  padding-left: 8px;
+  background: var(--pane);
 }
 
 .nowrap {
