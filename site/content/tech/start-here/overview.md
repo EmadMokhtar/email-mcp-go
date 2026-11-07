@@ -17,7 +17,9 @@ code_areas:
 ---
 
 This page shows the whole program on one page: the layers, the two doors into
-the use cases, the run modes, and the rules that every part follows. Read it
+the use cases, the run modes, and the rules that every part follows. A door
+here is a way into the program: the code that a caller goes through to reach
+the use cases. Read it
 first if you want to change the code and do not know it.
 
 email-mcp is an MCP server. MCP (Model Context Protocol) is the open standard
@@ -73,8 +75,9 @@ program for a caller, such as "read one message" or "send this mail".
      did on a page. The page "Activity log and program log" goes deeper.
    - `store` keeps all data in one SQLite database (a database in one file).
      `secrets` encrypts the secrets in it. It reads the master key from the
-     keychain or from a file, and the master key protects the keys that the
-     database stores. The page "Storage and secrets" goes deeper.
+     keychain of the operating system or from a file, and the master key
+     protects the keys that the database stores. The page "Storage and
+     secrets" goes deeper.
    - The mail backend talks to the mail servers. The interface is
      `mail.Backend`, and `provider/imapsmtp` implements it. The page "The mail
      backend" goes deeper.
@@ -87,8 +90,7 @@ deeper.
 
 ## Two doors into the use cases
 
-A door here is a way into the program: the code that a caller goes through to
-reach `service`. The agent and the person use different doors:
+The agent and the person reach `service` through different doors:
 
 - The agent uses the tools of `mcpserver`, through the transport.
 - The person uses the web portal (`web`) in a browser, and the commands

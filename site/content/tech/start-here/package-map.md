@@ -21,10 +21,12 @@ the package `internal/app`. `cmd/email-mcp` is the one package of the program
 outside `internal/`. Go does not let code outside this module import a package
 under `internal/`.
 
-The module has two more packages, under `test/`. `test/sitecheck` checks the
-built docs site, and `test/interop/gencerts` makes the certificates of the
-interop test (the test against real mail servers). They are tools of the
-repository and not part of the program, so this page leaves them out.
+The module has three more packages, under `test/`. `test/interop` runs the
+interop test: the mail scenario against real mail servers. It builds only with
+the build tag `interop` (a word that a Go file asks for before it is built).
+`test/interop/gencerts` makes the certificates of that test, and
+`test/sitecheck` checks the built docs site. They are tools of the repository
+and not part of the program, so this page leaves them out.
 
 ## The layer rule
 
@@ -63,8 +65,8 @@ The layers, from the top:
 - Tests only: `testutil/imaptest`, `testutil/smtptest`, `testutil/webtest`,
   `testutil/chrometest` and `e2e`. They import no package of this module
   outside their tests. `testutil/chrometest` builds only with the build tag
-  `screenshots` (a word that a Go file asks for before it is built), so the
-  command above does not list it. `e2e` has test files only.
+  `screenshots`, so the command above does not list it. `e2e` has test files
+  only.
 
 ## All packages
 

@@ -20,14 +20,14 @@ code_areas:
   - internal/provider/imapsmtp/pool.go
 ---
 
-This page follows one call of the tool `get_message` from the MCP client to
-the mail server and back. It shows where the permission is checked, where the
-call is recorded, where the text of the mail is cleaned, and where errors turn
-into the texts that the agent sees. Read it before you change a tool or a use
-case.
+This page follows one call of the tool `get_message` from the MCP (Model
+Context Protocol) client to the mail server and back. It shows where the
+permission is checked, where the call is recorded, where the text of the mail
+is cleaned, and where errors turn into the texts that the agent sees. Read it
+before you change a tool or a use case.
 
-MCP (Model Context Protocol) is the open standard that lets an AI (artificial
-intelligence) app call the tools of another program. The MCP client is that
+MCP is the open standard that lets an AI (artificial intelligence) app call
+the tools of another program. The MCP client is that
 app, and the agent is the AI program inside it. IMAP (Internet Message Access
 Protocol) is the protocol for reading mail. `get_message` reads one message:
 its headers, a page of its body and the list of its attachments.
