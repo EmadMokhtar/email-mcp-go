@@ -1,0 +1,39 @@
+{{- /*
+  Section 1 of the landing page, the first screen:
+
+    {{< hero >}}
+    The lead paragraph, in Markdown.
+    {{< /hero >}}
+
+  It shows the one h1 (hero.headline in the front matter, one sentence on each
+  line), the lead from between the tags, the main button and the text link,
+  the approval picture, and the facts (the list "facts" in the front matter).
+
+  On a wide screen the text is at the left and the picture at the right, both
+  aligned at the top. The facts are under both. site.css has the layout.
+
+  The section is named by its h1 (aria-labelledby), so a screen reader lists
+  it with that name.
+*/ -}}
+{{- $hero := .Page.Params.hero -}}
+{{- if not (and $hero $hero.headline $hero.link $hero.link.label $hero.link.anchor) -}}
+  {{- errorf "%s: the landing page needs hero.headline, hero.link.label and hero.link.anchor in the front matter" .Position -}}
+{{- end -}}
+{{- $lead := partial "landing-markdown.html" (dict "inner" .Inner "page" .Page "blocks" .Store.Values "position" .Position) -}}
+<section class="landing-hero" id="top" aria-labelledby="top-title">
+  <div class="landing-wrap landing-hero-grid">
+    <div class="landing-hero-text">
+      {{- /* Each sentence is a block, so it starts a new line. The space between them keeps the two sentences apart for a screen reader. */}}
+      <h1 id="top-title">
+        {{- range $i, $line := $hero.headline }}{{ if $i }} {{ end }}<span>{{ $line }}</span>{{ end -}}
+      </h1>
+      <div class="landing-lead">{{ $lead }}</div>
+      <div class="landing-actions">
+        {{ partial "landing-button.html" .Page }}
+        <a class="landing-link" href="#{{ $hero.link.anchor }}">{{ $hero.link.label }}</a>
+      </div>
+    </div>
+    {{ partial "approval-picture.html" . }}
+    {{ partial "landing-rows.html" (dict "page" .Page "name" "facts" "as" "dl" "class" "landing-facts") }}
+  </div>
+</section>
