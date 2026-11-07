@@ -398,8 +398,8 @@ a human click from an automated one. So run `email-mcp setup`, and use the
 email-mcp web pages, in a browser or a browser profile that no agent controls,
 and do not give browser-control tools access to that profile.
 
-**What you approve is what goes out.** A message that an agent writes holds no
-text that a confirmation hides:
+**What you approve is what goes out.** A message that an agent writes is
+cleaned and checked before you approve it:
 
 - HTML is reduced to text, headings, lists, tables and `http`, `https` or
   `mailto` links, and the text of the message is made from the result. Styles,
@@ -430,9 +430,10 @@ text that a confirmation hides:
   not show the content of an attachment.
 
 A draft that you write yourself in another mail program goes out as you saved
-it. The confirmation shows the text of it, and it counts hidden characters in
-its text and its HTML. If an agent saved drafts with an older version of
-email-mcp, check them in your mail program before you send them.
+it, with its styles and images. The confirmation shows the text of it, and it
+counts hidden characters in its text and its HTML. It does not show the styles
+or the images. If an agent saved drafts with a version before 0.6.0, check them
+in your mail program before you send them.
 
 **Other web services on your computer.** A browser sends a cookie to every port
 of a host. So a sign-in cookie on `127.0.0.1` would also go to every other local
@@ -444,10 +445,12 @@ other local web services do not normally use. Only that name gets the cookie,
 and no sign-in works on `127.0.0.1` or `localhost`.
 
 A sign-in lasts at most 24 hours and ends after 2 hours without use. Click
-**Sign out** when you finish, and do not open an old link to the web pages after
-email-mcp has stopped. The **Connections** page lists the signed-in browsers,
-and you can sign out each one. `email-mcp setup --revoke-sessions` signs out
-every browser at once, and stops every sign-in link that was not used yet.
+**Sign out** when you finish. Do not open the web pages from an old bookmark or
+an old tab. Use a new link from email-mcp after it starts. This is about links
+to the web pages, not about the one-time sign-in link. The **Connections** page
+lists the signed-in browsers, and you can sign out each one.
+`email-mcp setup --revoke-sessions` signs out every browser at once, and stops
+every sign-in link that was not used yet.
 
 ## Recommended Claude Code deny rules
 
@@ -740,12 +743,13 @@ After the import:
   security) needs the account to be removed and added again. A new password or
   a new server certificate does not: reconnect the account (see
   [Troubleshooting](#troubleshooting)).
-- In HTML mail, email-mcp cannot always tell what a reader sees. Some text that
-  a reader does not see can reach the agent, and a reader can see less than the
-  agent gets. When email-mcp cannot work out a style that can hide text, the
-  text stays in the body, and `get_message` returns
-  `hidden_content_suspected: true`. `hidden_parts_dropped` says how many hidden
-  parts were left out. When it matters, open the mail yourself.
+- In HTML mail, email-mcp cannot always tell what a reader sees. The agent can
+  get text that a reader does not see. It can also miss text that a reader sees.
+  When email-mcp cannot work out a style that can hide text, the text stays in
+  the body, and `get_message` returns `hidden_content_suspected: true`.
+  `hidden_parts_dropped` says how many hidden parts were left out. A mail can
+  hold hidden text even when `get_message` does not return
+  `hidden_content_suspected: true`. When it matters, open the mail yourself.
 - In the text of a message, a long link is cut, and `...[cut]` marks the place.
   At most 32 characters of the user name and password, the last 64 of the host,
   64 of the path and 32 of the query stay. The `html` body format has the whole

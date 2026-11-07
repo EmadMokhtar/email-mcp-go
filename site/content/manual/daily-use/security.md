@@ -58,8 +58,8 @@ tell a human click from an automated one. So run `email-mcp setup`, and use the
 email-mcp web pages, in a browser or a browser profile that no agent controls,
 and do not give browser-control tools access to that profile.
 
-**What you approve is what goes out.** A message that an agent writes holds no
-text that a confirmation hides:
+**What you approve is what goes out.** A message that an agent writes is
+cleaned and checked before you approve it:
 
 - HTML (HyperText Markup Language: the language of web pages) is reduced to
   text, headings, lists, tables and `http`, `https` or `mailto` links, and the
@@ -93,9 +93,10 @@ text that a confirmation hides:
   known kind). A confirmation does not show the content of an attachment.
 
 A draft that you write yourself in another mail program goes out as you saved
-it. The confirmation shows the text of it, and it counts hidden characters in
-its text and its HTML. If an agent saved drafts with an older version of
-email-mcp, check them in your mail program before you send them.
+it, with its styles and images. The confirmation shows the text of it, and it
+counts hidden characters in its text and its HTML. It does not show the styles
+or the images. If an agent saved drafts with a version before 0.6.0, check them
+in your mail program before you send them.
 
 **Other web services on your computer.** A browser sends a cookie to every port
 (the number that names one service on an address) of a host. So a sign-in cookie
@@ -110,7 +111,9 @@ use. Only that name gets the cookie, and no sign-in works on `127.0.0.1` or
 `localhost`.
 
 A sign-in lasts at most 24 hours and ends after 2 hours without use. Click
-**Sign out** when you finish, and do not open an old link to the web pages after
-email-mcp has stopped. The **Connections** page lists the signed-in browsers,
-and you can sign out each one. `email-mcp setup --revoke-sessions` signs out
-every browser at once, and stops every sign-in link that was not used yet.
+**Sign out** when you finish. Do not open the web pages from an old bookmark or
+an old tab. Use a new link from email-mcp after it starts. This is about links
+to the web pages, not about the one-time sign-in link. The **Connections** page
+lists the signed-in browsers, and you can sign out each one.
+`email-mcp setup --revoke-sessions` signs out every browser at once, and stops
+every sign-in link that was not used yet.

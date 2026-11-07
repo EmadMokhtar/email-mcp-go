@@ -22,12 +22,13 @@ tool is one action that the agent can call, such as `get_message`.
   a new server certificate does not: reconnect the account (see
   [Troubleshooting](/manual/daily-use/troubleshooting/)).
 - In HTML mail (mail that is written in HyperText Markup Language, the language
-  of web pages), email-mcp cannot always tell what a reader sees. Some text that
-  a reader does not see can reach the agent, and a reader can see less than the
-  agent gets. When email-mcp cannot work out a style that can hide text, the
-  text stays in the body, and `get_message` returns `hidden_content_suspected:
-  true`. `hidden_parts_dropped` says how many hidden parts were left out. When
-  it matters, open the mail yourself.
+  of web pages), email-mcp cannot always tell what a reader sees. The agent can
+  get text that a reader does not see. It can also miss text that a reader
+  sees. When email-mcp cannot work out a style that can hide text, the text
+  stays in the body, and `get_message` returns `hidden_content_suspected:
+  true`. `hidden_parts_dropped` says how many hidden parts were left out. A mail
+  can hold hidden text even when `get_message` does not return
+  `hidden_content_suspected: true`. When it matters, open the mail yourself.
 - In the text of a message, a long link is cut, and `...[cut]` marks the place.
   At most 32 characters of the user name and password, the last 64 of the host,
   64 of the path and 32 of the query stay. The `html` body format (a choice of
