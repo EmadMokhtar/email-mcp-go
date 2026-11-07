@@ -512,46 +512,57 @@ func TestImageWithoutAltFails(t *testing.T) {
 	}
 }
 
-// TestTableNeedsNamedScrollBox guards the access of the tables. A table that
+// scrollBoxAttrs is the attribute of the box that the table hook writes around
+// a table (layouts/_markup/render-table.html). The hook writes a plain
+// <div class="table-scroll">, so the cases of the check use this one place for
+// it. The real hook is tested on the fixture pages (tables_build_test.go).
+const scrollBoxAttrs = `class="table-scroll"`
+
+// boxWith returns a box with the given attributes around inside.
+func boxWith(attrs, inside string) string {
+	return "<div " + attrs + ">\n" + inside + "\n</div>"
+}
+
+// inScrollBox returns a good box around inside.
+func inScrollBox(inside string) string {
+	return boxWith(scrollBoxAttrs, inside)
+}
+
+// namedTable returns a table with the given aria-label, as the hook writes it.
+func namedTable(label string) string {
+	return `<table aria-label="` + label + `"><thead><tr><th scope="col">A</th></tr></thead>` +
+		`<tbody><tr><td>1</td></tr></tbody></table>`
+}
+
+// TestTableNeedsNameAndScrollBox guards the access of the tables. A table that
 // scrolls by itself needs display:block, and then a browser or a screen reader
 // may stop reading it as a table. The table hook puts each table in a scroll
-// box, and the box must be a region with a name, which the keyboard can focus
-// and scroll. Each page here is an in-memory copy of good or bad markup: the
-// test writes it to a temporary folder and never changes the real site.
-func TestTableNeedsNamedScrollBox(t *testing.T) {
-	const table = `<table><thead><tr><th scope="col">A</th></tr></thead>` +
+// box, so the table keeps its normal display. The name is on the table, and a
+// screen reader lists the tables by name, so each name must be different. Each
+// page here is an in-memory copy of good or bad markup: the test writes it to a
+// temporary folder and never changes the real site.
+func TestTableNeedsNameAndScrollBox(t *testing.T) {
+	table := namedTable("A")
+	noLabel := `<table><thead><tr><th scope="col">A</th></tr></thead>` +
 		`<tbody><tr><td>1</td></tr></tbody></table>`
-	box := func(attrs, inside string) string {
-		return "<div " + attrs + ">\n" + inside + "\n</div>"
-	}
-	const good = `class="table-scroll" role="region" tabindex="0" aria-label="Table: A"`
 	for _, tc := range []struct{ name, body, want string }{
-		{"box with all parts", box(good, table), ""},
-		{"box with more classes", box(`class="a table-scroll b" role="region" tabindex="0" aria-label="Table: A"`, table), ""},
-		{"box with text around the table", "<div " + good + "> " + table + " </div>", ""},
+		{"box and name", inScrollBox(table), ""},
+		{"box with more classes", boxWith(`class="a table-scroll b"`, table), ""},
+		{"box with text around the table", "<div " + scrollBoxAttrs + "> " + table + " </div>", ""},
 		{"no table", "<p>Text</p>", ""},
 		{"table with no box", table, "table 1 is not the child of a box with the class table-scroll"},
-		{"table in a box with no class", box(`role="region" tabindex="0" aria-label="Table: A"`, table),
+		{"table in a box with no class", boxWith(`id="x"`, table),
 			"table 1 is not the child of a box with the class table-scroll"},
-		{"table in a box with another class", box(`class="table-scrolls" role="region" tabindex="0" aria-label="Table: A"`, table),
+		{"table in a box with another class", boxWith(`class="table-scrolls"`, table),
 			"table 1 is not the child of a box with the class table-scroll"},
-		{"table deeper in the box", box(good, "<div>"+table+"</div>"),
+		{"table deeper in the box", inScrollBox("<div>" + table + "</div>"),
 			"table 1 is not the child of a box with the class table-scroll"},
-		{"box with no role", box(`class="table-scroll" tabindex="0" aria-label="Table: A"`, table),
-			`its box has role="", and it must be "region"`},
-		{"box with another role", box(`class="table-scroll" role="group" tabindex="0" aria-label="Table: A"`, table),
-			`its box has role="group", and it must be "region"`},
-		{"box with no tabindex", box(`class="table-scroll" role="region" aria-label="Table: A"`, table),
-			`its box has tabindex="", and it must be "0"`},
-		{"box with tabindex -1", box(`class="table-scroll" role="region" tabindex="-1" aria-label="Table: A"`, table),
-			`its box has tabindex="-1", and it must be "0"`},
-		{"box with no aria-label", box(`class="table-scroll" role="region" tabindex="0"`, table),
-			"its box has no aria-label"},
-		{"box with an empty aria-label", box(`class="table-scroll" role="region" tabindex="0" aria-label=""`, table),
-			"its box has no aria-label"},
-		{"box with a blank aria-label", box(`class="table-scroll" role="region" tabindex="0" aria-label="  "`, table),
-			"its box has no aria-label"},
-		{"table with another element in the box", box(good, table+"\n<p>Note</p>"),
+		{"table with no aria-label", inScrollBox(noLabel), "table 1 has no aria-label"},
+		{"table with an empty aria-label", inScrollBox(namedTable("")), "table 1 has no aria-label"},
+		{"table with a blank aria-label", inScrollBox(namedTable("  ")), "table 1 has no aria-label"},
+		{"name on the box and not on the table", boxWith(scrollBoxAttrs+` aria-label="A"`, noLabel),
+			"table 1 has no aria-label"},
+		{"table with another element in the box", inScrollBox(table + "\n<p>Note</p>"),
 			"its box has 2 child elements, and the table must be the only one"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -564,7 +575,8 @@ func TestTableNeedsNamedScrollBox(t *testing.T) {
 
 	t.Run("each table of a page is checked", func(t *testing.T) {
 		cfg := newSite(t, subPath, map[string]string{
-			"site/public/index.html": htmlPage("", box(good, table)+"\n"+table+"\n"+box(good, table)+"\n"+table),
+			"site/public/index.html": htmlPage("", inScrollBox(namedTable("A"))+"\n"+namedTable("B")+"\n"+
+				inScrollBox(namedTable("C"))+"\n"+namedTable("D")),
 		})
 		got := check(cfg)
 		require.Len(t, got, 2, "problems: %v", got)
@@ -574,13 +586,46 @@ func TestTableNeedsNamedScrollBox(t *testing.T) {
 
 	t.Run("two tables in one box", func(t *testing.T) {
 		cfg := newSite(t, subPath, map[string]string{
-			"site/public/index.html": htmlPage("", box(good, table+"\n"+table)),
+			"site/public/index.html": htmlPage("", inScrollBox(namedTable("A")+"\n"+namedTable("B"))),
 		})
 		got := check(cfg)
 		require.Len(t, got, 2, "problems: %v", got)
 		for _, p := range got {
 			require.Contains(t, p.Text, "its box has 2 child elements")
 		}
+	})
+}
+
+// TestTableNamesAreUnique guards the names of the tables of one page. A screen
+// reader lists the tables by name, so two tables with the same name are two
+// entries that it cannot tell apart. Another page may use the same name.
+func TestTableNamesAreUnique(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"different names", inScrollBox(namedTable("A")) + inScrollBox(namedTable("B")), ""},
+		{"same name twice", inScrollBox(namedTable("A")) + inScrollBox(namedTable("A")),
+			`table 2 has the same aria-label as table 1: "A"`},
+		{"same name after the spaces are cut", inScrollBox(namedTable("A")) + inScrollBox(namedTable(" A ")),
+			`table 2 has the same aria-label as table 1: "A"`},
+		{"the third table repeats the first",
+			inScrollBox(namedTable("A")) + inScrollBox(namedTable("B")) + inScrollBox(namedTable("A")),
+			`table 3 has the same aria-label as table 1: "A"`},
+		{"number in the name", inScrollBox(namedTable("A")) + inScrollBox(namedTable("A (table 2)")), ""},
+		{"names that differ in case", inScrollBox(namedTable("A")) + inScrollBox(namedTable("a")), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := newSite(t, subPath, map[string]string{
+				"site/public/index.html": htmlPage("", tc.body),
+			})
+			requireOutcome(t, cfg, "site/public/index.html", tc.want)
+		})
+	}
+
+	t.Run("the same name on two pages", func(t *testing.T) {
+		cfg := newSite(t, subPath, map[string]string{
+			"site/public/index.html":       htmlPage("", inScrollBox(namedTable("A"))),
+			"site/public/other/index.html": htmlPage("", inScrollBox(namedTable("A"))),
+		})
+		requireClean(t, cfg)
 	})
 }
 

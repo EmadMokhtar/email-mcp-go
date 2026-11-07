@@ -1,0 +1,20 @@
+# Settings for the table fixture build. Hugo reads this file only when it runs
+# with --environment tabletest, and merges it with site/hugo.toml. The normal
+# build (make site, the publish workflow) does not read it, so the fixture
+# pages never reach site/public.
+#
+# The build is the whole site plus the pages of test/sitecheck/testdata/tables,
+# in the section tabletest. The pages use the real layouts, the real table
+# hook and the real stylesheet, so a test can check what the hook writes.
+#
+# A mount replaces the default mount of its target. So the mount of content
+# must be written again, or the real pages would be missing from the build.
+# The paths are relative to the site/ folder.
+[module]
+  [[module.mounts]]
+    source = "content"
+    target = "content"
+
+  [[module.mounts]]
+    source = "../test/sitecheck/testdata/tables"
+    target = "content/tabletest"
