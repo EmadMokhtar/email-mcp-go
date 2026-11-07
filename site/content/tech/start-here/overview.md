@@ -17,10 +17,11 @@ code_areas:
 ---
 
 This page shows the whole program on one page: the parts, the two doors into
-the use cases, the run modes, and the rules that every part follows. A door
-here is a way into the program: the code that a caller goes through to reach
-the use cases. Read it
-first if you want to change the code and do not know it.
+the use cases, the run modes, and the rules that every part follows. A use case
+is one job of the program for a caller, such as "read one message" or "send
+this mail". A door here is a way into the program: the code that a caller goes
+through to reach the use cases. Read this page first if you want to change the
+code and do not know it.
 
 email-mcp is an MCP server. MCP (Model Context Protocol) is the open standard
 that lets an AI (artificial intelligence) app call the tools of another
@@ -49,9 +50,7 @@ person sees.
 
 The program has these parts, from the outside in. They are roles, not the
 import layers of the packages: the page
-[Map of packages](/tech/start-here/package-map/) has those. A use case is one
-job of the program for a caller, such as "read one message" or "send this
-mail".
+[Map of packages](/tech/start-here/package-map/) has those.
 
 1. The transport carries the MCP messages. On stdio (standard input and
    output: the client starts the server and talks to it through two pipes) it
@@ -60,8 +59,8 @@ mail".
    `limitRequests`, and the checks of the package `httpserve`. The page "Local
    HTTP mode" in the group "Ways in" goes deeper.
 2. `mcpserver` holds the tools. A tool handler turns its arguments into one
-   call of `service`, and turns the answer into a tool result. It checks no
-   permission itself. See
+   call of `service`, and turns the answer into a tool result. A tool handler
+   is the function that runs one tool. It checks no permission itself. See
    [One tool call, step by step](/tech/start-here/tool-call/).
 3. `service` runs the use cases. A use case that a tool calls on the mail of
    one account finds the caller, finds the account in the tenant of the
@@ -134,7 +133,8 @@ the id `local`: `store.LocalTenantID` in
 {{< src "internal/store/tenants.go" >}}.
 
 The principal is the caller of a request: the tenant, the scopes of the access
-token, and the name of the client. Scopes are the permissions that a token
+token, and the name of the client. An access token is a secret that a program
+sends with each request on local HTTP. Scopes are the permissions that a token
 carries, such as `email:read`. The type is `service.Principal` in
 {{< src "internal/service/principal.go" >}}. A principal travels in the Go
 context (`service.WithPrincipal`), and every use case reads it from there.
@@ -196,10 +196,12 @@ directory and one database. These parts make that safe:
   send flow" goes deeper.
 - Browser sessions and access tokens are rows in the database. So a session
   that one process made works in every other process.
-- The backend cache of each process compares a fingerprint of the account
-  settings and the stored password on every call (`service.BackendCache`). When
-  another process changes an account, the cache builds the backend again. The
-  page "The mail backend" goes deeper.
+- The backend cache of each process (the cache of one mail backend for each
+  account) compares a fingerprint of the account settings and the stored
+  password on every call (`service.BackendCache`). The fingerprint is a hash
+  that changes when the settings or the password change. When another process
+  changes an account, the cache builds the backend again. The page "The mail
+  backend" goes deeper.
 
 ## Rules that hold in all code
 
@@ -224,11 +226,12 @@ directory and one database. These parts make that safe:
 ## The mail backend boundary
 
 `mail.Backend` in {{< src "internal/domain/mail/backend.go" >}} is the
-provider-neutral interface. It uses no idea that belongs to one protocol. The
-use cases that read and change mail call only this interface. The choice of
-the backend is in the backend cache of `service`. Only IMAP and SMTP exist in
-the code. Other providers and a hosted mode for many people are planned in the
-design documents and are not built. `PRODUCT.md` says the same for hosted mode.
+provider-neutral interface: it is not tied to one mail provider, and it uses no
+idea that belongs to one protocol. The use cases that read and change mail call
+only this interface. The choice of the backend is in the backend cache of
+`service`. Only IMAP and SMTP exist in the code. Other providers and a hosted
+mode (one server that many people use) are planned in the design documents and
+are not built. `PRODUCT.md` says the same for hosted mode.
 
 ## The design documents
 

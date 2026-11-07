@@ -24,7 +24,8 @@ This page follows one call of the tool `get_message` from the MCP (Model
 Context Protocol) client to the mail server and back. It shows where the
 permission is checked, where the call is recorded, where the text of the mail
 is cleaned, and where errors turn into the texts that the agent sees. Read it
-before you change a tool or a use case.
+before you change a tool or a use case: a job of the program for a caller, such
+as reading one message.
 
 MCP is the open standard that lets an AI (artificial intelligence) app call
 the tools of another program. The MCP client is that
@@ -58,12 +59,14 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
      call, so that a stop can wait for it. While the program stops, it refuses
      the call.
    - `capture` in {{< src "internal/mcpserver/capture.go" >}} puts a call trace
-     in the context, and records the call when it ends (step 10).
+     in the context: a small record where `safe` writes the caller and the
+     result. `capture` records the call when it ends (step 10).
    - The multi round-trip middleware of the SDK. Multi round-trip means that a
      tool can answer "I need input", and the client calls again with the
      answer. `mcp.NewServer` adds this middleware.
    - Then the SDK finds the tool by its name, and checks the arguments against
-     the JSON (JavaScript Object Notation) schema of the tool.
+     the JSON (JavaScript Object Notation) schema of the tool: the
+     description of the arguments that the tool accepts.
 
    Each call of `AddReceivingMiddleware` wraps the handler that is there, so
    the middleware that was added last runs first. `mcpserver.New` adds
@@ -73,17 +76,18 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
    stops here. `safe` and the tool handler do not run for it. `capture`, which
    is also code of `mcpserver`, has already run, and it still records the
    call.
-3. **`safe`.** The function `safe` in
-   {{< src "internal/mcpserver/server.go" >}} wraps every tool handler. It asks
-   `Options.Principal` for the principal: the caller of the request, with its
-   tenant (the owner of a set of accounts), the scopes of its token, and the
-   name of the client. Without a principal or a tenant, the answer is "not
-   authorized", and the handler does not run. Then `safe` puts the principal in
-   the context (`service.WithPrincipal`), runs the handler, turns a panic into
-   "internal error", and turns an error into a tool result. Only `addTool`
-   registers a tool, and it wraps the handler with `safe`. So no tool can skip
-   it. The test `TestEveryToolRunsThroughSafe` calls every tool that the
-   server lists, and fails for a tool that was added another way.
+3. **`safe`.** The function `safe` in {{< src "internal/mcpserver/server.go" >}}
+   wraps every tool handler. It asks `Options.Principal` for the principal: the
+   caller of the request, with its tenant (the owner of a set of accounts), the
+   scopes of its access token (the permissions that the token carries; an access
+   token is the secret that a program sends on local HTTP), and the name of the
+   client. Without a principal or a tenant, the answer is "not authorized", and
+   the handler does not run. Then `safe` puts the principal in the context
+   (`service.WithPrincipal`), runs the handler, turns a panic into "internal
+   error", and turns an error into a tool result. Only `addTool` registers a
+   tool, and it wraps the handler with `safe`. So no tool can skip it. The test
+   `TestEveryToolRunsThroughSafe` calls every tool that the server lists, and
+   fails for a tool that was added another way.
 4. **The handler.** `getMessage` in
    {{< src "internal/mcpserver/read_tools.go" >}} checks the arguments that the
    schema cannot check, such as a negative `offset`. Then it calls
@@ -106,7 +110,8 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
 
    The order is on purpose. A caller that may not read gets the permission
    error first, so it learns nothing about the connection of the account.
-6. **The backend cache.** `mailBackend` gets the backend of the account from
+6. **The backend cache.** The backend of an account is the object that talks
+   to its mail servers. `mailBackend` gets the backend of the account from
    `BackendCache.Mail` in {{< src "internal/service/backends.go" >}}. The cache
    has one slot for each account. A call holds the slot only while it gets or
    builds the backend (`mailOn`), so two calls for one account wait for each
@@ -121,15 +126,15 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
    use it.
 7. **The IMAP backend.** `Backend.GetMessage` in
    {{< src "internal/provider/imapsmtp/fetch.go" >}} takes a logged-in
-   connection from the pool of the account
-   ({{< src "internal/provider/imapsmtp/pool.go" >}}). It opens the folder
-   read-only with the IMAP command `EXAMINE`. It fetches with `BODY.PEEK`, the
-   IMAP way to read a message without marking it as read. The package `mime`
-   decodes the body. It turns HTML (HyperText Markup Language, the language of
-   web pages) into text without the parts that a reader cannot see
-   (`mime.ReadableText`). One page of the body has 20,000 characters
-   by default (`defaultBodyChars`) and 100,000 at most (`maxBodyChars`). The
-   page "The mail backend" in the group "Mail" explains the pool.
+   connection from the pool of the account: the small set of open connections
+   that its calls share ({{< src "internal/provider/imapsmtp/pool.go" >}}). It
+   opens the folder read-only with the IMAP command `EXAMINE`. It fetches with
+   `BODY.PEEK`, the IMAP way to read a message without marking it as read. The
+   package `mime` decodes the body. It turns HTML (HyperText Markup Language,
+   the language of web pages) into text without the parts that a reader cannot
+   see (`mime.ReadableText`). One page of the body has 20,000 characters by
+   default (`defaultBodyChars`) and 100,000 at most (`maxBodyChars`). The page
+   "The mail backend" in the group "Mail" explains the pool.
 8. **Back in `service`.** `noteBackendError` looks at the error of the
    backend. When it matches `imapsmtp.ErrAuthFailed` (the server refused the
    stored login), it marks the account as one that must be reconnected. The
@@ -138,7 +143,9 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
    {{< src "internal/mcpserver/shape.go" >}} shapes the result. See "Where text
    from the mail is cleaned" below.
 10. **The call entry.** When the call ends, `capture` writes one call entry in
-    the activity log. See "Where the call is recorded" below.
+    the activity log: the log of what the agent did, which the person reads in
+    the web portal (the local web site of the person). See "Where the call is
+    recorded" below.
 
 ## Where the permission is checked
 
@@ -203,10 +210,10 @@ wait, and it names no account. The other parts that come from an error are
 fields that the service filled for the agent: the reason and the link of a
 `*service.PermissionError`, and the link of a `*service.ReauthError`.
 
-An error with no known text becomes "internal error". The program log then gets
-the name of the tool, a fixed code and the Go types of the error
-(`errtype.Chain`), never its text. The SDK turns the failure into a tool result
-with `isError` set.
+An error with no known text becomes "internal error". The program log (the log
+that the program writes to standard error) then gets the name of the tool, a
+fixed code and the Go types of the error (`errtype.Chain`), never its text. The
+SDK turns the failure into a tool result with `isError` set.
 
 ## Where the call is recorded
 
@@ -229,7 +236,7 @@ in the group "Inside the server" explains the log.
 |---|---|---|
 | Transport | `mcp.IOTransport` in `serveStdio` | `limitRequests`, the checks of `httpserve.Handler`, then the SDK handler in stateless mode (the server keeps nothing between two requests) |
 | Principal | `localPrincipal`: the tenant `local`, no scope limit | `httpserve.Principal`: the tenant and the scopes of the token. The scopes are a list that is never nil, so a token never means "no limit". |
-| A question in the chat | The client may show the confirmation form (`InBandConfirm` is true) | Only with a token made with `--in-band-confirm`. Other callers get a link to the approval page. |
+| A question in the chat | The client may show the confirmation form, where the person answers yes or no (`InBandConfirm` is true) | Only with a token made with `--in-band-confirm`. Other callers get a link to the approval page: the page of the web portal where the person approves or rejects an action. |
 
 Steps 2 to 10 are the same code for both. `serve` builds one server for each
 transport with `App.MCPServer`, with a different `mcpserver.Options`.
@@ -246,10 +253,10 @@ additions:
   to the approval page of the web portal.
 - The use case writes its own action entries in the activity log. So a call
   that changes something has a call entry and one or more action entries.
-- A send goes to the `outbox`, which waits for the undo window (the time when
-  the send can still be cancelled) and then delivers it. A send with no undo
-  window runs inside its tool call, and that is why `trackToolCalls` counts the
-  call.
+- A send goes to the `outbox`, the queue of sends, which waits for the undo
+  window (the time when the send can still be cancelled) and then delivers it.
+  A send with no undo window runs inside its tool call, and that is why
+  `trackToolCalls` counts the call.
 
 The page "The send flow" in the group "Inside the server" explains this path.
 
