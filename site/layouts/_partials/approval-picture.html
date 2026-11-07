@@ -1,0 +1,41 @@
+{{- /*
+  The approval picture of the landing page: a drawing of the approval page of
+  the portal, with sample data. It is HTML and CSS, not a screenshot, so it
+  follows light and dark and the size of the text, and it loads nothing.
+
+  Call it with: partial "approval-picture.html" .
+  It uses no data of the page. The styles are in site.css, in the landing part.
+
+  The labels are the words of internal/web/templates/approval.html. The Go test
+  internal/web/landing_labels_test.go requires them in both files. Change a
+  label here only with the portal.
+
+  For a screen reader, the drawing is one image with a description. The parts
+  inside are hidden from it, so it does not read two buttons that do nothing.
+  The buttons are spans, not buttons or links: no one can reach them with a
+  keyboard. The caption is outside the image, so it is read as text. The
+  drawing has no heading, so it adds nothing to the heading order.
+
+  The addresses are on example.com.
+*/ -}}
+<figure class="picture">
+  <div class="picture-art" role="img"
+       aria-label="A drawing of the approval page of email-mcp, with sample data. A reply to anna@example.com, with the subject Re: Thursday's meeting, is waiting for you. A note says that nothing goes out until you approve. There are two buttons: Reject and Approve and send.">
+    <p class="pic-title" aria-hidden="true">Waiting for you</p>
+    <div class="pic-bar" aria-hidden="true">
+      <p class="pic-note">Nothing goes out until you approve.</p>
+      <div class="pic-buttons">
+        <span class="pic-button">Reject</span>
+        <span class="pic-button pic-primary">Approve and send</span>
+      </div>
+    </div>
+    <p class="pic-subject" aria-hidden="true">Re: Thursday's meeting</p>
+    <dl class="pic-meta" aria-hidden="true">
+      <div><dt>From</dt><dd>you@example.com</dd></div>
+      <div><dt>To, every recipient (Bcc included)</dt><dd>anna@example.com</dd></div>
+      <div><dt>Attachments</dt><dd>None</dd></div>
+    </dl>
+    <p class="pic-body" aria-hidden="true">Thursday at 10:00 works for me. See you then.</p>
+  </div>
+  <figcaption>The approval page of email-mcp, drawn with sample data.</figcaption>
+</figure>
