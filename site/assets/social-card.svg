@@ -12,8 +12,12 @@
   Make the PNG with "make social-card" after a change here. It opens this file
   in Chrome without a window and saves a picture of 1200 by 630 pixels. The PNG
   is in git, so a build of the site uses the card as it is and does not make
-  it again. The font is the system font of the computer that makes the PNG.
-  The text is part of the picture, so any sans-serif font is fine.
+  it again. It also writes social-card.png.sha256, the SHA-256 of this file. A
+  test fails when this file changed and that record did not, and another test
+  requires the words of the card to be the words of the landing page
+  (test/sitecheck/landing_test.go). The font is the system font of the
+  computer that makes the PNG. The text is part of the picture, so any
+  sans-serif font is fine.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <title>email-mcp. Your agent asks. You decide.</title>

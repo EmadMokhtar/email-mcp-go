@@ -108,7 +108,9 @@ site-serve: screenshots site/static/icon.svg
 # exactly 1200 by 630 pixels, at one pixel for each point. Chrome runs with a
 # new empty profile, so your own Chrome profile is not touched. The PNG is in
 # git, so a build of the site uses the card as it is and does not make it
-# again: run this only after a change of the SVG.
+# again: run this only after a change of the SVG. It also writes
+# site/assets/social-card.png.sha256, the SHA-256 of the SVG that it used. A
+# test in test/sitecheck fails when the SVG changed and that record did not.
 #
 # Chrome is found as the tests that use Chrome find it (chrometest.Find): the
 # program that CHROME_PATH names when it is set, for example

@@ -2,8 +2,11 @@
 
 // Command socialcard makes the preview card of the landing page: a picture of
 // site/assets/social-card.svg, exactly 1200 by 630 pixels, saved as
-// site/assets/social-card.png. "make social-card" runs it from the root of the
-// repository:
+// site/assets/social-card.png. Then it writes the SHA-256 of the SVG that it
+// used to site/assets/social-card.png.sha256, in the format of sha256sum. A
+// test in test/sitecheck fails when the SVG changed and this record did not,
+// so a change of the SVG cannot reach git without a new PNG. "make
+// social-card" runs it from the root of the repository:
 //
 //	go run -tags screenshots ./test/socialcard
 //
@@ -20,6 +23,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"flag"
 	"fmt"
 	"image/png"
@@ -72,7 +76,9 @@ func makeCard(svgPath, pngPath string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(abs); err != nil {
+	// The record names the bytes that Chrome opens, so they are read first.
+	source, err := os.ReadFile(abs) //nolint:gosec // G304: the path is a flag of this tool
+	if err != nil {
 		return err
 	}
 	chrome, err := chrometest.Find()
@@ -107,5 +113,9 @@ func makeCard(svgPath, pngPath string) error {
 	if size.Width != cardWidth || size.Height != cardHeight {
 		return fmt.Errorf("the picture is %d by %d pixels, not %d by %d", size.Width, size.Height, cardWidth, cardHeight)
 	}
-	return os.WriteFile(pngPath, shot, 0o600)
+	if err := os.WriteFile(pngPath, shot, 0o600); err != nil {
+		return err
+	}
+	record := fmt.Sprintf("%x  %s\n", sha256.Sum256(source), filepath.Base(svgPath))
+	return os.WriteFile(pngPath+".sha256", []byte(record), 0o600)
 }

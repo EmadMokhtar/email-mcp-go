@@ -5,9 +5,12 @@
   docs/superpowers/specs/2026-11-05-landing-page-design.md. In the front matter
   the same note is a YAML comment, such as "# T13".
 
-  The shortcode prints nothing, so the page does not change. It stops the build
-  when the name is not a row name like T13, so a note cannot be empty or
-  mistyped.
+  The shortcode prints nothing, so the page does not change. It checks only the
+  form of the name: the build stops when the name is not like T13, so a note
+  cannot be empty. It does not read the spec. The Go test
+  TestLandingTruthNotesHaveRows (test/sitecheck/landing_test.go) checks that
+  each note, here and in the front matter, names a row that the truth table
+  has, so a mistyped or removed row fails "go test".
 
   Write the note right after its sentence, with no space before it:
   "level.{{< truth "T7" >}} A higher level". A space before it would stay in

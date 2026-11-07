@@ -37,6 +37,10 @@
   {{- with .Description }}
   <meta name="description" content="{{ . }}">
   {{- end }}
+  {{- /* Every build gives a full base address: make site (SITE_BASE_URL), the publish workflow (pages.yml stops when it is empty) and hugo server. A build with a relative one would print relative canonical and og: addresses, which a preview card cannot use, so it stops here. */}}
+  {{- if not (strings.HasPrefix .Permalink "http") }}
+    {{- errorf "%s: the address %q is not a full address. Build with a full base address, such as make site does (--baseURL http://... or https://...): the canonical and og: tags need one" .Path .Permalink }}
+  {{- end }}
   <link rel="canonical" href="{{ .Permalink }}">
   {{- if .IsHome }}
   <meta property="og:type" content="website">
@@ -48,6 +52,9 @@
     {{- with resources.Get "social-card.png" }}
       {{- if or (ne .Width 1200) (ne .Height 630) }}
         {{- errorf "assets/social-card.png is %d by %d pixels. A preview card must be 1200 by 630: run make social-card" .Width .Height }}
+      {{- end }}
+      {{- if not (strings.HasPrefix .Permalink "http") }}
+        {{- errorf "the og:image address %q is not a full address. Build with a full base address, such as make site does" .Permalink }}
       {{- end }}
   <meta property="og:image" content="{{ .Permalink }}">
   <meta property="og:image:type" content="{{ .MediaType.Type }}">
