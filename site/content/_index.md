@@ -12,13 +12,15 @@
 # request changes the code that a row names, read the words with that note
 # again.
 #
-# A few words were first written differently in the spec. The code won, and
-# the spec was changed to match the page. A comment next to each says which
-# code the words follow. Three are in the body. In section 4, the heading says
-# "You see the message" and not "the whole message", and the paragraph says
-# what an AI app shows when it asks in its own window. Such a window shows
-# only the start of the text (previewBodyChars in
-# internal/mcpserver/elicit.go), and the approval page shows all of it. In
+# A few words were first written differently in the spec. The code is the
+# source of truth, so the spec was changed to match the page. A comment next
+# to each says which code the words follow. Three are in the body. In section
+# 4, the heading says "You see the message" and not "the whole message", and
+# the paragraph says what an AI app shows when it asks in its own window. Such
+# a window shows only the start of the text (previewBodyChars in
+# internal/mcpserver/elicit.go). The approval page shows the whole text as the
+# recipient will see it, and says when the message also has characters that
+# cannot be seen (Body and MoreChars in internal/service/approvals.go). In
 # section 3, a link to the Security page of the manual follows "Only you can
 # change a level": like the manual, the page says where that holds. It holds
 # for an agent that can only call the tools of email-mcp, not for one that
@@ -120,9 +122,12 @@ levels:
       first. email-mcp has no tool that deletes mail for good.
 
 # Section 4: what the approval page promises. One sentence each.
+# The page offers Approve only when it can show the whole text that the
+# recipient will see (CanApprove in internal/web/approvals.go).
 decide:
   - >-  # T20
-    **Approve and send** appears only when the page shows the whole message.
+    **Approve and send** appears only when the page can show the whole text
+    that the recipient will see.
   - If the message changes after you look at it, it does not go out.  # T21
   - >-  # T22
     After you decide, the page tells you what happened. It says **Sent** only
@@ -216,8 +221,10 @@ manual page [Security](/manual/daily-use/security/) says when this holds.
 
 By default, email-mcp holds a message when your agent wants to send
 it.{{< truth "T3" >}} On the approval page, you see who will get it,
-including hidden copies (Bcc), the subject, the attachments and the full text.
-Then you press **Reject** or **Approve and send**.{{< truth "T19" >}}
+including hidden copies (Bcc), the subject, the attachments and the whole text
+as the recipient will see it.{{< truth "T19" >}} If the message also has
+characters that cannot be seen, the page says so.{{< truth "T19" >}} Then you
+press **Reject** or **Approve and send**.
 
 {{< rows "decide" "ul" >}}
 

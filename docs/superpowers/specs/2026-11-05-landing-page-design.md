@@ -253,8 +253,8 @@ first decision.
      uses the email tools to search, read, organize, write drafts and send."
   4. "Decide." "By default, email-mcp holds each send until you approve it. You
      see the message first." (The spec said "the whole message". An AI app that
-     asks in its own window shows only the start of the text, so the code
-     wins. See T19 and T24.)
+     asks in its own window shows only the start of the text. The code is the
+     source of truth, so the page says "the message". See T19 and T24.)
 
 **Beside it.** Nothing. The empty space on the right is intended (DESIGN.md:
 left aligned, nothing centred).
@@ -299,10 +299,10 @@ in step 3. (My call.)
   (My call.)
 - Level 5 is called "Delete" in the portal and "Move to Trash" in the README.
   The page uses the portal name and explains it in the same row.
-- Three rows changed after review, because the code wins. `move_messages`
-  refuses the Trash and every folder inside it at every level
-  (`ErrMoveToTrash` in `internal/service/write.go`), so level 2 says "(not to
-  the Trash)". `discard_draft` moves a draft to the Trash at level 3 and never
+- Three rows changed after review, to match the code, which is the source of
+  truth. `move_messages` refuses the Trash and every folder inside it at every
+  level (`ErrMoveToTrash` in `internal/service/write.go`), so level 2 says
+  "(not to the Trash)". `discard_draft` moves a draft to the Trash at level 3 and never
   asks (`DiscardDraft`), so level 3 names that move, and level 5 says "each of
   these moves" and not "every move" (T16).
 - "Only you can change a level" holds for an agent that can only call the
@@ -320,10 +320,12 @@ that moment.
 - Heading: "You see the message before you decide".
 - Paragraph: "By default, email-mcp holds a message when your agent wants to
   send it. On the approval page, you see who will get it, including hidden
-  copies (Bcc), the subject, the attachments and the full text. Then you press
-  Reject or Approve and send."
+  copies (Bcc), the subject, the attachments and the whole text as the
+  recipient will see it. If the message also has characters that cannot be
+  seen, the page says so. Then you press Reject or Approve and send."
 - Four rows, one sentence each:
-  - "Approve and send appears only when the page shows the whole message."
+  - "Approve and send appears only when the page can show the whole text that
+    the recipient will see."
   - "If the message changes after you look at it, it does not go out."
   - "After you decide, the page tells you what happened. It says Sent only when
     the mail server accepted the message."
@@ -349,6 +351,12 @@ that moment.
   part of the text and a count of what it leaves out, so the heading says "the
   message", the first paragraph says "On the approval page", and the paragraph
   on AI apps says what such a window shows (T19, T24).
+- The approval page shows the text as the recipient will see it, not every
+  character that goes out. So the page says "the whole text as the recipient
+  will see it" and not "the full text", and it says that the page tells you
+  when the message also has characters that cannot be seen (T19, T20). This is
+  the meaning of the manual (`daily-use/confirmations`: "The approval page
+  shows the whole text").
 
 ### 5. email-mcp runs on your computer
 
@@ -802,7 +810,8 @@ not replace the passes above.
 Each claim of the page, with the proof. Paths are in the repository. "README"
 names a section of `README.md`, which moves to the manual, so the builder reads
 the section of the same name in the manual too. If the code and the README
-disagree, the code wins and the difference is reported (foundation).
+disagree, the code is the source of truth, and the difference is reported
+(foundation).
 
 "Qualifier" is a word that must stay on the page.
 
@@ -935,18 +944,28 @@ for access, which only gives a link, and nothing changes until you choose.**
   claim.
 
 **T19. On the approval page, you see who gets it (Bcc included), the subject,
-the attachments and the full text.**
+the attachments and the whole text as the recipient will see it. If the
+message also has characters that cannot be seen, the page says so.**
 - README: "Confirmations and full autonomy" (the approval page shows the whole
   text; the preview of the AI app shows the first 500 characters).
 - Code: `internal/web/templates/approval.html` (the labels `From`, `To, every
-  recipient (Bcc included)` and `Attachments`, and `message-body`).
+  recipient (Bcc included)` and `Attachments`, and `message-body`);
+  `internal/service/approvals.go` (`Body`: "the whole text that the recipient
+  sees"; `MoreChars`: the count of the characters that cannot be seen);
+  `internal/service/send.go` (`sendContent`: `body` and `hidden`;
+  `draftUnseen`); `internal/web/approvals.go` (the page shows `Body` and adds
+  the `MoreChars` line).
 - Scope: the approval page only. An AI app that asks in its own window shows
   the start of the text (T24), so the heading of section 4 and step 4 of
   section 2 say "the message", not "the whole message".
 
-**T20. Approve and send appears only when the page shows the whole message.**
+**T20. Approve and send appears only when the page can show the whole text that
+the recipient will see.**
 - Code: `internal/web/templates/approval.html` (`{{if .CanApprove}}`);
-  `internal/web/approvals.go` (`CanApprove`, `msgDetailUnavailable`).
+  `internal/web/approvals.go` (`CanApprove` is set only with the detail of
+  the message, which holds `Body` and `MoreChars`; otherwise
+  `msgDetailUnavailable` and only Reject);
+  `internal/service/approvals.go` (`Body`, `MoreChars`).
 
 **T21. If the message changes after you look at it, it does not go out.**
 - README: "Security: what local mode protects against" ("What you approve is
