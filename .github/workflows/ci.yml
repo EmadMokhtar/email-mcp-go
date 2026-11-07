@@ -27,10 +27,11 @@ jobs:
       # One go vet has every build tag and every package, so a new package
       # with a tag is vetted without a change here. The interop test needs
       # Docker to run, so it runs nightly in interop.yml. The tests with the
-      # screenshots tag need Chrome, and "make site" runs them. Here they are
-      # only vetted, so a change that breaks them shows up at once.
+      # screenshots tag need Chrome, and the tests with the sitebuild tag need
+      # the table fixtures. "make site" runs both. Here they are only vetted,
+      # so a change that breaks them shows up at once.
       - name: go vet
-        run: go vet -tags interop,screenshots ./...
+        run: go vet -tags interop,screenshots,sitebuild ./...
       - name: go test
         run: go test -race ./...
 
@@ -45,7 +46,7 @@ jobs:
         with:
           go-version: stable
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags interop,screenshots ./...
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags interop,screenshots,sitebuild ./...
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:

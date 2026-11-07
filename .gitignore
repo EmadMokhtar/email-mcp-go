@@ -54,7 +54,10 @@ temp/
 # The docs site (see the Makefile). Hugo writes the built site to site/public/
 # and its cache to site/resources/. The screenshots are made for each build and
 # are never committed. site/static/icon.svg is a copy of the icon of the portal.
+# site/public-tabletest/ is the build of the table fixtures. It is never
+# published.
 site/public/
+site/public-tabletest/
 site/resources/
 site/.hugo_build.lock
 site/assets/screenshots/

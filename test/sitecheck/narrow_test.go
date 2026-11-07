@@ -5,9 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,12 +37,18 @@ const (
 // The subtests share it:
 //
 //   - "built pages": every page of the built site.
-//   - "wide content": pages that hold wide things. The built site holds none
-//     today: it has no table and no long line of code. So the test makes its own
-//     pages. Each one is a real page of the built site, with its real layout and
-//     its real stylesheet, and one wide thing in the place of the text. Each wide
-//     thing has a page of its own, so a failure names the thing that broke out
-//     of its box.
+//   - "wide content": pages that hold wide things. The built site may not hold
+//     the widest case of each kind: a code line of 200 characters, or a word
+//     of 200 characters. So the test makes its own pages. Each one is a real
+//     page of the built site, with its real layout and its real stylesheet, and
+//     one wide thing in the place of the text. Each wide thing has a page of
+//     its own, so a failure names the thing that broke out of its box.
+//   - "table fixtures": the pages of testdata/tables, as the table hook of the
+//     site draws them, with a table that is wider than a phone. The test does
+//     not write the box of the table itself, because then it would check a copy
+//     of the hook. The pages are in the build that SITE_TABLES_DIR names (see
+//     tablesBuild). The wide table must scroll in its box, and the page must
+//     not scroll.
 func TestNoSidewaysScroll(t *testing.T) {
 	public, base := builtSite(t)
 
@@ -53,7 +57,6 @@ func TestNoSidewaysScroll(t *testing.T) {
 
 	cases := []struct{ name, path, content string }{
 		{"code block", "code-block/", "<pre><code>" + wideCommand + "</code></pre>"},
-		{"table", "table/", wideTable()},
 		{"inline code", "inline-code/", "<p>Set <code>" + wideWord + "</code> before you start.</p>"},
 		{"link", "link/", `<p>Read <a href="` + wideLink + `">` + wideLink + `</a> first.</p>`},
 	}
@@ -97,6 +100,36 @@ func TestNoSidewaysScroll(t *testing.T) {
 				requireNoSidewaysScroll(t, ctx, server.URL+base+fixtureDir+c.path)
 			})
 		}
+	})
+	t.Run("table fixtures", func(t *testing.T) {
+		tables := tablesBuild(t)
+		tableServer := httptest.NewServer(http.StripPrefix(strings.TrimSuffix(base, "/"), http.FileServer(http.Dir(tables))))
+		defer tableServer.Close()
+
+		var fixturePages []string
+		for _, rel := range indexPages(t, tables) {
+			if strings.HasPrefix(rel, fixtureSection+"/") {
+				fixturePages = append(fixturePages, rel)
+			}
+		}
+		require.NotEmpty(t, fixturePages, "no page below %s/ in %s. Did the build with the environment tabletest run?", fixtureSection, tables)
+		for _, rel := range fixturePages {
+			t.Run(rel, func(t *testing.T) {
+				requireNoSidewaysScroll(t, ctx, tableServer.URL+base+pagePath(rel))
+			})
+		}
+
+		// The wide table is wide on purpose. If it fits in the window, the test
+		// above checks nothing about the box. So the box must scroll.
+		t.Run("the wide table scrolls in its box", func(t *testing.T) {
+			_, err := chromedp.Run(ctx, chromedp.Navigate(tableServer.URL+base+fixtureSection+"/wide/"))
+			require.NoError(t, err)
+			size, err := chromedp.Run(ctx, chromedp.Evaluate[[]int](
+				`(() => { const box = document.querySelector("div.table-scroll");
+				  return [box.scrollWidth, box.clientWidth]; })()`))
+			require.NoError(t, err)
+			require.Greater(t, size[0], size[1], "the table must be wider than its box, and the box must scroll")
+		})
 	})
 }
 
@@ -146,21 +179,7 @@ const (
 	// A link with a long address. The text of the link is the address.
 	wideLink = "https://example.com/segmentsegmentsegmentsegmentsegmentsegmentsegmentsegmentsegmentsegment" +
 		"segmentsegmentsegmentsegmentsegmentsegmentsegmentsegmentsegmentsegmentsegmentsegmentsegmentsegment"
-
-	// How many columns the wide table has. A phone shows two or three.
-	wideColumns = 12
 )
-
-// wideTable returns a table with wideColumns columns, in the markup that Hugo
-// writes for a table of a Markdown file.
-func wideTable() string {
-	var head, row strings.Builder
-	for i := 1; i <= wideColumns; i++ {
-		_, _ = fmt.Fprintf(&head, "<th>Column %d</th>", i)
-		_, _ = fmt.Fprintf(&row, "<td>Value %d</td>", i)
-	}
-	return "<table><thead><tr>" + head.String() + "</tr></thead><tbody><tr>" + row.String() + "</tr></tbody></table>"
-}
 
 // pageWithContent returns the HTML of one real page of the built site, with the
 // text of the page replaced by content. The page is the first one that has the
@@ -204,28 +223,4 @@ func docArticle(n *html.Node) *html.Node {
 		}
 	}
 	return nil
-}
-
-// indexPages returns the path of every index.html below public, with forward
-// slashes.
-func indexPages(t *testing.T, public string) []string {
-	t.Helper()
-	var pages []string
-	//nolint:gosec // G703: the Makefile sets this path
-	err := filepath.WalkDir(public, func(file string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || d.Name() != "index.html" {
-			return nil
-		}
-		rel, err := filepath.Rel(public, file)
-		if err != nil {
-			return err
-		}
-		pages = append(pages, filepath.ToSlash(rel))
-		return nil
-	})
-	require.NoError(t, err)
-	return pages
 }

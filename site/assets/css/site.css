@@ -300,15 +300,25 @@ pre code {
 }
 
 /*
-  A table has rules between rows and no fill. As a block it scrolls sideways
-  inside its own box when it is wider than the column. Its words stay whole,
-  so a narrow screen scrolls the table and does not break the words of a cell.
+  A table has rules between rows and no fill. It keeps its normal display, so
+  a browser and a screen reader still see a table (with display:block they may
+  not). The box around it (layouts/_markup/render-table.html) scrolls sideways
+  when the table is wider than the column. The words of the table stay whole,
+  so a narrow screen scrolls the box and does not break the words of a cell.
+
+  The box has no tabindex. A browser gives the keyboard focus to a box that
+  scrolls, so the keyboard can scroll it, and a box that does not scroll is not
+  a Tab stop. Chrome (from version 130) and Firefox do this. This relies on the
+  browser. Safari is not verified. The focus ring is the global :focus-visible
+  rule above, so the box needs no rule of its own.
 */
-table {
-  display: block;
+.table-scroll {
   max-width: 100%;
   margin: 0 0 1rem;
   overflow-x: auto;
+}
+
+table {
   overflow-wrap: normal;
   border-collapse: collapse;
   font-size: 0.9375rem;
@@ -337,6 +347,19 @@ td:last-child {
 
 td {
   border-bottom: 1px solid var(--line);
+}
+
+/* The alignment of a column. The table hook writes these classes. */
+.align-left {
+  text-align: left;
+}
+
+.align-center {
+  text-align: center;
+}
+
+.align-right {
+  text-align: right;
 }
 
 img,

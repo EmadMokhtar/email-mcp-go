@@ -34,6 +34,11 @@ SITE_BASE_PATH ?= /email-mcp-go/
 # last quote of the line, when the manifest has a second entry on that line.
 SITE_VERSION := $(shell sed -n 's/.*"\.": "\([^"]*\)".*/\1/p' .release-please-manifest.json)
 
+# Where "make site" builds the table fixtures: the site plus the pages of
+# test/sitecheck/testdata/tables. It is a folder of its own, so these pages
+# never reach site/public, the folder that is published. Git ignores it.
+SITE_TABLES_DIR := $(CURDIR)/site/public-tabletest
+
 .PHONY: build test lint vuln screenshots site site-serve social-card
 
 # build: compile a static binary into bin/
@@ -48,11 +53,13 @@ test:
 # The interop test (build tag "interop") is checked too, but not run: it needs
 # the Docker servers of test/interop/compose.yaml. The same goes for the tests
 # with the build tag "screenshots": they need Chrome, and "make site" runs them.
+# The tests with the build tag "sitebuild" need the table fixtures, and "make
+# site" runs them too.
 # One go vet has every tag and every package, so a new package with a tag is
 # checked without a change here.
 lint:
-	go vet -tags interop,screenshots ./...
-	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) -tags interop,screenshots ./...
+	go vet -tags interop,screenshots,sitebuild ./...
+	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) -tags interop,screenshots,sitebuild ./...
 	golangci-lint run
 
 # vuln: check dependencies and code for known vulnerabilities
@@ -89,13 +96,27 @@ screenshots: $(SCREENSHOT_STAMP)
 # a Hugo warning into an error, so a warning cannot reach the published site.
 # Then comes the site check (test/sitecheck). It reads the built pages and finds
 # what Hugo cannot: a link that leaves the base path, a missing file or anchor, a
-# script, a missing alt text, a path in the source that does not exist. The last
-# step opens every page in Chrome, at the width of a phone, and fails when a page
-# scrolls sideways.
+# script, a missing alt text, a table with no name or with the same name as
+# another table of its page, a path in the source that does not exist.
+#
+# The next three steps test the table hook (layouts/_markup/render-table.html)
+# on pages that are made for it. Hugo builds the site again, with
+# --environment tabletest (site/config/tabletest/hugo.toml), into
+# $(SITE_TABLES_DIR). That build has the real pages and the fixture pages of
+# test/sitecheck/testdata/tables, and the site check reads it too. Then a test
+# (build tag "sitebuild") requires the exact name, the escaping and the
+# alignment of each fixture table.
+#
+# The last step opens every page in Chrome, at the width of a phone, and fails
+# when a page scrolls sideways. It opens the fixture pages too, with the wide
+# table.
 site: screenshots site/static/icon.svg
 	HUGO_PARAMS_VERSION=$(SITE_VERSION) $(HUGO) --source site --cleanDestinationDir --panicOnWarning --baseURL $(SITE_BASE_URL)
 	go run ./test/sitecheck -public site/public -base $(SITE_BASE_PATH) -root .
-	SITE_PUBLIC_DIR=$(CURDIR)/site/public SITE_BASE_PATH=$(SITE_BASE_PATH) go test -tags screenshots -count=1 -run TestNoSidewaysScroll ./test/sitecheck/
+	HUGO_PARAMS_VERSION=$(SITE_VERSION) $(HUGO) --source site --environment tabletest --destination $(SITE_TABLES_DIR) --cleanDestinationDir --panicOnWarning --baseURL $(SITE_BASE_URL)
+	go run ./test/sitecheck -public $(SITE_TABLES_DIR) -base $(SITE_BASE_PATH) -root .
+	SITE_TABLES_DIR=$(SITE_TABLES_DIR) go test -tags sitebuild -count=1 -run TestTableHook ./test/sitecheck/
+	SITE_PUBLIC_DIR=$(CURDIR)/site/public SITE_TABLES_DIR=$(SITE_TABLES_DIR) SITE_BASE_PATH=$(SITE_BASE_PATH) go test -tags screenshots -count=1 -run TestNoSidewaysScroll ./test/sitecheck/
 
 # site-serve: show the docs site on http://localhost:1313/ and rebuild it when
 # a file changes.
