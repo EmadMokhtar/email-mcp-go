@@ -4,22 +4,31 @@
   columns and header cells. A table with display:block can lose this.
 
   A table that is wider than the column must scroll sideways. A scroll box
-  around the table does that, so the table itself does not change. The box has:
-  - tabindex="0", so a person who uses only the keyboard can focus the box and
-    scroll it with the arrow keys.
-  - role="region" and an aria-label. A box that can take the focus needs a role
-    and a name, or a screen reader says only "group" or nothing.
+  around the table does that, so the table itself does not change. The box is
+  a plain <div class="table-scroll"> with no tabindex, no role and no name:
+  - A box that can scroll gets the keyboard focus from the browser, so a person
+    who uses only the keyboard can scroll it with the arrow keys. Chrome (from
+    version 130) and Firefox do this. It relies on the browser: this site has
+    no script and no tabindex for it. Safari is not verified.
+  - A box that does not scroll (the table fits) is not a Tab stop, and it is
+    not a landmark. A tabindex="0" on every box would add both for each table.
 
-  The name of the box is "Table: " and the header cells, such as
-  "Table: Command, What it does". The header cells say what the table is about,
-  and the page needs no extra text for it. The name must be different from the
-  name of every other table of the page, because a screen reader lists the
-  boxes by name. When an earlier table of the page has the same name, the name
-  gets the number of the table: "Table 2: Command, What it does". The earlier
-  names are in .Page.Store, by the number of the table. A table looks only at
-  the lower numbers, so a second render of the page (another output) does not
-  change the result. A table with no header text is named "Table 2" (its
-  number).
+  The name is on the <table>, as aria-label. A screen reader lists the tables
+  of a page by name, so each name must be different. The name is the header
+  cells, such as "Command, What it does". The role already says "table", so
+  the name does not repeat it. The header cells say what the table is about,
+  and the page needs no extra text for it. These rules choose the words:
+  - An empty header cell is "column N" (N counts from 1), so the position of
+    the other cells is not lost: "column 1, z".
+  - When every header cell is empty, or there is no header, the cells of the
+    first body row are used the same way.
+  - When those are empty too, the name is "Table N" (N is the number of the
+    table in the page).
+  - When an earlier table of the page has the same name, the name gets the
+    number of the table: "Command, What it does (table 2)".
+  The earlier names are in .Page.Store, by the number of the table. A table
+  looks only at the lower numbers, so a second render of the page (another
+  output) does not change the result.
 
   The text of a cell is HTML already (Hugo has drawn the bold text, the code
   and the links of the cell). So it is printed as it is, and it is not escaped
@@ -28,44 +37,60 @@
   the attribute escapes the result once.
 
   Hugo gives the alignment of each cell (.Alignment: left, center, right, or
-  empty). The header cells have scope="col". The attributes of a table, such as
-  {.wide}, go on the <table>. This site does not turn them on today (the
-  setting markup.goldmark.parser.attribute.block), but a page that uses them
-  later would lose them without this line. The name of an attribute is safe
-  (the Markdown parser allows only letters, digits and a few signs), and the
-  value is escaped here.
+  empty). It becomes a class (align-left, align-center or align-right), and
+  site.css sets the text-align of each class. A class keeps the page free of
+  inline style. The header cells have scope="col". The attributes of a table,
+  such as {.wide}, go on the <table>. This site does not turn them on today
+  (the setting markup.goldmark.parser.attribute.block), but a page that uses
+  them later would lose them without this line. The name of an attribute is
+  safe (the Markdown parser allows only letters, digits and a few signs), and
+  the value is escaped here.
+
+  test/sitecheck checks the output of this file in the built site, and
+  test/sitecheck/testdata/tables has the pages that test the rules above.
 */ -}}
 {{- $number := add .Ordinal 1 -}}
 
-{{- /* The text of the header cells, with no tags and no empty cell. */ -}}
-{{- $headers := slice -}}
-{{- with .THead -}}
-  {{- range index . 0 -}}
-    {{- with .Text | plainify | htmlUnescape | strings.TrimSpace -}}
-      {{- $headers = $headers | append . -}}
+{{- /* The words of the first row that has text: the header row, and when it has none, the first row of the body. */ -}}
+{{- $words := slice -}}
+{{- range slice .THead .TBody -}}
+  {{- if and (not $words) . -}}
+    {{- $row := slice -}}
+    {{- $hasText := false -}}
+    {{- range $i, $cell := index . 0 -}}
+      {{- with $cell.Text | plainify | htmlUnescape | strings.TrimSpace -}}
+        {{- $hasText = true -}}
+        {{- $row = $row | append . -}}
+      {{- else -}}
+        {{- $row = $row | append (printf "column %d" (add $i 1)) -}}
+      {{- end -}}
+    {{- end -}}
+    {{- if $hasText -}}
+      {{- $words = $row -}}
     {{- end -}}
   {{- end -}}
 {{- end -}}
 
 {{- $label := printf "Table %d" $number -}}
-{{- if $headers -}}
-  {{- $label = printf "Table: %s" (delimit $headers ", ") -}}
+{{- if $words -}}
+  {{- $label = delimit $words ", " -}}
+  {{- $base := $label -}}
   {{- $names := .Page.Store.Get "tableNames" | default dict -}}
   {{- range $earlier, $name := $names -}}
-    {{- if and (lt (int $earlier) $.Ordinal) (eq $name $label) -}}
-      {{- $label = printf "Table %d: %s" $number (delimit $headers ", ") -}}
+    {{- if and (lt (int $earlier) $.Ordinal) (eq $name $base) -}}
+      {{- $label = printf "%s (table %d)" $base $number -}}
     {{- end -}}
   {{- end -}}
 {{- end -}}
 {{- $_ := .Page.Store.SetInMap "tableNames" (printf "%d" .Ordinal) $label -}}
 
-<div class="table-scroll" role="region" tabindex="0" aria-label="{{ $label }}">
-  <table{{ range $name, $value := .Attributes }}{{ printf " %s=\"%s\"" $name (printf "%v" $value | htmlEscape) | safeHTMLAttr }}{{ end }}>
+<div class="table-scroll">
+  <table aria-label="{{ $label }}"{{ range $name, $value := .Attributes }}{{ printf " %s=\"%s\"" $name (printf "%v" $value | htmlEscape) | safeHTMLAttr }}{{ end }}>
     <thead>
       {{- range .THead }}
       <tr>
         {{- range . }}
-        <th scope="col"{{ with .Alignment }} style="text-align: {{ . }}"{{ end }}>{{ .Text }}</th>
+        <th scope="col"{{ with .Alignment }} class="align-{{ . }}"{{ end }}>{{ .Text }}</th>
         {{- end }}
       </tr>
       {{- end }}
@@ -75,7 +100,7 @@
       {{- range . }}
       <tr>
         {{- range . }}
-        <td{{ with .Alignment }} style="text-align: {{ . }}"{{ end }}>{{ .Text }}</td>
+        <td{{ with .Alignment }} class="align-{{ . }}"{{ end }}>{{ .Text }}</td>
         {{- end }}
       </tr>
       {{- end }}
