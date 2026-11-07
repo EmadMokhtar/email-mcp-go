@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 778 1169" role="img">
+  <title>One get_message call, step by step</title>
+  <desc>A sequence of one get_message call, with nine lanes: client, transport, SDK middleware, mcpserver, service, backend cache, imapsmtp, IMAP server and audit log. 1: the client sends tools/call to the transport. On HTTP only, the transport first runs the limit on requests at once and the checks of httpserve: Host, Origin, body size and the bearer token. 2: the middleware of the SDK runs trackToolCalls, then capture, then the check of the tool name and the arguments against the schema. 3: safe in mcpserver finds the principal. 4: the handler getMessage calls service. 5: service runs authorize: it finds the account in the tenant of the caller and calls policy.Decide. 6: BackendCache.Mail returns the cached backend, or builds it again. 7: service calls GetMessage of imapsmtp, which sends EXAMINE and a fetch with BODY.PEEK to the IMAP server, gets the data, and decodes and converts it with mime. imapsmtp returns a mail.Message to service. 8: service runs noteBackendError. 9: messageOut in mcpserver cleans each string with CleanUntrusted and puts third-party text in the Untrusted wrapper. 10: the result goes back to the middleware, where capture writes the call entry in the audit log. Then the result goes back to the client.</desc>
+
+  <path class="d-line" d="M43 64V1129"/>
+  <path class="d-line" d="M129 64V1129"/>
+  <path class="d-line" d="M215 64V1129"/>
+  <path class="d-line" d="M301 64V1129"/>
+  <path class="d-line" d="M387 64V1129"/>
+  <path class="d-line" d="M473 64V1129"/>
+  <path class="d-line" d="M559 64V1129"/>
+  <path class="d-line" d="M645 64V1129"/>
+  <path class="d-line" d="M731 64V1129"/>
+
+  <rect class="d-box" x="2" y="16" width="82" height="48" rx="8"/>
+  <text class="d-text" x="43" y="40" text-anchor="middle" dominant-baseline="central">Client</text>
+  <rect class="d-box" x="88" y="16" width="82" height="48" rx="8"/>
+  <text class="d-text" x="129" y="40" text-anchor="middle" dominant-baseline="central">Transport</text>
+  <rect class="d-box" x="174" y="16" width="82" height="48" rx="8"/>
+  <text class="d-text" x="215" y="31" text-anchor="middle" dominant-baseline="central">SDK</text>
+  <text class="d-text" x="215" y="49" text-anchor="middle" dominant-baseline="central">middleware</text>
+  <rect class="d-box" x="260" y="16" width="82" height="48" rx="8"/>
+  <text class="d-text" x="301" y="40" text-anchor="middle" dominant-baseline="central">mcpserver</text>
+  <rect class="d-box" x="346" y="16" width="82" height="48" rx="8"/>
+  <text class="d-text" x="387" y="40" text-anchor="middle" dominant-baseline="central">service</text>
+  <rect class="d-box" x="432" y="16" width="82" height="48" rx="8"/>
+  <text class="d-text" x="473" y="31" text-anchor="middle" dominant-baseline="central">Backend</text>
+  <text class="d-text" x="473" y="49" text-anchor="middle" dominant-baseline="central">cache</text>
+  <rect class="d-box" x="518" y="16" width="82" height="48" rx="8"/>
+  <text class="d-text" x="559" y="40" text-anchor="middle" dominant-baseline="central">imapsmtp</text>
+  <rect class="d-box" x="604" y="16" width="82" height="48" rx="8"/>
+  <text class="d-text" x="645" y="31" text-anchor="middle" dominant-baseline="central">IMAP</text>
+  <text class="d-text" x="645" y="49" text-anchor="middle" dominant-baseline="central">server</text>
+  <rect class="d-box" x="690" y="16" width="82" height="48" rx="8"/>
+  <text class="d-text" x="731" y="31" text-anchor="middle" dominant-baseline="central">Audit</text>
+  <text class="d-text" x="731" y="49" text-anchor="middle" dominant-baseline="central">log</text>
+
+  <path class="d-line" d="M43 90H129M121 84L129 90L121 96"/>
+  <text class="d-soft" x="86" y="80" text-anchor="middle">1 tools/call</text>
+  <rect class="d-box d-dash" x="51" y="110" width="156" height="63" rx="8"/>
+  <text class="d-text" x="129" y="124" text-anchor="middle" dominant-baseline="central">1 HTTP only</text>
+  <text class="d-soft" x="129" y="141" text-anchor="middle" dominant-baseline="central">limit, Host, Origin,</text>
+  <text class="d-soft" x="129" y="158" text-anchor="middle" dominant-baseline="central">body size, token</text>
+  <path class="d-line" d="M129 199H215M207 193L215 199L207 205"/>
+  <rect class="d-box" x="140" y="219" width="150" height="80" rx="8"/>
+  <text class="d-text" x="215" y="233" text-anchor="middle" dominant-baseline="central">2 middleware</text>
+  <text class="d-soft" x="215" y="250" text-anchor="middle" dominant-baseline="central">trackToolCalls</text>
+  <text class="d-soft" x="215" y="267" text-anchor="middle" dominant-baseline="central">capture</text>
+  <text class="d-soft" x="215" y="284" text-anchor="middle" dominant-baseline="central">schema check</text>
+  <path class="d-line" d="M215 325H301M293 319L301 325L293 331"/>
+  <rect class="d-box" x="226" y="345" width="150" height="63" rx="8"/>
+  <text class="d-text" x="301" y="359" text-anchor="middle" dominant-baseline="central">3 safe</text>
+  <text class="d-soft" x="301" y="376" text-anchor="middle" dominant-baseline="central">finds the principal</text>
+  <text class="d-soft" x="301" y="393" text-anchor="middle" dominant-baseline="central">4 getMessage</text>
+  <path class="d-line" d="M301 434H387M379 428L387 434L379 440"/>
+  <rect class="d-box" x="312" y="454" width="150" height="63" rx="8"/>
+  <text class="d-text" x="387" y="468" text-anchor="middle" dominant-baseline="central">5 authorize</text>
+  <text class="d-soft" x="387" y="485" text-anchor="middle" dominant-baseline="central">account of the tenant</text>
+  <text class="d-soft" x="387" y="502" text-anchor="middle" dominant-baseline="central">policy.Decide</text>
+  <path class="d-line" d="M387 543H473M465 537L473 543L465 549"/>
+  <rect class="d-box" x="398" y="563" width="150" height="63" rx="8"/>
+  <text class="d-text" x="473" y="577" text-anchor="middle" dominant-baseline="central">6 BackendCache</text>
+  <text class="d-soft" x="473" y="594" text-anchor="middle" dominant-baseline="central">Mail: cached, or</text>
+  <text class="d-soft" x="473" y="611" text-anchor="middle" dominant-baseline="central">built again</text>
+  <path class="d-line" d="M387 652H559M551 646L559 652L551 658"/>
+  <text class="d-soft" x="473" y="642" text-anchor="middle">7 GetMessage</text>
+  <path class="d-line" d="M559 684H645M637 678L645 684L637 690"/>
+  <text class="d-soft" x="602" y="674" text-anchor="middle">EXAMINE</text>
+  <path class="d-line" d="M559 716H645M637 710L645 716L637 722"/>
+  <text class="d-soft" x="602" y="706" text-anchor="middle">BODY.PEEK</text>
+  <path class="d-line" d="M645 748H559M567 742L559 748L567 754"/>
+  <text class="d-soft" x="602" y="738" text-anchor="middle">data</text>
+  <rect class="d-box" x="484" y="768" width="150" height="46" rx="8"/>
+  <text class="d-text" x="559" y="782" text-anchor="middle" dominant-baseline="central">7 mime</text>
+  <text class="d-soft" x="559" y="799" text-anchor="middle" dominant-baseline="central">decode, convert</text>
+  <path class="d-line" d="M559 840H387M395 834L387 840L395 846"/>
+  <text class="d-soft" x="473" y="830" text-anchor="middle">*mail.Message</text>
+  <rect class="d-box" x="312" y="860" width="150" height="46" rx="8"/>
+  <text class="d-text" x="387" y="874" text-anchor="middle" dominant-baseline="central">8 service</text>
+  <text class="d-soft" x="387" y="891" text-anchor="middle" dominant-baseline="central">noteBackendError</text>
+  <path class="d-line" d="M387 932H301M309 926L301 932L309 938"/>
+  <rect class="d-box" x="226" y="952" width="150" height="63" rx="8"/>
+  <text class="d-text" x="301" y="966" text-anchor="middle" dominant-baseline="central">9 messageOut</text>
+  <text class="d-soft" x="301" y="983" text-anchor="middle" dominant-baseline="central">CleanUntrusted,</text>
+  <text class="d-soft" x="301" y="1000" text-anchor="middle" dominant-baseline="central">Untrusted wrapper</text>
+  <path class="d-line" d="M301 1041H215M223 1035L215 1041L223 1047"/>
+  <path class="d-line" d="M215 1073H731M723 1067L731 1073L723 1079"/>
+  <text class="d-soft" x="688" y="1063" text-anchor="middle">10 call entry</text>
+  <path class="d-line" d="M215 1105H43M51 1099L43 1105L51 1111"/>
+  <text class="d-soft" x="86" y="1095" text-anchor="middle">result</text>
+
+  <text class="d-soft" x="2" y="1153">Numbers are the steps in the text. Dashed box: only on HTTP.</text>
+</svg>

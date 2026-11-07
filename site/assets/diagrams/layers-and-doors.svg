@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 528" role="img">
+  <title>The layers and the two doors</title>
+  <desc>On the left, the agent goes through the transport, stdio or HTTP, to mcpserver, which holds the tools. mcpserver calls the use cases of service. On the right, the person goes through the browser to web, the web portal, and through the terminal to cmd/email-mcp, the commands. Both reach service, and only they reach the user-only use cases, such as UpdateSettings and ApprovePending, drawn as a dashed box inside service. Under service are policy, confirm, outbox, audit, store with secrets, and the mail backend, mail.Backend, which provider/imapsmtp implements. The mail backend talks to the mail servers over IMAP and SMTP.</desc>
+
+  <!-- The two callers. -->
+  <rect class="d-box" x="20" y="16" width="260" height="40" rx="8"/>
+  <text class="d-text" x="150" y="36" text-anchor="middle" dominant-baseline="central">Agent</text>
+  <rect class="d-box" x="440" y="16" width="260" height="40" rx="8"/>
+  <text class="d-text" x="570" y="36" text-anchor="middle" dominant-baseline="central">Person</text>
+
+  <!-- The agent's door. -->
+  <path class="d-line" d="M150 56V96M144 88L150 96L156 88"/>
+  <rect class="d-box" x="20" y="96" width="260" height="48" rx="8"/>
+  <text class="d-text" x="150" y="114" text-anchor="middle" dominant-baseline="central">Transport</text>
+  <text class="d-soft" x="150" y="133" text-anchor="middle" dominant-baseline="central">stdio or HTTP (httpserve)</text>
+  <path class="d-line" d="M150 144V176M144 168L150 176L156 168"/>
+  <rect class="d-box" x="20" y="176" width="260" height="48" rx="8"/>
+  <text class="d-text" x="150" y="194" text-anchor="middle" dominant-baseline="central">mcpserver</text>
+  <text class="d-soft" x="150" y="213" text-anchor="middle" dominant-baseline="central">the tools</text>
+  <path class="d-line" d="M150 224V272M144 264L150 272L156 264"/>
+
+  <!-- The person's door. -->
+  <path class="d-line" d="M502 56V96M496 88L502 96L508 88"/>
+  <path class="d-line" d="M637 56V96M631 88L637 96L643 88"/>
+  <rect class="d-box" x="440" y="96" width="125" height="48" rx="8"/>
+  <text class="d-text" x="502" y="120" text-anchor="middle" dominant-baseline="central">Browser</text>
+  <rect class="d-box" x="575" y="96" width="125" height="48" rx="8"/>
+  <text class="d-text" x="637" y="120" text-anchor="middle" dominant-baseline="central">Terminal</text>
+  <path class="d-line" d="M502 144V176M496 168L502 176L508 168"/>
+  <path class="d-line" d="M637 144V176M631 168L637 176L643 168"/>
+  <rect class="d-box" x="440" y="176" width="125" height="48" rx="8"/>
+  <text class="d-text" x="502" y="194" text-anchor="middle" dominant-baseline="central">web</text>
+  <text class="d-soft" x="502" y="213" text-anchor="middle" dominant-baseline="central">the web portal</text>
+  <rect class="d-box" x="575" y="176" width="125" height="48" rx="8"/>
+  <text class="d-text" x="637" y="194" text-anchor="middle" dominant-baseline="central">cmd/email-mcp</text>
+  <text class="d-soft" x="637" y="213" text-anchor="middle" dominant-baseline="central">the commands</text>
+  <path class="d-line" d="M502 224V288M496 280L502 288L508 280"/>
+  <path class="d-line" d="M637 224V288M631 280L637 288L643 280"/>
+
+  <!-- The use cases. -->
+  <rect class="d-box" x="20" y="272" width="680" height="80" rx="8"/>
+  <text class="d-text" x="40" y="300" dominant-baseline="central">service</text>
+  <text class="d-soft" x="40" y="322" dominant-baseline="central">the use cases</text>
+  <rect class="d-box d-dash" x="430" y="288" width="260" height="56" rx="8"/>
+  <text class="d-text" x="560" y="306" text-anchor="middle" dominant-baseline="central">User-only use cases</text>
+  <text class="d-soft" x="560" y="327" text-anchor="middle" dominant-baseline="central">UpdateSettings, ApprovePending, ...</text>
+
+  <!-- The parts under service. -->
+  <path class="d-line" d="M74 352V384M68 376L74 384L80 376"/>
+  <path class="d-line" d="M188 352V384M182 376L188 384L194 376"/>
+  <path class="d-line" d="M302 352V384M296 376L302 384L308 376"/>
+  <path class="d-line" d="M416 352V384M410 376L416 384L422 376"/>
+  <path class="d-line" d="M530 352V384M524 376L530 384L536 376"/>
+  <path class="d-line" d="M644 352V384M638 376L644 384L650 376"/>
+
+  <rect class="d-box" x="20" y="384" width="108" height="48" rx="8"/>
+  <text class="d-text" x="74" y="408" text-anchor="middle" dominant-baseline="central">policy</text>
+  <rect class="d-box" x="134" y="384" width="108" height="48" rx="8"/>
+  <text class="d-text" x="188" y="408" text-anchor="middle" dominant-baseline="central">confirm</text>
+  <rect class="d-box" x="248" y="384" width="108" height="48" rx="8"/>
+  <text class="d-text" x="302" y="408" text-anchor="middle" dominant-baseline="central">outbox</text>
+  <rect class="d-box" x="362" y="384" width="108" height="48" rx="8"/>
+  <text class="d-text" x="416" y="408" text-anchor="middle" dominant-baseline="central">audit</text>
+  <rect class="d-box" x="476" y="384" width="108" height="48" rx="8"/>
+  <text class="d-text" x="530" y="402" text-anchor="middle" dominant-baseline="central">store</text>
+  <text class="d-soft" x="530" y="421" text-anchor="middle" dominant-baseline="central">with secrets</text>
+  <rect class="d-box" x="590" y="384" width="110" height="48" rx="8"/>
+  <text class="d-text" x="645" y="402" text-anchor="middle" dominant-baseline="central">mail.Backend</text>
+  <text class="d-soft" x="645" y="421" text-anchor="middle" dominant-baseline="central">imapsmtp</text>
+
+  <!-- The mail servers. -->
+  <path class="d-line" d="M645 432V464M639 456L645 464L651 456"/>
+  <rect class="d-box" x="590" y="464" width="110" height="48" rx="8"/>
+  <text class="d-text" x="645" y="482" text-anchor="middle" dominant-baseline="central">Mail servers</text>
+  <text class="d-soft" x="645" y="501" text-anchor="middle" dominant-baseline="central">IMAP and SMTP</text>
+
+  <text class="d-soft" x="20" y="482" dominant-baseline="central">Dashed box: only the person's door reaches it.</text>
+</svg>

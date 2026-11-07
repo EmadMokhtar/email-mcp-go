@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 598" role="img">
+  <title>The layers of the packages</title>
+  <desc>The packages of email-mcp in ten layers, layer 9 at the top and layer 0 at the bottom. A package imports only packages of lower layers. Names are under internal/, except cmd/email-mcp. Layer 9: cmd/email-mcp. Layer 8: app. Layer 7: web. Layer 6: httpserve. Layer 5: connect, mcpserver and tokens. Layer 4: service. Layer 3: audit, confirm, outbox and provider/imapsmtp. Layer 2: policy and secrets. Layer 1: discovery, mime and store. Layer 0, with no internal imports: domain/account, domain/mail, errtype, inflight, signing, thirdparty/xhtml and version. In a separate strip, the packages for tests only: testutil/imaptest, testutil/smtptest, testutil/webtest, testutil/chrometest, which builds only with the build tag screenshots, and e2e.</desc>
+
+  <text class="d-soft" x="20" y="20" dominant-baseline="central">A package imports only packages of lower layers. Names are under internal/,</text>
+  <text class="d-soft" x="20" y="34" dominant-baseline="central">except cmd/email-mcp.</text>
+
+  <rect class="d-box" x="20" y="54" width="84" height="36" rx="8"/>
+  <text class="d-text" x="62" y="72" text-anchor="middle" dominant-baseline="central">Layer 9</text>
+  <rect class="d-box" x="112" y="54" width="588" height="36" rx="8"/>
+  <text class="d-text" x="128" y="72" dominant-baseline="central">cmd/email-mcp</text>
+  <rect class="d-box" x="20" y="98" width="84" height="36" rx="8"/>
+  <text class="d-text" x="62" y="116" text-anchor="middle" dominant-baseline="central">Layer 8</text>
+  <rect class="d-box" x="112" y="98" width="588" height="36" rx="8"/>
+  <text class="d-text" x="128" y="116" dominant-baseline="central">app</text>
+  <rect class="d-box" x="20" y="142" width="84" height="36" rx="8"/>
+  <text class="d-text" x="62" y="160" text-anchor="middle" dominant-baseline="central">Layer 7</text>
+  <rect class="d-box" x="112" y="142" width="588" height="36" rx="8"/>
+  <text class="d-text" x="128" y="160" dominant-baseline="central">web</text>
+  <rect class="d-box" x="20" y="186" width="84" height="36" rx="8"/>
+  <text class="d-text" x="62" y="204" text-anchor="middle" dominant-baseline="central">Layer 6</text>
+  <rect class="d-box" x="112" y="186" width="588" height="36" rx="8"/>
+  <text class="d-text" x="128" y="204" dominant-baseline="central">httpserve</text>
+  <rect class="d-box" x="20" y="230" width="84" height="36" rx="8"/>
+  <text class="d-text" x="62" y="248" text-anchor="middle" dominant-baseline="central">Layer 5</text>
+  <rect class="d-box" x="112" y="230" width="588" height="36" rx="8"/>
+  <text class="d-text" x="128" y="248" dominant-baseline="central">connect, mcpserver, tokens</text>
+  <rect class="d-box" x="20" y="274" width="84" height="36" rx="8"/>
+  <text class="d-text" x="62" y="292" text-anchor="middle" dominant-baseline="central">Layer 4</text>
+  <rect class="d-box" x="112" y="274" width="588" height="36" rx="8"/>
+  <text class="d-text" x="128" y="292" dominant-baseline="central">service</text>
+  <rect class="d-box" x="20" y="318" width="84" height="36" rx="8"/>
+  <text class="d-text" x="62" y="336" text-anchor="middle" dominant-baseline="central">Layer 3</text>
+  <rect class="d-box" x="112" y="318" width="588" height="36" rx="8"/>
+  <text class="d-text" x="128" y="336" dominant-baseline="central">audit, confirm, outbox, provider/imapsmtp</text>
+  <rect class="d-box" x="20" y="362" width="84" height="36" rx="8"/>
+  <text class="d-text" x="62" y="380" text-anchor="middle" dominant-baseline="central">Layer 2</text>
+  <rect class="d-box" x="112" y="362" width="588" height="36" rx="8"/>
+  <text class="d-text" x="128" y="380" dominant-baseline="central">policy, secrets</text>
+  <rect class="d-box" x="20" y="406" width="84" height="36" rx="8"/>
+  <text class="d-text" x="62" y="424" text-anchor="middle" dominant-baseline="central">Layer 1</text>
+  <rect class="d-box" x="112" y="406" width="588" height="36" rx="8"/>
+  <text class="d-text" x="128" y="424" dominant-baseline="central">discovery, mime, store</text>
+  <rect class="d-box" x="20" y="450" width="84" height="56" rx="8"/>
+  <text class="d-text" x="62" y="478" text-anchor="middle" dominant-baseline="central">Layer 0</text>
+  <rect class="d-box" x="112" y="450" width="588" height="56" rx="8"/>
+  <text class="d-text" x="128" y="468" dominant-baseline="central">domain/account, domain/mail, errtype, inflight,</text>
+  <text class="d-text" x="128" y="488" dominant-baseline="central">signing, thirdparty/xhtml, version</text>
+  <rect class="d-box d-dash" x="20" y="530" width="84" height="56" rx="8"/>
+  <text class="d-text" x="62" y="558" text-anchor="middle" dominant-baseline="central">Tests</text>
+  <rect class="d-box d-dash" x="112" y="530" width="588" height="56" rx="8"/>
+  <text class="d-soft" x="128" y="548" dominant-baseline="central">testutil/imaptest, testutil/smtptest, testutil/webtest,</text>
+  <text class="d-soft" x="128" y="568" dominant-baseline="central">testutil/chrometest (build tag screenshots), e2e</text>
+</svg>

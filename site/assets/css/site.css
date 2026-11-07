@@ -529,6 +529,8 @@ svg {
             the path. d-go, d-warn and d-bad change its colour.
     d-text  a word in the drawing.
     d-soft  a word of less weight, such as the label of a line.
+    d-dash  a dashed line or a dashed box. Use it with d-line or d-box. The
+            drawing says in words what the dashes mean.
 */
 
 .d-box {
@@ -581,6 +583,11 @@ svg {
 .d-soft {
   fill: var(--soft);
   font: 400 13px/1.25 var(--sans);
+}
+
+/* A dash pattern only. The colour stays the colour of the line or the box. */
+.d-dash {
+  stroke-dasharray: 6 4;
 }
 
 /* The footer. */
