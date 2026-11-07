@@ -70,9 +70,9 @@
 
   <!-- The mail servers. -->
   <path class="d-line" d="M645 432V464M639 456L645 464L651 456"/>
-  <rect class="d-box" x="590" y="464" width="110" height="48" rx="8"/>
+  <rect class="d-box" x="580" y="464" width="130" height="48" rx="8"/>
   <text class="d-text" x="645" y="482" text-anchor="middle" dominant-baseline="central">Mail servers</text>
-  <text class="d-soft" x="645" y="501" text-anchor="middle" dominant-baseline="central">IMAP and SMTP</text>
+  <text class="d-soft" x="645" y="501" text-anchor="middle" dominant-baseline="central">IMAP, SMTP</text>
 
   <text class="d-soft" x="20" y="482" dominant-baseline="central">Dashed box: only the person's door reaches it.</text>
 </svg>

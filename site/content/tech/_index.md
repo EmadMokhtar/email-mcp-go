@@ -22,6 +22,11 @@ whole program on one page.
 
 ## If you want to know
 
+The questions use a few terms. A tenant is the owner of a set of accounts.
+IMAP (Internet Message Access Protocol) is the protocol for reading mail. Stdio
+(standard input and output) and HTTP (HyperText Transfer Protocol) are the two
+ways that a client talks to the server.
+
 | If you want to know... | read... |
 |---|---|
 | What are the main parts, and what does each one do? | [Architecture overview](/tech/start-here/overview/#the-layers) |
@@ -39,8 +44,3 @@ whole program on one page.
 | Where is text from the mail cleaned? | [One tool call, step by step](/tech/start-here/tool-call/#where-text-from-the-mail-is-cleaned) |
 | Where do errors become the texts that the agent sees? | [One tool call, step by step](/tech/start-here/tool-call/#errors-become-fixed-texts) |
 | What differs between stdio and HTTP? | [One tool call, step by step](/tech/start-here/tool-call/#what-differs-between-stdio-and-http) |
-
-A tenant is the owner of a set of accounts. IMAP (Internet Message Access
-Protocol) is the protocol for reading mail. Stdio (standard input and output)
-and HTTP (HyperText Transfer Protocol) are the two ways that a client talks to
-the server.

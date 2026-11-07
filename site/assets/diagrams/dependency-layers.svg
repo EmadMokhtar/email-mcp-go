@@ -2,6 +2,10 @@
   <title>The layers of the packages</title>
   <desc>The packages of email-mcp in ten layers, layer 9 at the top and layer 0 at the bottom. A package imports only packages of lower layers. Names are under internal/, except cmd/email-mcp. Layer 9: cmd/email-mcp. Layer 8: app. Layer 7: web. Layer 6: httpserve. Layer 5: connect, mcpserver and tokens. Layer 4: service. Layer 3: audit, confirm, outbox and provider/imapsmtp. Layer 2: policy and secrets. Layer 1: discovery, mime and store. Layer 0, with no internal imports: domain/account, domain/mail, errtype, inflight, signing, thirdparty/xhtml and version. In a separate strip, the packages for tests only: testutil/imaptest, testutil/smtptest, testutil/webtest, testutil/chrometest, which builds only with the build tag screenshots, and e2e.</desc>
 
+  <!-- This file is the source of the drawing: edit it by hand. A short script
+       placed the first coordinates, and that script is not kept. The
+       classes are in site/assets/css/site.css. -->
+
   <text class="d-soft" x="20" y="20" dominant-baseline="central">A package imports only packages of lower layers. Names are under internal/,</text>
   <text class="d-soft" x="20" y="34" dominant-baseline="central">except cmd/email-mcp.</text>
 

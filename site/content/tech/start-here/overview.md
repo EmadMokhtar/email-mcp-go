@@ -72,8 +72,9 @@ program for a caller, such as "read one message" or "send this mail".
    - `audit` keeps the activity log: what the agent did, and what the person
      did on a page. The page "Activity log and program log" goes deeper.
    - `store` keeps all data in one SQLite database (a database in one file).
-     `secrets` encrypts the secrets in it and holds the master key. The page
-     "Storage and secrets" goes deeper.
+     `secrets` encrypts the secrets in it. It reads the master key from the
+     keychain or from a file, and the master key protects the keys that the
+     database stores. The page "Storage and secrets" goes deeper.
    - The mail backend talks to the mail servers. The interface is
      `mail.Backend`, and `provider/imapsmtp` implements it. The page "The mail
      backend" goes deeper.
@@ -86,7 +87,8 @@ deeper.
 
 ## Two doors into the use cases
 
-The agent and the person reach `service` through different doors:
+A door here is a way into the program: the code that a caller goes through to
+reach `service`. The agent and the person use different doors:
 
 - The agent uses the tools of `mcpserver`, through the transport.
 - The person uses the web portal (`web`) in a browser, and the commands
@@ -151,10 +153,17 @@ program):
   minutes (`backendSweepEvery`).
 
 Before it starts them, `Run` cleans up after a program that stopped in the
-middle of a send (`Outbox.RecoverInterrupted`). The web portal does not start
-with `serve`. It starts the first time that a link to it is needed
-(`web.Server.EnsureStarted`). `setup` serves the portal until the person
-presses Ctrl-C (holds the Ctrl key and presses C).
+middle of its work:
+
+- `Outbox.RecoverInterrupted` marks a send that has been in the state
+  `sending` for more than 15 minutes (`recoverAfter` in `outbox`) as failed.
+  It never sends it again.
+- `expireStaleApproved` ends the approved actions that have no result after
+  their time is over.
+
+The web portal does not start with `serve`. It starts the first time that a
+link to it is needed (`web.Server.EnsureStarted`). `setup` serves the portal
+until the person presses Ctrl-C (holds the Ctrl key and presses C).
 
 An MCP client starts its own `serve` process. So two clients mean two
 processes, and `setup` can run at the same time as both. They all use one data

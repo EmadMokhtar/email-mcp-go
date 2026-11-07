@@ -10,15 +10,21 @@ code_areas:
   - internal/thirdparty/xhtml/README.md
 ---
 
-This page has one row for each Go package of email-mcp: what it does, where it
-sits in the import order, and where to add code. Use it to find the code of a
-feature, and to check what a package may import.
+This page has one row for each Go package of the program email-mcp and of its
+test helpers: what it does, where it sits in the import order, and where to add
+code. Use it to find the code of a feature, and to check what a package may
+import.
 
 A package is a folder of Go files that build together. A layer is the place of
 a package in the import order. On this page, a short name such as `app` means
-the package `internal/app`. `cmd/email-mcp` is the one package outside
-`internal/`. Go does not let code outside this module import a package under
-`internal/`.
+the package `internal/app`. `cmd/email-mcp` is the one package of the program
+outside `internal/`. Go does not let code outside this module import a package
+under `internal/`.
+
+The module has two more packages, under `test/`. `test/sitecheck` checks the
+built docs site, and `test/interop/gencerts` makes the certificates of the
+interop test (the test against real mail servers). They are tools of the
+repository and not part of the program, so this page leaves them out.
 
 ## The layer rule
 
@@ -27,7 +33,8 @@ is the longest path of imports from it down to a package with no imports of
 this module. Go refuses an import cycle (two packages that import each other,
 directly or through others), so every package has one number.
 
-This command prints each package of the program with the packages it imports:
+This command prints each package under `cmd/` and `internal/`, with the
+packages that it imports:
 
 ```sh
 go list -f '{{.ImportPath}} {{join .Imports " "}}' ./cmd/... ./internal/...
@@ -61,14 +68,23 @@ The layers, from the top:
 
 ## All packages
 
-The main entry point is the name to read first in `go doc`.
+The table has the packages that the command above prints, and
+`testutil/chrometest`, which needs the build tag. The main entry point is the
+name to read first in `go doc`.
+
+MCP (Model Context Protocol) is the open standard that lets an AI (artificial
+intelligence) app call the tools of another program. IMAP (Internet Message
+Access Protocol) is the protocol for reading mail. SMTP (Simple Mail Transfer
+Protocol) is the protocol for sending mail. HTTP (HyperText Transfer Protocol)
+is the protocol of the web. HTML (HyperText Markup Language) is the language
+of web pages, and of the body of many mails.
 
 | Package | Layer | Job | Main entry point |
 |---|---|---|---|
 | {{< src "cmd/email-mcp/" >}} | 9 | The program and its commands. | `commands`, `runServe` |
 | {{< src "internal/app/" >}} | 8 | Builds all parts and connects them. Runs the background work, and stops the parts in an order that never loses a send. | `app.Open`, `app.App` |
 | {{< src "internal/web/" >}} | 7 | The web portal of the person: sign-in, accounts, settings, approvals, activity and connections. | `web.New`, `web.Server` |
-| {{< src "internal/httpserve/" >}} | 6 | MCP (Model Context Protocol) over local, stateless HTTP, with the checks of each request. | `httpserve.Handler`, `httpserve.Principal` |
+| {{< src "internal/httpserve/" >}} | 6 | MCP over local, stateless HTTP, with the checks of each request. | `httpserve.Handler`, `httpserve.Principal` |
 | {{< src "internal/connect/" >}} | 5 | The parts of connecting an account that the portal and the commands share: fixed error texts, and the decision to offer a certificate pin (to trust one certificate by its fingerprint). | `connect.ErrorText`, `connect.CheckCertificate` |
 | {{< src "internal/mcpserver/" >}} | 5 | The tools of the agent, and the shape of their results and errors. | `mcpserver.New` |
 | {{< src "internal/tokens/" >}} | 5 | Makes and checks the access tokens of local HTTP. The store keeps only a hash of each token. | `tokens.Manager` |
@@ -94,10 +110,6 @@ The main entry point is the name to read first in `go doc`.
 | {{< src "internal/testutil/webtest/" >}} | tests | Lets a test reach the web portal by its name, `email-mcp.localhost`. | `webtest.Transport` |
 | {{< src "internal/testutil/chrometest/" >}} | tests | Starts a headless Chrome (Chrome with no window) for the screenshot tests. | `chrometest.Start` |
 | {{< src "internal/e2e/" >}} | tests | End-to-end tests: each one opens the whole program with `app.Open`. | the test files |
-
-IMAP (Internet Message Access Protocol) is the protocol for reading mail. SMTP
-(Simple Mail Transfer Protocol) is the protocol for sending mail. HTTP
-(HyperText Transfer Protocol) is the protocol of the web.
 
 ## Imports that you may not expect
 
@@ -141,8 +153,9 @@ These are facts of the code. The design documents do not show them.
 - A page of the web portal: `web`, with its template in
   {{< src "internal/web/templates/" >}}.
 - A table: a migration file in {{< src "internal/store/migrations/" >}} and its
-  methods in a file of `store`. A migration is a numbered SQL file that changes
-  the structure of the database, and each one runs once, in order. Read the
+  methods in a file of `store`. A migration is a numbered SQL (Structured
+  Query Language) file that changes the structure of the database, and each
+  one runs once, in order. Read the
   warning about tables with `ON DELETE CASCADE` in the package comment of
   `store` first.
 - A command: `cmd/email-mcp`, with an entry in the list `commands` in
@@ -160,7 +173,7 @@ the packages of the program. Tests import more.
 | `github.com/modelcontextprotocol/go-sdk` | `cmd/email-mcp`, `app`, `httpserve`, `mcpserver` | The official Go SDK (software development kit) for MCP: the server, the stdio and HTTP transports, typed tool handlers and the check of a bearer token. |
 | `github.com/emersion/go-imap/v2` | `provider/imapsmtp`, `testutil/imaptest` | The IMAP client, and the IMAP server of the tests. |
 | `github.com/emersion/go-smtp` | `provider/imapsmtp`, `testutil/smtptest` | The SMTP client, and the SMTP server of the tests. |
-| `github.com/emersion/go-sasl` | `provider/imapsmtp`, `testutil/smtptest` | The SMTP login with `AUTH PLAIN`. |
+| `github.com/emersion/go-sasl` | `provider/imapsmtp`, `testutil/smtptest` | The SMTP login with `AUTH PLAIN`, the SMTP command that sends the user name and the password. |
 | `github.com/emersion/go-message` | `mime` | Reads and writes the parts of a message. |
 | `github.com/microcosm-cc/bluemonday` | `mime` | Cleans HTML (`mime.SanitizeHTML`). |
 | `github.com/google/jsonschema-go` | `mcpserver` | Builds JSON (JavaScript Object Notation) schemas: the output of the send and Trash tools, whose first call may return a question and no output, and the confirmation form. |

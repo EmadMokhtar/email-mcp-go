@@ -2,6 +2,10 @@
   <title>One get_message call, step by step</title>
   <desc>A sequence of one get_message call, with nine lanes: client, transport, SDK middleware, mcpserver, service, backend cache, imapsmtp, IMAP server and audit log. 1: the client sends tools/call to the transport. On HTTP only, the transport first runs the limit on requests at once and the checks of httpserve: Host, Origin, body size and the bearer token. 2: the middleware of the SDK runs trackToolCalls, then capture, then the check of the tool name and the arguments against the schema. 3: safe in mcpserver finds the principal. 4: the handler getMessage calls service. 5: service runs authorize: it finds the account in the tenant of the caller and calls policy.Decide. 6: BackendCache.Mail returns the cached backend, or builds it again. 7: service calls GetMessage of imapsmtp, which sends EXAMINE and a fetch with BODY.PEEK to the IMAP server, gets the data, and decodes and converts it with mime. imapsmtp returns a mail.Message to service. 8: service runs noteBackendError. 9: messageOut in mcpserver cleans each string with CleanUntrusted and puts third-party text in the Untrusted wrapper. 10: the result goes back to the middleware, where capture writes the call entry in the audit log. Then the result goes back to the client.</desc>
 
+  <!-- This file is the source of the drawing: edit it by hand. A short script
+       placed the first coordinates, and that script is not kept. The
+       classes are in site/assets/css/site.css. -->
+
   <path class="d-line" d="M43 64V1129"/>
   <path class="d-line" d="M129 64V1129"/>
   <path class="d-line" d="M215 64V1129"/>

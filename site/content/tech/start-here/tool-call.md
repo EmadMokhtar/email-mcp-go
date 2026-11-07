@@ -97,8 +97,10 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
    - It asks the store for the account in the tenant of the principal. When
      the tenant has no such account, the error is `ErrAccountNotFound`.
    - It calls `policy.Decide` with the account, the action `policy.ActRead`
-     and the scopes. A refusal is a `*PermissionError`, with a reason and a
-     link to the settings page of the account.
+     and the scopes. A refusal is a `*PermissionError`, with a reason, and a
+     link to the settings page of the account when there is one. There is no
+     link when the scopes of the token lowered the level, or when the link
+     cannot be built.
    - When the account must be reconnected, the error is a `*ReauthError`.
 
    The order is on purpose. A caller that may not read gets the permission
@@ -107,20 +109,22 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
    `BackendCache.Mail` in {{< src "internal/service/backends.go" >}}. The cache
    has one slot for each account, so calls for one account take turns. On every
    call it reads the sealed (encrypted) password from the store and makes a
-   fingerprint: a SHA-256 hash of the server settings, the key version and the
-   sealed password. When the fingerprint is the one of the cached backend, it
-   returns that backend. Otherwise it decrypts the password and builds the
-   backend again with `imapsmtp.New`. It decrypts the password only then. The
-   old backend closes after 2 minutes (`retireAfter`), because a call that
-   started on it may still use it.
+   fingerprint: a SHA-256 (Secure Hash Algorithm with a 256-bit result) hash of
+   the server settings, the key version and the sealed password. When the
+   fingerprint is the one of the cached backend, it returns that backend.
+   Otherwise it decrypts the password and builds the backend again with
+   `imapsmtp.New`. It decrypts the password only then. The old backend closes
+   after 2 minutes (`retireAfter`), because a call that started on it may still
+   use it.
 7. **The IMAP backend.** `Backend.GetMessage` in
    {{< src "internal/provider/imapsmtp/fetch.go" >}} takes a logged-in
    connection from the pool of the account
    ({{< src "internal/provider/imapsmtp/pool.go" >}}). It opens the folder
    read-only with the IMAP command `EXAMINE`. It fetches with `BODY.PEEK`, the
    IMAP way to read a message without marking it as read. The package `mime`
-   decodes the body. It turns HTML into text without the parts that a reader
-   cannot see (`mime.ReadableText`). One page of the body has 20,000 characters
+   decodes the body. It turns HTML (HyperText Markup Language, the language of
+   web pages) into text without the parts that a reader cannot see
+   (`mime.ReadableText`). One page of the body has 20,000 characters
    by default (`defaultBodyChars`) and 100,000 at most (`maxBodyChars`). The
    page "The mail backend" in the group "Mail" explains the pool.
 8. **Back in `service`.** `noteBackendError` looks at the error of the
@@ -153,6 +157,11 @@ name, the subject, the body and the names of the attachments) inside an
 outside the wrapper only when it has the plain form that `mime.IsPlainAddress`
 accepts.
 
+The backend cleans text too, while it decodes the message: a text part goes
+through `cleanText`, and the name of an attachment through `partFilename`, in
+{{< src "internal/provider/imapsmtp/fetch.go" >}}. Both use
+`mime.CleanUntrusted`.
+
 The result has two forms. The structured content is the JSON object. The text
 copy is for clients that do not read structured content. `textCopy` makes it,
 and its first line is always the fixed warning `untrustedBanner`. When the HTML
@@ -177,15 +186,18 @@ with `isError` set.
 
 ## Where the call is recorded
 
-`capture` records every `tools/call` request, also a call that the SDK refused
-before a handler ran. It calls `service.RecordToolCall` in
+`capture` records every `tools/call` request that reaches it, also a call that
+the SDK refused before a handler ran. It calls `service.RecordToolCall` in
 {{< src "internal/service/calls.go" >}}, which writes a call entry with the
-`audit` package. The arguments are sealed with the key of the tenant. The
-arguments `body`, `html_body` and `data_base64` are never kept
-(`omittedArguments`). A failure to write the entry does not change the answer
-of the call. A call without a principal has no entry, because the table needs a
-tenant, and the program log gets a fixed code instead. The page "Activity log
-and program log" in the group "Inside the server" explains the log.
+`audit` package. A call that `trackToolCalls` refuses while the program stops
+never reaches `capture`, so it has no entry.
+
+The arguments are sealed with the key of the tenant. The arguments `body`,
+`html_body` and `data_base64` are never kept (`omittedArguments`). A failure to
+write the entry does not change the answer of the call. A call without a
+principal has no entry either, because the table needs a tenant, and the
+program log gets a fixed code instead. The page "Activity log and program log"
+in the group "Inside the server" explains the log.
 
 ## What differs between stdio and HTTP
 
