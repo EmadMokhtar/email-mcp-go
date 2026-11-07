@@ -398,8 +398,8 @@ a human click from an automated one. So run `email-mcp setup`, and use the
 email-mcp web pages, in a browser or a browser profile that no agent controls,
 and do not give browser-control tools access to that profile.
 
-**What you approve is what goes out.** A message that an agent writes can only
-hold what a confirmation can show:
+**What you approve is what goes out.** A message that an agent writes holds no
+text that a confirmation hides:
 
 - HTML is reduced to text, headings, lists, tables and `http`, `https` or
   `mailto` links, and the text of the message is made from the result. Styles,
@@ -426,30 +426,28 @@ hold what a confirmation can show:
 - A confirmation shows the media type of each attachment next to its name. An
   attachment keeps only the `charset` of its content type, and other parameters
   do not go out. A media type over 100 bytes is refused. A forwarded attachment
-  with such a type goes out as `application/octet-stream`.
+  with such a type goes out as `application/octet-stream`. A confirmation does
+  not show the content of an attachment.
 
 A draft that you write yourself in another mail program goes out as you saved
-it, with its styles and images. The confirmation shows the text of it, and it
-counts hidden characters in its text and its HTML. It does not list the styles
-or the images. An agent cannot make such a draft, but a draft that it saved with
-an older version of email-mcp can still hold them.
+it. The confirmation shows the text of it, and it counts hidden characters in
+its text and its HTML. If an agent saved drafts with an older version of
+email-mcp, check them in your mail program before you send them.
 
 **Other web services on your computer.** A browser sends a cookie to every port
 of a host. So a sign-in cookie on `127.0.0.1` would also go to every other local
 web service that you open in that browser, such as a dev server, a notebook, a
 dashboard or a local AI tool. That service, a dependency inside it, or its
 request log could then use your sign-in to approve a send or make a token. This
-is why the web pages have their own name, `email-mcp.localhost`, which no other
-program uses. Only that name gets the cookie, and no sign-in works on
-`127.0.0.1` or `localhost`.
+is why the web pages have their own name, `email-mcp.localhost`, a name that
+other local web services do not normally use. Only that name gets the cookie,
+and no sign-in works on `127.0.0.1` or `localhost`.
 
-One gap stays. email-mcp uses a random port, so if you open an old link after
-email-mcp has stopped, and another program now listens on that port, your
-browser sends the cookie to that program. To limit this, a sign-in lasts at most
-24 hours and ends after 2 hours without use. Click **Sign out** when you finish.
-The **Connections** page lists the signed-in browsers, and you can sign out each
-one. `email-mcp setup --revoke-sessions` signs out every browser at once, and
-stops every sign-in link that was not used yet.
+A sign-in lasts at most 24 hours and ends after 2 hours without use. Click
+**Sign out** when you finish, and do not open an old link to the web pages after
+email-mcp has stopped. The **Connections** page lists the signed-in browsers,
+and you can sign out each one. `email-mcp setup --revoke-sessions` signs out
+every browser at once, and stops every sign-in link that was not used yet.
 
 ## Recommended Claude Code deny rules
 
@@ -742,15 +740,12 @@ After the import:
   security) needs the account to be removed and added again. A new password or
   a new server certificate does not: reconnect the account (see
   [Troubleshooting](#troubleshooting)).
-- In HTML mail, text coloured like its background (for example white text on
-  a white background) is not detected as hidden, so the agent can read it.
-- Some styles that can hide text cannot be worked out, such as a selector like
-  `div p`. The text then stays in the body, and `get_message` returns
-  `hidden_content_suspected: true`. The same is true for a rule that holds only
-  in a window wider than 1000 pixels or in dark mode. `hidden_parts_dropped` says
-  how many hidden parts were left out. A rule that holds only on a phone or a
-  tablet (for a window of 768 pixels or less) hides nothing here and gives no
-  warning, so a reader on such a device can see less than the agent.
+- In HTML mail, email-mcp cannot always tell what a reader sees. Some text that
+  a reader does not see can reach the agent, and a reader can see less than the
+  agent gets. When email-mcp cannot work out a style that can hide text, the
+  text stays in the body, and `get_message` returns
+  `hidden_content_suspected: true`. `hidden_parts_dropped` says how many hidden
+  parts were left out. When it matters, open the mail yourself.
 - In the text of a message, a long link is cut, and `...[cut]` marks the place.
   At most 32 characters of the user name and password, the last 64 of the host,
   64 of the path and 32 of the query stay. The `html` body format has the whole

@@ -58,8 +58,8 @@ tell a human click from an automated one. So run `email-mcp setup`, and use the
 email-mcp web pages, in a browser or a browser profile that no agent controls,
 and do not give browser-control tools access to that profile.
 
-**What you approve is what goes out.** A message that an agent writes can only
-hold what a confirmation can show:
+**What you approve is what goes out.** A message that an agent writes holds no
+text that a confirmation hides:
 
 - HTML (HyperText Markup Language: the language of web pages) is reduced to
   text, headings, lists, tables and `http`, `https` or `mailto` links, and the
@@ -90,13 +90,12 @@ hold what a confirmation can show:
   (the character set of a text) of its content type, and other parameters do not
   go out. A media type over 100 bytes is refused. A forwarded attachment with
   such a type goes out as `application/octet-stream` (the type for bytes of no
-  known kind).
+  known kind). A confirmation does not show the content of an attachment.
 
 A draft that you write yourself in another mail program goes out as you saved
-it, with its styles and images. The confirmation shows the text of it, and it
-counts hidden characters in its text and its HTML. It does not list the styles
-or the images. An agent cannot make such a draft, but a draft that it saved with
-an older version of email-mcp can still hold them.
+it. The confirmation shows the text of it, and it counts hidden characters in
+its text and its HTML. If an agent saved drafts with an older version of
+email-mcp, check them in your mail program before you send them.
 
 **Other web services on your computer.** A browser sends a cookie to every port
 (the number that names one service on an address) of a host. So a sign-in cookie
@@ -106,13 +105,12 @@ website), a notebook, a dashboard or a local AI tool. That service, a dependency
 inside it (a library that it uses), or its request log could then use your
 sign-in to approve a send or make a token (a secret that an app sends to the
 local server). This is why the web pages have their own name,
-`email-mcp.localhost`, which no other program uses. Only that name gets the
-cookie, and no sign-in works on `127.0.0.1` or `localhost`.
+`email-mcp.localhost`, a name that other local web services do not normally
+use. Only that name gets the cookie, and no sign-in works on `127.0.0.1` or
+`localhost`.
 
-One gap stays. email-mcp uses a random port, so if you open an old link after
-email-mcp has stopped, and another program now listens on that port, your
-browser sends the cookie to that program. To limit this, a sign-in lasts at most
-24 hours and ends after 2 hours without use. Click **Sign out** when you finish.
-The **Connections** page lists the signed-in browsers, and you can sign out each
-one. `email-mcp setup --revoke-sessions` signs out every browser at once, and
-stops every sign-in link that was not used yet.
+A sign-in lasts at most 24 hours and ends after 2 hours without use. Click
+**Sign out** when you finish, and do not open an old link to the web pages after
+email-mcp has stopped. The **Connections** page lists the signed-in browsers,
+and you can sign out each one. `email-mcp setup --revoke-sessions` signs out
+every browser at once, and stops every sign-in link that was not used yet.
