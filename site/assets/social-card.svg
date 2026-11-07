@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The source of social-card.png: the preview card that a chat app or a social
+  site shows when someone shares a link to the landing page. The page does not
+  load it. Only the og:image tag in layouts/baseof.html points to it.
+
+  The card is text only, in the light colours of DESIGN.md, so a change of the
+  portal cannot make it wrong. Each line is placed by hand, because SVG text
+  does not wrap. The words are the words of the landing page spec
+  (docs/superpowers/specs/2026-11-05-landing-page-design.md, "The social card").
+
+  Make the PNG with "make social-card" after a change here. It opens this file
+  in Chrome without a window and saves a picture of 1200 by 630 pixels. The PNG
+  is in git, so the build of the site does not need Chrome. The font is the
+  system font of the computer that makes the PNG. The text is part of the
+  picture, so any sans-serif font is fine.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <title>email-mcp. Your agent asks. You decide.</title>
+  <style>
+    text {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    .name {
+      fill: #55615b;
+      font-size: 40px;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+    }
+    .headline {
+      fill: #16201c;
+      font-size: 104px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+    .line {
+      fill: #55615b;
+      font-size: 36px;
+      font-weight: 400;
+    }
+  </style>
+  <!-- The ground colour of DESIGN.md. -->
+  <rect width="1200" height="630" fill="#f4f6f3"/>
+  <text class="name" x="88" y="132">email-mcp</text>
+  <text class="headline" x="82" y="292">Your agent asks.</text>
+  <text class="headline" x="82" y="412">You decide.</text>
+  <text class="line" x="88" y="508">Let an AI agent use your email.</text>
+  <text class="line" x="88" y="558">By default, every send waits until you approve it.</text>
+</svg>

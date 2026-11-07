@@ -1,0 +1,21 @@
+{{- /*
+  A note for the reader of the source, in the body of the landing page:
+  {{< truth "T13" >}} names the row of the truth table that proves the claim
+  just before it. The truth table is in
+  docs/superpowers/specs/2026-11-05-landing-page-design.md. In the front matter
+  the same note is a YAML comment, such as "# T13".
+
+  The shortcode prints nothing, so the page does not change. It stops the build
+  when the name is not a row name like T13, so a note cannot be empty or
+  mistyped.
+
+  Write the note right after its sentence, with no space before it:
+  "level.{{< truth "T7" >}} A higher level". A space before it would stay in
+  the page, next to the space after it, as a double space. Keep a note on the
+  same line as text: a line with only a note becomes an empty line, and an
+  empty line ends a paragraph of Markdown.
+*/ -}}
+{{- $row := .Get 0 | default "" -}}
+{{- if not (findRE `^T[0-9]+$` $row) -}}
+  {{- errorf "%s: the shortcode truth needs the name of a row of the truth table, such as \"T13\". It got %q" .Position $row -}}
+{{- end -}}

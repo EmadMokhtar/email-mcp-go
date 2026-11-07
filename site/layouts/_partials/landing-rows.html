@@ -1,0 +1,58 @@
+{{- /*
+  A list of rows of the landing page, from a list in the front matter of
+  content/_index.md. Each row has a hairline above it.
+
+    "as" is the kind of list:
+      dl  a list of terms. Each item has "term" and "text".
+      ol  a list that you read in order. Each item has "title" and "text".
+          The number of each row is its place in the list.
+      ul  rows of one sentence each. Each item is a string.
+    "class" is the class of the list. The default is "landing-rows".
+
+  The words can hold Markdown, such as a link or `code`. A link to a page of
+  the site goes through the link hook, like a link of the body.
+
+  The bullets of the ol and the ul are removed with CSS, so they get
+  role="list": without it, VoiceOver (the screen reader of macOS and iOS)
+  does not read them as a list.
+
+  Call it with:
+    partial "landing-rows.html" (dict "page" .Page "name" "levels" "as" "dl")
+  "name" is the key of the list in the front matter.
+*/ -}}
+{{- $page := .page -}}
+{{- $name := .name -}}
+{{- $items := index $page.Params $name -}}
+{{- $class := .class | default "landing-rows" -}}
+{{- if not $items -}}
+  {{- errorf "the landing page: the front matter has no list %q" $name -}}
+{{- end -}}
+{{- if eq .as "dl" -}}
+<dl class="{{ $class }}">
+  {{- range $items }}
+    {{- if not (and .term .text) }}{{ errorf "the landing page: each item of %q needs term and text" $name }}{{ end }}
+  <div>
+    <dt>{{ .term | $page.RenderString }}</dt>
+    <dd>{{ .text | $page.RenderString }}</dd>
+  </div>
+  {{- end }}
+</dl>
+{{- else if eq .as "ol" -}}
+<ol class="{{ $class }}" role="list">
+  {{- range $i, $item := $items }}
+    {{- if not (and .title .text) }}{{ errorf "the landing page: each item of %q needs title and text" $name }}{{ end }}
+  <li>
+    <p class="landing-row-title"><span class="landing-row-number">{{ add $i 1 }}</span> <span>{{ .title | $page.RenderString }}</span></p>
+    <p>{{ .text | $page.RenderString }}</p>
+  </li>
+  {{- end }}
+</ol>
+{{- else if eq .as "ul" -}}
+<ul class="{{ $class }}" role="list">
+  {{- range $items }}
+  <li>{{ . | $page.RenderString }}</li>
+  {{- end }}
+</ul>
+{{- else -}}
+  {{- errorf "the landing page: the list %q must be shown as dl, ol or ul, not %q" $name .as -}}
+{{- end -}}

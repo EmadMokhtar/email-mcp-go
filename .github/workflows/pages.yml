@@ -65,12 +65,16 @@ jobs:
       # database verifies it and the job downloads no release file. The links
       # to the source code point to the tag of a release, and to the commit in
       # any other run, so a link never points to a branch that has moved on.
+      # ${BASE_URL:?} stops the step when BASE_URL is empty: the canonical
+      # address and the og: tags of the landing page need the full address,
+      # and with an empty one they would be relative, with no error. BASE_PATH
+      # is empty for a custom domain, which is correct.
       - name: make site
         env:
           BASE_URL: ${{ steps.pages.outputs.base_url }}
           BASE_PATH: ${{ steps.pages.outputs.base_path }}
           HUGO_PARAMS_SOURCEREF: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
-        run: make site SITE_BASE_URL="$BASE_URL/" SITE_BASE_PATH="$BASE_PATH/"
+        run: make site SITE_BASE_URL="${BASE_URL:?}/" SITE_BASE_PATH="$BASE_PATH/"
       - name: upload the site
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

@@ -34,7 +34,7 @@ SITE_BASE_PATH ?= /email-mcp-go/
 # last quote of the line, when the manifest has a second entry on that line.
 SITE_VERSION := $(shell sed -n 's/.*"\.": "\([^"]*\)".*/\1/p' .release-please-manifest.json)
 
-.PHONY: build test lint vuln screenshots site site-serve
+.PHONY: build test lint vuln screenshots site site-serve social-card
 
 # build: compile a static binary into bin/
 build:
@@ -101,3 +101,25 @@ site: screenshots site/static/icon.svg
 # a file changes.
 site-serve: screenshots site/static/icon.svg
 	HUGO_PARAMS_VERSION=$(SITE_VERSION) $(HUGO) server --source site
+
+# social-card: make site/assets/social-card.png, the preview card of the
+# landing page (its og:image), from site/assets/social-card.svg. Chrome opens
+# the SVG with no window (--headless) and saves a picture of exactly 1200 by
+# 630 pixels (--window-size, and --force-device-scale-factor=1 for one pixel per
+# point). It runs with a new empty profile (--user-data-dir), so it does not
+# touch your own Chrome profile. The PNG is in git, so "make site" does not
+# need Chrome: run this only after a change of the SVG. CHROME_PATH is the path
+# or the name of Chrome or Chromium, for example CHROME_PATH=google-chrome on
+# Linux. The tests that use Chrome read the same variable
+# (internal/testutil/chrometest), but when it is not set they search several
+# places. This target does not search: without CHROME_PATH it uses the Chrome
+# application of macOS.
+CHROME_PATH ?= /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+
+social-card:
+	profile=$$(mktemp -d) && \
+	"$(CHROME_PATH)" --headless --user-data-dir="$$profile" --hide-scrollbars \
+		--force-device-scale-factor=1 --window-size=1200,630 \
+		--screenshot="$(CURDIR)/site/assets/social-card.png" \
+		"file://$(CURDIR)/site/assets/social-card.svg"; \
+	status=$$?; rm -rf "$$profile"; exit $$status

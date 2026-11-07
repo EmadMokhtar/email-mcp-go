@@ -590,6 +590,493 @@ svg {
   stroke-dasharray: 6 4;
 }
 
+/*
+  The landing page (layouts/index.html, and the shortcodes hero, section, rows
+  and install). The sizes come from the spec of the landing page
+  (docs/superpowers/specs/2026-11-05-landing-page-design.md, "Layout and
+  breakpoints"). The colours are the tokens above, so light and dark change
+  together, and this part has no colour value of its own.
+
+  The page has four widths. Below 680px is a phone. From 680px the rows have
+  two columns. From 900px the first screen has two columns. The last width of
+  the spec, 1100px and wider, has no rule of its own: the column grows until
+  it is 66rem wide (a window of about 1144px with its gutters), and after that
+  only the room around it grows. The rules use min-width at 680px and
+  900px, and max-width just under them (679.98px and 899.98px), so a window of
+  exactly 680px or 900px gets the layout of the wider group.
+
+  The menu, the first screen (the hero) and the footer sit on the ground
+  colour. Each section below the hero is a band on the pane colour, with a
+  hairline above it. The words of each part sit in one column of at most
+  66rem, centred as a block, with the text aligned left.
+*/
+
+.page-landing {
+  padding: 0;
+  background: var(--ground);
+  overflow-wrap: anywhere;
+}
+
+/*
+  The side gutter of the landing page is 44px, 24px below 900px and 16px below
+  680px. It is set on the body of the landing page (Hugo prints its kind,
+  "home"), so the menu and the footer use the same gutter as the page. They
+  line up with the column of words while the window is narrower than the
+  column and its two gutters (66rem + 88px, about 1144px). In a wider window
+  the column is centred, and the menu and the footer stay at the left gutter.
+*/
+@media (max-width: 899.98px) {
+  body[data-kind="home"] {
+    --gutter: 24px;
+  }
+}
+
+@media (max-width: 679.98px) {
+  body[data-kind="home"] {
+    --gutter: 16px;
+  }
+}
+
+.landing-wrap {
+  max-width: calc(66rem + 2 * var(--gutter));
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+.landing-hero,
+.landing-section {
+  padding: 48px 0;
+}
+
+.landing-section {
+  border-top: 1px solid var(--line);
+  background: var(--pane);
+}
+
+/* The h1 may be larger than the 1.625rem of the portal (foundation spec). */
+.landing-hero h1 {
+  margin: 0 0 16px;
+  font-size: clamp(1.875rem, 1.2rem + 3vw, 2.75rem);
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+/* Each sentence of the h1 is on its own line. */
+.landing-hero h1 span {
+  display: block;
+}
+
+.landing-lead p {
+  max-width: 34rem;
+  margin: 0 0 24px;
+  font-size: 1.125rem;
+}
+
+/* The Empty Title style of DESIGN.md. */
+.landing-section h2 {
+  margin: 0 0 16px;
+  font-size: 1.375rem;
+  font-weight: 650;
+}
+
+.landing-section p {
+  max-width: 34rem;
+  margin: 0 0 16px;
+}
+
+.landing-wrap > :last-child {
+  margin-bottom: 0;
+}
+
+/*
+  The main button and the text link. The button is the primary button of
+  DESIGN.md: green, with the Go Ink text, at least 40px high. It never sits on
+  a bordered neutral style, because the edge of a neutral button is too faint
+  on the ground colour. The text link is green and underlined, like every link
+  in text, and its area is 40px high so that it is easy to touch.
+*/
+.landing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+}
+
+.landing-section .landing-actions {
+  margin: 24px 0;
+}
+
+.landing-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid var(--go);
+  border-radius: var(--radius);
+  background: var(--go);
+  color: var(--go-ink);
+  font: 600 0.9375rem/1.25 var(--sans);
+  text-align: center;
+  text-decoration: none;
+  transition: background-color 150ms var(--ease), border-color 150ms var(--ease), transform 100ms var(--ease);
+}
+
+.landing-button:hover {
+  border-color: var(--go-hover);
+  background: var(--go-hover);
+}
+
+.landing-button:active {
+  transform: scale(0.98);
+}
+
+.landing-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+}
+
+/* The line for developers, under the button of the last section. */
+.landing-actions + p {
+  color: var(--soft);
+  font-size: 0.9375rem;
+}
+
+/*
+  The rows of sections 2 to 6. A row has a hairline above it. From 680px a row
+  of a dl or an ol has two columns: the title at the left, 12rem wide, and the
+  text at the right, at most 34rem wide. A ul has rows of one sentence, so it
+  keeps one column. The level number and the level name are one term, so they
+  share the first line of a row.
+*/
+.landing-rows {
+  max-width: calc(12rem + 24px + 34rem);
+  margin: 24px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.landing-rows > div,
+.landing-rows > li {
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+
+.landing-rows dt,
+.landing-rows .landing-row-title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.landing-rows dd,
+.landing-rows p {
+  max-width: 34rem;
+  margin: 0;
+}
+
+/* The number of a step: plain text in the soft colour. */
+.landing-row-title {
+  display: flex;
+  gap: 8px;
+}
+
+.landing-row-number {
+  flex: none;
+  min-width: 0.75rem;
+  color: var(--soft);
+  font-variant-numeric: tabular-nums;
+}
+
+ul.landing-rows {
+  max-width: 34rem;
+}
+
+@media (min-width: 680px) {
+  dl.landing-rows > div,
+  ol.landing-rows > li {
+    display: grid;
+    grid-template-columns: 12rem minmax(0, 34rem);
+    gap: 0 24px;
+  }
+}
+
+/*
+  The first screen. Below 900px it is one column: the heading, the lead and
+  the actions, then the picture, then the facts. From 900px the text and the
+  picture are two columns, aligned at the top, so the heading and the picture
+  start on the same line. The picture keeps at least 22rem.
+*/
+.landing-hero .picture {
+  margin-top: 40px;
+}
+
+@media (min-width: 900px) {
+  .landing-hero-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(22rem, 1.1fr);
+    gap: 0 44px;
+    align-items: start;
+  }
+
+  .landing-hero .picture {
+    margin-top: 0;
+  }
+
+  .landing-hero-grid .landing-facts {
+    grid-column: 1 / -1;
+  }
+}
+
+/*
+  The facts under the first screen: a hairline, then three facts. Below 900px
+  they are one column, with a hairline between them. From 900px they are three
+  columns, with a hairline between the columns. They have no colour.
+*/
+.landing-facts {
+  margin: 40px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.landing-facts > div {
+  padding: 14px 0;
+}
+
+.landing-facts > div + div {
+  border-top: 1px solid var(--line);
+}
+
+.landing-facts dt {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.landing-facts dd {
+  margin: 0;
+  color: var(--soft);
+  font-size: 0.9375rem;
+}
+
+@media (min-width: 900px) {
+  .landing-facts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding-top: 20px;
+  }
+
+  .landing-facts > div {
+    padding: 0 24px;
+  }
+
+  .landing-facts > div:first-child {
+    padding-left: 0;
+  }
+
+  .landing-facts > div + div {
+    border-top: 0;
+    border-left: 1px solid var(--line);
+  }
+}
+
+/*
+  A phone. Less space between the sections. The button takes the full width
+  and is 44px high, and the text link sits under it.
+*/
+@media (max-width: 679.98px) {
+  .landing-hero,
+  .landing-section {
+    padding: 32px 0;
+  }
+
+  .landing-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+
+  .landing-button {
+    min-height: 44px;
+  }
+
+  .landing-link {
+    align-self: flex-start;
+  }
+}
+
+/*
+  With reduced motion, the button does not change its colour slowly, and it
+  does not shrink when pressed. The jump to a section is instant: the page
+  never sets smooth scrolling.
+*/
+@media (prefers-reduced-motion: reduce) {
+  .landing-button {
+    transition: none;
+  }
+
+  .landing-button:active {
+    transform: none;
+  }
+}
+
+/*
+  The approval picture is a drawing of the approval page of the portal, made of
+  HTML and CSS (layouts/_partials/approval-picture.html). It takes its colours
+  from the tokens above, so it follows light and dark. It has no shadow, no
+  gradient and no animation.
+
+  The picture is a drawing and does nothing. Its buttons are spans: they have
+  the default cursor, no hover and no focus. A person cannot reach them with
+  the keyboard. The selectors start with .picture-art so that the rules of
+  .doc (the margins of p, for example) cannot change the drawing.
+*/
+
+.picture {
+  max-width: 34rem;
+  margin: 0;
+}
+
+/*
+  The frame is a hairline with a round corner, on the pane colour. The hero
+  sits on the ground colour, so the picture stands apart by tone and hairline.
+  A long address breaks at the edge of the frame.
+*/
+.picture-art {
+  padding: 16px 20px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--pane);
+  color: var(--ink);
+  cursor: default;
+  overflow-wrap: anywhere;
+}
+
+/* Title style of DESIGN.md. */
+.picture-art .pic-title {
+  margin: 0 0 12px;
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+/*
+  The bar has the note at the left and the buttons at the right. When the
+  frame is too narrow for both, the bar wraps and the note takes a full line.
+  A hairline sits under it.
+*/
+.picture-art .pic-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.picture-art .pic-note {
+  flex: 1 1 10rem;
+  margin: 0;
+  color: var(--soft);
+  font-size: 0.9375rem;
+  text-wrap: balance;
+}
+
+.picture-art .pic-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/*
+  Reject is the neutral button: pane colour, ink text and the Control Edge.
+  It is never red. Approve and send is the primary button.
+*/
+.picture-art .pic-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--pane);
+  color: var(--ink);
+  font: 500 0.9375rem/1.25 var(--sans);
+  text-align: center;
+}
+
+.picture-art .pic-button.pic-primary {
+  border-color: var(--go);
+  background: var(--go);
+  color: var(--go-ink);
+  font-weight: 600;
+}
+
+/* Row Title style of DESIGN.md. */
+.picture-art .pic-subject {
+  margin: 16px 0 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+/* Each label sits above its value, so a long label can wrap. */
+.picture-art .pic-meta {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.picture-art .pic-meta > div {
+  padding: 4px 0;
+}
+
+.picture-art .pic-meta dt {
+  color: var(--soft);
+}
+
+.picture-art .pic-meta dd {
+  margin: 0;
+}
+
+.picture-art .pic-body {
+  max-width: 34rem;
+  margin: 12px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.picture figcaption {
+  margin-top: 10px;
+  color: var(--soft);
+  font-size: 0.875rem;
+}
+
+/*
+  On a phone (below 680px, as for the rest of the landing page) the note takes
+  a full line. The two buttons share the next line in equal widths, 44px high,
+  as the buttons of the portal do.
+*/
+@media (max-width: 679.98px) {
+  .picture-art {
+    padding: 14px 16px 16px;
+  }
+
+  .picture-art .pic-note,
+  .picture-art .pic-buttons {
+    flex: 1 1 100%;
+  }
+
+  .picture-art .pic-button {
+    flex: 1 1 0;
+    min-height: 44px;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+}
+
 /* The footer. */
 
 .site-footer {

@@ -8,7 +8,16 @@
   site.css shows it only when it has the focus.
 
   test/sitecheck reads two marks that this file prints: the code-area tags,
-  and data-kind on <body>, which says if the page is a regular page.
+  and data-kind on <body>, which says if the page is a regular page. site.css
+  reads data-kind="home" too, for the gutters of the landing page.
+
+  The head follows "Page data" in the spec of the landing page
+  (docs/superpowers/specs/2026-11-05-landing-page-design.md). The theme-color
+  values are the ground colours of DESIGN.md, so the bar of the browser
+  matches the menu. The canonical address and the Open Graph tags (og:, read
+  by chat apps and social sites to draw a preview card) must be full
+  addresses, so they come from the base address that the build gives. Only
+  the landing page has the Open Graph tags.
 */ -}}
 {{- $version := site.Params.version -}}
 {{- if not $version -}}
@@ -20,9 +29,39 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} - {{ site.Title }}{{ end }}</title>
+  {{- /* These two values must equal --ground and its night value in assets/css/site.css. A meta tag cannot read a CSS variable, so a change of the ground colour must change them too. */}}
+  <meta name="theme-color" content="#f4f6f3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#131414" media="(prefers-color-scheme: dark)">
+  {{- /* The title of the landing page says what the tool is, so it does not repeat the name of the site. */}}
+  <title>{{ if .IsHome }}{{ .Title }}{{ else }}{{ .Title }} - {{ site.Title }}{{ end }}</title>
   {{- with .Description }}
   <meta name="description" content="{{ . }}">
+  {{- end }}
+  <link rel="canonical" href="{{ .Permalink }}">
+  {{- if .IsHome }}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ site.Title }}">
+  <meta property="og:title" content="{{ .Title }}">
+  <meta property="og:description" content="{{ .Description }}">
+  <meta property="og:url" content="{{ .Permalink }}">
+    {{- /* The card is made from assets/social-card.svg with "make social-card". Hugo publishes it because this tag uses it. */}}
+    {{- with resources.Get "social-card.png" }}
+      {{- if or (ne .Width 1200) (ne .Height 630) }}
+        {{- errorf "assets/social-card.png is %d by %d pixels. A preview card must be 1200 by 630: run make social-card" .Width .Height }}
+      {{- end }}
+  <meta property="og:image" content="{{ .Permalink }}">
+  <meta property="og:image:type" content="{{ .MediaType.Type }}">
+  <meta property="og:image:width" content="{{ .Width }}">
+  <meta property="og:image:height" content="{{ .Height }}">
+    {{- else }}
+      {{- errorf "assets/social-card.png is missing: run make social-card" }}
+    {{- end }}
+    {{- with .Params.card_alt }}
+  <meta property="og:image:alt" content="{{ . }}">
+    {{- else }}
+      {{- errorf "content/_index.md needs card_alt in its front matter: the og:image:alt of the preview card" }}
+    {{- end }}
+  <meta name="twitter:card" content="summary_large_image">
   {{- end }}
   {{- /* One tag for each path, never a list in one tag. test/sitecheck checks that each path exists. */ -}}
   {{- range .Params.code_areas }}

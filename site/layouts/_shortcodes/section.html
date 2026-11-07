@@ -1,0 +1,27 @@
+{{- /*
+  One of the sections 2 to 7 of the landing page:
+
+    {{< section id="levels" heading="You choose how far each account may go" >}}
+    Markdown, and the blocks {{< rows ... >}} and {{< install >}}, each alone
+    in its paragraph.
+    {{< /section >}}
+
+  "id" is the id of the section, for a link such as #how-it-works. The h2 gets
+  the id with "-title" added, and the section is named by it (aria-labelledby),
+  so a screen reader lists the section with the name of its heading.
+
+  Each section is a band on the pane colour, with a hairline above it. The
+  words sit in a column of at most 66rem. site.css has the layout.
+*/ -}}
+{{- $id := .Get "id" -}}
+{{- $heading := .Get "heading" -}}
+{{- if not (and $id $heading) -}}
+  {{- errorf "%s: the shortcode section needs an id and a heading" .Position -}}
+{{- end -}}
+{{- $body := partial "landing-markdown.html" (dict "inner" .Inner "page" .Page "blocks" .Store.Values "position" .Position) -}}
+<section class="landing-section" id="{{ $id }}" aria-labelledby="{{ $id }}-title">
+  <div class="landing-wrap">
+    <h2 id="{{ $id }}-title">{{ $heading }}</h2>
+    {{ $body }}
+  </div>
+</section>
