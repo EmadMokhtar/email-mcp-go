@@ -618,7 +618,10 @@ svg {
 /*
   The side gutter of the landing page is 44px, 24px below 900px and 16px below
   680px. It is set on the body of the landing page (Hugo prints its kind,
-  "home"), so the menu and the footer line up with the page.
+  "home"), so the menu and the footer use the same gutter as the page. They
+  line up with the column of words while the window is narrower than the
+  column and its two gutters (66rem + 88px, about 1144px). In a wider window
+  the column is centred, and the menu and the footer stay at the left gutter.
 */
 @media (max-width: 899.98px) {
   body[data-kind="home"] {

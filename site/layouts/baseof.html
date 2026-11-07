@@ -56,7 +56,11 @@
     {{- else }}
       {{- errorf "assets/social-card.png is missing: run make social-card" }}
     {{- end }}
-  <meta property="og:image:alt" content="{{ .Params.card_alt }}">
+    {{- with .Params.card_alt }}
+  <meta property="og:image:alt" content="{{ . }}">
+    {{- else }}
+      {{- errorf "content/_index.md needs card_alt in its front matter: the og:image:alt of the preview card" }}
+    {{- end }}
   <meta name="twitter:card" content="summary_large_image">
   {{- end }}
   {{- /* One tag for each path, never a list in one tag. test/sitecheck checks that each path exists. */ -}}

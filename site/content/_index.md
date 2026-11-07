@@ -13,11 +13,15 @@
 # again.
 #
 # A few words differ from the spec, because the code wins. A comment next to
-# each says why. Two are in the body, in section 4: the heading says "You see
-# the message" and not "the whole message", and the paragraph says what an AI
-# app shows when it asks in its own window. Such a window shows only the start
-# of the text (previewBodyChars in internal/mcpserver/elicit.go), and the
-# approval page shows all of it.
+# each says why. Three are in the body. In section 4, the heading says "You
+# see the message" and not "the whole message", and the paragraph says what an
+# AI app shows when it asks in its own window. Such a window shows only the
+# start of the text (previewBodyChars in internal/mcpserver/elicit.go), and
+# the approval page shows all of it. In section 3, a link to the Security page
+# of the manual follows "Only you can change a level": like the manual, the
+# page says where that holds. It holds for an agent that can only call the
+# tools of email-mcp, not for one that runs shell commands as you or controls
+# your browser.
 
 # The <title> of the page and its og:title.
 title: "email-mcp: let an AI agent use your email"  # T1
@@ -203,7 +207,8 @@ includes the levels below it.{{< truth "T14" >}}
 
 Only you can change a level, on a page in your browser. The agent has no tool
 for this. It can ask for more access. That only gives you a link to the
-settings page, and nothing changes until you choose.{{< truth "T18" >}}
+settings page, and nothing changes until you choose.{{< truth "T18" >}} The
+manual page [Security](/manual/daily-use/security/) says when this holds.
 
 {{< /section >}}
 
