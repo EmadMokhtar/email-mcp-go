@@ -16,8 +16,8 @@ tools. A tool is one action that the agent can call, such as `search_messages`.
 
 Source: <https://developers.openai.com/codex/mcp> (it redirects to
 <https://learn.chatgpt.com/docs/extend/mcp?surface=cli>), checked on
-2026-10-29. The text about `bearer_token_env_var` and about a connection with no
-credential is on the same page, checked on 2026-11-07.
+2026-10-29. The text about `bearer_token_env_var` is on the same page, checked
+on 2026-11-07.
 
 ## Add email-mcp (stdio)
 
@@ -85,7 +85,10 @@ running. If your master key is a file, also set `EMAIL_MCP_KEK` first, as that
 page says.
 
 The docs list `url` and `bearer_token_env_var` (the name of an environment
-variable that holds the token):
+variable that holds the token). This block and the stdio block above are
+alternatives: both use the section `[mcp_servers.email]`, and a file with both
+is not valid TOML. Use one of them. If your `config.toml` has the stdio block,
+replace it with this one:
 
 ```toml
 [mcp_servers.email]
@@ -100,9 +103,8 @@ manager). Set it before you start Codex. For example, on macOS and Linux,
 with the token of step 1, the text that starts with `emcp_`. Then start Codex
 from the same terminal.
 
-Without the variable, the server answers HTTP 401 (the answer "not
-authorized"), because the request has no `Authorization` header. The docs say
-that Codex can connect without authentication when no credential is found.
+The server answers HTTP 401 (the answer "not authorized") to a request with no
+valid token.
 
 ## What you should see
 

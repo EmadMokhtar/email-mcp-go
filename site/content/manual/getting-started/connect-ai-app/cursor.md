@@ -93,8 +93,13 @@ Cursor reads the token from the environment variable `EMAIL_MCP_TOKEN`, which
 you set in the shell that starts Cursor (for example from your password
 manager). Set it before you start Cursor. For example, on macOS and Linux,
 `export EMAIL_MCP_TOKEN=<token>` sets it for that terminal. Replace `<token>`
-with the token of step 1, the text that starts with `emcp_`. If Cursor is
-already running, close it and start it again after you set the variable.
+with the token of step 1, the text that starts with `emcp_`.
+
+Cursor is a graphical app (an app with windows). A Cursor that you start from
+the Dock does not see a variable that you set only in a terminal. So start
+Cursor from that same terminal, after the `export`. Or set the variable in the
+system environment, as said above. If Cursor is already running, close it and
+start it again after you set the variable.
 
 Without a valid token, the server answers HTTP 401 (the answer "not
 authorized").

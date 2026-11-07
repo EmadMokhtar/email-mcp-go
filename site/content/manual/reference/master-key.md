@@ -202,8 +202,8 @@ is quick.
    email-mcp key rotate --to keychain
    ```
 
-   It asks you to confirm that every other program is stopped. Without a
-   terminal, add `--yes`.
+   Either command asks you to confirm that every other program is stopped.
+   Without a terminal, add `--yes`.
 3. It prints the new `EMAIL_MCP_KEK` setting. Use it everywhere from now on,
    also in the `env` of your AI app config.
 4. Run `email-mcp doctor` with the new setting. When it passes, you may delete
