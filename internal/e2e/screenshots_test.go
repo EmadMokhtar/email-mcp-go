@@ -94,31 +94,36 @@ func (s *shooter) openStatus(link string, wantStatus int64, want ...string) {
 	require.NoError(s.t, checkPage(resp.URL, resp.Status, wantStatus, text, want...))
 }
 
-// checkOpened returns an error when the page that was opened is not the page
-// that a shot needs: the answer is not 200, or the text lacks one of want.
+// checkPage returns an error when the page that was opened is not the page that
+// a shot needs: the answer does not have the status wantStatus, or the text
+// lacks one of want. Most pages answer 200. A browser that is not signed in gets
+// a page that answers 401, and the page is the thing to show.
 //
 // The log of a CI run is public, so the error holds only what is safe: the path
 // of the address (the sign-in link has its token in the query), the status, and
 // the text that was wanted. It never holds the address with its query, and it
 // never holds the text of the page, which may show a secret.
-func checkOpened(address string, status int64, text string, want ...string) error {
-	return checkPage(address, status, http.StatusOK, text, want...)
-}
-
-// checkPage is checkOpened for a page that answers with the status wantStatus.
-// A browser that is not signed in gets such a page: it answers 401, and the
-// page is the thing to show.
 func checkPage(address string, status, wantStatus int64, text string, want ...string) error {
 	where := addressPath(address)
 	if status != wantStatus {
 		return fmt.Errorf("the page at %s answered with status %d, not %d", where, status, wantStatus)
 	}
-	for _, w := range want {
-		if !strings.Contains(text, w) {
-			return fmt.Errorf("the page at %s does not show %q", where, w)
-		}
+	if w, missing := firstMissing(text, want); missing {
+		return fmt.Errorf("the page at %s does not show %q", where, w)
 	}
 	return nil
+}
+
+// firstMissing returns the first text in want that the text of a page does not
+// contain, and true. It returns "" and false when the text has every one of
+// them. Both checkPage and reloadUntil use it, so they name the same text.
+func firstMissing(text string, want []string) (string, bool) {
+	for _, w := range want {
+		if !strings.Contains(text, w) {
+			return w, true
+		}
+	}
+	return "", false
 }
 
 // navigationError turns the error of the browser into an error for the log, or
@@ -191,7 +196,7 @@ func (s *shooter) click(selector, ready string, want ...string) {
 	))
 	where, err := chromedp.Run(s.ctx, chromedp.Location())
 	require.NoError(s.t, err)
-	require.NoError(s.t, checkOpened(where, http.StatusOK, s.pageText(), want...))
+	require.NoError(s.t, checkPage(where, http.StatusOK, http.StatusOK, s.pageText(), want...))
 }
 
 // reloadUntil reloads the open page until its text has every text in want, or
@@ -203,15 +208,8 @@ func (s *shooter) reloadUntil(limit time.Duration, want ...string) {
 	s.t.Helper()
 	deadline := time.Now().Add(limit)
 	for {
-		text := s.pageText()
-		missing := ""
-		for _, w := range want {
-			if !strings.Contains(text, w) {
-				missing = w
-				break
-			}
-		}
-		if missing == "" {
+		missing, ok := firstMissing(s.pageText(), want)
+		if !ok {
 			return
 		}
 		require.True(s.t, time.Now().Before(deadline), "the page does not show %q after %s", missing, limit)
@@ -309,29 +307,29 @@ func TestShotRefusesToPrintTheSignInLink(t *testing.T) {
 	}
 
 	t.Run("a wrong status names the status and the path", func(t *testing.T) {
-		err := checkOpened(link, http.StatusInternalServerError, "", "Sign out")
+		err := checkPage(link, http.StatusInternalServerError, http.StatusOK, "", "Sign out")
 		requireSafe(t, err)
 		require.Contains(t, err.Error(), "status 500")
 		require.Contains(t, err.Error(), "/setup")
 	})
 
 	t.Run("a missing text names the wanted text and not the page", func(t *testing.T) {
-		err := checkOpened(link, http.StatusOK, "Hello "+pageSecret, "Sign out", "Approve and send")
+		err := checkPage(link, http.StatusOK, http.StatusOK, "Hello "+pageSecret, "Sign out", "Approve and send")
 		requireSafe(t, err)
 		require.Contains(t, err.Error(), `"Sign out"`)
 		require.Contains(t, err.Error(), "/setup")
 	})
 
 	t.Run("the second missing text is named, not the first", func(t *testing.T) {
-		err := checkOpened(link, http.StatusOK, "Sign out", "Sign out", "Approve and send")
+		err := checkPage(link, http.StatusOK, http.StatusOK, "Sign out", "Sign out", "Approve and send")
 		requireSafe(t, err)
 		require.Contains(t, err.Error(), `"Approve and send"`)
 		require.NotContains(t, err.Error(), `"Sign out"`)
 	})
 
 	t.Run("a good page has no error", func(t *testing.T) {
-		require.NoError(t, checkOpened(link, http.StatusOK, "Sign out and more", "Sign out"))
-		require.NoError(t, checkOpened(link, http.StatusOK, "anything"))
+		require.NoError(t, checkPage(link, http.StatusOK, http.StatusOK, "Sign out and more", "Sign out"))
+		require.NoError(t, checkPage(link, http.StatusOK, http.StatusOK, "anything"))
 	})
 
 	t.Run("an error of the browser has the path and not the address", func(t *testing.T) {
@@ -345,13 +343,35 @@ func TestShotRefusesToPrintTheSignInLink(t *testing.T) {
 
 	t.Run("an address that cannot be read is not printed", func(t *testing.T) {
 		bad := "http://[::1?token=" + token
-		requireSafe(t, checkOpened(bad, http.StatusNotFound, ""))
+		requireSafe(t, checkPage(bad, http.StatusNotFound, http.StatusOK, ""))
 		require.NotContains(t, addressPath(bad), token)
 	})
 
 	t.Run("a path with no slash and an address with no path", func(t *testing.T) {
 		require.Equal(t, "/", addressPath("http://127.0.0.1:4321?token="+token))
 		require.Equal(t, "/approvals/abc", addressPath("http://x.localhost:1/approvals/abc?a=1"))
+	})
+}
+
+// TestShotRefusesWhenATextIsMissing requires that firstMissing names the first
+// wanted text that the page lacks, and that it names none when the page has
+// them all. checkPage and reloadUntil both depend on this.
+func TestShotRefusesWhenATextIsMissing(t *testing.T) {
+	t.Run("the first missing text is named", func(t *testing.T) {
+		w, missing := firstMissing("Sign out", []string{"Sign out", "Approve and send", "Reject"})
+		require.True(t, missing)
+		require.Equal(t, "Approve and send", w)
+	})
+
+	t.Run("a page with every text has none missing", func(t *testing.T) {
+		w, missing := firstMissing("Sign out and Approve and send", []string{"Sign out", "Approve and send"})
+		require.False(t, missing)
+		require.Empty(t, w)
+	})
+
+	t.Run("nothing wanted means nothing missing", func(t *testing.T) {
+		_, missing := firstMissing("anything", nil)
+		require.False(t, missing)
 	})
 }
 
