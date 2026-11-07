@@ -367,7 +367,7 @@ func runAccountRemove(ctx context.Context, c *cli, args []string) int {
 	if !ok {
 		return exitError
 	}
-	c.printf("Removing %s (%s) also deletes its queued messages that are not sent yet. They are never sent.\n", view.Address, view.ID)
+	c.printf("Removing %s (%s) also deletes its queued messages that are not sent yet. They are never sent. The activity history of the account is deleted too.\n", view.Address, view.ID)
 	if !*yes {
 		if !c.sys.isTerminal() {
 			c.errorf("%s: without a terminal, run again with --yes to remove the account. Nothing was removed.\n", cmd)

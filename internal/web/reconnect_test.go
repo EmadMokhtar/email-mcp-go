@@ -336,6 +336,24 @@ func labelOfBox(t *testing.T, page, name string) string {
 	return ""
 }
 
+// boxName returns the accessible name of the one box with the name, as its
+// aria-labelledby gives it: the texts of the elements that it points at, in
+// order, with a space between them.
+func boxName(t *testing.T, page, name string) string {
+	t.Helper()
+	boxes := inputNamed(t, page, name)
+	require.Len(t, boxes, 1, "one %s box", name)
+	ids := strings.Fields(boxes[0].attrs["aria-labelledby"])
+	require.NotEmpty(t, ids, "the %s box has aria-labelledby", name)
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		n := elementWithID(t, page, id)
+		require.NotNil(t, n, "no element has the id %q", id)
+		parts = append(parts, textOf(n))
+	}
+	return strings.Join(parts, " ")
+}
+
 // A server that had no pin and is not on this computer follows the first-pin
 // rule of the connect flow: trusting its certificate also needs the "I
 // understand the risk" box, which is checked before any test. In a reconnect
@@ -356,7 +374,11 @@ func TestReconnectFirstPinOfARemoteServerNeedsTheRiskBox(t *testing.T) {
 	resp, body := c.post(reconnectPath(a), url.Values{})
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, msgTrustLabel, labelOfBox(t, body, "trust_imap"))
+	require.Equal(t, msgTrustLabel, labelFor(t, body, "trust_imap"))
+	require.Equal(t, "IMAP server imap.example.org:993 "+msgTrustLabel, boxName(t, body, "trust_imap"),
+		"a screen reader hears which server the box is for")
 	require.Len(t, inputNamed(t, body, "understand"), 1)
+	require.Equal(t, "I understand the risk", labelFor(t, body, "understand"))
 	require.Contains(t, visibleText(t, body), textChangedWarning, "the certificate changed from a signed one")
 	require.Contains(t, visibleText(t, body), connect.TextCertNoLongerSigned)
 	require.NotContains(t, visibleText(t, body), connect.TextCertUnknown, "not the text of a new local bridge")
@@ -404,6 +426,7 @@ func TestReconnectRemoveStepShowsTheRemoveLabel(t *testing.T) {
 	require.Contains(t, label, connect.TextRemovePin)
 	require.Contains(t, strings.ToLower(label), strings.ToLower(textChangedWarning), "the warning stays")
 	require.NotEqual(t, msgReplaceLabel, label)
+	require.Equal(t, "IMAP server imap.example.org:993 "+msgRemoveLabel, boxName(t, body, "trust_imap"))
 	offer := offerOf(t, body, "imap")
 	var got certOffer
 	require.NoError(t, c.signer.Open(purposeCertOffer, offer, &got))

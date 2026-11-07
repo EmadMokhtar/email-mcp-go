@@ -744,8 +744,8 @@ func TestAccountTestUsesTheStoredPin(t *testing.T) {
 	require.NotContains(t, r.stdout, "Trust this certificate?")
 }
 
-// account remove warns that the queued messages of the account go with it. It
-// asks on a terminal, and needs --yes without one.
+// account remove warns that the queued messages and the activity history of the
+// account go with it. It asks on a terminal, and needs --yes without one.
 func TestAccountRemoveNeedsConfirmation(t *testing.T) {
 	dir, keyPath := newCLIEnv(t)
 	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)
@@ -758,6 +758,7 @@ func TestAccountRemoveNeedsConfirmation(t *testing.T) {
 	r := runCLI(t, nil, "y\n", "account", "remove", string(a.ID), "--data-dir", dir)
 	require.Equal(t, exitError, r.code)
 	require.Contains(t, r.stdout, "queued")
+	require.Contains(t, r.stdout, "The activity history of the account is deleted too.")
 	require.Contains(t, r.stderr, "--yes")
 	require.Equal(t, 1, remaining())
 

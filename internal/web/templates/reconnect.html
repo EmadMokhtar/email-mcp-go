@@ -33,20 +33,20 @@
 <legend>Certificates</legend>
 {{range .Certs}}
 <section class="cert">
-<h2 class="break">{{.Name}} server {{.Host}}:{{.Port}}</h2>
+<h2 class="break" id="cert_{{.Field}}">{{.Name}} server {{.Host}}:{{.Port}}</h2>
 <p>{{.Problem}}</p>
 {{if .OldFingerprint}}<p>Trusted until now, SHA-256 fingerprint: <code class="break">{{.OldFingerprint}}</code></p>{{end}}
 {{if .Fingerprint}}<p>Shown now, SHA-256 fingerprint: <code class="break">{{.Fingerprint}}</code></p>{{end}}
 {{if .CanChange}}
 {{if .Warning}}<p><strong>{{.Warning}}</strong></p>{{end}}
 <input type="hidden" name="{{.Field}}_offer" value="{{.Offer}}">
-<label class="check"><input type="checkbox" name="trust_{{.Field}}" value="1"{{if .Checked}} checked{{end}}> <span>{{.Label}}</span></label>
+<label class="check" for="trust_{{.Field}}"><input type="checkbox" id="trust_{{.Field}}" name="trust_{{.Field}}" value="1" aria-labelledby="cert_{{.Field}} trust_{{.Field}}_text"{{if .Checked}} checked{{end}}> <span id="trust_{{.Field}}_text">{{.Label}}</span></label>
 {{end}}
 </section>
 {{end}}
 {{if .Understand}}
 <p>A server that is not on this computer should have a certificate that an authority signed. A certificate that no authority signed can mean that someone on the network reads your mail and your password. Trust it only if your provider gave you this fingerprint.</p>
-<label class="check"><input type="checkbox" name="understand" value="1"{{if .UnderstandChecked}} checked{{end}}> <span>I understand the risk</span></label>
+<label class="check" for="understand"><input type="checkbox" id="understand" name="understand" value="1"{{if .UnderstandChecked}} checked{{end}}> <span>I understand the risk</span></label>
 {{end}}
 </fieldset>
 {{end}}

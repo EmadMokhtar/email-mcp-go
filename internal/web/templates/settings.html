@@ -109,7 +109,7 @@
 <form method="post" action="/accounts/{{.ID}}/remove">
 {{template "csrf_field" $csrf}}
 <p>{{.RemoveWarning}}</p>
-<label class="check" for="confirm_remove"><input type="checkbox" id="confirm_remove" name="confirm_remove" value="1"> <span>Yes, remove this account and its queued messages</span></label>
+<label class="check" for="confirm_remove"><input type="checkbox" id="confirm_remove" name="confirm_remove" value="1"> <span>Yes, remove this account, its queued messages and its activity history</span></label>
 <button class="button danger" type="submit">Remove account</button>
 </form>
 </section>

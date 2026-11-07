@@ -117,7 +117,7 @@
 <fieldset class="notice bad">
 <legend>No encryption</legend>
 <p>Without encryption, your password and your messages travel as plain text. Anyone who can read the connection can read them. Use it only for a server on this computer, such as a local bridge.</p>
-<label class="check"><input type="checkbox" name="plain_understand" value="1"{{if .PlainChecked}} checked{{end}}> <span>I understand that this connection is not encrypted: my password and my messages travel over it as plain text.</span></label>
+<label class="check" for="plain_understand"><input type="checkbox" id="plain_understand" name="plain_understand" value="1"{{if .PlainChecked}} checked{{end}}> <span>I understand that this connection is not encrypted: my password and my messages travel over it as plain text.</span></label>
 </fieldset>
 {{end}}
 <div class="group">
@@ -143,13 +143,13 @@
 {{if .Fingerprint}}<p>SHA-256 fingerprint: <code class="break">{{.Fingerprint}}</code></p>{{end}}
 {{if .CanTrust}}
 <input type="hidden" name="{{.Field}}_offer" value="{{.Offer}}">
-<label class="check"><input type="checkbox" name="trust_{{.Field}}" value="1"{{if .Checked}} checked{{end}}> <span>Trust this certificate</span></label>
+<label class="check" for="trust_{{.Field}}"><input type="checkbox" id="trust_{{.Field}}" name="trust_{{.Field}}" value="1"{{if .Checked}} checked{{end}}> <span class="break">Trust this certificate for the {{.Name}} server {{.Host}}</span></label>
 {{end}}
 </section>
 {{end}}
 {{if .Understand}}
 <p>A server that is not on this computer should have a certificate that an authority signed. A certificate that no authority signed can mean that someone on the network reads your mail and your password. Trust it only if your provider gave you this fingerprint.</p>
-<label class="check"><input type="checkbox" name="understand" value="1"{{if .UnderstandChecked}} checked{{end}}> <span>I understand the risk</span></label>
+<label class="check" for="understand"><input type="checkbox" id="understand" name="understand" value="1"{{if .UnderstandChecked}} checked{{end}}> <span>I understand the risk</span></label>
 {{end}}
 </fieldset>
 {{end}}
