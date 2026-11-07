@@ -7,9 +7,13 @@
   The browser picks the image with the setting of the computer, as the site does
   with its colours. The width and the height keep the place of the image while
   it loads, so the text does not jump.
+
+  A long alt text can be written over several lines, as a raw string between
+  backticks (Hugo does not allow a line break inside a quoted parameter). Every
+  run of white space becomes one space, so the alt in the HTML is one line.
 */ -}}
 {{- $name := .Get "name" -}}
-{{- $alt := .Get "alt" -}}
+{{- $alt := .Get "alt" | replaceRE `\s+` " " | strings.TrimSpace -}}
 {{- if not $name -}}
   {{- errorf "%s: the shortcode screenshot needs a name" .Position -}}
 {{- else if not $alt -}}
@@ -23,6 +27,6 @@
   <img src="{{ $light.RelPermalink }}" alt="{{ $alt }}" width="{{ $light.Width }}" height="{{ $light.Height }}" loading="lazy">
 </picture>
   {{- else -}}
-    {{- errorf "%s: the screenshot %q has no images. Add the shot to TestScreenshots in internal/e2e, then run make screenshots" .Position $name -}}
+    {{- errorf "%s: the screenshot %q has no images. Add the shot to TestScreenshots in internal/e2e, then run make -B screenshots. Plain make screenshots can do nothing, because the stamp file says that the images are current" .Position $name -}}
   {{- end -}}
 {{- end -}}

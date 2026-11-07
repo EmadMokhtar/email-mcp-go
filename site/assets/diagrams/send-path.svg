@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 148" role="img">
+  <title>The path of a send</title>
+  <desc>A send goes through five steps. First, the agent asks to send: this is the request. Second, email-mcp checks that the level of the account allows a send. Third, the send waits for your yes, when a confirmation is needed. Fourth, the send waits in the undo window, and you or the agent can cancel it. By default this window is 0 seconds after you confirmed a send, so an approved send goes out at once, and 30 seconds for a send with no confirmation. Fifth, the mail is delivered.</desc>
+
+  <rect class="d-box" x="8" y="20" width="128" height="48" rx="8"/>
+  <text class="d-text" x="72" y="44" text-anchor="middle" dominant-baseline="central">Request</text>
+  <text class="d-soft" x="72" y="92" text-anchor="middle">The agent asks</text>
+  <text class="d-soft" x="72" y="110" text-anchor="middle">to send</text>
+
+  <path class="d-line" d="M138 44H162M156 38L162 44L156 50"/>
+
+  <rect class="d-box" x="164" y="20" width="128" height="48" rx="8"/>
+  <text class="d-text" x="228" y="44" text-anchor="middle" dominant-baseline="central">Level check</text>
+  <text class="d-soft" x="228" y="92" text-anchor="middle">The level of the</text>
+  <text class="d-soft" x="228" y="110" text-anchor="middle">account allows it</text>
+
+  <path class="d-line" d="M294 44H318M312 38L318 44L312 50"/>
+
+  <rect class="d-box" x="320" y="20" width="128" height="48" rx="8"/>
+  <text class="d-text" x="384" y="44" text-anchor="middle" dominant-baseline="central">Confirmation</text>
+  <text class="d-soft" x="384" y="92" text-anchor="middle">Waits for your yes</text>
+  <text class="d-soft" x="384" y="110" text-anchor="middle">when it is needed</text>
+
+  <path class="d-line" d="M450 44H474M468 38L474 44L468 50"/>
+
+  <rect class="d-box" x="476" y="20" width="128" height="48" rx="8"/>
+  <text class="d-text" x="540" y="44" text-anchor="middle" dominant-baseline="central">Undo window</text>
+  <text class="d-soft" x="540" y="92" text-anchor="middle">You or the agent</text>
+  <text class="d-soft" x="540" y="110" text-anchor="middle">can cancel</text>
+  <text class="d-soft" x="540" y="128" text-anchor="middle">Can be 0 seconds: see the text</text>
+
+  <path class="d-line" d="M606 44H630M624 38L630 44L624 50"/>
+
+  <rect class="d-box" x="632" y="20" width="120" height="48" rx="8"/>
+  <text class="d-text" x="692" y="44" text-anchor="middle" dominant-baseline="central">Delivery</text>
+  <text class="d-soft" x="692" y="92" text-anchor="middle">The mail goes out</text>
+</svg>
