@@ -99,6 +99,46 @@ func TestToolsListFullSet(t *testing.T) {
 	}
 }
 
+// Agents choose a field from the texts of the tool list. Without these hints
+// they write plain text drafts and messages, also when the user wants
+// formatting.
+func TestComposeToolsPointToTheHTMLBody(t *testing.T) {
+	e := newEnv(t, envOptions{backends: &countingFactory{}})
+	res, err := e.cs.ListTools(context.Background(), nil)
+	require.NoError(t, err)
+
+	tools := map[string]*mcp.Tool{}
+	for _, tool := range res.Tools {
+		tools[tool.Name] = tool
+	}
+	require.Contains(t, tools[toolCreateDraft].Description, "For a formatted message, give html_body instead of body.")
+
+	for _, name := range []string{toolCreateDraft, toolSendMessage} {
+		t.Run(name, func(t *testing.T) {
+			require.Contains(t, propertyDescription(t, tools[name], "body"),
+				"For formatting (headings, bold, lists, tables, links), give html_body instead.")
+			require.Contains(t, propertyDescription(t, tools[name], "html_body"),
+				"A link keeps its url only when the text part shows the whole url.")
+		})
+	}
+}
+
+// propertyDescription returns the description of a top-level property of the
+// input schema of a tool.
+func propertyDescription(t *testing.T, tool *mcp.Tool, property string) string {
+	t.Helper()
+	require.NotNil(t, tool)
+	schema, ok := tool.InputSchema.(map[string]any)
+	require.True(t, ok, "%s: the input schema is an object", tool.Name)
+	props, ok := schema["properties"].(map[string]any)
+	require.True(t, ok, "%s: the input schema has properties", tool.Name)
+	prop, ok := props[property].(map[string]any)
+	require.True(t, ok, "%s has the property %s", tool.Name, property)
+	description, ok := prop["description"].(string)
+	require.True(t, ok, "%s.%s has a description", tool.Name, property)
+	return description
+}
+
 // requireNoPathArgument fails when an input schema has a property, at any depth,
 // whose name says that it holds a file path. Attachments come as base64 only.
 func requireNoPathArgument(t *testing.T, tool string, schema any) {

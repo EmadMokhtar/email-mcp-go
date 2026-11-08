@@ -66,6 +66,27 @@ MiB.
   then true. A text part with a file name is an attachment, unless the message
   has no other body. `get_attachment` reads only the attachments that
   `get_message` lists, not the body.
+- **`create_draft` and `send_message`:** The body is plain text (`body`) or
+  HTML (`html_body`), not both. To get a formatted draft or message, ask the
+  agent to use HTML. With HTML, the message has an HTML part and a plain text
+  part that email-mcp makes from it.
+  - Headings, paragraphs, bold, italic, underline, lists, tables, quotes, code
+    and links stay.
+  - Styles (colors, fonts and sizes), images, comments and hidden text are
+    removed. All attributes are removed too, so a table cell cannot span
+    several rows or columns. A link keeps only its address (the web address
+    that it opens). email-mcp adds `rel="nofollow"` to each link, a mark that
+    asks search engines not to follow it.
+  - The plain text part shows the address of a link after the link text, but
+    only when the address is short enough to show in full. A link keeps its
+    address only in that case. A long address is cut in the plain text part,
+    and then the link goes out as text, without its address. The limits are
+    small: for example, a link with more than 31 characters after the `?`, such
+    as a tracking link, goes out without its address. The [known
+    limitations](/manual/reference/known-limitations/) list all the limits.
+  - In a forward, only your new text is formatted. The original message is
+    added as plain text in a quoted block, so its formatting is gone and its
+    links are plain text.
 - **`get_send_status`:** The status is one of `queued`, `sending`, `sent`,
   `failed`, `cancelled`, `pending_approval`, `declined` and `expired`. A send
   that you rejected is `declined`. A send that was cancelled, or that the agent

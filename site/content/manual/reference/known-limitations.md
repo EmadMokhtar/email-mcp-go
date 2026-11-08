@@ -31,7 +31,11 @@ tool is one action that the agent can call, such as `get_message`.
   `hidden_content_suspected: true`. When it matters, open the mail yourself.
 - In the text of a message, a long link is cut, and `...[cut]` marks the place.
   At most 32 characters of the user name and password, the last 64 of the host,
-  64 of the path and 32 of the query stay. The `html` body format (a choice of
+  64 of the path (with its first `/`) and 32 of the query and fragment (from
+  the `?` or `#`) stay. These limits count the link as it is written in a url,
+  where each byte of a character that is not ASCII (the basic Latin letters,
+  digits and signs) becomes a three-character `%XX` code, so one Arabic letter
+  counts as 6 characters. The `html` body format (a choice of
   `get_message`) has the whole link. The same cut applies to the text part (the
   plain text version) of mail that goes out and to the approval preview (what
   you see before you approve a send; see

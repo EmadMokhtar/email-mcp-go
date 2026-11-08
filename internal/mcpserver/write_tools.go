@@ -71,8 +71,8 @@ type ComposeIn struct {
 	Cc                         []string       `json:"cc,omitempty" jsonschema:"Copy addresses."`
 	Bcc                        []string       `json:"bcc,omitempty" jsonschema:"Blind copy addresses. The other recipients do not see them."`
 	Subject                    string         `json:"subject,omitempty"`
-	Body                       string         `json:"body,omitempty" jsonschema:"The plain text body. Give body or html_body, not both. A character that a reader cannot see is refused."`
-	HTMLBody                   string         `json:"html_body,omitempty" jsonschema:"An HTML body instead of body. The text part is made from it. Only text, headings, lists, tables and http, https or mailto links go out: styles, images, comments, other attributes and hidden text are removed."`
+	Body                       string         `json:"body,omitempty" jsonschema:"The plain text body. For formatting (headings, bold, lists, tables, links), give html_body instead. Give body or html_body, not both. A character that a reader cannot see is refused."`
+	HTMLBody                   string         `json:"html_body,omitempty" jsonschema:"An HTML body instead of body. The text part is made from it. Only text, headings, lists, tables and http, https or mailto links go out: styles, images, comments, other attributes and hidden text are removed. A link keeps its url only when the text part shows the whole url. A url with a long part is cut there, so the link goes out as text only: a path over 64 characters, a query over 31, a host over 64 or a user name over 32, where each byte of a character that is not ASCII counts as 3."`
 	ReplyTo                    *ReplyIn       `json:"reply_to,omitempty" jsonschema:"Make the message a reply to this message."`
 	ForwardOf                  string         `json:"forward_of,omitempty" jsonschema:"Ref of a message to forward."`
 	IncludeOriginalAttachments bool           `json:"include_original_attachments,omitempty" jsonschema:"With forward_of: send the attachments of the original too."`
@@ -256,6 +256,7 @@ func registerWriteTools(srv *mcp.Server, d *deps) {
 	addTool(srv, d, &mcp.Tool{
 		Name: toolCreateDraft,
 		Description: "Save a new draft: a new message, a reply (reply_to) or a forward (forward_of). " +
+			"For a formatted message, give html_body instead of body. " +
 			"Attachments are base64 data, never file paths, at most 10 MB together. Returns the ref of the draft. Needs Mail 3 (draft).",
 		Annotations: writeHints(false, false, false),
 	}, d.createDraft)
