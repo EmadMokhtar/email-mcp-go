@@ -75,7 +75,8 @@ site/static/icon.svg: internal/web/static/icon.svg
 # screenshots: make the images of the user manual. A Go test starts the whole
 # program, and a headless Chrome saves its pages in site/assets/screenshots/. The
 # images are not in git. The stamp file makes the test run only when the code
-# changed, so a change of the text of the site does not start Chrome.
+# changed, so a change of the text of the site does not make the images again.
+# The last step of "make site" (TestNoSidewaysScroll) opens Chrome each time.
 # "make -B screenshots" forces a new run. It needs Chrome: see
 # internal/testutil/chrometest. The same run checks the layout of the pages in
 # Chrome (internal/e2e/layout_test.go).
