@@ -47,6 +47,10 @@ check the signature of a release.
 ## Documentation
 
 All documentation is on the site <https://emadmokhtar.github.io/email-mcp-go/>.
+The site shows the newest release. The pages for an older version are in the
+source code at its tag, in the folder `site/content/` (for 0.6.1 and newer) or
+in its `README.md` (before 0.6.1). For example, the pages for version 0.6.2 are
+in [`site/content/` at the tag v0.6.2][v062].
 
 - [The start page][site]: what email-mcp does, on one page.
 - [The user manual][manual]: install email-mcp, connect an account and an AI
@@ -58,6 +62,7 @@ All documentation is on the site <https://emadmokhtar.github.io/email-mcp-go/>.
 [manual]: https://emadmokhtar.github.io/email-mcp-go/manual/
 [tech]: https://emadmokhtar.github.io/email-mcp-go/tech/
 [install]: https://emadmokhtar.github.io/email-mcp-go/manual/getting-started/install/
+[v062]: https://github.com/EmadMokhtar/email-mcp-go/tree/v0.6.2/site/content
 
 ## License
 

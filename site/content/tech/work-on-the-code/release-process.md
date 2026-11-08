@@ -332,9 +332,13 @@ A release publishes the site. `pages.yml` is a reusable workflow: a workflow
 that another workflow can call (`workflow_call`). The last job of
 `release.yml`, `publish the site` (`site`), calls it after the job `release`
 has passed. So a failed release publishes nothing, and the site never points
-to files that do not exist yet. The job gives `pages.yml` `pages: write` and
-`id-token: write`, because a called workflow cannot get more permissions than
-its caller gives it.
+to files that do not exist yet. The job gives `pages.yml` `contents: read`,
+`pages: write` and `id-token: write`, because a called workflow cannot get
+more permissions than its caller gives it. A `permissions` block in a job sets
+every permission that it does not list to `none`, so a job that calls
+`pages.yml` must list `contents: read` too. Without it, the checkout of the
+job `build` fails. The job `build` stops after 30 minutes and the job `deploy`
+after 10, so a hung run does not hold back the next deploy.
 
 - A pre-release does not publish the site. The job runs only when the tag has
   no `-`, so a tag such as `v0.2.0-rc.1` skips it, as it skips the tap and the
