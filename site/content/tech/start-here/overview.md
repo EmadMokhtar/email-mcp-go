@@ -224,9 +224,10 @@ directory and one database. These parts make that safe:
 - A check of permission fails closed: when it cannot decide, the answer is
   "no". For example, `policy.Decide` refuses an action that it does not know,
   and it counts a damaged level of an account as level 0, no access
-  (`account.MailOff`). The page "Security design" goes deeper. The hidden-text
-  rules work in another way: what they cannot work out stays in the text, and
-  the result is marked as unsure (see [Mail
+  (`account.MailOff`). The page [Security
+  design](/tech/security/security-design/#failing-closed) goes deeper. The
+  hidden-text rules work in another way: what they cannot work out stays in the
+  text, and the result is marked as unsure (see [Mail
   content](/tech/mail/mail-content/)).
 
 ## The mail backend boundary
