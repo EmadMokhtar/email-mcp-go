@@ -62,7 +62,8 @@ var (
 type BuildContext struct {
 	// From is the sender. Its Email is the envelope sender too.
 	From mail.Address
-	// Self lists the addresses of the user. A reply to all leaves them out.
+	// Self lists the addresses of the user. A reply to all removes them from
+	// To and Cc, but not from Bcc (see Build).
 	Self []string
 	// Original is the message that a reply answers or a forward sends on. It
 	// must be set for a reply or a forward, and is not used otherwise.

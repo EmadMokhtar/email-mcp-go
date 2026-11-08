@@ -605,14 +605,14 @@ func (a *App) BeginStop() {
 //  3. It waits for the tool calls and the service actions that run (a send
 //     without an undo window runs inside its tool call or its web approval).
 //  4. Outbox.Drain for 5 minutes: it sends the queued messages that are due, or
-//     that become due within 5 minutes. The web server is still up, so the user
-//     can still reject an action that waits for approval (approvals are
-//     refused), and can still cancel a queued send on the activity page. Tool
-//     calls are refused, so an agent cannot cancel it (see BeginStop). When
-//     ctx has a deadline, the drain starts no send later than
-//     outbox.SendDeadline before it, so every send it starts ends in time.
-//     When that time is over, the messages that are left stay queued for the
-//     next start: the stop is still clean, and Close logs it.
+//     that become due within 5 minutes. When this process runs its web server,
+//     the web server is still up, so the user can still reject an action that
+//     waits for approval (approvals are refused), and can still cancel a queued
+//     send on the activity page. Tool calls are refused, so an agent cannot
+//     cancel it (see BeginStop). When ctx has a deadline, the drain starts no
+//     send later than outbox.SendDeadline before it, so every send it starts
+//     ends in time. When that time is over, the messages that are left stay
+//     queued for the next start: the stop is still clean, and Close logs it.
 //  5. It shuts down the web server.
 //  6. It closes the mail backends and the store.
 //
