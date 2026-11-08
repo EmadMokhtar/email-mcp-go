@@ -11,6 +11,8 @@ code_areas:
   - cmd/email-mcp/serve.go
   - cmd/email-mcp/token.go
   - internal/httpserve/httpserve_test.go
+  - internal/web/connections.go
+  - internal/web/templates/connections.html
 ---
 
 This page explains local HTTP mode: the HTTP (HyperText Transfer Protocol)
@@ -48,8 +50,9 @@ Protocol) endpoint is `/mcp` (`mcpPath`). When the server listens, it logs
 
 {{< diagram "http-checks" >}}
 
-`serveHTTP` builds the handler from two layers. `limitRequests` in `serve.go` is
-the outer one. `httpserve.Handler` in
+`serveHTTP` builds the handler from three layers. `limitRequests` in `serve.go`
+is the outer one. In the middle, a router (`http.ServeMux`, the path router of
+the Go standard library) passes on only the path `/mcp`. `httpserve.Handler` in
 {{< src "internal/httpserve/httpserve.go" >}} is the inner one. The SDK
 (software development kit) is the official Go library for MCP, `go-sdk`. A
 bearer token is a secret in the header `Authorization: Bearer <token>`. A MiB
@@ -59,14 +62,15 @@ order:
 | Step | Code | Refused with | Log code |
 |---|---|---|---|
 | 1. Concurrency limit | `limitRequests`: at most 8 requests at once (`maxConcurrentRequests`). A request over the limit waits up to 30 seconds (`requestQueueWait`) for a free place, before its body is read. | 503 (Service Unavailable), with `Retry-After: 1` | `too_many_requests` |
-| 2. `Host` | `hostAllowed`: the connection came in on a loopback address, and the `Host` header is exactly `localhost:<port>`, `127.0.0.1:<port>` or `[::1]:<port>`, with the port of the connection (`LoopbackPort`). | 403 (Forbidden) | `bad_host` |
-| 3. `Origin` | `originAllowed`: no `Origin` header, or exactly one whose value is in the list of `--allow-origin`. | 403 | `bad_origin` |
-| 4. Stated body size | A `Content-Length` over 15 MiB (`MaxBodyBytes`) is refused at once. Any other body is cut at that limit while it is read (`http.MaxBytesReader`). | 413 (Request Entity Too Large) | `body_too_large` |
-| 5. Bearer token | `auth.RequireBearerToken` of the SDK, with `verifier`, which calls `tokens.Manager.Verify`. | 401 (Unauthorized), or 500 with the fixed text "internal error" when the check itself fails | `invalid_token`, `token_check_failed` |
-| 6. Read the body | `readBody` reads the whole body before the MCP handler runs. | 413 over the limit, 400 (Bad Request) when it cannot be read | `body_too_large`, `body_unreadable` |
-| 7. MCP handler | `mcp.NewStreamableHTTPHandler` in stateless mode, with `MaxRequestBodyBytes` set to `MaxBodyBytes`. | The SDK answers. | none |
+| 2. Path | The router passes on a request whose path is `/mcp` (`mcpPath`), with any method. It answers any other path itself. A path that is not clean, such as `//mcp`, gets a redirect to its clean form. | 404 (Not Found), or a redirect to the clean path (307, Temporary Redirect, with Go 1.27.3, the Go version of the release build; older Go versions send 301) | none |
+| 3. `Host` | `hostAllowed`: the connection came in on a loopback address, and the `Host` header is exactly `localhost:<port>`, `127.0.0.1:<port>` or `[::1]:<port>`, with the port of the connection (`LoopbackPort`). | 403 (Forbidden) | `bad_host` |
+| 4. `Origin` | `originAllowed`: no `Origin` header, or exactly one whose value is in the list of `--allow-origin`. | 403 | `bad_origin` |
+| 5. Stated body size | A `Content-Length` over 15 MiB (`MaxBodyBytes`) is refused at once. Any other body is cut at that limit while it is read (`http.MaxBytesReader`). | 413 (Request Entity Too Large) | `body_too_large` |
+| 6. Bearer token | `auth.RequireBearerToken` of the SDK, with `verifier`, which calls `tokens.Manager.Verify`. | 401 (Unauthorized), or 500 (Internal Server Error) when the check itself fails | `invalid_token`, `token_check_failed` |
+| 7. Read the body | `readBody` reads the whole body before the MCP handler runs. | 413 over the limit, 400 (Bad Request) when it cannot be read | `body_too_large`, `body_unreadable` |
+| 8. MCP handler | `mcp.NewStreamableHTTPHandler` in stateless mode, with `MaxRequestBodyBytes` set to `MaxBodyBytes`. | The SDK answers. | none |
 
-After step 7, the request is a tool call as on stdio: the middleware (functions
+After step 8, the request is a tool call as on stdio: the middleware (functions
 that wrap the handling of every request: `trackToolCalls`, `capture` and the
 multi round-trip middleware of the SDK, which lets a tool answer "I need input";
 see [Stateless mode](#stateless-mode)), `safe`, the tool handler and `service`.
@@ -75,9 +79,10 @@ Why this order:
 
 - The `Host` check comes before the token. It stops a web page that uses DNS
   rebinding (DNS is the Domain Name System; in DNS rebinding, a name of the
-  attacker points to `127.0.0.1`). Such a page gets 403 before any token is
-  looked at. `TestHTTPCheckOrder` in
-  {{< src "internal/httpserve/httpserve_test.go" >}} checks the order.
+  attacker points to `127.0.0.1`). Such a page gets 403 on `/mcp`, or the 404 or
+  the redirect of the router on another path, before any token is looked at.
+  `TestHTTPCheckOrder` in {{< src "internal/httpserve/httpserve_test.go" >}}
+  checks the order of `Host`, `Origin`, the body size and the token.
 - A request with an `Origin` header comes from a browser, and the list of
   `--allow-origin` is empty by default. Programs send no `Origin`. The handler
   sends no CORS headers (CORS, cross-origin resource sharing, is the set of
@@ -86,11 +91,15 @@ Why this order:
   body. `readBody` runs after the token check, so it does not run for a caller
   without a token.
 
-Each refusal has a fixed answer, the standard text of its status, such as
-"Forbidden". It never repeats a value of the request. The log gets the fixed
-code of the table, and never a token, the `Authorization` header or a body. A
-request without the `Authorization` header, or with one of another form, gets
-the SDK's own 401 and is not logged.
+Each refusal of `limitRequests` and `httpserve` has a fixed text, which never
+repeats a value of the request. Most texts are the standard text of the status,
+such as "Forbidden". The SDK writes the text of the token check: "invalid
+token" for a bad token, and "internal error" for a check that failed for
+another reason (`errTokenCheck`). A request without the `Authorization` header,
+or with one of another form, gets the SDK's 401 with "no bearer token", and is
+not logged. The log gets the fixed code of the table, and never a token, the
+`Authorization` header or a body. The 404 and the redirect come from Go's
+router, and they are not logged.
 
 ## Tokens
 
@@ -122,7 +131,12 @@ rules are in {{< src "internal/tokens/tokens.go" >}}:
   channel](#who-gets-which-channel).
 - A name is 1 to 128 bytes (`maxNameBytes`) of UTF-8 (Unicode Transformation
   Format, 8-bit) text (the usual way to write text as bytes), without a control
-  or format character, which could change how a terminal shows the list.
+  character, a format character, or a line or paragraph separator, which could
+  change how a terminal shows the list. The
+  manual and the error of `token create` say "128 characters". That is the same
+  for ASCII (American Standard Code for Information Interchange: the basic
+  Latin letters, digits and signs). A character outside ASCII takes 2 to 4
+  bytes, so a name of such characters holds fewer than 128 of them.
 
 `Manager.Verify` checks a token. It refuses a token of the wrong form before
 any lookup (`wellFormed`). Each token has one spelling, so upper case, padding
@@ -154,13 +168,14 @@ check, not from the request. `httpserve.Principal` then makes the principal
 
 The person makes a token with `token create` in
 {{< src "cmd/email-mcp/token.go" >}}, or on the Connections page of the [web
-portal](/tech/ways-in/web-portal/). Both call `Service.CreateToken` in
-{{< src "internal/service/tokens.go" >}}, which writes the activity log entry
-`token_created`, or `token_created_in_band` for a token that may answer in its
-own window. `Service.RevokeToken` writes `token_revoked`. No tool reaches these
-use cases. `token list` and the Connections page show the tokens with
-`Manager.List`, which never returns a token or its hash. Only the command sets
-a lifetime (`--expires-in`). The page uses the default.
+portal](/tech/ways-in/web-portal/): {{< src "internal/web/connections.go" >}}
+and {{< src "internal/web/templates/connections.html" >}}. Both call
+`Service.CreateToken` in {{< src "internal/service/tokens.go" >}}, which writes
+the activity log entry `token_created`, or `token_created_in_band` for a token
+that may answer in its own window. `Service.RevokeToken` writes `token_revoked`.
+No tool reaches these use cases. `token list` and the Connections page show the
+tokens with `Manager.List`, which never returns a token or its hash. Only the
+command sets a lifetime (`--expires-in`). The page uses the default.
 
 ## Stateless mode
 
@@ -176,11 +191,14 @@ What this changes:
   `elicitation/create` (the request that asks the client to show a form) over
   HTTP. `serveHTTP` sets `InBandLegacyElicitation` to false.
 - A client that speaks the protocol version `2026-07-28` or newer can still get
-  the question, inside the result. This is MRTR (multi round-trip request): the
-  tool answers "I need input", and the client calls again with the answer.
-- A client of an older protocol version gets the approval link for every
-  confirmation. The approval link leads to the page of the web portal where the
-  person approves or rejects the action.
+  the question, inside the result, when its token was made with the choice to
+  answer in its own window. This is MRTR (multi round-trip request): the tool
+  answers "I need input", and the client calls again with the answer. See [Who
+  gets which channel](#who-gets-which-channel) for every condition.
+- Every other client gets the approval link for each confirmation: a client of
+  an older protocol version, a client without form elicitation, and a client
+  whose token was made without that choice. The approval link leads to the page
+  of the web portal where the person approves or rejects the action.
 
 The design of the program chose this over a server that keeps sessions for
 older clients, and accepted that those clients get the approval link.

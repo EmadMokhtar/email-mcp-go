@@ -270,8 +270,8 @@ spec, "What other parts rely on").
 Rule for all pages: do not write how many tools or commands exist. The count
 changes with each feature. Name the function that registers them instead.
 
-Names. This part says "web portal", as `PRODUCT.md` and `DESIGN.md` do. The
-manual says "web pages". The code comments say "web interface". The page
+Names. This part says "web portal". `PRODUCT.md` and `DESIGN.md` say
+"portal". The manual says "web pages". The code comments say "web interface". The page
 `web-portal` says this once and then keeps "web portal". The menu label of the
 approval page is "Waiting for you" (`internal/web/templates/layout.html:52`).
 The route and the code say "approvals". (My call.)
@@ -983,11 +983,13 @@ Questions:
 Must cover:
 
 - The address must be a loopback address (`httpserve.CheckLoopbackAddr`).
-- The order: limit on concurrent requests (`limitRequests`), `Host`, `Origin`,
-  the stated body size (`Content-Length`), bearer token, the read of the whole
-  body (`readBody`), then the SDK handler in stateless mode. Why the order: a
-  DNS rebinding page gets 403 before any token is looked at, and `readBody`
-  runs after the token check.
+- The order: limit on concurrent requests (`limitRequests`), the router of
+  `serveHTTP` (only `/mcp` goes on; another path gets 404, and a path that is
+  not clean gets a redirect), `Host`, `Origin`, the stated body size
+  (`Content-Length`), bearer token, the read of the whole body (`readBody`),
+  then the SDK handler in stateless mode. Why the order: a DNS rebinding page
+  gets 403 before any token is looked at, and `readBody` runs after the token
+  check.
 - Stateless mode (`Stateless: true`): the server keeps no session, so it cannot
   call back to the client. It never sends `elicitation/create` over HTTP. A
   client that speaks protocol `2026-07-28` or newer can still get the question,
@@ -1385,8 +1387,8 @@ Source: the other pages.
   characters, clean the HTML and make the text part, write the message, preview
   of the text part.
 - **D12 `http-checks`** (`local-http`, required). The pipeline of a request:
-  concurrency limit, `Host`, `Origin`, stated body size, token, read of the
-  body, stateless SDK handler, middleware, tool. Show the status code of each
+  concurrency limit, path, `Host`, `Origin`, stated body size, token, read of
+  the body, stateless SDK handler, middleware, tool. Show the status code of each
   refusal.
 - **D13 `portal-checks`** (`web-portal`, required). The pipeline of the portal:
   headers, `Host`, cross-origin, `/setup` and `/static/`, name, session, CSRF,

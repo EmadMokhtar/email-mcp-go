@@ -27,11 +27,11 @@ It covers how the portal starts, how a person signs in, the checks of each
 request, how pages are built, and how to add one. Read it before you change the
 package `web` or the command `setup`.
 
-The tech docs say "web portal", as `PRODUCT.md` and `DESIGN.md` do. The user
-manual says "web pages", and the code comments say "web interface". The menu
-calls the approvals page "Waiting for you", and the route and the code call it
-`approvals`. The manual page [The web pages](/manual/daily-use/web-pages/) shows
-what the person sees.
+The tech docs say "web portal". `PRODUCT.md` and `DESIGN.md` say "portal", the
+user manual says "web pages", and the code comments say "web interface". The
+menu calls the approvals page "Waiting for you", and the route and the code call
+it `approvals`. The manual page [The web pages](/manual/daily-use/web-pages/)
+shows what the person sees.
 
 ## When it starts and where it listens
 

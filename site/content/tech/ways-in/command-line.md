@@ -88,7 +88,7 @@ through two pipes), or on local HTTP (HyperText Transfer Protocol) with
 | `account add`, `list`, `reconnect`, `remove`, `test` | {{< src "cmd/email-mcp/account.go" >}}, {{< src "cmd/email-mcp/reconnect.go" >}} | `openApp`, calls to `service`, then `closeApp`, which calls `CloseNow`. |
 | `token create`, `list`, `revoke` | {{< src "cmd/email-mcp/token.go" >}} | The same. `list` reads `tokens.Manager.List`. |
 | `outbox list`, `cancel` | {{< src "cmd/email-mcp/outbox.go" >}} | The same. |
-| `import-env` | {{< src "cmd/email-mcp/importenv.go" >}} | `parseEnvFile` reads the `.env` file (a text file of settings) of the old email-mcp, and `checkServer` applies the rule of plain connections. Only then `openApp`, the connect flow (see below), and `closeApp`. |
+| `import-env` | {{< src "cmd/email-mcp/importenv.go" >}} | `readEnvFile` reads the `.env` file (a text file of settings) of the old email-mcp, `parseEnvFile` checks its lines, and `checkServer` applies the rule of plain connections. Only then `openApp`, the connect flow (see below), and `closeApp`. |
 | `key rotate` | {{< src "cmd/email-mcp/key.go" >}} | `openApp`, `App.RotateKEK`, then `closeApp`. |
 | `doctor` | {{< src "cmd/email-mcp/doctor.go" >}} | It checks the data directory and the database file first, and stops when one is missing. Then `app.Open` with `ExistingKeyOnly` (load the master key, never make one), `ProbeAccount` for each account, and `closeApp`. |
 | `version` | `main.go` | Nothing. |
