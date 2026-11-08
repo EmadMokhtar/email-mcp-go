@@ -88,7 +88,7 @@ through two pipes), or on local HTTP (HyperText Transfer Protocol) with
 | `account add`, `list`, `reconnect`, `remove`, `test` | {{< src "cmd/email-mcp/account.go" >}}, {{< src "cmd/email-mcp/reconnect.go" >}} | `openApp`, calls to `service`, then `closeApp`, which calls `CloseNow`. |
 | `token create`, `list`, `revoke` | {{< src "cmd/email-mcp/token.go" >}} | The same. `list` reads `tokens.Manager.List`. |
 | `outbox list`, `cancel` | {{< src "cmd/email-mcp/outbox.go" >}} | The same. |
-| `import-env` | {{< src "cmd/email-mcp/importenv.go" >}} | `parseEnvFile` reads the `.env` file of the old email-mcp, and `checkServer` applies the rule of plain connections. Only then `openApp`, the connect flow (see below), and `closeApp`. |
+| `import-env` | {{< src "cmd/email-mcp/importenv.go" >}} | `parseEnvFile` reads the `.env` file (a text file of settings) of the old email-mcp, and `checkServer` applies the rule of plain connections. Only then `openApp`, the connect flow (see below), and `closeApp`. |
 | `key rotate` | {{< src "cmd/email-mcp/key.go" >}} | `openApp`, `App.RotateKEK`, then `closeApp`. |
 | `doctor` | {{< src "cmd/email-mcp/doctor.go" >}} | It checks the data directory and the database file first, and stops when one is missing. Then `app.Open` with `ExistingKeyOnly` (load the master key, never make one), `ProbeAccount` for each account, and `closeApp`. |
 | `version` | `main.go` | Nothing. |
@@ -129,7 +129,7 @@ The comment at the top of {{< src "cmd/email-mcp/console.go" >}} gives the rules
 of the output:
 
 - Standard output gets what the person asked for, and the questions. It may show
-  the address of the person's own account, and once the token that
+  the address of the person's own account and, one time only, the token that
   `token create` makes or the setup link. `token create` prints its notes on
   standard error and the token alone on standard output.
 - Standard error gets the errors, the warnings and the log of the `App`. Nothing
@@ -140,10 +140,11 @@ of the output:
   input when standard input is not a terminal.
 
 `readTerminalPassword` puts the terminal back as it was when the first Ctrl-C
-comes during the read, so the echo does not stay off after a second Ctrl-C.
-`TestReadTerminalPasswordRestoresOnCtrlC` checks it. `openBrowser` gets one
-argument, which must never hold a secret. So `setup` opens the setup link
-through a private file: see [Signing in](/tech/ways-in/web-portal/#signing-in).
+(hold the Ctrl key and press C) comes during the read, so the echo does not stay
+off after a second Ctrl-C. `TestReadTerminalPasswordRestoresOnCtrlC` checks it.
+`openBrowser` gets one argument, which must never hold a secret. So `setup`
+opens the setup link through a private file: see [Signing
+in](/tech/ways-in/web-portal/#signing-in).
 
 ### Prompts
 
@@ -158,8 +159,8 @@ answer, so a command that asks first needs a flag instead: `account remove` and
 
 The commands and the web portal call the same use cases of `service`, such as
 `CreateIMAPAccount`, `ReconnectIMAPAccount`, `RemoveAccount`, `CreateToken` and
-`CancelQueuedSend`. Both are used by the person, not by the agent (the AI
-program that calls the tools). `userContext` in
+`CancelQueuedSend`. Both are for the person: no tool of the agent (the AI
+program that calls the tools) calls them. `userContext` in
 `console.go` gives each call the principal (the caller of a request) of the
 person at the terminal: the local tenant (the owner of the accounts), no scope
 limit (a scope is a permission that an access token carries), and the client

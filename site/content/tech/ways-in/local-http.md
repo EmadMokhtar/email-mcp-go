@@ -68,8 +68,8 @@ order:
 
 After step 7, the request is a tool call as on stdio: the middleware (functions
 that wrap the handling of every request: `trackToolCalls`, `capture` and the
-multi round-trip middleware of the SDK), `safe`, the tool handler and
-`service`.
+multi round-trip middleware of the SDK, which lets a tool answer "I need input";
+see [Stateless mode](#stateless-mode)), `safe`, the tool handler and `service`.
 
 Why this order:
 
@@ -120,9 +120,9 @@ rules are in {{< src "internal/tokens/tokens.go" >}}:
 - A token may answer a confirmation in its own window only when the person
   chose that when the token was made (`InBandConfirm`). See [Who gets which
   channel](#who-gets-which-channel).
-- A name is 1 to 128 bytes (`maxNameBytes`) of UTF-8 text (the usual way to
-  write text as bytes), without a control or format character, which could
-  change how a terminal shows the list.
+- A name is 1 to 128 bytes (`maxNameBytes`) of UTF-8 (Unicode Transformation
+  Format, 8-bit) text (the usual way to write text as bytes), without a control
+  or format character, which could change how a terminal shows the list.
 
 `Manager.Verify` checks a token. It refuses a token of the wrong form before
 any lookup (`wellFormed`). Each token has one spelling, so upper case, padding

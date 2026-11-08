@@ -100,13 +100,14 @@ of them into smaller steps.
    bytes, and the store keeps only its SHA-256.
 5. `handleSetup` sets the cookie `emcp_session` (`cookieName`; a cookie is a
    value that the browser keeps and sends back with each request). It redirects
-   the browser to `/` with 303 (See Other), so the token leaves the address bar
-   and the history entry of the page.
+   the browser (sends it on to another address) to `/` with 303 (See Other), so
+   the token leaves the address bar and the history entry of the page.
 
 A missing, malformed, used, expired or unknown token gets the no-session page,
 the same for every cause. HEAD (a request for the headers only) on `/setup` uses
-up the token too: it is the one route where GET or HEAD changes more than the
-last-use time of a session.
+up the token too. The session check writes the last use of a session, or
+deletes a session that has ended. `/setup` is the one route where GET or HEAD
+does more.
 
 The cookie is `HttpOnly` (a script of a page cannot read it) and `SameSite=Lax`
 (from another site, the browser sends it only with a top-level GET, such as a
@@ -231,12 +232,12 @@ only the exact address of a file, with the fixed `Content-Type` of
 
 - `Content-Security-Policy`: the sources that a page may load. Its value is the
   constant `contentSecurityPolicy`.
-- `X-Content-Type-Options: nosniff`: the browser uses the `Content-Type` that
-  the server sends, and does not guess another one.
-- `Referrer-Policy: no-referrer`: the browser does not send the address of the
-  page to another site.
-- `Cache-Control: no-store`: the browser keeps no copy of the answer. A static
-  file replaces this header.
+- `X-Content-Type-Options: nosniff`: tells the browser to use the `Content-Type`
+  that the server sends, and not to guess another one.
+- `Referrer-Policy: no-referrer`: tells the browser not to send the address of
+  the page to another site.
+- `Cache-Control: no-store`: tells the browser to keep no copy of the answer. A
+  static file replaces this header.
 
 The policy is:
 
