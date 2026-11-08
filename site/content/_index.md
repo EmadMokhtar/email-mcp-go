@@ -96,15 +96,17 @@ levels:
   - term: 1 Read
     text: Search and read messages and attachments.  # T13
   # move_messages refuses, at every level, a folder that email-mcp recognizes
-  # as the Trash and every folder inside it (ErrMoveToTrash, refuseTrashTarget
-  # and inTrash in internal/service/write.go). So the page speaks only of the
-  # folders that email-mcp recognizes, as the tech page Permissions does
-  # (site/content/tech/inside-the-server/permissions.md).
+  # as the Trash and every folder inside it, and create_folder refuses to make
+  # a folder there (ErrMoveToTrash, refuseTrashTarget and inTrash in
+  # internal/service/write.go). A new folder name may not hold the hierarchy
+  # delimiter (CreateFolder in internal/provider/imapsmtp/folders.go). So the
+  # page speaks only of the folders that email-mcp recognizes, as the tech page
+  # Permissions does (site/content/tech/inside-the-server/permissions.md).
   - term: 2 Organize
     text: >-  # T13
-      Mark as read, flag, tag, make folders and move messages. These moves
-      never go to a folder that email-mcp recognizes as the Trash, or to a
-      folder inside that folder.
+      Mark as read, flag, tag, make folders and move messages. These moves,
+      and new folders, never go into a folder that email-mcp recognizes as the
+      Trash, or into a folder inside that folder.
   # discard_draft moves a draft to the Trash at level 3, and it never asks
   # (internal/service/write.go, DiscardDraft), so the page says so after
   # "Write drafts".
