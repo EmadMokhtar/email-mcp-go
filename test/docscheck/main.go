@@ -1,14 +1,13 @@
 // Command docscheck checks that a pull request that changes behaviour also
-// changes the docs. The workflow docs-check.yml runs it:
-//
-//	gh api --paginate "repos/$REPO/pulls/$PR/files" \
-//	  --jq '.[] | .filename, (.previous_filename // empty)' | go run ./test/docscheck
+// changes the docs. The workflow docs-check.yml runs it.
 //
 // It reads the changed paths from standard input, one on each line. A moved
 // file gives two lines: the new path and the old one. So a file that moves out
 // of internal/ still counts. The labels of the pull request come from the
 // environment variable PR_LABELS, as a JSON array of strings. When PR_LABELS
-// is not set, there are no labels. A local run can use git. --no-renames
+// is not set, there are no labels. The number of changed files of the pull
+// request comes from PR_CHANGED_FILES. When it is not set, nothing compares
+// it. A local run can use git. --no-renames
 // lists a moved file as two paths, the old one and the new one, like the API:
 //
 //	git diff --name-only --no-renames origin/main... | go run ./test/docscheck
@@ -17,8 +16,9 @@
 //
 //   - A change counts as behaviour when it touches a Go file in cmd/ or
 //     internal/ that is not a test file, or any file in
-//     internal/web/templates/ or internal/web/static/. Test files,
-//     internal/testutil, internal/e2e and internal/thirdparty do not count.
+//     internal/web/templates/, internal/web/static/ or
+//     internal/store/migrations/. Test files, internal/testutil, internal/e2e
+//     and internal/thirdparty do not count.
 //   - If behaviour changed, the pull request must change a file under
 //     site/content/manual/ or carry the label no-manual-change.
 //   - It must also change a file under site/content/tech/ or carry the label
@@ -26,9 +26,11 @@
 //   - The landing page (site/content/_index.md) does not count as docs.
 //
 // It prints one problem on each line and exits with 1 when it finds any. It
-// exits with 2 when the input is wrong: it cannot read the paths, it reads no
-// path, or PR_LABELS is not a JSON array of strings. Wrong input must not look
-// like a pass.
+// exits with 2 when it cannot check: it cannot read the paths, it reads no
+// path, PR_LABELS is not a JSON array of strings, PR_CHANGED_FILES is not a
+// whole number, or the pull request has more files than the API lists. That
+// must not look like a pass. "go run" reports both 1 and 2 as exit status 1,
+// so in the workflow only the message tells them apart.
 package main
 
 import (
@@ -38,6 +40,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -53,18 +56,35 @@ const (
 	techDir   = "site/content/tech/"
 )
 
+// maxFiles is the most files that the API lists for one pull request.
+const maxFiles = 3000
+
 func main() {
-	os.Exit(run(os.Stdin, os.Getenv("PR_LABELS"), os.Stderr))
+	os.Exit(run(os.Stdin, os.Getenv("PR_LABELS"), os.Getenv("PR_CHANGED_FILES"), os.Stderr))
 }
 
-// run is main without the process: it reads the paths from in and the labels
-// from labelsJSON, writes the problems to out, and returns the exit code. A
-// test can call it.
-func run(in io.Reader, labelsJSON string, out io.Writer) int {
+// run is main without the process: it reads the paths from in, the labels
+// from labelsJSON and the number of changed files from changedFiles. It
+// writes the problems to out and returns the exit code. A test can call it.
+func run(in io.Reader, labelsJSON, changedFiles string, out io.Writer) int {
 	var labels []string
 	if labelsJSON != "" {
 		if err := json.Unmarshal([]byte(labelsJSON), &labels); err != nil {
 			_, _ = fmt.Fprintf(out, "docscheck: PR_LABELS is not a JSON array of strings: %v\n", err)
+			return 2
+		}
+	}
+	if changedFiles != "" {
+		n, err := strconv.Atoi(changedFiles)
+		if err != nil || n < 0 {
+			_, _ = fmt.Fprintf(out, "docscheck: PR_CHANGED_FILES is not a whole number of 0 or more: %q\n", changedFiles)
+			return 2
+		}
+		// The API stops at maxFiles with no error. Above that, the check
+		// would judge only part of the list.
+		if n > maxFiles {
+			_, _ = fmt.Fprintf(out, "docscheck: the pull request changes %d files, and the API lists at most %d, "+
+				"so the check cannot see every file: check the docs by hand\n", n, maxFiles)
 			return 2
 		}
 	}
@@ -118,9 +138,13 @@ func check(paths, labels []string) []string {
 // isBehaviour reports whether a change to the file at path p can change what
 // the program does.
 func isBehaviour(p string) bool {
-	// The web pages and their styles and scripts count, whatever the file.
-	if strings.HasPrefix(p, "internal/web/templates/") || strings.HasPrefix(p, "internal/web/static/") {
-		return true
+	// The program embeds the files of these folders, so they count, whatever
+	// the file: the web pages, their styles and scripts, and the database
+	// migrations.
+	for _, dir := range []string{"internal/web/templates/", "internal/web/static/", "internal/store/migrations/"} {
+		if strings.HasPrefix(p, dir) {
+			return true
+		}
 	}
 	// Code that only the tests use, and code that is copied from other
 	// projects.

@@ -18,11 +18,8 @@ permissions:
   contents: read
   pull-requests: read
 
-# Each run uses the labels that the pull request had when its event happened.
-# Adding or removing a label starts a new run by itself. "Re-run jobs" on an
-# old run uses the old labels again, so it gives the old result. A newer run of
-# the same pull request makes an older run out of date, so the older run is
-# cancelled.
+# A newer run of the same pull request makes an older run out of date, so the
+# older run is cancelled.
 concurrency:
   group: docs-check-${{ github.event.number }}
   cancel-in-progress: true
@@ -47,12 +44,16 @@ jobs:
           # The check uses only the standard library, so it needs no module
           # cache.
           cache: false
+      # The labels and the number of changed files are read from the API when
+      # the job runs, not from the event. So "Re-run jobs" on an old run uses
+      # the labels that the pull request has now.
+      #
       # The API lists the changed files of the pull request, and --paginate
       # reads every page. For a moved file the jq filter also prints the old
       # path, so a file that moves out of internal/ still counts. The API
-      # lists at most 3000 files of one pull request, with no error. So for a
-      # larger pull request the check sees only part of the list, and the
-      # reviewer must check the docs by hand.
+      # lists at most 3000 files of one pull request, with no error.
+      # docscheck compares PR_CHANGED_FILES with that limit, and fails when
+      # it cannot see every file.
       #
       # "shell: bash" turns on pipefail, so the step fails when gh fails. The
       # default shell has no pipefail, and then only the exit code of
@@ -63,7 +64,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.number }}
           REPO: ${{ github.repository }}
-          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
+          PR_LABELS="$(gh api "repos/$REPO/pulls/$PR" --jq '[.labels[].name]')"
+          PR_CHANGED_FILES="$(gh api "repos/$REPO/pulls/$PR" --jq '.changed_files')"
+          export PR_LABELS PR_CHANGED_FILES
           gh api --paginate "repos/$REPO/pulls/$PR/files" \
             --jq '.[] | .filename, (.previous_filename // empty)' | go run ./test/docscheck
