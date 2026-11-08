@@ -116,3 +116,7 @@ the language of web pages and of many mails.
 | How is an outgoing message built, and what does it refuse? | [Building mail](/tech/mail/building-mail/#what-build-refuses) |
 | How is a saved draft made ready to send? | [Building mail](/tech/mail/building-mail/#a-saved-draft) |
 | Why does the preview start with the text that goes out? | [Building mail](/tech/mail/building-mail/#the-preview-and-the-text-part) |
+| What protects the person from an agent that follows bad instructions? | [Security design](/tech/security/security-design/#the-model) |
+| Where is each security rule enforced? | [Security design](/tech/security/security-design/#rules-and-their-tests) |
+| Which test fails if a security rule breaks? | [Security design](/tech/security/security-design/#rules-and-their-tests) |
+| What must I check when I change security code? | [Security design](/tech/security/security-design/#when-you-change-security-code) |

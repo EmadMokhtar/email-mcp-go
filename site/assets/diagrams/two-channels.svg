@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 620" role="img">
+  <title>The two channels into service</title>
+  <desc>On the left, the agent's channel: the agent uses the transport, stdio or local HTTP, where httpserve checks the Host header, the Origin header, the body size and the access token. Then mcpserver, where each tool is added with addTool and runs through safe. Its arrow goes only into the use cases of the tools inside service, which call authorize, and authorize calls policy.Decide. On the right, the person's channel: the browser goes to web, the web portal, which checks the Host header, the origin, the name, the session and the CSRF token. The terminal goes to the other commands of cmd/email-mcp, which use the local tenant. Their arrows go into the user-only use cases inside service, drawn as a dashed box, for example UpdateSettings and ApprovePending. In service, the tenant comes from the principal, not from an argument. Under service, both channels share policy, confirm, outbox, audit, store, secrets and the mail backend. The agent's channel cannot reach the user-only use cases, the packages web or tokens, or a session, because its links carry no secret. Only the person's channel reaches the user-only use cases, such as UpdateSettings, ApprovePending and CreateToken.</desc>
+
+  <!-- The two callers. -->
+  <rect class="d-box" x="20" y="16" width="330" height="40" rx="8"/>
+  <text class="d-text" x="185" y="36" text-anchor="middle" dominant-baseline="central">Agent</text>
+  <rect class="d-box" x="370" y="16" width="330" height="40" rx="8"/>
+  <text class="d-text" x="535" y="36" text-anchor="middle" dominant-baseline="central">Person</text>
+
+  <!-- The agent's channel. -->
+  <path class="d-line" d="M185 56V96M179 88L185 96L191 88"/>
+  <rect class="d-box" x="20" y="96" width="330" height="48" rx="8"/>
+  <text class="d-text" x="185" y="114" text-anchor="middle" dominant-baseline="central">stdio or local HTTP</text>
+  <text class="d-soft" x="185" y="133" text-anchor="middle" dominant-baseline="central">httpserve: Host, Origin, body size, token</text>
+  <path class="d-line" d="M185 144V176M179 168L185 176L191 168"/>
+  <rect class="d-box" x="20" y="176" width="330" height="64" rx="8"/>
+  <text class="d-text" x="185" y="194" text-anchor="middle" dominant-baseline="central">mcpserver</text>
+  <text class="d-soft" x="185" y="213" text-anchor="middle" dominant-baseline="central">each tool is added with addTool</text>
+  <text class="d-soft" x="185" y="229" text-anchor="middle" dominant-baseline="central">and runs through safe</text>
+  <path class="d-line" d="M185 240V304M179 296L185 304L191 296"/>
+
+  <!-- The person's channel. -->
+  <path class="d-line" d="M450 56V96M444 88L450 96L456 88"/>
+  <path class="d-line" d="M620 56V96M614 88L620 96L626 88"/>
+  <rect class="d-box" x="370" y="96" width="160" height="48" rx="8"/>
+  <text class="d-text" x="450" y="120" text-anchor="middle" dominant-baseline="central">Browser</text>
+  <rect class="d-box" x="540" y="96" width="160" height="48" rx="8"/>
+  <text class="d-text" x="620" y="120" text-anchor="middle" dominant-baseline="central">Terminal</text>
+  <path class="d-line" d="M450 144V176M444 168L450 176L456 168"/>
+  <path class="d-line" d="M620 144V176M614 168L620 176L626 168"/>
+  <rect class="d-box" x="370" y="176" width="160" height="64" rx="8"/>
+  <text class="d-text" x="450" y="194" text-anchor="middle" dominant-baseline="central">web</text>
+  <text class="d-soft" x="450" y="213" text-anchor="middle" dominant-baseline="central">Host, origin, name,</text>
+  <text class="d-soft" x="450" y="229" text-anchor="middle" dominant-baseline="central">session, CSRF token</text>
+  <rect class="d-box" x="540" y="176" width="160" height="64" rx="8"/>
+  <text class="d-text" x="620" y="194" text-anchor="middle" dominant-baseline="central">cmd/email-mcp</text>
+  <text class="d-soft" x="620" y="213" text-anchor="middle" dominant-baseline="central">the other commands</text>
+  <text class="d-soft" x="620" y="229" text-anchor="middle" dominant-baseline="central">the local tenant</text>
+  <path class="d-line" d="M450 240V304M444 296L450 304L456 296"/>
+  <path class="d-line" d="M620 240V304M614 296L620 304L626 296"/>
+
+  <!-- The use cases. -->
+  <rect class="d-box" x="20" y="272" width="680" height="128" rx="8"/>
+  <text class="d-text" x="40" y="288" dominant-baseline="central">service</text>
+  <rect class="d-box" x="36" y="304" width="314" height="56" rx="8"/>
+  <text class="d-text" x="193" y="322" text-anchor="middle" dominant-baseline="central">Use cases of the tools</text>
+  <text class="d-soft" x="193" y="342" text-anchor="middle" dominant-baseline="central">authorize, then policy.Decide</text>
+  <rect class="d-box d-dash" x="370" y="304" width="314" height="56" rx="8"/>
+  <text class="d-text" x="527" y="322" text-anchor="middle" dominant-baseline="central">User-only use cases</text>
+  <text class="d-soft" x="527" y="342" text-anchor="middle" dominant-baseline="central">for example UpdateSettings, ApprovePending</text>
+  <text class="d-soft" x="40" y="382" dominant-baseline="central">The tenant comes from the principal, not from an argument.</text>
+
+  <!-- The parts under service. -->
+  <path class="d-line" d="M360 400V432M354 424L360 432L366 424"/>
+  <rect class="d-box" x="20" y="432" width="680" height="48" rx="8"/>
+  <text class="d-text" x="360" y="450" text-anchor="middle" dominant-baseline="central">Under service, for both channels</text>
+  <text class="d-soft" x="360" y="469" text-anchor="middle" dominant-baseline="central">policy, confirm, outbox, audit, store, secrets, mail backend</text>
+
+  <!-- What each channel reaches. -->
+  <rect class="d-box" x="20" y="504" width="330" height="80" rx="8"/>
+  <text class="d-text" x="185" y="524" text-anchor="middle" dominant-baseline="central">The agent's channel cannot reach</text>
+  <text class="d-soft" x="185" y="546" text-anchor="middle" dominant-baseline="central">the user-only use cases, web or tokens,</text>
+  <text class="d-soft" x="185" y="564" text-anchor="middle" dominant-baseline="central">a session: its links carry no secret</text>
+  <rect class="d-box" x="370" y="504" width="330" height="80" rx="8"/>
+  <text class="d-text" x="535" y="524" text-anchor="middle" dominant-baseline="central">Only the person's channel reaches</text>
+  <text class="d-soft" x="535" y="546" text-anchor="middle" dominant-baseline="central">the user-only use cases, such as</text>
+  <text class="d-soft" x="535" y="564" text-anchor="middle" dominant-baseline="central">UpdateSettings, ApprovePending, CreateToken</text>
+
+  <text class="d-soft" x="20" y="604" dominant-baseline="central">Dashed box: only the person's channel reaches it.</text>
+</svg>
