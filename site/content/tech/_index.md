@@ -119,4 +119,5 @@ the language of web pages and of many mails.
 | What protects the person from an agent that follows bad instructions? | [Security design](/tech/security/security-design/#the-model) |
 | Where is each security rule enforced? | [Security design](/tech/security/security-design/#rules-and-their-tests) |
 | Which test fails if a security rule breaks? | [Security design](/tech/security/security-design/#rules-and-their-tests) |
+| Which values does the server sign, and how? | [Security design](/tech/security/security-design/#signed-values) |
 | What must I check when I change security code? | [Security design](/tech/security/security-design/#when-you-change-security-code) |
