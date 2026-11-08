@@ -1094,15 +1094,17 @@ Must cover:
   - A level is checked before any backend call. Enforced in `service` and
     `policy`. Checked by `TestEveryWriteToolRefusedBelowItsLevel` in
     `internal/e2e/security_test.go`.
-  - Tools cannot reach the use cases that only a person may call. Enforced by
-    the imports and calls of `mcpserver`. Checked by `useronly_test.go`.
+  - No tool calls a use case of the list `userOnlyCalls` (the use cases of the
+    person that a test guards). Enforced by the imports and calls of
+    `mcpserver`. Checked by `useronly_test.go`.
   - Links carry no secret. Enforced in `web.Links` and `web/guard.go`. Checked
     by `TestLocalUILinksRevealNothingWithoutSession`.
   - The portal checks Host, Origin, session and CSRF token. Enforced in
     `web/guard.go`. Checked by `TestLocalUIRefusesWrongHost`,
     `TestLocalUIRefusesCrossOriginPost` and
     `TestEveryPostRouteNeedsTheCSRFToken`.
-  - A confirmation binds to the exact message. Enforced in `confirm`, `service`
+  - A confirmation binds to the exact request that the person was asked about.
+    Enforced in `confirm`, `service`
     and `mcpserver/elicit.go`. Checked by `TestConfirmationCannotBeSkipped`.
   - Secrets are sealed and never logged. Enforced in `secrets` and by the
     `Secret` type. Checked by `TestNoPlaintextSecretsInDB` and
@@ -1110,21 +1112,29 @@ Must cover:
   - TLS 1.2 or newer, certificate pins, no plain text to a remote host.
     Enforced in `imapsmtp/tlsdial.go` and `account.MailServer.Validate`. Checked
     by `TestTLSCertificateChecksEnforced` and `TestPlainTextToRemoteRefused`.
-  - Mail only moves to Trash. Enforced by the `mail.Backend` contract and
+  - No method deletes mail for good. `move_messages` refuses a Trash folder
+    that email-mcp recognizes, `trash_messages` needs level 5, and
+    `discard_draft` moves a draft to the Trash at level 3. Enforced by the
+    `mail.Backend` contract and `service.Trash`, `service.DiscardDraft` and
     `service.Move`. Checked by `TestTrashMoveBlockedBelowLevel5`.
   - Third-party text is cleaned and marked. Enforced in `mime` and
     `mcpserver/shape.go`. Checked by the tests of `mime`.
-  - Errors for the agent are fixed texts. Enforced in `mcpserver/errors.go`.
-    Checked by the tests of `mcpserver`.
-  - Values that the agent passes back are signed. Enforced in `signing` and
-    `imapsmtp`. Checked by the tests of `signing`.
+  - Errors for the agent are texts that email-mcp wrote. Enforced in
+    `mcpserver/errors.go`. Checked by the tests of `mcpserver`.
+  - Request states, page tokens, cursors, form tokens and certificate offers
+    are signed. Enforced in `signing`, and by the purposes of `confirm`, `web`
+    and `imapsmtp`. Checked by the tests of `signing`. Message refs, attachment
+    ids and send ids are not signed: they give no right, because every call
+    checks the tenant and the permission first (`imapsmtp/ref.go`).
 
   The writer checks each test name before it goes into the page. The list above
   is the minimum. A name that no longer exists must be fixed, or the rule left
   out.
 - Two channels into `service` (D15).
 - A checklist for a change to security code: run `make test`; add a test to the
-  matching file; update this table; check the map for other pages.
+  matching file; update this table; check the other pages that list the
+  changed code under "Code covered by this page" (the map comes to the site
+  with the cutover).
 
 Source: the files in the table; `internal/e2e/security_test.go`;
 `internal/e2e/harness_test.go`.
