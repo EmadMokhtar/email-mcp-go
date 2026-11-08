@@ -139,7 +139,7 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
    the language of web pages) into text without the parts that a reader cannot
    see (`mime.ReadableText`). One page of the body has 20,000 characters by
    default (`defaultBodyChars`) and 100,000 at most (`maxBodyChars`). The page
-   "The mail backend" in the group "Mail" explains the pool.
+   [The mail backend](/tech/mail/mail-backend/) explains the pool.
 8. **Back in `service`.** `noteBackendError` looks at the error of the
    backend. When it matches `imapsmtp.ErrAuthFailed` (the server refused the
    stored login), it marks the account as one that must be reconnected. The
@@ -205,8 +205,8 @@ The result has two forms. The structured content is the JSON object. The text
 copy is for clients that do not read structured content. `textCopy` makes it,
 and its first line is always the fixed warning `untrustedBanner`. When the HTML
 of the message may hide text, a second fixed line says so
-(`hiddenContentNotice`). The page "Mail content" in the group "Mail" explains
-the cleaning.
+(`hiddenContentNotice`). The page [Mail content](/tech/mail/mail-content/)
+explains the cleaning.
 
 ## Errors become fixed texts
 

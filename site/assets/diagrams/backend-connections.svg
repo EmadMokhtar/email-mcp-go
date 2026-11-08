@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 722" role="img">
+  <title>From a use case to the mail servers</title>
+  <desc>The path from a use case to the mail servers, from top to bottom. A use case in service calls authorize, and then mailBackend asks the BackendCache for the backend of the account. The BackendCache, in service/backends.go, has one slot for each account. On each call it makes a fingerprint, a SHA-256 hash of the server settings, the key version and the sealed password. With the same fingerprint, it reuses the backend. With a different one, it builds a backend again, and the old backend is retired and closes after 2 minutes. A backend that nobody used for 30 minutes is closed by SweepIdle. The cache gives one imapsmtp.Backend for each account, made by imapsmtp.New. The backend has two paths. On the left, reads, changes and drafts go through the pool in pool.go, which has 2 slots: a call holds one slot and one connection, a stuck connection is closed by force, a call is tried again once if the connection failed, and there is no retry for APPEND, CREATE or the change step of a move. The pool uses the secure dialer in tlsdial.go: it checks the settings, dials within 15 seconds, needs TLS 1.2 or newer, upgrades with STARTTLS and has no fall back to plain text, accepts a pin that is the SHA-256 of the leaf certificate, and then sends the IMAP LOGIN. The dialer connects to the IMAP server. On the right, a send goes through Send in smtp.go, which makes a new SMTP connection for each message, uses AUTH PLAIN only, is all or nothing for the recipients, and then saves the Sent copy through the pool. The SMTP connection has the same rules as the dialer: it checks the settings, dials within 15 seconds, needs TLS 1.2 or newer, upgrades with STARTTLS and has no fall back to plain text, uses the pin PinnedSMTPCert, and then sends AUTH PLAIN. It connects to the SMTP server. A dashed arrow from Send to the pool is the copy of the sent message to the Sent folder.</desc>
+
+  <!-- This file is the source of the drawing: edit it by hand. A short script
+       placed the first coordinates, and that script is not kept. The
+       classes are in site/assets/css/site.css. -->
+
+  <rect class="d-box" x="185" y="16" width="350" height="56" rx="8"/>
+  <text class="d-text" x="360" y="31" text-anchor="middle" dominant-baseline="central">A use case in service</text>
+  <text class="d-soft" x="360" y="48" text-anchor="middle" dominant-baseline="central">after authorize, mailBackend asks the cache</text>
+  <path class="d-line" d="M360 72V96M354 88L360 96L366 88"/>
+
+  <rect class="d-box" x="125" y="96" width="470" height="140" rx="8"/>
+  <text class="d-text" x="360" y="111" text-anchor="middle" dominant-baseline="central">BackendCache (service/backends.go)</text>
+  <text class="d-soft" x="360" y="130" text-anchor="middle" dominant-baseline="central">one slot for each account</text>
+  <text class="d-soft" x="360" y="147" text-anchor="middle" dominant-baseline="central">fingerprint: SHA-256 of the server settings,</text>
+  <text class="d-soft" x="360" y="164" text-anchor="middle" dominant-baseline="central">the key version and the sealed password</text>
+  <text class="d-soft" x="360" y="181" text-anchor="middle" dominant-baseline="central">same fingerprint: reuse the backend</text>
+  <text class="d-soft" x="360" y="198" text-anchor="middle" dominant-baseline="central">different: build again; the old one retires</text>
+  <text class="d-soft" x="360" y="215" text-anchor="middle" dominant-baseline="central">unused for 30 minutes: SweepIdle closes it</text>
+  <path class="d-line" d="M360 236V260M354 252L360 260L366 252"/>
+
+  <rect class="d-box" x="185" y="260" width="350" height="56" rx="8"/>
+  <text class="d-text" x="360" y="275" text-anchor="middle" dominant-baseline="central">imapsmtp.Backend</text>
+  <text class="d-soft" x="360" y="292" text-anchor="middle" dominant-baseline="central">one for each account, made by imapsmtp.New</text>
+
+  <path class="d-line" d="M360 316V340"/>
+  <path class="d-line" d="M175 340H545"/>
+  <path class="d-line" d="M175 340V364M169 356L175 364L181 356"/>
+  <path class="d-line" d="M545 340V364M539 356L545 364L551 356"/>
+  <text class="d-soft" x="165" y="353" text-anchor="end" dominant-baseline="central">reads, changes, drafts</text>
+  <text class="d-soft" x="555" y="353" text-anchor="start" dominant-baseline="central">send a message</text>
+
+  <rect class="d-box" x="20" y="364" width="310" height="108" rx="8"/>
+  <text class="d-text" x="175" y="379" text-anchor="middle" dominant-baseline="central">Pool (pool.go): 2 slots</text>
+  <text class="d-soft" x="175" y="398" text-anchor="middle" dominant-baseline="central">a call holds a slot and one connection</text>
+  <text class="d-soft" x="175" y="415" text-anchor="middle" dominant-baseline="central">a stuck connection is closed by force</text>
+  <text class="d-soft" x="175" y="432" text-anchor="middle" dominant-baseline="central">retry once if the connection failed</text>
+  <text class="d-soft" x="175" y="449" text-anchor="middle" dominant-baseline="central">no retry for APPEND, CREATE or a move</text>
+
+  <rect class="d-box" x="390" y="364" width="310" height="108" rx="8"/>
+  <text class="d-text" x="545" y="379" text-anchor="middle" dominant-baseline="central">Send (smtp.go)</text>
+  <text class="d-soft" x="545" y="398" text-anchor="middle" dominant-baseline="central">a new SMTP connection for each message</text>
+  <text class="d-soft" x="545" y="415" text-anchor="middle" dominant-baseline="central">AUTH PLAIN only</text>
+  <text class="d-soft" x="545" y="432" text-anchor="middle" dominant-baseline="central">all or nothing for the recipients</text>
+  <text class="d-soft" x="545" y="449" text-anchor="middle" dominant-baseline="central">then the Sent copy goes through the pool</text>
+
+  <path class="d-line d-dash" d="M390 418H330M338 412L330 418L338 424"/>
+
+  <path class="d-line" d="M175 472V496M169 488L175 496L181 488"/>
+  <path class="d-line" d="M545 472V496M539 488L545 496L551 488"/>
+
+  <rect class="d-box" x="20" y="496" width="310" height="100" rx="8"/>
+  <text class="d-text" x="175" y="511" text-anchor="middle" dominant-baseline="central">Secure dialer (tlsdial.go)</text>
+  <text class="d-soft" x="175" y="530" text-anchor="middle" dominant-baseline="central">checks the settings; dial limit 15 seconds</text>
+  <text class="d-soft" x="175" y="547" text-anchor="middle" dominant-baseline="central">TLS 1.2 or newer; STARTTLS has no fall back</text>
+  <text class="d-soft" x="175" y="564" text-anchor="middle" dominant-baseline="central">a pin is the SHA-256 of the leaf certificate</text>
+  <text class="d-soft" x="175" y="581" text-anchor="middle" dominant-baseline="central">then the IMAP LOGIN</text>
+
+  <rect class="d-box" x="390" y="496" width="310" height="100" rx="8"/>
+  <text class="d-text" x="545" y="511" text-anchor="middle" dominant-baseline="central">The same rules (secureSMTP)</text>
+  <text class="d-soft" x="545" y="530" text-anchor="middle" dominant-baseline="central">checks the settings; dial limit 15 seconds</text>
+  <text class="d-soft" x="545" y="547" text-anchor="middle" dominant-baseline="central">TLS 1.2 or newer; STARTTLS has no fall back</text>
+  <text class="d-soft" x="545" y="564" text-anchor="middle" dominant-baseline="central">the pin is PinnedSMTPCert</text>
+  <text class="d-soft" x="545" y="581" text-anchor="middle" dominant-baseline="central">then AUTH PLAIN</text>
+
+  <path class="d-line" d="M175 596V620M169 612L175 620L181 612"/>
+  <path class="d-line" d="M545 596V620M539 612L545 620L551 612"/>
+
+  <rect class="d-box" x="20" y="620" width="310" height="40" rx="8"/>
+  <text class="d-text" x="175" y="640" text-anchor="middle" dominant-baseline="central">IMAP server</text>
+  <rect class="d-box" x="390" y="620" width="310" height="40" rx="8"/>
+  <text class="d-text" x="545" y="640" text-anchor="middle" dominant-baseline="central">SMTP server</text>
+
+  <text class="d-soft" x="20" y="686" text-anchor="start" dominant-baseline="central">The dashed arrow is the copy of a sent</text>
+  <text class="d-soft" x="20" y="703" text-anchor="start" dominant-baseline="central">message, saved in the Sent folder.</text>
+</svg>

@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 548" role="img">
+  <title>The two pipelines of mail content</title>
+  <desc>Two lists side by side. On the left, the incoming pipeline, from the mail server to the agent, in six steps. 1, fetch: the text parts that a mail client shows, chosen by LayoutOf; an HTML part is fetched whole and is at most 4 MiB. 2, decode: the transfer encoding and the charset, by DecodeText; damaged data keeps the text up to the damage. 3, parse the HTML with xhtml.ParseWithLimit and a work budget of 16,000,000; a document that is too complex gives ErrHTMLTooComplex and no text. 4, apply the hidden-text rules: each element and each text node is classified, and the report has Suspected and Dropped. 5, clean: CleanUntrusted removes hidden characters, and the body is cut into pages of 20,000 characters, 100,000 at most. 6, wrap as untrusted: mcpserver cleans each string again and puts it in the Untrusted wrapper, with the banner line. On the right, the outgoing pipeline, from the agent to the mail server, in six steps. 1, compose: mail.Compose has text, HTML, a reply or a forward, and attachments as bytes and not as file paths. 2, check the addresses and the headers: ErrInvalidAddress and ErrHeaderInjection; each address is once, in the order To, Cc, Bcc. 3, refuse hidden characters in the subject, the text body and the display names: ErrHiddenText; the value is refused and not cleaned. 4, clean the HTML with outgoingHTML and make the text part with HTMLToText of the result; a link keeps its href only if its text shows it. 5, write the message: the text part, the HTML part, then the attachments; there is no Bcc header, except in a draft. 6, preview: service shows the text part to the person, so the preview is the text that goes out.</desc>
+
+  <!-- This file is the source of the drawing: edit it by hand. A short script
+       placed the first coordinates, and that script is not kept. The
+       classes are in site/assets/css/site.css. -->
+
+  <text class="d-text" x="185" y="22" text-anchor="middle" dominant-baseline="central">Incoming: server to agent</text>
+  <text class="d-text" x="535" y="22" text-anchor="middle" dominant-baseline="central">Outgoing: agent to server</text>
+  <rect class="d-box" x="20" y="44" width="330" height="64" rx="8"/>
+  <text class="d-text" x="185" y="59" text-anchor="middle" dominant-baseline="central">1 Fetch</text>
+  <text class="d-soft" x="185" y="76" text-anchor="middle" dominant-baseline="central">the parts a client shows, chosen by LayoutOf</text>
+  <text class="d-soft" x="185" y="93" text-anchor="middle" dominant-baseline="central">an HTML part is fetched whole, 4 MiB at most</text>
+  <rect class="d-box" x="20" y="128" width="330" height="64" rx="8"/>
+  <text class="d-text" x="185" y="143" text-anchor="middle" dominant-baseline="central">2 Decode</text>
+  <text class="d-soft" x="185" y="160" text-anchor="middle" dominant-baseline="central">transfer encoding and charset: DecodeText</text>
+  <text class="d-soft" x="185" y="177" text-anchor="middle" dominant-baseline="central">damaged data keeps the text up to the damage</text>
+  <rect class="d-box" x="20" y="212" width="330" height="64" rx="8"/>
+  <text class="d-text" x="185" y="227" text-anchor="middle" dominant-baseline="central">3 Parse the HTML</text>
+  <text class="d-soft" x="185" y="244" text-anchor="middle" dominant-baseline="central">xhtml.ParseWithLimit, work budget 16,000,000</text>
+  <text class="d-soft" x="185" y="261" text-anchor="middle" dominant-baseline="central">too complex: ErrHTMLTooComplex, no text</text>
+  <rect class="d-box" x="20" y="296" width="330" height="64" rx="8"/>
+  <text class="d-text" x="185" y="311" text-anchor="middle" dominant-baseline="central">4 Apply the hidden-text rules</text>
+  <text class="d-soft" x="185" y="328" text-anchor="middle" dominant-baseline="central">classify each element and each text node</text>
+  <text class="d-soft" x="185" y="345" text-anchor="middle" dominant-baseline="central">the report: Suspected and Dropped</text>
+  <rect class="d-box" x="20" y="380" width="330" height="64" rx="8"/>
+  <text class="d-text" x="185" y="395" text-anchor="middle" dominant-baseline="central">5 Clean</text>
+  <text class="d-soft" x="185" y="412" text-anchor="middle" dominant-baseline="central">CleanUntrusted removes hidden characters</text>
+  <text class="d-soft" x="185" y="429" text-anchor="middle" dominant-baseline="central">a page: 20,000 characters, 100,000 at most</text>
+  <rect class="d-box" x="20" y="464" width="330" height="64" rx="8"/>
+  <text class="d-text" x="185" y="479" text-anchor="middle" dominant-baseline="central">6 Wrap as untrusted</text>
+  <text class="d-soft" x="185" y="496" text-anchor="middle" dominant-baseline="central">mcpserver cleans each string again</text>
+  <text class="d-soft" x="185" y="513" text-anchor="middle" dominant-baseline="central">Untrusted wrapper, and the banner line</text>
+  <path class="d-line" d="M185 108V128M179 120L185 128L191 120"/>
+  <path class="d-line" d="M185 192V212M179 204L185 212L191 204"/>
+  <path class="d-line" d="M185 276V296M179 288L185 296L191 288"/>
+  <path class="d-line" d="M185 360V380M179 372L185 380L191 372"/>
+  <path class="d-line" d="M185 444V464M179 456L185 464L191 456"/>
+  <rect class="d-box" x="370" y="44" width="330" height="64" rx="8"/>
+  <text class="d-text" x="535" y="59" text-anchor="middle" dominant-baseline="central">1 Compose</text>
+  <text class="d-soft" x="535" y="76" text-anchor="middle" dominant-baseline="central">mail.Compose: text, HTML, reply, forward</text>
+  <text class="d-soft" x="535" y="93" text-anchor="middle" dominant-baseline="central">attachments as bytes, not as file paths</text>
+  <rect class="d-box" x="370" y="128" width="330" height="64" rx="8"/>
+  <text class="d-text" x="535" y="143" text-anchor="middle" dominant-baseline="central">2 Check addresses and headers</text>
+  <text class="d-soft" x="535" y="160" text-anchor="middle" dominant-baseline="central">ErrInvalidAddress, ErrHeaderInjection</text>
+  <text class="d-soft" x="535" y="177" text-anchor="middle" dominant-baseline="central">each address once, in the order To, Cc, Bcc</text>
+  <rect class="d-box" x="370" y="212" width="330" height="64" rx="8"/>
+  <text class="d-text" x="535" y="227" text-anchor="middle" dominant-baseline="central">3 Refuse hidden characters</text>
+  <text class="d-soft" x="535" y="244" text-anchor="middle" dominant-baseline="central">subject, text body, display names</text>
+  <text class="d-soft" x="535" y="261" text-anchor="middle" dominant-baseline="central">ErrHiddenText: refused, not cleaned</text>
+  <rect class="d-box" x="370" y="296" width="330" height="64" rx="8"/>
+  <text class="d-text" x="535" y="311" text-anchor="middle" dominant-baseline="central">4 Clean the HTML, make the text</text>
+  <text class="d-soft" x="535" y="328" text-anchor="middle" dominant-baseline="central">outgoingHTML, then HTMLToText of the result</text>
+  <text class="d-soft" x="535" y="345" text-anchor="middle" dominant-baseline="central">a link keeps href only if its text shows it</text>
+  <rect class="d-box" x="370" y="380" width="330" height="64" rx="8"/>
+  <text class="d-text" x="535" y="395" text-anchor="middle" dominant-baseline="central">5 Write the message</text>
+  <text class="d-soft" x="535" y="412" text-anchor="middle" dominant-baseline="central">text part, then HTML part, then attachments</text>
+  <text class="d-soft" x="535" y="429" text-anchor="middle" dominant-baseline="central">no Bcc header, except in a draft</text>
+  <rect class="d-box" x="370" y="464" width="330" height="64" rx="8"/>
+  <text class="d-text" x="535" y="479" text-anchor="middle" dominant-baseline="central">6 Preview</text>
+  <text class="d-soft" x="535" y="496" text-anchor="middle" dominant-baseline="central">service shows the text part to the person</text>
+  <text class="d-soft" x="535" y="513" text-anchor="middle" dominant-baseline="central">so the preview is the text that goes out</text>
+  <path class="d-line" d="M535 108V128M529 120L535 128L541 120"/>
+  <path class="d-line" d="M535 192V212M529 204L535 212L541 204"/>
+  <path class="d-line" d="M535 276V296M529 288L535 296L541 288"/>
+  <path class="d-line" d="M535 360V380M529 372L535 380L541 372"/>
+  <path class="d-line" d="M535 444V464M529 456L535 464L541 456"/>
+</svg>
