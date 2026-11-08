@@ -133,3 +133,8 @@ the language of web pages and of many mails.
 | How are the pages, the styles and the one script of the web portal served? | [The web portal](/tech/ways-in/web-portal/#pages-styles-and-the-script) |
 | How does the web portal reach the service? | [The web portal](/tech/ways-in/web-portal/#how-the-portal-reaches-the-service) |
 | How do I add a page to the web portal? | [The web portal](/tech/ways-in/web-portal/#add-a-page) |
+| What protects the person from an agent that follows bad instructions? | [Security design](/tech/security/security-design/#the-model) |
+| Where is each security rule enforced? | [Security design](/tech/security/security-design/#rules-and-their-tests) |
+| Which test fails if a security rule breaks? | [Security design](/tech/security/security-design/#rules-and-their-tests) |
+| Which values does the server sign, and how? | [Security design](/tech/security/security-design/#signed-values) |
+| What must I check when I change security code? | [Security design](/tech/security/security-design/#when-you-change-security-code) |
