@@ -71,20 +71,24 @@ import layers of the packages: the page
    [One tool call, step by step][permission].
 4. Under `service` are the parts that it uses:
    - `policy` decides what the agent may do with an account, and limits how
-     often it may send mail and move mail to the Trash. The page "Permissions"
-     goes deeper.
+     often it may send mail and move mail to the Trash. The page
+     [Permissions](/tech/inside-the-server/permissions/) goes deeper.
    - `confirm` keeps the actions that wait for the "yes" of the person, such as
-     a send. The page "The send flow" goes deeper.
+     a send. The page [The send flow](/tech/inside-the-server/send-flow/) goes
+     deeper.
    - `outbox` queues the outgoing mail for its undo window (the time when a
      send can still be cancelled), and sends it from a background worker. The
-     page "The send flow" goes deeper.
+     page [The send flow](/tech/inside-the-server/send-flow/) goes deeper.
    - `audit` keeps the activity log: what the agent did, and what the person
-     did on a page. The page "Activity log and program log" goes deeper.
+     did on a page. The page
+     [Activity log and program log](/tech/inside-the-server/audit-and-logging/)
+     goes deeper.
    - `store` keeps all data in one SQLite database (a database in one file).
      `secrets` encrypts the secrets in it. It reads the master key from the
      keychain of the operating system or from a file, and the master key
-     protects the keys that the database stores. The page "Storage and
-     secrets" goes deeper.
+     protects the keys that the database stores. The page
+     [Storage and secrets](/tech/inside-the-server/storage-and-secrets/) goes
+     deeper.
    - The mail backend talks to the mail servers. The interface is
      `mail.Backend`, and `provider/imapsmtp` implements it. The page "The mail
      backend" goes deeper.
@@ -95,7 +99,8 @@ Its command `serve` holds the transport of the agent: `serveStdio`,
 commands, such as `setup` and `account`, are for the person. The package `app`
 builds all the parts and connects them. Its function `app.Open` does this.
 `serve`, `setup` and every command that reads the data call it. The page
-"Startup and shutdown" goes deeper.
+[Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/) goes
+deeper.
 
 ## Two doors into the use cases
 
@@ -163,24 +168,14 @@ data of another tenant by guessing an id.
 ## Run modes
 
 `serve` serves MCP on stdio by default, and on local HTTP with `--http`. It
-calls `app.Open`, then `App.Run`, which starts the background work in
-goroutines (functions that Go runs at the same time as the rest of the
-program):
-
-- the outbox worker, every second (`outboxTick` in
-  {{< src "internal/app/app.go" >}});
-- the daily jobs, at the start and then every 24 hours (`jobEvery`);
-- the sweep that closes mail backends that nobody used for a while, every 5
-  minutes (`backendSweepEvery`).
-
-Before it starts them, `Run` cleans up after a program that stopped in the
-middle of its work:
-
-- `Outbox.RecoverInterrupted` marks a send that has been in the state
-  `sending` for more than 15 minutes (`recoverAfter` in `outbox`) as failed.
-  It never sends it again.
-- `expireStaleApproved` ends the approved actions that have no result after
-  their time is over.
+calls `app.Open`, then `App.Run` in {{< src "internal/app/app.go" >}}. `Run`
+first cleans up after a program that stopped in the middle of its work. A send
+that may have gone out is marked failed, and it is never sent again. Then `Run`
+starts the background work in goroutines (functions that Go runs at the same
+time as the rest of the program): the outbox worker, the daily jobs and the
+sweep of unused mail backends. The page
+[Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/) gives each
+step of `Run` and its timing.
 
 The web portal does not start with `serve`. It starts the first time that a
 link to it is needed (`web.Server.EnsureStarted`). `setup` serves the portal
@@ -192,14 +187,15 @@ directory and one database. These parts make that safe:
 
 - A lock file guards the master key on the first start, so two processes do
   not each make a key (`loadKEK` in {{< src "internal/app/kek.go" >}}). The
-  page "Storage and secrets" goes deeper.
+  page [Storage and secrets](/tech/inside-the-server/storage-and-secrets/) goes
+  deeper.
 - The database runs in WAL mode (write-ahead log: a SQLite mode where readers
   and one writer work at the same time). See
   {{< src "internal/store/store.go" >}}.
 - A send starts only after an atomic claim of its outbox item: one database
   statement that moves the item from `queued` to `sending` only when it is
-  still queued (`store.ClaimOutbox`). Of two processes, one wins. The page "The
-  send flow" goes deeper.
+  still queued (`store.ClaimOutbox`). Of two processes, one wins. The page
+  [The send flow](/tech/inside-the-server/send-flow/) goes deeper.
 - Browser sessions and access tokens are rows in the database. So a session
   that one process made works in every other process.
 - The backend cache of each process (the cache of one mail backend for each
@@ -216,8 +212,9 @@ directory and one database. These parts make that safe:
   (`*policy.RateLimitError`): its text is a fixed sentence with the kind of
   limit and the wait. See [One tool call, step by step][errors].
 - The program log has ids, counts and fixed codes only: never a secret, an
-  address, a subject or a body. The page "Activity log and program log" goes
-  deeper.
+  address, a subject or a body. The page
+  [Activity log and program log](/tech/inside-the-server/audit-and-logging/)
+  goes deeper.
 - Text that third parties wrote, such as a mail body, is cleaned and marked as
   untrusted before the agent gets it. See
   [One tool call, step by step][cleaned].

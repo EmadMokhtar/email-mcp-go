@@ -182,8 +182,8 @@ itself.
 
 So a tool that you add gets the check from its use case. That use case must
 call `authorize`, or, for a write, `authorizeWrite` (alone or through
-`begin`). The page "Permissions" in the group
-"Inside the server" explains `policy.Decide`.
+`begin`). The page [Permissions](/tech/inside-the-server/permissions/) in the
+group "Inside the server" explains `policy.Decide`.
 
 ## Where text from the mail is cleaned
 
@@ -235,11 +235,10 @@ the SDK refused before a handler ran. It calls `service.RecordToolCall` in
 never reaches `capture`, so it has no entry.
 
 The arguments are sealed with the key of the tenant. The arguments `body`,
-`html_body` and `data_base64` are never kept (`omittedArguments`). A failure to
-write the entry does not change the answer of the call. A call without a
-principal has no entry either, because the table needs a tenant, and the
-program log gets a fixed code instead. The page "Activity log and program log"
-in the group "Inside the server" explains the log.
+`html_body` and `data_base64` are never kept (`omittedArguments`). The page
+[Activity log and program log](/tech/inside-the-server/audit-and-logging/) in
+the group "Inside the server" explains the log and the rules for writing to
+it.
 
 ## What differs between stdio and HTTP
 
@@ -247,7 +246,7 @@ in the group "Inside the server" explains the log.
 |---|---|---|
 | Transport | `mcp.IOTransport` in `serveStdio` | `limitRequests`, the checks of `httpserve.Handler`, then the SDK handler in stateless mode (the server keeps nothing between two requests) |
 | Principal | `localPrincipal`: the tenant `local`, no scope limit | `httpserve.Principal`: the tenant and the scopes of the token. The scopes are a list that is never nil, so a token never means "no limit". |
-| A question in the chat | The client may show the confirmation form, where the person answers yes or no (`InBandConfirm` is true) | Only with a token made with `--in-band-confirm`. Other callers get a link to the approval page: the page of the web portal where the person approves or rejects an action. |
+| A question in the chat | The client may show the confirmation form, where the person answers yes or no (`InBandConfirm` is true) | Only with a token that may confirm in band: one made with `--in-band-confirm`, or with the box "Let this app ask me in its own window" in the web portal. Other callers get a link to the approval page: the page of the web portal where the person approves or rejects an action. |
 
 Steps 2 to 10 are the same code for both. `serve` builds one server for each
 transport with `App.MCPServer`, with a different `mcpserver.Options`.
@@ -269,7 +268,8 @@ additions:
   A send with no undo window runs inside its tool call, and that is why
   `trackToolCalls` counts the call.
 
-The page "The send flow" in the group "Inside the server" explains this path.
+The page [The send flow](/tech/inside-the-server/send-flow/) in the group
+"Inside the server" explains this path.
 
 ## Related pages
 
