@@ -5,14 +5,12 @@ name: Pages
 # result is deployed.
 #
 # Two ways to start it:
-#   - workflow_call lets release.yml call it as its last job, after the
-#     release job succeeds. Then a failed release publishes nothing, and the
-#     site never points to files that do not exist yet. A called workflow
-#     cannot get more permissions than its caller gives it, so the job in the
-#     caller needs "pages: write" and "id-token: write". release.yml has no
-#     such job before the cutover of the docs plan (Task 24 of
-#     docs/superpowers/plans/2026-11-06-docs-site.md), so until then a release
-#     does not publish the site.
+#   - workflow_call lets release.yml call it as its last job, "publish the
+#     site", after the release job succeeds. Then a failed release publishes
+#     nothing, and the site never points to files that do not exist yet. A
+#     pre-release tag skips that job. A called workflow cannot get more
+#     permissions than its caller gives it, so the job in the caller needs
+#     "pages: write" and "id-token: write".
 #   - workflow_dispatch starts it by hand, for the first launch and for urgent
 #     fixes. It publishes whatever is on the chosen branch or tag, also work
 #     that is not released.

@@ -14,17 +14,20 @@ name: Release
 #   - the Homebrew cask in github.com/EmadMokhtar/homebrew-tap;
 #   - the container image ghcr.io/emadmokhtar/email-mcp;
 #   - GitHub build-provenance attestations for every file in checksums.txt
-#     and for the image.
+#     and for the image;
+#   - the docs site on GitHub Pages, through pages.yml, but not for a
+#     pre-release tag.
 #
 # It needs one secret, HOMEBREW_TAP_GITHUB_TOKEN: a token that may push to the
-# tap repository (see the README, "Making a release").
+# tap repository (see "Once, before the first release" in
+# site/content/tech/work-on-the-code/release-process.md).
 on:
   push:
     tags:
       - "v*"
 
-# Read-only by default. Only the release job gets write permissions, and only
-# the ones it needs.
+# Read-only by default. Only the release job and the site job get write
+# permissions, and only the ones they need.
 permissions:
   contents: read
 
@@ -84,7 +87,8 @@ jobs:
     timeout-minutes: 60
     # A deployment environment. Keep HOMEBREW_TAP_GITHUB_TOKEN as a secret of
     # this environment, and allow only tags v* to deploy to it: then no other
-    # workflow or branch can read the token (see the README).
+    # workflow or branch can read the token (see
+    # site/content/tech/work-on-the-code/release-process.md).
     environment: release
     permissions:
       contents: write # create the GitHub release and upload its files
@@ -139,7 +143,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
-      # Check the signature the same way the README tells users to check it.
+      # Check the signature the same way the user manual tells users to check
+      # it (site/content/manual/reference/verify-a-release.md).
       - name: verify the signature of checksums.txt
         env:
           IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}
@@ -178,3 +183,24 @@ jobs:
           # Storage records exist only for repositories of an organization.
           # This repository belongs to a user.
           create-storage-record: false
+
+  # Publishes the docs site after the release, so the site never points to
+  # files that do not exist yet. pages.yml builds the site from this tag and
+  # deploys it. A called workflow cannot get more permissions than this job
+  # gives it, so the job gives what the jobs of pages.yml need. The environment
+  # github-pages must allow tags that match v* to deploy (an owner setting).
+  #
+  # A pre-release tag, such as v0.2.0-rc.1, has a "-" in its name and skips
+  # this job, because Homebrew and the latest image do not get that version
+  # either (see .goreleaser.yaml). The job runs only when the release job
+  # succeeded. When the job fails, the release stays published: re-run the
+  # failed jobs of this run, or start pages.yml by hand on the tag.
+  site:
+    name: publish the site
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    permissions:
+      contents: read # check out the code
+      pages: write # deploy the site; it also lets configure-pages read the settings
+      id-token: write # prove to Pages that the deploy comes from this workflow
+    uses: ./.github/workflows/pages.yml
