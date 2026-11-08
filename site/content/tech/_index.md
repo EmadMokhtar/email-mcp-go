@@ -143,6 +143,7 @@ the language of web pages and of many mails.
 | What does CI (continuous integration: the checks that GitHub runs on each push) run? | [Local development](/tech/work-on-the-code/local-development/#what-ci-runs) |
 | How do I add a tool, a command, a migration or a package? | [Local development](/tech/work-on-the-code/local-development/#add-code) |
 | Which conventions does the code follow? | [Local development](/tech/work-on-the-code/local-development/#rules-of-the-code) |
+| Which page of the docs do I update when I change the code? | [Local development](/tech/work-on-the-code/local-development/#which-page-do-i-update) |
 | Which kinds of test exist, and what does each one prove? | [Testing](/tech/work-on-the-code/testing/#the-kinds-of-test) |
 | How do I test code that talks to IMAP, SMTP or the web portal (the pages that email-mcp shows in the browser)? | [Testing](/tech/work-on-the-code/testing/#test-servers) |
 | What is in `internal/e2e`? | [Testing](/tech/work-on-the-code/testing/#the-end-to-end-tests) |

@@ -1,6 +1,6 @@
 ---
 title: Local development
-description: How to build, test and lint email-mcp, what CI runs, the rules of the code, how to add a tool, a command, a migration or a package, and how to build the docs site and the container image.
+description: How to build, test and lint email-mcp, what CI runs, the rules of the code, how to add a tool, a command, a migration or a package, which docs page to update, and how to build the docs site and the container image.
 weight: 10
 code_areas:
   - Makefile
@@ -28,6 +28,9 @@ code_areas:
   - internal/testutil/chrometest/chrometest.go
   - site/layouts/_shortcodes/screenshot.html
   - test/sitecheck/main.go
+  - test/docscheck/main.go
+  - .github/workflows/docs-check.yml
+  - .github/pull_request_template.md
   - Dockerfile
   - .dockerignore
 ---
@@ -35,8 +38,8 @@ code_areas:
 This page explains how to build, test and change the code of email-mcp on your
 own computer. It names the make targets, the Go version, the checks of CI
 (continuous integration: the checks that GitHub runs on each push), the rules
-of the code, and the steps to add a tool, a command, a migration or a package.
-Read it before your first change.
+of the code, the steps to add a tool, a command, a migration or a package, and
+which page of the docs to update. Read it before your first change.
 
 ## The make targets
 
@@ -127,7 +130,8 @@ change a workflow:
 
 The interop test runs in its own workflow. The page
 [Testing](/tech/work-on-the-code/testing/#what-ci-and-the-release-run) lists
-what each workflow runs.
+what each workflow runs. The docs check also runs in its own workflow (see
+[Which page do I update?](#which-page-do-i-update)).
 
 ## Dependabot
 
@@ -283,7 +287,8 @@ the stored passwords.
 ### Add a package
 
 1. Put it in the layer that its imports allow, and add its row to
-   [Map of packages](/tech/start-here/package-map/#all-packages).
+   [Map of packages](/tech/start-here/package-map/#all-packages) and to the
+   maps of [Which page do I update?](#which-page-do-i-update).
 2. Write or change the tech docs page that explains it, and add its path to the
    `code_areas` of that page (the list of the code that a page covers).
 3. A file with a build tag that is not one of `interop`, `screenshots` and
@@ -291,6 +296,299 @@ the stored passwords.
    `ci.yml`, and in `build-tags` of `.golangci.yml`. Otherwise no linter reads
    the file. A file with one of the three tags needs no change, because each
    linter reads every package with them.
+
+## Which page do I update?
+
+A change of the code can make a page of the docs wrong. The site has two kinds
+of docs: the user manual, for the person who uses email-mcp, and the tech docs,
+for the people who change the code. The two maps below say which pages to read
+for each part of the code. The docs check, a check on each pull request, fails
+when a change of the program leaves out one of the two kinds.
+
+### The docs check
+
+The workflow {{< src ".github/workflows/docs-check.yml" >}} (a workflow is a
+file of steps that GitHub runs) has the job `docs check`. The job runs when a
+pull request is opened or reopened, when it gets a new commit, and when a label
+is added or removed. A label is a short name that a person attaches to a pull
+request. The job gives the list of the files that the pull request changes to
+{{< src "test/docscheck/main.go" >}}. A moved file counts with its old path and
+its new path, so a file that moves out of `internal/` still counts.
+
+First, the check looks for a change of behaviour (of what the program does). A
+change counts as behaviour when it touches:
+
+- a Go file in `cmd/` or `internal/` that is not a test file (a file whose name
+  ends in `_test.go`);
+- any file in `internal/web/templates/`, `internal/web/static/` or
+  `internal/store/migrations/`. The program embeds files of these folders
+  (builds them into the binary). The check counts every file in them, whatever
+  its type.
+
+Files in `internal/testutil/`, `internal/e2e/` and `internal/thirdparty/` do
+not count. No other file counts either, such as the Makefile, a workflow or a
+page of the site.
+
+Then, if behaviour changed, the pull request must do both of these:
+
+- change a file under `site/content/manual/`, or carry the label
+  `no-manual-change`;
+- change a file under `site/content/tech/`, or carry the label
+  `no-tech-docs-change`.
+
+The landing page (`site/content/_index.md`) is in neither folder, so it does
+not count as docs. When a part is missing, the job fails. Its message names the
+missing part and the label that would clear it.
+
+The check sees folders, not pages: a change of any file under
+`site/content/manual/` clears the manual part. So the check cannot tell you
+which page to change. The maps below do that.
+
+The check also fails when it cannot check, with a message that starts with
+`docscheck:`. This happens, for example, when it reads no changed file. The job
+fails too when `gh` (the GitHub command line tool) cannot read the pull request
+from GitHub. It also happens when the pull request changes more than 3000
+files, because the GitHub API (here, the web service that lists the files)
+lists no more. In that case, check the docs by hand.
+
+The job reads the labels from GitHub when it runs, not from the event that
+started it. So "Re-run jobs" on an old run uses the labels that the pull
+request has when the job runs again.
+
+You can run the check on your own computer, from the root of the repository.
+`origin/main` is your copy of the branch `main` of GitHub, so run
+`git fetch origin` first to bring it up to date. The command sees only commits,
+so commit your change first. With no commit, the check reads no file and
+cannot run. The command lists the files that your commits change since your
+branch left `origin/main`. The `|` (a
+pipe) gives that list to the check as its standard input (the text that a
+program reads). `--name-only` prints only the paths. `--no-renames` lists a
+moved file as two paths, the old one and the new one, as the job does.
+`origin/main...` (three dots) compares your last commit with the commit where
+your branch left `origin/main`. `go run ./test/docscheck` builds the check and
+runs it:
+
+```sh
+git diff --name-only --no-renames origin/main... | go run ./test/docscheck
+```
+
+It prints nothing and exits with 0 (the code that means success) when nothing
+is missing. A missing part ends with the line `exit status 1`, and a check that
+could not run ends with `exit status 2`. In both cases the `go run` command
+itself exits with 1, so read the message.
+
+The check reads the labels from the variable `PR_LABELS`, a JSON (JavaScript
+Object Notation) array of names. This command runs the same check as if the
+pull request had the label `no-manual-change`. The variable is set for `go run`
+only, so it comes after the `|`:
+
+```sh
+git diff --name-only --no-renames origin/main... |
+  PR_LABELS='["no-manual-change"]' go run ./test/docscheck
+```
+
+### The two labels
+
+Add a label only after you read the pages of the maps below, and none of them
+needs a change:
+
+- `no-manual-change`: the person who uses email-mcp sees no change in what it
+  does, and no step of the manual changes. A change that alters only the look
+  of a web page can carry it too: `make site` makes the images of the manual
+  again when the code changed, so the images show the changed look.
+- `no-tech-docs-change`: no sentence of a tech docs page becomes wrong.
+
+There are two labels, not one. One label would clear both parts. Then a pull
+request that updated the tech docs could skip the manual with it.
+
+In this repository, only people with write access can add a label. If you have
+no write access, say in the pull request why a label fits, and a maintainer
+adds it.
+
+The pull request template {{< src ".github/pull_request_template.md" >}} adds
+two checkboxes, one for each kind of docs, and a link to this section. GitHub
+fills it in when you open a pull request on github.com. A pull request that a
+tool opens with its own text does not get it. The docs check runs in both
+cases.
+
+### Map of the tech docs
+
+Each row names a code area, its main page, and other pages that may need a
+change. Each tech docs page also lists the code that it covers, at its end,
+under "Code covered by this page". The docs check does not count
+`internal/e2e`, `internal/testutil` and `internal/thirdparty`, but they are in
+the map so that you can find their page. Two pages are named Local HTTP mode,
+one in each part of the docs. HTTP (HyperText Transfer Protocol: the protocol
+of web servers) is one of the two ways that an AI app talks to the server.
+
+| Code area | Main tech page | Also check |
+|---|---|---|
+| `cmd/email-mcp` | [The command line][t-cli] | [Startup and shutdown][t-startup], [Local HTTP mode][t-http] |
+| `internal/app` | [Startup and shutdown][t-startup] | [Storage and secrets][t-storage], [The send flow][t-send] |
+| `internal/audit` | [Activity log and program log][t-audit] | [Storage and secrets][t-storage] |
+| `internal/confirm` | [The send flow][t-send] | [Security design][t-security] |
+| `internal/connect` | [Connecting an account][t-connect] | [The command line][t-cli], [The web portal][t-portal] |
+| `internal/discovery` | [Connecting an account][t-connect] | |
+| `internal/domain/account` | [Permissions][t-perm] | [Storage and secrets][t-storage] |
+| `internal/domain/mail` | [The mail backend][t-backend] | [One tool call, step by step][t-call] |
+| `internal/e2e` | [Testing][t-testing] | [Security design][t-security], this page |
+| `internal/errtype` | [Activity log and program log][t-audit] | |
+| `internal/httpserve` | [Local HTTP mode][t-http] | [One tool call, step by step][t-call] |
+| `internal/inflight` | [Startup and shutdown][t-startup] | |
+| `internal/mcpserver` | [One tool call, step by step][t-call] | [The send flow][t-send], [Activity log and program log][t-audit], this page |
+| `internal/mime` | [Mail content][t-content] | [Building mail][t-building], [Security design][t-security] |
+| `internal/outbox` | [The send flow][t-send] | [Startup and shutdown][t-startup] |
+| `internal/policy` | [Permissions][t-perm] | |
+| `internal/provider/imapsmtp` | [The mail backend][t-backend] | [One tool call, step by step][t-call] |
+| `internal/secrets` | [Storage and secrets][t-storage] | [Security design][t-security] |
+| `internal/service` | [One tool call, step by step][t-call] | [The send flow][t-send], [Permissions][t-perm] |
+| `internal/signing` | [Security design][t-security] | [The send flow][t-send], [The web portal][t-portal] |
+| `internal/store` | [Storage and secrets][t-storage] | |
+| `internal/testutil/chrometest` | [Testing][t-testing] | this page |
+| `internal/testutil/imaptest` | [Testing][t-testing] | |
+| `internal/testutil/smtptest` | [Testing][t-testing] | |
+| `internal/testutil/webtest` | [Testing][t-testing] | |
+| `internal/thirdparty/xhtml` | [Mail content][t-content] | [Map of packages][t-packages] |
+| `internal/tokens` | [Local HTTP mode][t-http] | [Permissions][t-perm] |
+| `internal/version` | [Making a release][t-release] | |
+| `internal/web` | [The web portal][t-portal] | [Permissions][t-perm], [The send flow][t-send] |
+
+`internal/service` is large, so several pages explain it. Choose the page by
+the file:
+
+- `send.go`, `write.go`, `queue.go` and `approvals.go`: [The send
+  flow][t-send];
+- `service.go`, `read.go` and `principal.go`: [One tool call, step by
+  step][t-call];
+- `calls.go`: [Activity log and program log][t-audit];
+- `tokens.go`: [Local HTTP mode][t-http];
+- `accounts.go`: [Permissions][t-perm] for the settings and the risk
+  acceptance, and [Connecting an account][t-connect] for connecting an account;
+- `reconnect.go`: [Connecting an account][t-connect];
+- `backends.go`: [The mail backend][t-backend];
+- `links.go`: [Permissions][t-perm].
+
+`internal/mime` has two pages. Choose the page by the file:
+
+- `build.go`, `body.go`, `recipients.go`, `draft.go` and `address.go`:
+  [Building mail][t-building];
+- the other files: [Mail content][t-content].
+
+These files and folders are not Go packages. The docs check counts the files of
+the first three rows. It does not count the other rows.
+
+| File or folder | Main tech page | Also check |
+|---|---|---|
+| `internal/store/migrations/` | [Storage and secrets][t-storage] | this page |
+| `internal/web/templates/`, `internal/web/static/` | [The web portal][t-portal] | |
+| `internal/web/templates/approval.html` | [The web portal][t-portal] | [The send flow][t-send] |
+| `Makefile` | this page | [Testing][t-testing] |
+| `.golangci.yml`, `.go-version`, `.github/copilot-instructions.md` | this page | |
+| `go.mod`, `.github/dependabot.yml` | this page | [Map of packages][t-packages] |
+| `.github/workflows/ci.yml` | this page | [Testing][t-testing] |
+| `.github/workflows/docs-check.yml`, `test/docscheck/`, `.github/pull_request_template.md` | this page | |
+| `test/sitecheck/` | this page | [Testing][t-testing] |
+| `.github/workflows/interop.yml`, `test/interop/` | [Testing][t-testing] | |
+| `.github/workflows/release-please.yml`, `.github/workflows/pages.yml` | [Making a release][t-release] | |
+| `.github/workflows/release.yml` | [Making a release][t-release] | [Testing][t-testing] |
+| `.goreleaser.yaml`, `release-please-config.json`, `.release-please-manifest.json`, `server.json`, `CHANGELOG.md` | [Making a release][t-release] | |
+| `Dockerfile` | [Making a release][t-release] | this page |
+| `.dockerignore` | this page | |
+| `DESIGN.md`, `PRODUCT.md` | [The web portal][t-portal] | |
+
+The landing page of the site has a drawing of the approval page, in
+`site/layouts/_partials/approval-picture.html`. A change of
+`internal/web/templates/approval.html` may need the same change in the drawing.
+The test `TestLandingPictureLabelsMatchPortal` in
+`internal/web/landing_labels_test.go` compares a fixed list of labels of the
+approval page and of the drawing, and fails until both say the same.
+
+A new package gets a row in this map in the same pull request, and a row in
+[Map of packages](/tech/start-here/package-map/#all-packages). It also gets a
+row in the map of the user manual below, or a place in its list of areas with
+no manual page. A new file in `internal/service` or `internal/mime` gets a line
+in the list of its package above.
+
+### Map of the user manual
+
+Each row names a part of the code and the manual pages that may need a change.
+The manual pages also list their code in `code_areas`, but they do not show the
+list.
+
+| Code | Manual pages |
+|---|---|
+| `cmd/email-mcp/main.go` (the list of commands, the help) | [Commands][m-commands], [Install email-mcp][m-install] |
+| `cmd/email-mcp/serve.go` | [Commands][m-commands], [Local HTTP mode][m-http], [Containers][m-containers], [Connect an AI app][m-apps] and its five app pages |
+| `cmd/email-mcp/setup.go` | [Connect your first account][m-connect], [The web pages][m-web], [Commands][m-commands] |
+| `cmd/email-mcp/account.go`, `connect.go` | [Connect your first account][m-connect], [Manage accounts][m-manage], [Commands][m-commands] |
+| `cmd/email-mcp/reconnect.go` | [Connect your first account][m-connect], [Manage accounts][m-manage], [Commands][m-commands], [Known limitations][m-limits] |
+| `cmd/email-mcp/token.go` | [Local HTTP mode][m-http], [Commands][m-commands] |
+| `cmd/email-mcp/outbox.go` | [Activity and undo][m-activity], [Commands][m-commands] |
+| `cmd/email-mcp/importenv.go` | [Moving from the old email-mcp][m-move], [Commands][m-commands] |
+| `cmd/email-mcp/key.go` | [The master key][m-key], [Commands][m-commands] |
+| `cmd/email-mcp/doctor.go` | [Your first use][m-first], [Troubleshooting][m-trouble], [The master key][m-key], [Commands][m-commands] |
+| `cmd/email-mcp/console.go` (the flags that all commands share) | [Commands][m-commands], [Where the data lives][m-data] |
+| `internal/mcpserver/read_tools.go`, `write_tools.go` | [What the agent can do][m-agent], [Permission levels][m-levels] |
+| `internal/mcpserver/shape.go` | [What the agent can do][m-agent], [Known limitations][m-limits] |
+| `internal/mcpserver/server.go` (`Instructions`, the text that the server sends to the agent) | [What the agent can do][m-agent] |
+| `internal/mcpserver/elicit.go` | [Confirmations][m-confirm], [How each AI app confirms][m-app-confirm], [Your first use][m-first], [Connect an AI app][m-apps] and its five app pages |
+| `internal/mcpserver/errors.go` | [Troubleshooting][m-trouble] |
+| `internal/mcpserver/capture.go` | [Activity and undo][m-activity] |
+| `internal/policy/policy.go` | [Permission levels][m-levels], [Local HTTP mode][m-http] |
+| `internal/policy/limiter.go` | [Full autonomy, limits and settings][m-autonomy] |
+| `internal/domain/account` | [Permission levels][m-levels], [Full autonomy, limits and settings][m-autonomy], [Your first use][m-first] |
+| `internal/tokens` | [Local HTTP mode][m-http] |
+| `internal/httpserve` | [Local HTTP mode][m-http], [How each AI app confirms][m-app-confirm] |
+| `internal/confirm` | [Confirmations][m-confirm], [How each AI app confirms][m-app-confirm] |
+| `internal/outbox` | [Full autonomy, limits and settings][m-autonomy], [Activity and undo][m-activity], [Known limitations][m-limits] |
+| `internal/audit` (the activity log) | [Activity and undo][m-activity] |
+| `internal/web/server.go` (the routes), `templates/layout.html` (the menu) | [The web pages][m-web] |
+| `internal/web/session.go`, `guard.go`, `links.go` | [Connect your first account][m-connect], [The web pages][m-web], [Security][m-security] |
+| `internal/web/accounts.go` | [Connect your first account][m-connect], [The web pages][m-web] |
+| `internal/web/templates/connect.html` | [Connect your first account][m-connect] |
+| `internal/web/templates/accounts.html` | [Manage accounts][m-manage], [The web pages][m-web], [Connect your first account][m-connect], [Permission levels][m-levels] |
+| `internal/web/settings.go`, `templates/settings.html` | [Permission levels][m-levels], [Full autonomy, limits and settings][m-autonomy], [Manage accounts][m-manage]; `settings.go` also [Your first use][m-first] |
+| `internal/web/reconnect.go`, `templates/reconnect.html` | [Manage accounts][m-manage] |
+| `internal/web/approvals.go`, `templates/approval.html`, `templates/approvals.html` | [Confirmations][m-confirm], [The web pages][m-web]; `approvals.go` and `approval.html` also [Your first use][m-first] |
+| `internal/web/activity.go`, `templates/activity.html` | [Activity and undo][m-activity] |
+| `internal/web/connections.go`, `templates/connections.html` | [Local HTTP mode][m-http], [The web pages][m-web] |
+| `internal/web/templates/no_session.html`, `use_name.html` | [Connect your first account][m-connect], [Troubleshooting][m-trouble], [The web pages][m-web] |
+| `internal/mime` | [What the agent can do][m-agent], [Security][m-security], [Known limitations][m-limits] |
+| `internal/provider/imapsmtp` | [What the agent can do][m-agent], [Connect your first account][m-connect], [Troubleshooting][m-trouble] |
+| `internal/discovery` | [Connect your first account][m-connect], [Manage accounts][m-manage] |
+| `internal/connect` | [Connect your first account][m-connect], [Manage accounts][m-manage], [Troubleshooting][m-trouble] |
+| `internal/secrets` | [The master key][m-key], [Where the data lives][m-data], [Recommended Claude Code deny rules][m-deny], [Troubleshooting][m-trouble] |
+| `internal/app/kek.go` | [The master key][m-key], [Where the data lives][m-data], [Containers][m-containers] |
+| `internal/app/app.go` | [Where the data lives][m-data], [Activity and undo][m-activity], [Recommended Claude Code deny rules][m-deny] |
+| `internal/store` | [Where the data lives][m-data], [Troubleshooting][m-trouble] |
+| `internal/version` | [Install email-mcp][m-install] |
+| `.goreleaser.yaml` | [Install email-mcp][m-install], [Verifying a release][m-verify] |
+| `.github/workflows/release.yml` | [Verifying a release][m-verify] |
+| `Dockerfile` | [Containers][m-containers] |
+
+These areas have no manual page: `internal/service`, `internal/domain/mail`,
+`internal/signing`, `internal/inflight`, `internal/errtype`,
+`internal/thirdparty`, `internal/e2e` and `internal/testutil`. A change in
+`internal/service` reaches the person through a tool or a web page, so use the
+row of that tool or page. A file with no row, such as a file of
+`internal/web/static/` or another file of `internal/app`, has no manual page of
+its own. If a person can see its change, update the page that shows that screen
+or that behaviour.
+
+### Find the pages that name a path
+
+The maps name the pages to read first. A search finds the pages that contain a
+path, in their `code_areas` (the list of code in the front matter, the block of
+settings at the top of the file) or in their text. Run it from the root of the
+repository. `grep -rl` prints the name of each file that holds the text (`-r`:
+in every folder below, `-l`: only the names of the files):
+
+```sh
+grep -rl 'internal/outbox/' site/content
+```
+
+A page may name a file by its short name only, such as `outbox.go`, so search
+for the short name too.
 
 ## The docs site
 
@@ -442,3 +740,43 @@ data on a volume, keep the key file in a different place from the database.
 [permission]: /tech/start-here/tool-call/#where-the-permission-is-checked
 [publish]: /tech/work-on-the-code/release-process/#how-the-site-is-published
 [image]: /tech/work-on-the-code/release-process/#the-container-image
+[t-packages]: /tech/start-here/package-map/
+[t-call]: /tech/start-here/tool-call/
+[t-send]: /tech/inside-the-server/send-flow/
+[t-perm]: /tech/inside-the-server/permissions/
+[t-storage]: /tech/inside-the-server/storage-and-secrets/
+[t-audit]: /tech/inside-the-server/audit-and-logging/
+[t-startup]: /tech/inside-the-server/startup-and-shutdown/
+[t-backend]: /tech/mail/mail-backend/
+[t-connect]: /tech/mail/connecting-an-account/
+[t-content]: /tech/mail/mail-content/
+[t-building]: /tech/mail/building-mail/
+[t-cli]: /tech/ways-in/command-line/
+[t-http]: /tech/ways-in/local-http/
+[t-portal]: /tech/ways-in/web-portal/
+[t-security]: /tech/security/security-design/
+[t-testing]: /tech/work-on-the-code/testing/
+[t-release]: /tech/work-on-the-code/release-process/
+[m-install]: /manual/getting-started/install/
+[m-connect]: /manual/getting-started/connect-account/
+[m-apps]: /manual/getting-started/connect-ai-app/
+[m-first]: /manual/getting-started/first-use/
+[m-agent]: /manual/daily-use/what-the-agent-can-do/
+[m-web]: /manual/daily-use/web-pages/
+[m-levels]: /manual/daily-use/permission-levels/
+[m-confirm]: /manual/daily-use/confirmations/
+[m-app-confirm]: /manual/daily-use/app-confirmation/
+[m-autonomy]: /manual/daily-use/full-autonomy-and-limits/
+[m-activity]: /manual/daily-use/activity-and-undo/
+[m-security]: /manual/daily-use/security/
+[m-deny]: /manual/daily-use/deny-rules/
+[m-manage]: /manual/daily-use/manage-accounts/
+[m-trouble]: /manual/daily-use/troubleshooting/
+[m-commands]: /manual/reference/commands/
+[m-key]: /manual/reference/master-key/
+[m-http]: /manual/reference/local-http-mode/
+[m-containers]: /manual/reference/containers/
+[m-data]: /manual/reference/data-folder/
+[m-limits]: /manual/reference/known-limitations/
+[m-move]: /manual/reference/move-from-old-version/
+[m-verify]: /manual/reference/verify-a-release/
