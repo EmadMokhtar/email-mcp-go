@@ -278,7 +278,7 @@ and stops them also when the test failed.
 |---|---|---|
 | {{< src ".github/workflows/ci.yml" >}} | each push and each pull request | the five jobs of [What CI runs](/tech/work-on-the-code/local-development/#what-ci-runs): the tests with `-race`, the linters with the three tags, `goreleaser check`, govulncheck (a check for known vulnerabilities), and `make site`, which runs the screenshot, layout and site tests |
 | {{< src ".github/workflows/interop.yml" >}} | each night, each `v*` tag, by hand | the interop test with `-race -count=1` |
-| {{< src ".github/workflows/release.yml" >}} | each `v*` tag | `go vet ./...` without tags, `go test -race ./...`, govulncheck and the version check of `server.json`, before it builds anything |
+| {{< src ".github/workflows/release.yml" >}} | each `v*` tag | `go vet ./...` without tags, `go test -race ./...`, govulncheck and the version check of `server.json`, before it builds anything; after the release, `make site` through `pages.yml`, except for a pre-release tag |
 
 The interop run of a tag does not stop the release. Look at its result before
 you approve the deployment.
