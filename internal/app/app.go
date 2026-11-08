@@ -572,10 +572,12 @@ func (a *App) logJobError(ctx context.Context, job string, err error) {
 //   - the service refuses new sends, Trash moves and approvals
 //     (service.ErrStopping); an action that waits for approval keeps waiting;
 //   - every new tool call of the servers of MCPServer is refused, cancel_send
-//     included. So an agent of this process cannot undo a queued send any more,
-//     and the web page has no undo button either. Only another email-mcp
-//     process that uses the same data directory can still cancel a queued send,
-//     before the drain of Close sends it;
+//     included. So an agent of this process cannot undo a queued send any more.
+//     The user still can, before the drain of Close sends it: when the web
+//     server of this process runs, the Cancel button of the activity page still
+//     works (Service.CancelQueuedSend does not check the stop), and the web
+//     server runs until the drain ends. Another email-mcp process that uses the
+//     same data directory can cancel it too ("email-mcp outbox cancel");
 //   - Run does nothing;
 //   - if the stop takes longer than a second, one log line says so.
 //
@@ -603,10 +605,11 @@ func (a *App) BeginStop() {
 //  3. It waits for the tool calls and the service actions that run (a send
 //     without an undo window runs inside its tool call or its web approval).
 //  4. Outbox.Drain for 5 minutes: it sends the queued messages that are due, or
-//     that become due within 5 minutes. The web server is still up, so the user
-//     can still reject an action that waits for approval (approvals are
-//     refused). Nothing in this process can undo a queued send now (see
-//     BeginStop). When ctx has a deadline, the drain starts no
+//     that become due within 5 minutes. When this process runs its web server,
+//     the web server is still up, so the user can still reject an action that
+//     waits for approval (approvals are refused), and can still cancel a queued
+//     send on the activity page. Tool calls are refused, so an agent cannot
+//     cancel it (see BeginStop). When ctx has a deadline, the drain starts no
 //     send later than outbox.SendDeadline before it, so every send it starts
 //     ends in time. When that time is over, the messages that are left stay
 //     queued for the next start: the stop is still clean, and Close logs it.

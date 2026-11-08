@@ -62,7 +62,8 @@ var (
 type BuildContext struct {
 	// From is the sender. Its Email is the envelope sender too.
 	From mail.Address
-	// Self lists the addresses of the user. A reply to all leaves them out.
+	// Self lists the addresses of the user. A reply to all removes them from
+	// To and Cc, but not from Bcc (see Build).
 	Self []string
 	// Original is the message that a reply answers or a forward sends on. It
 	// must be set for a reply or a forward, and is not used otherwise.
@@ -116,8 +117,10 @@ type BuildContext struct {
 //
 // A reply goes to the Reply-To addresses of the original, or else to its
 // sender. A reply to all also copies the To and Cc addresses of the original
-// to Cc. Addresses in BuildContext.Self are then removed from To and Cc.
-// Compose.To, Cc and Bcc are added to those. The reply gets In-Reply-To and
+// to Cc. Then Compose.To, Cc and Bcc are added to To, Cc and Bcc. For a reply
+// to all, the addresses in BuildContext.Self are then removed from To and Cc.
+// This also removes a Self address that the caller gave in Compose.To or Cc.
+// Self addresses are not removed from Bcc. The reply gets In-Reply-To and
 // References headers. Build does not quote the original text.
 //
 // A forward puts the text of the original under a short "Forwarded message"
