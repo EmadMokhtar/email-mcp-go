@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 756" role="img">
+  <title>The checks of a request to serve --http</title>
+  <desc>The steps of a request to serve --http, from top to bottom. A refused request gets a fixed text and a fixed log code. 1, limitRequests in serve.go lets at most 8 requests run at once (maxConcurrentRequests). A request over the limit waits up to 30 seconds (requestQueueWait) before its body is read, and then gets 503 Service Unavailable with Retry-After: 1, log code too_many_requests. 2, the Host check of httpserve: the connection came in on a loopback address, and the Host header is exactly localhost, 127.0.0.1 or [::1] with the port of the connection. Else 403 Forbidden, log code bad_host. 3, the Origin check: no Origin header, or exactly one whose value is in the allow-list of --allow-origin. Else 403 Forbidden, log code bad_origin. 4, the stated body size: a Content-Length over 15 MiB (MaxBodyBytes) gets 413 Content Too Large, log code body_too_large. 5, the bearer token, checked by tokens.Manager.Verify: a bad token gets 401 Unauthorized, log code invalid_token, and a check that fails for another reason gets 500 with the text internal error, log code token_check_failed. 6, readBody reads the whole body: over 15 MiB it gets 413, log code body_too_large, and a body that cannot be read gets 400 Bad Request, log code body_unreadable. 7, the MCP handler of the SDK, in stateless mode: the server keeps no session between two requests. 8, the middleware: trackToolCalls, capture and the multi round-trip middleware of the SDK. 9, the tool: safe, the tool handler, then service. Steps 8 and 9 are the same as on stdio.</desc>
+
+  <!-- This file is the source of the drawing: edit it by hand. A short script
+       placed the first coordinates, and that script is not kept. The
+       classes are in site/assets/css/site.css. -->
+
+  <rect class="d-box" x="20" y="16" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="35" text-anchor="middle" dominant-baseline="central">1 limitRequests</text>
+  <text class="d-soft" x="220" y="54" text-anchor="middle" dominant-baseline="central">at most 8 at once; a wait of up to 30 seconds</text>
+  <path class="d-line" d="M220 72V96M214 88L220 96L226 88"/>
+  <path class="d-line d-bad" d="M420 44H460M452 38L460 44L452 50"/>
+  <rect class="d-box d-bad" x="460" y="16" width="240" height="56" rx="8"/>
+  <text class="d-text" x="580" y="35" text-anchor="middle" dominant-baseline="central">503 Service Unavailable</text>
+  <text class="d-soft" x="580" y="54" text-anchor="middle" dominant-baseline="central">too_many_requests</text>
+  <rect class="d-box" x="20" y="96" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="115" text-anchor="middle" dominant-baseline="central">2 Host</text>
+  <text class="d-soft" x="220" y="134" text-anchor="middle" dominant-baseline="central">loopback connection, exact Host header</text>
+  <path class="d-line" d="M220 152V176M214 168L220 176L226 168"/>
+  <path class="d-line d-bad" d="M420 124H460M452 118L460 124L452 130"/>
+  <rect class="d-box d-bad" x="460" y="96" width="240" height="56" rx="8"/>
+  <text class="d-text" x="580" y="115" text-anchor="middle" dominant-baseline="central">403 Forbidden</text>
+  <text class="d-soft" x="580" y="134" text-anchor="middle" dominant-baseline="central">bad_host</text>
+  <rect class="d-box" x="20" y="176" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="195" text-anchor="middle" dominant-baseline="central">3 Origin</text>
+  <text class="d-soft" x="220" y="214" text-anchor="middle" dominant-baseline="central">none, or one in the --allow-origin list</text>
+  <path class="d-line" d="M220 232V256M214 248L220 256L226 248"/>
+  <path class="d-line d-bad" d="M420 204H460M452 198L460 204L452 210"/>
+  <rect class="d-box d-bad" x="460" y="176" width="240" height="56" rx="8"/>
+  <text class="d-text" x="580" y="195" text-anchor="middle" dominant-baseline="central">403 Forbidden</text>
+  <text class="d-soft" x="580" y="214" text-anchor="middle" dominant-baseline="central">bad_origin</text>
+  <rect class="d-box" x="20" y="256" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="275" text-anchor="middle" dominant-baseline="central">4 Stated body size</text>
+  <text class="d-soft" x="220" y="294" text-anchor="middle" dominant-baseline="central">Content-Length at most 15 MiB</text>
+  <path class="d-line" d="M220 312V336M214 328L220 336L226 328"/>
+  <path class="d-line d-bad" d="M420 284H460M452 278L460 284L452 290"/>
+  <rect class="d-box d-bad" x="460" y="256" width="240" height="56" rx="8"/>
+  <text class="d-text" x="580" y="275" text-anchor="middle" dominant-baseline="central">413 Content Too Large</text>
+  <text class="d-soft" x="580" y="294" text-anchor="middle" dominant-baseline="central">body_too_large</text>
+  <rect class="d-box" x="20" y="336" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="355" text-anchor="middle" dominant-baseline="central">5 Bearer token</text>
+  <text class="d-soft" x="220" y="374" text-anchor="middle" dominant-baseline="central">verifier: tokens.Manager.Verify</text>
+  <path class="d-line" d="M220 392V416M214 408L220 416L226 408"/>
+  <path class="d-line d-bad" d="M420 364H460M452 358L460 364L452 370"/>
+  <rect class="d-box d-bad" x="460" y="336" width="240" height="56" rx="8"/>
+  <text class="d-text" x="580" y="355" text-anchor="middle" dominant-baseline="central">401 Unauthorized</text>
+  <text class="d-soft" x="580" y="374" text-anchor="middle" dominant-baseline="central">or 500 when the check fails</text>
+  <rect class="d-box" x="20" y="416" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="435" text-anchor="middle" dominant-baseline="central">6 Read the body</text>
+  <text class="d-soft" x="220" y="454" text-anchor="middle" dominant-baseline="central">readBody: at most 15 MiB</text>
+  <path class="d-line" d="M220 472V496M214 488L220 496L226 488"/>
+  <path class="d-line d-bad" d="M420 444H460M452 438L460 444L452 450"/>
+  <rect class="d-box d-bad" x="460" y="416" width="240" height="56" rx="8"/>
+  <text class="d-text" x="580" y="435" text-anchor="middle" dominant-baseline="central">413 or 400</text>
+  <text class="d-soft" x="580" y="454" text-anchor="middle" dominant-baseline="central">body_too_large, body_unreadable</text>
+  <rect class="d-box" x="20" y="496" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="515" text-anchor="middle" dominant-baseline="central">7 SDK handler, stateless</text>
+  <text class="d-soft" x="220" y="534" text-anchor="middle" dominant-baseline="central">no session between two requests</text>
+  <path class="d-line" d="M220 552V576M214 568L220 576L226 568"/>
+  <rect class="d-box" x="20" y="576" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="595" text-anchor="middle" dominant-baseline="central">8 Middleware</text>
+  <text class="d-soft" x="220" y="614" text-anchor="middle" dominant-baseline="central">trackToolCalls, capture, multi round-trip</text>
+  <path class="d-line" d="M220 632V656M214 648L220 656L226 648"/>
+  <rect class="d-box" x="20" y="656" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="675" text-anchor="middle" dominant-baseline="central">9 The tool</text>
+  <text class="d-soft" x="220" y="694" text-anchor="middle" dominant-baseline="central">safe, the tool handler, then service</text>
+  <text class="d-soft" x="360" y="734" text-anchor="middle" dominant-baseline="central">Steps 8 and 9 are the same as on stdio. Each refusal has a fixed text.</text>
+</svg>

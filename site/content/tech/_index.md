@@ -116,3 +116,20 @@ the language of web pages and of many mails.
 | How is an outgoing message built, and what does it refuse? | [Building mail](/tech/mail/building-mail/#what-build-refuses) |
 | How is a saved draft made ready to send? | [Building mail](/tech/mail/building-mail/#a-saved-draft) |
 | Why does the preview start with the text that goes out? | [Building mail](/tech/mail/building-mail/#the-preview-and-the-text-part) |
+| How are the commands registered and tested? | [The command line](/tech/ways-in/command-line/#how-commands-are-registered-and-tested) |
+| Which commands open the parts of the program (the `App`), and how does each one close it? | [The command line](/tech/ways-in/command-line/#what-each-command-opens) |
+| How do the commands handle passwords, prompts and exit codes (the number that a program gives back when it ends)? | [The command line](/tech/ways-in/command-line/#passwords-prompts-and-exit-codes) |
+| What do the web portal and the commands share? | [The command line](/tech/ways-in/command-line/#what-the-commands-share-with-the-web-portal) |
+| How do I add a command? | [The command line](/tech/ways-in/command-line/#add-a-command) |
+| Which checks run before a request of `serve --http` reaches a tool, and in what order? | [Local HTTP mode](/tech/ways-in/local-http/#the-checks-in-order) |
+| How do the access tokens of local HTTP work? | [Local HTTP mode](/tech/ways-in/local-http/#tokens) |
+| Why is the HTTP server stateless (it keeps nothing between two requests), and what does that change? | [Local HTTP mode](/tech/ways-in/local-http/#stateless-mode) |
+| Who gets the question in the chat, and who gets the link to the approval page? | [Local HTTP mode](/tech/ways-in/local-http/#who-gets-which-channel) |
+| How are the size, the time and the number of HTTP requests bounded? | [Local HTTP mode](/tech/ways-in/local-http/#limits-and-timeouts) |
+| How does the HTTP server stop? | [Local HTTP mode](/tech/ways-in/local-http/#how-the-server-stops) |
+| When does the web portal start, and where does it listen? | [The web portal](/tech/ways-in/web-portal/#when-it-starts-and-where-it-listens) |
+| How does a person sign in to the web portal, and why does it have its own host name? | [The web portal](/tech/ways-in/web-portal/#signing-in) |
+| Which checks run on a request to the web portal, and in what order? | [The web portal](/tech/ways-in/web-portal/#the-checks-in-order) |
+| How are the pages, the styles and the one script of the web portal served? | [The web portal](/tech/ways-in/web-portal/#pages-styles-and-the-script) |
+| How does the web portal reach the service? | [The web portal](/tech/ways-in/web-portal/#how-the-portal-reaches-the-service) |
+| How do I add a page to the web portal? | [The web portal](/tech/ways-in/web-portal/#add-a-page) |

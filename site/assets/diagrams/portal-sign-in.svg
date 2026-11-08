@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 702" role="img">
+  <title>Signing in to the web portal</title>
+  <desc>A sequence of the sign-in to the web portal, with four lanes: the command setup in the terminal, the browser, web.Server, and the store. 1, setup calls NewSetupURL, which starts the server if needed. 2, web.Server calls CreateWebSetupToken: the table web_setup_tokens keeps only the SHA-256 of the token, which ends after 10 minutes. 3, web.Server returns the setup link, with the token. 4, setup prints the link on standard output, and writes the page sign-in.html, which sends the browser on to the link, in a new folder that only this user can read. 5, setup calls openBrowser with the file address of that page, so no token is in the arguments of a process. 6, the browser reads the file and asks for /setup with the token. 7, handleSetup calls UseWebSetupToken: in one transaction, the store deletes the row of the token and adds the session, kept as the SHA-256 of a new session id. So the token works once. 8, web.Server answers with the cookie emcp_session and a redirect to / with 303, so the token leaves the address bar. 9, the browser asks for / with the cookie. 10, setup removes the file after 1 minute, or when it stops.</desc>
+
+  <!-- This file is the source of the drawing: edit it by hand. A short script
+       placed the first coordinates, and that script is not kept. The
+       classes are in site/assets/css/site.css. -->
+
+  <rect class="d-box" x="10" y="16" width="170" height="48" rx="8"/>
+  <text class="d-text" x="95" y="31.5" text-anchor="middle" dominant-baseline="central">setup</text>
+  <text class="d-soft" x="95" y="48.5" text-anchor="middle" dominant-baseline="central">(the terminal)</text>
+  <rect class="d-box" x="200" y="16" width="170" height="48" rx="8"/>
+  <text class="d-text" x="285" y="40" text-anchor="middle" dominant-baseline="central">Browser</text>
+  <rect class="d-box" x="390" y="16" width="170" height="48" rx="8"/>
+  <text class="d-text" x="475" y="40" text-anchor="middle" dominant-baseline="central">web.Server</text>
+  <rect class="d-box" x="580" y="16" width="170" height="48" rx="8"/>
+  <text class="d-text" x="665" y="40" text-anchor="middle" dominant-baseline="central">store</text>
+  <path class="d-line" d="M95 64V688"/>
+  <path class="d-line" d="M285 64V688"/>
+  <path class="d-line" d="M475 64V688"/>
+  <path class="d-line" d="M665 64V688"/>
+  <path class="d-line" d="M95 94H475M467 88L475 94L467 100"/>
+  <text class="d-soft" x="190" y="84" text-anchor="middle">1 NewSetupURL</text>
+  <path class="d-line" d="M475 134H665M657 128L665 134L657 140"/>
+  <text class="d-soft" x="570" y="124" text-anchor="middle">2 CreateWebSetupToken</text>
+  <rect class="d-box" x="580" y="148" width="170" height="63" rx="8"/>
+  <text class="d-text" x="665" y="162.5" text-anchor="middle" dominant-baseline="central">web_setup_tokens</text>
+  <text class="d-soft" x="665" y="179.5" text-anchor="middle" dominant-baseline="central">SHA-256 of the token</text>
+  <text class="d-soft" x="665" y="196.5" text-anchor="middle" dominant-baseline="central">ends after 10 minutes</text>
+  <path class="d-line" d="M475 236H95M103 230L95 236L103 242"/>
+  <text class="d-soft" x="190" y="226" text-anchor="middle">3 the setup link</text>
+  <rect class="d-box" x="10" y="250" width="170" height="63" rx="8"/>
+  <text class="d-text" x="95" y="264.5" text-anchor="middle" dominant-baseline="central">4 setup</text>
+  <text class="d-soft" x="95" y="281.5" text-anchor="middle" dominant-baseline="central">prints the link, writes</text>
+  <text class="d-soft" x="95" y="298.5" text-anchor="middle" dominant-baseline="central">sign-in.html, private</text>
+  <path class="d-line" d="M95 338H285M277 332L285 338L277 344"/>
+  <text class="d-soft" x="190" y="328" text-anchor="middle">5 opens the file, no token</text>
+  <path class="d-line" d="M285 378H475M467 372L475 378L467 384"/>
+  <text class="d-soft" x="380" y="368" text-anchor="middle">6 /setup with the token</text>
+  <path class="d-line" d="M475 418H665M657 412L665 418L657 424"/>
+  <text class="d-soft" x="570" y="408" text-anchor="middle">7 UseWebSetupToken</text>
+  <rect class="d-box" x="580" y="432" width="170" height="63" rx="8"/>
+  <text class="d-text" x="665" y="446.5" text-anchor="middle" dominant-baseline="central">one transaction</text>
+  <text class="d-soft" x="665" y="463.5" text-anchor="middle" dominant-baseline="central">deletes the token row,</text>
+  <text class="d-soft" x="665" y="480.5" text-anchor="middle" dominant-baseline="central">adds the session hash</text>
+  <path class="d-line" d="M475 520H285M293 514L285 520L293 526"/>
+  <text class="d-soft" x="380" y="510" text-anchor="middle">8 emcp_session, 303 to /</text>
+  <path class="d-line" d="M285 560H475M467 554L475 560L467 566"/>
+  <text class="d-soft" x="380" y="550" text-anchor="middle">9 GET / with the cookie</text>
+  <rect class="d-box" x="10" y="588" width="170" height="63" rx="8"/>
+  <text class="d-text" x="95" y="602.5" text-anchor="middle" dominant-baseline="central">10 setup</text>
+  <text class="d-soft" x="95" y="619.5" text-anchor="middle" dominant-baseline="central">removes the file after</text>
+  <text class="d-soft" x="95" y="636.5" text-anchor="middle" dominant-baseline="central">1 minute, or at its stop</text>
+</svg>

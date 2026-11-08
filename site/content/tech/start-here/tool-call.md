@@ -54,8 +54,9 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
    status 503 (Service Unavailable). Then `httpserve.Handler` checks the `Host`
    header, the `Origin` header, the size of the body and the bearer token (a
    secret in the `Authorization` header), in this order. The body is at most
-   15 MiB (`httpserve.MaxBodyBytes`; a MiB is 1,048,576 bytes). The page "Local
-   HTTP mode" in the group "Ways in" explains these checks.
+   15 MiB (`httpserve.MaxBodyBytes`; a MiB is 1,048,576 bytes). The page
+   [Local HTTP mode](/tech/ways-in/local-http/#the-checks-in-order) explains
+   these checks.
 2. **Middleware of the SDK.** The SDK (software development kit) is the
    official Go library for MCP, `go-sdk`. A middleware is a function that wraps
    the handling of every request, so it runs before and after it. From the

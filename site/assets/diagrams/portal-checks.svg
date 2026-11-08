@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 756" role="img">
+  <title>The checks of a request to the web portal</title>
+  <desc>The checks of a request to the web portal, in the order of serve in guard.go, from top to bottom. A refused request gets a fixed text. 1, setSecurityHeaders sets the Content-Security-Policy, X-Content-Type-Options nosniff, Referrer-Policy no-referrer and Cache-Control no-store on every answer. 2, the Host check: the connection came in on a loopback address, and the Host header is exactly email-mcp.localhost, 127.0.0.1 or localhost with the port of the connection. Else 403 Forbidden, log code bad_host. 3, http.CrossOriginProtection refuses a request that the browser marks as cross-origin, unless it is GET, HEAD or OPTIONS: 403, log code cross_origin. 4, the guard answers /setup and the static files under /static/ itself. They take only GET and HEAD and need no session. Another method gets 405, log code bad_method, and an address under /static/ that is not a file gets 404, log code no_static. /setup on another name than email-mcp.localhost gets the page of step 5. 5, the name: a request on 127.0.0.1 or localhost gets, with 403, a page that says how to reach email-mcp.localhost, log code use_name. 6, the session: without a valid emcp_session cookie, the answer is the no-session page with 401, log code no_session. 7, the form token, for each method that is not GET or HEAD: the form body is at most 15 MiB and holds the CSRF token of the session in the field csrf_token. A bad token gets 403, log code bad_csrf. A larger body gets 413, log code body_too_large, and a form that cannot be read gets 400, log code bad_form. 8, the mux of net/http finds the route in the list routes, and answers 404 or 405 when no route matches. 9, the page handler calls the service through userCall.</desc>
+
+  <!-- This file is the source of the drawing: edit it by hand. A short script
+       placed the first coordinates, and that script is not kept. The
+       classes are in site/assets/css/site.css. -->
+
+  <rect class="d-box" x="20" y="16" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="35" text-anchor="middle" dominant-baseline="central">1 Security headers</text>
+  <text class="d-soft" x="220" y="54" text-anchor="middle" dominant-baseline="central">on every answer: CSP, nosniff, no-store</text>
+  <path class="d-line" d="M220 72V96M214 88L220 96L226 88"/>
+  <rect class="d-box" x="20" y="96" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="115" text-anchor="middle" dominant-baseline="central">2 Host</text>
+  <text class="d-soft" x="220" y="134" text-anchor="middle" dominant-baseline="central">loopback connection, exact Host header</text>
+  <path class="d-line" d="M220 152V176M214 168L220 176L226 168"/>
+  <path class="d-line d-bad" d="M420 124H460M452 118L460 124L452 130"/>
+  <rect class="d-box d-bad" x="460" y="96" width="240" height="56" rx="8"/>
+  <text class="d-text" x="580" y="115" text-anchor="middle" dominant-baseline="central">403 Forbidden</text>
+  <text class="d-soft" x="580" y="134" text-anchor="middle" dominant-baseline="central">bad_host</text>
+  <rect class="d-box" x="20" y="176" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="195" text-anchor="middle" dominant-baseline="central">3 Cross-origin</text>
+  <text class="d-soft" x="220" y="214" text-anchor="middle" dominant-baseline="central">CrossOriginProtection: not GET, HEAD, OPTIONS</text>
+  <path class="d-line" d="M220 232V256M214 248L220 256L226 248"/>
+  <path class="d-line d-bad" d="M420 204H460M452 198L460 204L452 210"/>
+  <rect class="d-box d-bad" x="460" y="176" width="240" height="56" rx="8"/>
+  <text class="d-text" x="580" y="195" text-anchor="middle" dominant-baseline="central">403 Forbidden</text>
+  <text class="d-soft" x="580" y="214" text-anchor="middle" dominant-baseline="central">cross_origin</text>
+  <rect class="d-box" x="20" y="256" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="275" text-anchor="middle" dominant-baseline="central">4 /setup and /static/</text>
+  <text class="d-soft" x="220" y="294" text-anchor="middle" dominant-baseline="central">answered here: GET and HEAD, no session</text>
+  <path class="d-line" d="M220 312V336M214 328L220 336L226 328"/>
+  <path class="d-line d-bad" d="M420 284H460M452 278L460 284L452 290"/>
+  <rect class="d-box d-bad" x="460" y="256" width="240" height="56" rx="8"/>
+  <text class="d-text" x="580" y="275" text-anchor="middle" dominant-baseline="central">405 or 404</text>
+  <text class="d-soft" x="580" y="294" text-anchor="middle" dominant-baseline="central">bad_method, no_static</text>
+  <rect class="d-box" x="20" y="336" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="355" text-anchor="middle" dominant-baseline="central">5 Name</text>
+  <text class="d-soft" x="220" y="374" text-anchor="middle" dominant-baseline="central">only email-mcp.localhost gets a session</text>
+  <path class="d-line" d="M220 392V416M214 408L220 416L226 408"/>
+  <path class="d-line d-bad" d="M420 364H460M452 358L460 364L452 370"/>
+  <rect class="d-box d-bad" x="460" y="336" width="240" height="56" rx="8"/>
+  <text class="d-text" x="580" y="355" text-anchor="middle" dominant-baseline="central">403, the name page</text>
+  <text class="d-soft" x="580" y="374" text-anchor="middle" dominant-baseline="central">use_name</text>
+  <rect class="d-box" x="20" y="416" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="435" text-anchor="middle" dominant-baseline="central">6 Session</text>
+  <text class="d-soft" x="220" y="454" text-anchor="middle" dominant-baseline="central">a valid emcp_session cookie</text>
+  <path class="d-line" d="M220 472V496M214 488L220 496L226 488"/>
+  <path class="d-line d-bad" d="M420 444H460M452 438L460 444L452 450"/>
+  <rect class="d-box d-bad" x="460" y="416" width="240" height="56" rx="8"/>
+  <text class="d-text" x="580" y="435" text-anchor="middle" dominant-baseline="central">401, no-session page</text>
+  <text class="d-soft" x="580" y="454" text-anchor="middle" dominant-baseline="central">no_session</text>
+  <rect class="d-box" x="20" y="496" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="515" text-anchor="middle" dominant-baseline="central">7 Form token</text>
+  <text class="d-soft" x="220" y="534" text-anchor="middle" dominant-baseline="central">not GET or HEAD: the csrf_token of the session</text>
+  <path class="d-line" d="M220 552V576M214 568L220 576L226 568"/>
+  <path class="d-line d-bad" d="M420 524H460M452 518L460 524L452 530"/>
+  <rect class="d-box d-bad" x="460" y="496" width="240" height="56" rx="8"/>
+  <text class="d-text" x="580" y="515" text-anchor="middle" dominant-baseline="central">403, or 413 or 400</text>
+  <text class="d-soft" x="580" y="534" text-anchor="middle" dominant-baseline="central">bad_csrf, body_too_large, bad_form</text>
+  <rect class="d-box" x="20" y="576" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="595" text-anchor="middle" dominant-baseline="central">8 Route</text>
+  <text class="d-soft" x="220" y="614" text-anchor="middle" dominant-baseline="central">the mux finds the route in routes</text>
+  <path class="d-line" d="M220 632V656M214 648L220 656L226 648"/>
+  <path class="d-line d-bad" d="M420 604H460M452 598L460 604L452 610"/>
+  <rect class="d-box d-bad" x="460" y="576" width="240" height="56" rx="8"/>
+  <text class="d-text" x="580" y="595" text-anchor="middle" dominant-baseline="central">404 or 405</text>
+  <text class="d-soft" x="580" y="614" text-anchor="middle" dominant-baseline="central">no route matches</text>
+  <rect class="d-box" x="20" y="656" width="400" height="56" rx="8"/>
+  <text class="d-text" x="220" y="675" text-anchor="middle" dominant-baseline="central">9 The page handler</text>
+  <text class="d-soft" x="220" y="694" text-anchor="middle" dominant-baseline="central">userCall, then service</text>
+  <text class="d-soft" x="360" y="734" text-anchor="middle" dominant-baseline="central">Each refusal has a fixed text and a fixed log code.</text>
+</svg>
