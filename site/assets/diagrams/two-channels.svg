@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 620" role="img">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 640" role="img">
   <title>The two channels into service</title>
-  <desc>On the left, the agent's channel: the agent uses the transport, stdio or local HTTP, where httpserve checks the Host header, the Origin header, the body size and the access token. Then mcpserver, where each tool is added with addTool and runs through safe. Its arrow goes only into the use cases of the tools inside service, which call authorize, and authorize calls policy.Decide. On the right, the person's channel: the browser goes to web, the web portal, which checks the Host header, the origin, the name, the session and the CSRF token. The terminal goes to the other commands of cmd/email-mcp, which use the local tenant. Their arrows go into the user-only use cases inside service, drawn as a dashed box, for example UpdateSettings and ApprovePending. In service, the tenant comes from the principal, not from an argument. Under service, both channels share policy, confirm, outbox, audit, store, secrets and the mail backend. The agent's channel does not call the user-only use cases and does not use the packages web or tokens. Its links carry no secret, so they give no session. Only the person's channel reaches the user-only use cases, such as UpdateSettings, ApprovePending and CreateToken.</desc>
+  <desc>On the left, the agent's channel: the agent uses the transport, stdio or local HTTP, where httpserve checks the Host header, the Origin header, the body size and the access token. Then mcpserver, where each tool is added with addTool and runs through safe. Its arrow goes only into the use cases of the tools inside service, which call authorize, and authorize calls policy.Decide. On the right, the person's channel: the browser goes to web, the web portal, which checks the Host header, the origin, the name, the session and the CSRF token. The terminal goes to the other commands of cmd/email-mcp, which use the local tenant. Their arrows go into the user-only use cases inside service, drawn as a dashed box, for example UpdateSettings and ApprovePending. In service, the tenant comes from the principal, not from an argument. Under service, both channels share policy, confirm, outbox, audit, store, secrets and the mail backend. The agent's channel does not call the user-only use cases, and mcpserver imports neither the package web nor the package tokens. The links of the tools carry no secret, so they give no session. Only the person's channel reaches the user-only use cases, such as UpdateSettings, ApprovePending and CreateToken.</desc>
 
   <!-- The two callers. -->
   <rect class="d-box" x="20" y="16" width="330" height="40" rx="8"/>
@@ -58,14 +58,15 @@
   <text class="d-soft" x="360" y="469" text-anchor="middle" dominant-baseline="central">policy, confirm, outbox, audit, store, secrets, mail backend</text>
 
   <!-- What each channel reaches. -->
-  <rect class="d-box" x="20" y="504" width="330" height="80" rx="8"/>
+  <rect class="d-box" x="20" y="504" width="330" height="98" rx="8"/>
   <text class="d-text" x="185" y="524" text-anchor="middle" dominant-baseline="central">The agent's channel does not call</text>
-  <text class="d-soft" x="185" y="546" text-anchor="middle" dominant-baseline="central">the user-only use cases, and does not use</text>
-  <text class="d-soft" x="185" y="564" text-anchor="middle" dominant-baseline="central">web or tokens. Its links carry no secret.</text>
-  <rect class="d-box" x="370" y="504" width="330" height="80" rx="8"/>
+  <text class="d-soft" x="185" y="546" text-anchor="middle" dominant-baseline="central">the user-only use cases, and mcpserver</text>
+  <text class="d-soft" x="185" y="564" text-anchor="middle" dominant-baseline="central">imports neither web nor tokens.</text>
+  <text class="d-soft" x="185" y="582" text-anchor="middle" dominant-baseline="central">The links of the tools carry no secret.</text>
+  <rect class="d-box" x="370" y="504" width="330" height="98" rx="8"/>
   <text class="d-text" x="535" y="524" text-anchor="middle" dominant-baseline="central">Only the person's channel reaches</text>
   <text class="d-soft" x="535" y="546" text-anchor="middle" dominant-baseline="central">the user-only use cases, such as</text>
   <text class="d-soft" x="535" y="564" text-anchor="middle" dominant-baseline="central">UpdateSettings, ApprovePending, CreateToken</text>
 
-  <text class="d-soft" x="20" y="604" dominant-baseline="central">Dashed box: only the person's channel reaches it.</text>
+  <text class="d-soft" x="20" y="622" dominant-baseline="central">Dashed box: only the person's channel reaches it.</text>
 </svg>

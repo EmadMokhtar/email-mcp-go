@@ -1116,7 +1116,10 @@ Must cover:
     that email-mcp recognizes, `trash_messages` needs level 5, and
     `discard_draft` moves a draft to the Trash at level 3. Enforced by the
     `mail.Backend` contract and `service.Trash`, `service.DiscardDraft` and
-    `service.Move`. Checked by `TestTrashMoveBlockedBelowLevel5`.
+    `service.Move`. The refusals are checked by
+    `TestTrashMoveBlockedBelowLevel5`. No single test covers the
+    `mail.Backend` contract for all providers: a review of a change to
+    `mail.Backend` or to a provider checks it.
   - Third-party text is cleaned and marked. Enforced in `mime` and
     `mcpserver/shape.go`. Checked by the tests of `mime`.
   - Errors for the agent are texts that email-mcp wrote. Enforced in

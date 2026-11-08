@@ -12,6 +12,7 @@ code_areas:
   - internal/mcpserver/errors.go
   - internal/service/principal.go
   - internal/service/service.go
+  - internal/service/
   - internal/store/store.go
   - internal/policy/policy.go
   - internal/confirm/confirm.go
@@ -20,8 +21,10 @@ code_areas:
   - internal/web/guard.go
   - internal/web/links.go
   - internal/httpserve/httpserve.go
+  - cmd/email-mcp/serve.go
   - internal/domain/account/account.go
   - internal/provider/imapsmtp/tlsdial.go
+  - internal/provider/imapsmtp/search.go
   - internal/domain/mail/backend.go
   - internal/mime/untrusted.go
 ---
@@ -45,7 +48,8 @@ through the tools of `mcpserver` (the package that holds the tools), and
 before it touches the mail. The person has a second way in: the web portal (the
 local web site of the person) and the commands at the terminal. Only that way
 changes the settings of an account, makes an access token (a secret that a
-program sends with each request to local HTTP), or approves an action on the
+program sends with each request to local HTTP, where HTTP is HyperText Transfer
+Protocol), or approves an action on the
 approval page (the page of the web portal where the person approves a waiting
 send or move to the Trash). A "yes" that the person gives in the AI app comes
 from the form of the app, and never from the arguments of a tool. So that "yes"
@@ -74,12 +78,12 @@ The agent's channel:
   of accounts; a local install has one) with no scope limit. Scopes are the
   permissions that an access token carries.
 - **Local HTTP.** Local HTTP is the server that `email-mcp serve --http` starts
-  for programs on the same computer (HTTP is HyperText Transfer Protocol).
-  `Handler` in {{< src "internal/httpserve/httpserve.go" >}} runs four checks,
-  in this order. First the Host header (the name of the server that a request
-  asks for). Then the Origin header (the web site that a browser request comes
-  from). Then the size of the body. Last the access token. The page "Local HTTP
-  mode" in the group "Ways in" goes deeper.
+  for programs on the same computer. `Handler` in
+  {{< src "internal/httpserve/httpserve.go" >}} runs four checks, in this order.
+  First the Host header (the name of the server that a request asks for). Then
+  the Origin header (the web site that a browser request comes from). Then the
+  size of the body. Last the access token. The page "Local HTTP mode" in the
+  group "Ways in" goes deeper.
 - **The tools.** `addTool` in {{< src "internal/mcpserver/server.go" >}} wraps
   each tool in `safe`, which asks for the caller first. A call with no caller,
   or with a caller that has no tenant, is refused with "not authorized", and the
@@ -93,18 +97,23 @@ The agent's channel:
 The person's channel:
 
 - **The browser** goes to `web`, the web portal. `Server.serve` in
-  {{< src "internal/web/guard.go" >}} runs these checks, in this order: the
-  security headers (headers on each answer that limit what a page may load and
-  keep), the Host header, the cross-origin check (a check that refuses a form
-  post that the browser marks as coming from another site), the name
-  `email-mcp.localhost`, the session (the sign-in of one browser, kept in a
-  cookie), and the CSRF token (cross-site request forgery token: a value in each
-  form that proves that the form came from the portal) for a request that is not
-  GET or HEAD. It answers `/setup` and the static files (the style sheets and
-  the script of the portal, which hold nothing private) before the session
-  check. `/setup` takes the one-time link that `email-mcp setup` opens, and
-  starts the session. The page "The web portal" in the group "Ways in" goes
-  deeper.
+  {{< src "internal/web/guard.go" >}} first sets the security headers (headers
+  on each answer that limit what a page may load and keep). Then it works in
+  this order:
+  1. It checks the Host header.
+  2. It runs the cross-origin check (a check that refuses a form post that the
+     browser marks as coming from another site).
+  3. It answers `/setup`. That path takes only GET and HEAD, and it checks the
+     name `email-mcp.localhost` itself. It takes the one-time link that
+     `email-mcp setup` opens, and starts the session.
+  4. It answers the static files (the style sheets and the script of the
+     portal, which hold nothing private), with no name check and no session.
+  5. For every other path, it checks the name `email-mcp.localhost`, then the
+     session (the sign-in of one browser, kept in a cookie), then the CSRF
+     token (cross-site request forgery token: a value in each form that proves
+     that the form came from the portal) for a request that is not GET or HEAD.
+
+  The page "The web portal" in the group "Ways in" goes deeper.
 - **The terminal** runs the commands of `cmd/email-mcp` other than `serve`, such
   as `setup` and `token`. The ones that call a use case run as the local tenant.
 - **The reach.** This channel calls the user-only use cases (the use cases that
@@ -154,10 +163,10 @@ to trust a certificate.
 | The password of an account, the payload and preview (the exact request and its summary) of a waiting action, the message of a queued send, and the recipients and arguments of an activity log entry are sealed in the database. Access tokens, setup tokens and session ids are stored as hashes. | `Vault` in {{< src "internal/secrets/vault.go" >}}, which seals a value with a key of the tenant, and the sealed and hashed columns of `store` | `TestNoPlaintextSecretsInDB` |
 | The program log gets fixed codes, ids, counts and names such as tool names and Go type names, not a secret, a mail address, a subject or a body. | `safe` in {{< src "internal/mcpserver/server.go" >}}, which logs the name of the tool, a fixed code and the Go types of an error (`errtype.Chain`); `secrets.Secret`, which prints `[redacted]`; the log rules of each package | `TestNoSecretsInLogs` |
 | A connection to a remote mail server uses TLS 1.2 or newer (`tls.VersionTLS12` in `newPinnedTLSConfig`) and checks the certificate, or its pin. Plain text is allowed only to a loopback host, on a local install. | `MailServer.Validate` in {{< src "internal/domain/account/account.go" >}}; the secure dialer in {{< src "internal/provider/imapsmtp/tlsdial.go" >}} | `TestPlainTextToRemoteRefused`; `TestTLSCertificateChecksEnforced` |
-| `mail.Backend` has no method that deletes mail for good, and its comment asks each implementation to keep it so. `move_messages` refuses a Trash folder that email-mcp recognizes, at every level. `trash_messages` needs level 5, and `discard_draft` moves a draft to the Trash at level 3. | The comment of `mail.Backend` in {{< src "internal/domain/mail/backend.go" >}}; in `service`: `Trash`, which needs `policy.ActTrash` (level 5), `DiscardDraft`, and `Move`, which refuses such a folder with `ErrMoveToTrash` | `TestTrashMoveBlockedBelowLevel5` |
+| `mail.Backend` has no method that deletes mail for good, and its comment asks each implementation to keep it so. `move_messages` refuses a Trash folder that email-mcp recognizes, at every level. `trash_messages` needs level 5, and `discard_draft` moves a draft to the Trash at level 3. | The comment of `mail.Backend` in {{< src "internal/domain/mail/backend.go" >}}; in `service`: `Trash`, which needs `policy.ActTrash` (level 5), `DiscardDraft`, and `Move`, which refuses such a folder with `ErrMoveToTrash` | `TestTrashMoveBlockedBelowLevel5` checks the refusals of `move_messages`, `trash_messages` and `discard_draft`. No single test covers the rule of `mail.Backend` for all providers, so check it when you review a change to `mail.Backend` or to a provider. |
 | The text that a sender wrote (the name, the subject, the body and the names of the attachments) is cleaned of characters that a reader cannot see, and it is put inside an `Untrusted` wrapper. An address stays outside the wrapper only when it has the plain form that `mime.IsPlainAddress` accepts. | `CleanUntrusted` in {{< src "internal/mime/untrusted.go" >}}; `messageOut` and the `Untrusted` wrapper in {{< src "internal/mcpserver/shape.go" >}} | `TestCleanUntrustedRemovesInvisible` and `TestCleanUntrustedRemovesWholeRanges` in `mime`; `TestUntrustedCleaned` and `TestSearchResultMarksUntrusted` in `mcpserver` |
 | The agent gets a text that email-mcp wrote for each known error, and "internal error" for any other. | `toolError`, `permissionFailure`, `reauthFailure` and `rateLimitFailure` in {{< src "internal/mcpserver/errors.go" >}} | `TestToolErrorMapping` and `TestUnknownErrorIsInternalError` in `mcpserver` |
-| Request states, page tokens, cursors, form tokens and certificate offers are signed. | `Signer` in {{< src "internal/signing/signing.go" >}}; `seal` and `open` in `provider/imapsmtp`, which add the tenant and the account to the purpose | `TestOpenTamperedInvalid` and `TestOpenWrongPurposeInvalid` in `signing`; `TestListNewMessagesRejectsAForgedCursor` in `mcpserver` |
+| Request states, page tokens, cursors, form tokens and certificate offers are signed (see [Signed values](#signed-values)). | `Signer` in {{< src "internal/signing/signing.go" >}} and its callers | `TestOpenTamperedInvalid` and `TestOpenWrongPurposeInvalid` in `signing`; `TestListNewMessagesRejectsAForgedCursor` in `mcpserver` |
 
 The pages that own each area give the details: [The send
 flow](/tech/inside-the-server/send-flow/#how-the-yes-is-tied-to-the-message) for
@@ -171,11 +180,9 @@ step](/tech/start-here/tool-call/#errors-become-fixed-texts) for the error
 texts, [The mail backend](/tech/mail/mail-backend/#the-secure-dialer) for TLS
 and the pins, and [Mail content](/tech/mail/mail-content/) for the cleaning.
 
-Two rows need a note. For the row about errors: three kinds of error add a field
-that `service` or `policy` wrote for the agent. They are the reason and the link
-of a permission error, the link of a reconnect error, and the sentence of a
-reached limit (`*policy.RateLimitError`), which names the kind of limit and the
-wait.
+Two rows need a note. For the row about errors: a few kinds of error add a
+field that `service` or `policy` wrote for the agent. [One tool call, step by
+step](/tech/start-here/tool-call/#errors-become-fixed-texts) lists them.
 
 For the cleaning row, note a limit: in HTML (HyperText Markup Language) mail,
 email-mcp cannot always tell what a reader sees (see [Known
@@ -184,10 +191,11 @@ mail yourself.
 
 ## Failing closed
 
-The checks below fail closed: when one cannot decide, the answer is no.
+The checks below fail closed: when one cannot decide, the answer is no. For
+`policy.Decide`, see the section of Permissions [How a decision is
+made](/tech/inside-the-server/permissions/#how-a-decision-is-made). The other
+checks that fail closed are these:
 
-- `policy.Decide` refuses an action that it does not know, and it counts a level
-  outside 0 to 5 as level 0, Off (`account.MailOff`).
 - `safe` refuses a caller without a tenant before the tool runs, and
   `PrincipalFrom` counts such a principal as no principal.
 - The zero value (the value that Go gives a field that nobody set) of
@@ -213,8 +221,10 @@ secrets](/tech/inside-the-server/storage-and-secrets/#keys)).
 - `Open` accepts a token only for the purpose that it was made for. `signing`
   names four purposes: `PurposeCursor`, `PurposePage`, `PurposeRequestState`
   and `PurposeCSRF`. `web` adds `cert_offer` for the offer to trust a
-  certificate. `provider/imapsmtp` adds the tenant and the account
-  (`TokenScope`) to the purpose of a page token and a cursor, so a token of one
+  certificate. In `provider/imapsmtp`, `seal` and `open` in
+  {{< src "internal/provider/imapsmtp/search.go" >}} add the tenant and the
+  account (`TokenScope`) to the purpose of a page token and a cursor, so a token
+  of one
   account fails for another account (see [The mail
   backend](/tech/mail/mail-backend/#refs-folders-and-tags)).
 - A token that is changed, made without the key, made for another purpose or
@@ -264,10 +274,11 @@ secret or a connection, or that cleans text from a third party.
 2. Add a test for the rule that you add or change: in `security_test.go` for a
    rule of the whole program, or next to the test of the package that the table
    names.
-3. To add a tool: add it with `addTool`, and add its row to `requiredLevel` in
-   `security_test.go`. `TestEveryWriteToolRefusedBelowItsLevel` fails for a tool
-   without a row. A tool that can change something needs a level above 0. The
-   test allows level 0 only for a read-only tool, and for
+3. To add a tool: add it with `addTool`. In `security_test.go`, add its row to
+   `requiredLevel`, and add its arguments to the map `args` of
+   `TestEveryWriteToolRefusedBelowItsLevel`. That test fails for a tool without
+   a row or without arguments. A tool that can change something needs a level
+   above 0. The test allows level 0 only for a read-only tool, and for
    `request_permission_change` and `connect_account`, which return a link and
    change nothing.
 4. To add a use case that only the person may call: add its name to
