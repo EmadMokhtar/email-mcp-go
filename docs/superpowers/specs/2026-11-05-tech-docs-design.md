@@ -769,9 +769,9 @@ Questions:
 
 Must cover:
 
-- `mail.Backend`: neutral types, opaque `Ref` values, batch calls that check
-  every ref before they change anything, `ErrPartial`, `ErrRefStale`, and the
-  rule that no method deletes mail for good.
+- `mail.Backend`: neutral types, opaque `Ref` values, `ErrPartial`,
+  `ErrRefStale`, and the rule that no method deletes mail for good. The IMAP
+  backend checks every ref of a batch before it changes anything.
 - `BackendFactory` and `BackendCache`: one backend for each account in its own
   slot; a fingerprint of the server settings and the sealed password, compared
   on each call, so a change made by another process is seen; a replaced backend
@@ -1376,8 +1376,9 @@ Source: the other pages.
   connection.
 - **D11 `mail-pipelines`** (`mail-content`, required). Two pipelines. Incoming:
   fetch, decode, parse with the work budget, hidden-text rules, clean, wrap as
-  untrusted. Outgoing: compose, build, clean the HTML, refuse hidden characters,
-  preview of the text part.
+  untrusted. Outgoing: compose, check the addresses and headers, refuse hidden
+  characters, clean the HTML and make the text part, write the message, preview
+  of the text part.
 - **D12 `http-checks`** (`local-http`, required). The pipeline of a request:
   concurrency limit, `Host`, `Origin`, body size, token, stateless SDK handler,
   middleware, tool. Show the status code of each refusal.
@@ -1665,7 +1666,8 @@ constant again at writing time. Do not copy a number without its name.
   and 100,000 at most. An HTML part over 4 MiB is not converted (`fetch.go`). A
   search page has at most 100 results (`mcpserver/read_tools.go`).
 - Mail content (`internal/mime`): parser work budget 16,000,000 (`maxHTMLCost`;
-  a node and an attribute cost 16 each); output cap 16 MiB; nesting depth 512.
+  a node and an attribute cost 16 each); two output caps of 16 MiB
+  (`maxConvertedTextBytes`, `maxVisibleHTMLBytes`); nesting depth 512.
 - Discovery (`internal/discovery/discovery.go`): four sources, at most 1 MiB for
   a response, at most 3 redirects, 10 seconds in all.
 - MCP: input requests in a result from protocol `2026-07-28`

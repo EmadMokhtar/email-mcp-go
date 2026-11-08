@@ -67,7 +67,8 @@ content](/manual/daily-use/what-the-agent-can-do/#untrusted-content)).
 4. **Hidden-text rules.** A walk over the tree leaves out the text that the
    rules find hidden, and makes a report of what it left out.
 5. **Clean.** `CleanUntrusted` removes hidden characters from the text. The
-   backend cuts the body into pages.
+   backend cuts the body into pages: 20,000 characters by default
+   (`defaultBodyChars`) and 100,000 at most (`maxBodyChars`).
 6. **Wrap as untrusted.** `messageOut` in
    {{< src "internal/mcpserver/shape.go" >}} cleans each string again and puts
    the text that a sender wrote inside the `Untrusted` wrapper. The text copy of
@@ -189,9 +190,8 @@ and `font-size` work as in a browser: the last declaration counts.
 **When a style cannot be worked out.** The code reads just enough CSS (Cascading
 Style Sheets, the language of styles) to find hidden elements. A value that
 needs a calculation (`calc()` or `var()`) in `font-size` or `opacity` counts as
-hiding. A rule with a selector that is longer than a class, an id, an element
-name or a compound of these is not used. Other styles that can hide text, and
-that the code cannot work out, keep the element in place and set `unsure`. In
+hiding. Other styles that can hide text, and that the code cannot work out,
+keep the element in place and set `unsure`. In
 these cases the report says so. `HiddenReport` has `Suspected` (a style that can
 hide text could not be worked out) and `Dropped` (how many parts with text were
 left out). They become `HiddenContentSuspected` and `HiddenParts` on

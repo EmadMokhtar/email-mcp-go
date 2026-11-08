@@ -8,6 +8,7 @@ code_areas:
   - internal/mime/recipients.go
   - internal/mime/draft.go
   - internal/mime/address.go
+  - internal/service/send.go
 ---
 
 This page explains how email-mcp builds the mail that an agent writes: the
@@ -23,10 +24,8 @@ reply to all, or a forward, in the form of RFC 5322 (the numbered document for
 the internet message format). {{< src "internal/mime/body.go" >}} has the bodies
 and the attachments, {{< src "internal/mime/recipients.go" >}} the recipients,
 and {{< src "internal/mime/address.go" >}} the rules for addresses. A message
-that the agent writes goes out as the preview can show it. A draft that a person
-wrote in another mail program goes out as it was saved, with its styles and
-images. The preview shows its text only. Check such a draft in your mail program
-(see [Security](/manual/daily-use/security/)).
+that the agent writes goes out as the preview can show it. A saved draft goes
+out as it was saved (see [A saved draft](#a-saved-draft)).
 
 ## What Build refuses
 
@@ -115,18 +114,19 @@ minus the `Bcc` fields. It refuses a bare CR (a carriage return with no line
 feed after it) in the header (`ErrHeaderInjection`), a missing sender or an
 unreadable address (`ErrInvalidAddress`), and a draft with no recipient
 (`ErrNoRecipients`). It does not refuse or clean hidden characters or HTML the
-way `Build` does: a draft goes out as the person saved it. The preview of a
-draft counts its hidden characters and shows its text only. Check a draft that
-came from another mail program before you send it (see
+way `Build` does: a draft goes out as the person saved it, with its styles and
+images. The preview of a draft counts its hidden characters and shows its text
+only. Check a draft that came from another mail program before you send it (see
 [Security](/manual/daily-use/security/)).
 
 ## The preview and the text part
 
 For a message made from HTML, `composeBodies` makes the text part with
-`HTMLToText` of the cleaned HTML, and `Build` writes it first. The service reads
-the built message again and shows the person the start of the text part. So the
-start of the text that the person sees is the start of the text that goes out.
-For a saved draft, the preview shows the parts that `LayoutOf` picks. [The send
+`HTMLToText` of the cleaned HTML, and `Build` writes it first. The service, in
+{{< src "internal/service/send.go" >}}, reads the built message again and shows
+the person the start of the text part. So the start of the text that the person
+sees is the start of the text that goes out. For a saved draft, the preview
+shows the parts that `LayoutOf` picks. [The send
 flow](/tech/inside-the-server/send-flow/#what-the-person-sees) explains the
 preview and how the answer of the person is tied to the message.
 

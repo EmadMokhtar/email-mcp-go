@@ -221,10 +221,13 @@ directory and one database. These parts make that safe:
 - Mail is never deleted for good. A delete moves the mail to the Trash, and
   the comment of `mail.Backend` asks this of every implementation. The page
   [The mail backend](/tech/mail/mail-backend/) goes deeper.
-- Every check fails closed: when a check cannot decide, the answer is "no".
-  For example, `policy.Decide` refuses an action that it does not know, and it
-  counts a damaged level of an account as level 0, no access
-  (`account.MailOff`). The page "Security design" goes deeper.
+- A check of permission fails closed: when it cannot decide, the answer is
+  "no". For example, `policy.Decide` refuses an action that it does not know,
+  and it counts a damaged level of an account as level 0, no access
+  (`account.MailOff`). The page "Security design" goes deeper. The hidden-text
+  rules work in another way: what they cannot work out stays in the text, and
+  the result is marked as unsure (see [Mail
+  content](/tech/mail/mail-content/)).
 
 ## The mail backend boundary
 

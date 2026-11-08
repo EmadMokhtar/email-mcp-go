@@ -96,7 +96,7 @@ the language of web pages and of many mails.
 | How does the backend keep and reuse connections? | [The mail backend](/tech/mail/mail-backend/#the-connection-pool) |
 | How does the backend secure a connection and check a certificate? | [The mail backend](/tech/mail/mail-backend/#the-secure-dialer) |
 | When may a person trust a certificate that no authority signed, when an account is new? | [The mail backend](/tech/mail/mail-backend/#the-secure-dialer) |
-| When may a person replace or remove a pin? | [Connecting an account](/tech/mail/connecting-an-account/#a-refused-login-and-the-reconnect) |
+| When may a person replace or remove a pin? | [The mail backend](/tech/mail/mail-backend/#the-secure-dialer) |
 | How are messages, folders and tags addressed? | [The mail backend](/tech/mail/mail-backend/#refs-folders-and-tags) |
 | How does a change to many messages stay safe, and what if it fails half way? | [The mail backend](/tech/mail/mail-backend/#changing-mail) |
 | How does a send reach the SMTP server? | [The mail backend](/tech/mail/mail-backend/#sending-with-smtp) |
@@ -112,7 +112,7 @@ the language of web pages and of many mails.
 | How is HTML turned into text? | [Mail content](/tech/mail/mail-content/#how-html-becomes-text) |
 | What limits stop a hostile message from using all the memory? | [Mail content](/tech/mail/mail-content/#limits) |
 | Why is there a copy of the HTML parser of `golang.org/x/net`? | [Mail content](/tech/mail/mail-content/#the-copied-parser) |
+| How do I change the hidden-text rules safely? | [Mail content](/tech/mail/mail-content/#change-the-hidden-text-rules) |
 | How is an outgoing message built, and what does it refuse? | [Building mail](/tech/mail/building-mail/#what-build-refuses) |
 | How is a saved draft made ready to send? | [Building mail](/tech/mail/building-mail/#a-saved-draft) |
 | Why does the preview start with the text that goes out? | [Building mail](/tech/mail/building-mail/#the-preview-and-the-text-part) |
-| How do I change the hidden-text rules safely? | [Mail content](/tech/mail/mail-content/#change-the-hidden-text-rules) |

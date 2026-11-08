@@ -7,6 +7,7 @@ code_areas:
   - internal/connect/connect.go
   - internal/service/accounts.go
   - internal/service/reconnect.go
+  - internal/web/accounts.go
 ---
 
 This page explains how an account gets connected to email-mcp: how server
@@ -105,7 +106,7 @@ commands share, so the two use the same rules:
 
 The only value from a server that a caller may show is the fingerprint of a
 certificate. The web portal binds an offer to pin to a signed token that lasts
-`certOfferTTL`, 10 minutes (`internal/web/accounts.go`).
+`certOfferTTL`, 10 minutes, in {{< src "internal/web/accounts.go" >}}.
 
 ## A refused login and the reconnect
 
@@ -129,14 +130,9 @@ certificate is not accepted fails at the handshake, so the password is not sent
 to it. A change of the hosts, the ports or the security modes is not a
 reconnect: the person removes the account and adds it again.
 
-`ReconnectPinChange` decides what a reconnect may do with a pin. It may add a
-first pin (`PinChangeAdd`), as for a new account. It may replace a pin with the
-pin of another certificate that no known authority signed
-(`PinChangeReplace`). It may remove a pin when a known authority signs the
-certificate for the host (`PinChangeRemove`). The name and the dates of the
-certificate must be right in the first two cases. In any other case the answer
-is `PinChangeRefused`, and nothing may change. The table in [The secure
-dialer](/tech/mail/mail-backend/#the-secure-dialer) has the cases.
+`ReconnectPinChange` decides what a reconnect may do with a pin: add it,
+replace it, remove it, or nothing (`PinChangeRefused`). The table in [The secure
+dialer](/tech/mail/mail-backend/#the-secure-dialer) gives each case.
 
 A decision of the person counts only for the server that shows a certificate
 with the same fingerprint in this test. Before a replace or a removal, the

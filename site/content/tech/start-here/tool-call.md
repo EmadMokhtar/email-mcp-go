@@ -118,17 +118,10 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
 6. **The backend cache.** The backend of an account is the object that talks
    to its mail servers. `mailBackend` gets the backend of the account from
    `BackendCache.Mail` in {{< src "internal/service/backends.go" >}}. The cache
-   has one slot for each account. A call holds the slot only while it gets or
-   builds the backend (`mailOn`), so two calls for one account wait for each
-   other only then. After that, they can use the same backend at the same time.
-   On every call the cache reads the sealed (encrypted) password from the store
-   and makes a fingerprint: a SHA-256 (Secure Hash Algorithm with a 256-bit
-   result) hash of the server settings, the key version and the sealed password.
-   When the fingerprint is the one of the cached backend, it returns that
-   backend. Otherwise it decrypts the password and builds the backend again with
-   `imapsmtp.New`. It decrypts the password only then. The old backend closes
-   after 2 minutes (`retireAfter`), because a call that started on it may still
-   use it.
+   keeps one backend for each account. It builds a new one with `imapsmtp.New`
+   only when the server settings or the stored password changed. [The mail
+   backend](/tech/mail/mail-backend/#one-backend-for-each-account) explains the
+   slot, the fingerprint and when an old backend closes.
 7. **The IMAP backend.** `Backend.GetMessage` in
    {{< src "internal/provider/imapsmtp/fetch.go" >}} takes a logged-in
    connection from the pool of the account: the small set of open connections

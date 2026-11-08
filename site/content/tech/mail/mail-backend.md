@@ -22,6 +22,8 @@ code_areas:
   - internal/provider/imapsmtp/smtp.go
   - internal/provider/imapsmtp/probe.go
   - internal/service/backends.go
+  - internal/app/app.go
+  - internal/app/sender.go
 ---
 
 This page explains how email-mcp talks to a mail server. It covers the
@@ -102,7 +104,8 @@ through `mailBackend` in `service`, which calls `authorize` first and then
   while it gets or builds the backend. Calls for one account take turns. Calls
   for other accounts do not wait. The slot is a channel (a Go value that passes
   values between goroutines) with room for one value, and not a mutex (a lock),
-  so a call that waits can stop when its context ends.
+  so a call that waits can stop when its context ends. A context is the Go
+  value that carries the deadline and the cancel of a request.
 - **A fingerprint on every call.** Another process can change an account while
   this one runs. For example, `email-mcp account reconnect` can change the
   password, and it cannot tell the running email-mcp server. So `Mail` reads the
@@ -211,7 +214,8 @@ identity that a server shows when a connection starts.
 - **With a pin.** A pin is the SHA-256 fingerprint of the leaf certificate, in
   lowercase hex, that the person chose to trust. The fingerprint of the
   certificate must equal it. The comparison uses a constant-time function
-  (`subtle.ConstantTimeCompare`). Only a match accepts the certificate.
+  (`subtle.ConstantTimeCompare`): its time does not depend on which bytes
+  differ. Only a match accepts the certificate.
 - **Without a pin.** The certificate must be valid for the host name, be inside
   its dates (it has not expired, and its first day has come), and chain to the
   root certificates (the list of certificate authorities that the system trusts;
@@ -262,7 +266,8 @@ repeat the user name or the address in it, and logs must not hold addresses.
 three values: the folder name, the UIDVALIDITY of the folder and the UID of the
 message. A UID is the number that a folder gives to a message. The UIDVALIDITY
 is a number that changes when the folder starts its UIDs again, so an old UID
-may then name another message. The ref is these values as JSON, in base64url (a
+may then name another message. The ref is these values as JSON (JavaScript
+Object Notation, a text format for data), in base64url (a
 text form of bytes that is safe in a web address) without padding, and at most
 4,096 characters (`maxRefLen`). A ref only names a message in a folder of the
 account. It gives no right: every call checks the permission first.
@@ -336,8 +341,11 @@ The calls that change messages are in
   messages, and `.SILENT` asks the server not to send the flags back). They open
   the folder for writing and check the UIDVALIDITY again, because a folder can
   change between the check and the change.
-- **All or nothing holds until the first change.** If a later folder fails, the
-  error says how many messages were already changed, and it wraps `ErrPartial`.
+- **All or nothing holds until the first folder is changed.** If a later
+  folder fails, the error says how many messages were already changed, and it
+  wraps `ErrPartial`. A failure inside the first folder gives the plain error,
+  even when one of its two `STORE` commands has run. The flags then have a
+  state between the old and the new.
 - **Nothing is deleted for good.** The only `EXPUNGE` is `UID EXPUNGE` of the
   messages that the fallback of `Move` has just copied.
 
@@ -358,11 +366,11 @@ account has no Trash folder, the call fails and nothing changes.
 **Drafts.** `SaveDraft` stores the message in the `@drafts` folder with the
 flags `\Draft` and `\Seen`. It takes the ref from the `APPENDUID` answer of the
 server (the UID of the stored message, from `UIDPLUS`). Without `UIDPLUS`, it
-finds the draft by its `Message-ID`, and it refuses a draft with no
-`Message-ID` before it stores anything. After the draft is stored, an error
-says that the draft was saved and that its ref is not known, and wraps
-`ErrPartial`, so nobody saves it again. `DiscardDraft` checks the `\Draft` flag
-(the flag decides, not the folder) and then calls `Trash`.
+finds the draft by its `Message-ID` (the header that names one message), and it
+refuses a draft with no `Message-ID` before it stores anything. After the draft
+is stored, an error says that the draft was saved and that its ref is not known,
+and wraps `ErrPartial`, so nobody saves it again. `DiscardDraft` checks the
+`\Draft` flag (the flag decides, not the folder) and then calls `Trash`.
 
 ## Sending with SMTP
 
@@ -374,17 +382,21 @@ to test a login. The send works in these steps:
    address that cannot be written into an SMTP command. The error is
    `ErrInvalidMessage`, and nothing is sent.
 2. `withSMTP` opens an SMTP connection for this message alone, not from the
-   pool. It validates the settings and dials. Then `secureSMTP` secures the
+   pool. It validates the settings and dials. The dial limit covers the connect
+   and, in the mode `tls`, the handshake. STARTTLS and the hello run under the
+   limit of the conversation. Then `secureSMTP` secures the
    connection with the rules of the secure dialer (`tls`, or `starttls` with no
    fall back, or `plain` to a loopback address on a local install) and the same
    certificate check, against `PinnedSMTPCert`. After the hello, a `tls` or
-   `starttls` connection must have a finished handshake with TLS 1.2 or newer.
+   `starttls` connection must have a finished handshake (the first exchange,
+   which sets up the encryption) with TLS 1.2 or newer.
 3. The login is `AUTH PLAIN` (the command that sends the user name and the
    password in one step), and no other. `loginSMTP` fails if the server does not
    offer it. A reply 535 or 534 matches `ErrAuthFailed`.
 4. `sendOn` sends `MAIL FROM` (the sender), one `RCPT TO` for each recipient,
    and the data. It is all or nothing for the recipients: when the server
-   refuses one, `Send` resets the transaction, sends no data and returns a
+   refuses one, `Send` resets the transaction (the exchange for one message:
+   sender, recipients and data), sends no data and returns a
    `*RecipientRejectedError` with the place of the recipient. A message with
    addresses outside ASCII (the basic set of characters: English letters, digits
    and common signs) needs `SMTPUTF8`, an SMTP extension that allows such
@@ -407,7 +419,8 @@ code is a sure refusal. When the connection fails, the time runs out, or the
 answer is garbled or has another code than 250, nobody can tell whether the
 server took the message. The error then wraps `ErrDeliveryUnknown`, and the
 caller must not send the message again without asking a person. These errors
-hold no text of the server. `sendError` in `internal/app/sender.go` reads their
+hold no text of the server. `sendError` in
+{{< src "internal/app/sender.go" >}} reads their
 types to decide between a retry and a final failure (see [The send
 flow](/tech/inside-the-server/send-flow/)).
 
@@ -417,7 +430,7 @@ flow](/tech/inside-the-server/send-flow/)).
 |---|---|---|
 | `maxBatch` (`backend.go`) | 500 | Refs in one batch call |
 | `defaultPoolSize` (`config.go`) | 2 | IMAP connections for one account |
-| `defaultDialTimeout` (`config.go`) | 15 seconds | Connect and secure step. For IMAP, also the greeting and the login |
+| `defaultDialTimeout` (`config.go`) | 15 seconds | The connect. For IMAP, also the secure step, the greeting and the login. For SMTP, also the handshake of the mode `tls` |
 | `defaultCommandTimeout` (`config.go`) | 60 seconds | One pooled call, and the SMTP conversation before the data time |
 | `defaultIdleTimeout` (`config.go`) | 5 minutes | Age at which `takeIdle` closes an idle connection |
 | `capabilitiesTimeout` (`backend.go`) | 15 seconds | One call of `Capabilities` |
