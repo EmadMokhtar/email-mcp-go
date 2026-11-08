@@ -32,6 +32,11 @@
 //   - Every screenshot that was made is used by a page.
 //   - The Markdown files in site/content follow the content rules: no H1, no
 //     heading deeper than H3, a language on every code fence, and short lines.
+//   - The maps from code to docs page (mapsFile) name every Go package of cmd/
+//     and internal/: the map of the tech docs in a row, and the map of the user
+//     manual in a row or in its list of areas with no manual page. Every path
+//     that the first column of a map names exists. A root with no go.mod is
+//     not the Go module, so the small sites of the tests need no maps.
 //
 // It prints one problem on each line and exits with 1 when it finds any. A
 // missing or wrong flag exits with 2.
@@ -119,6 +124,7 @@ func check(cfg config) []problem {
 	c.pages()
 	c.screenshots()
 	c.content()
+	c.pageMaps()
 	return c.problems
 }
 

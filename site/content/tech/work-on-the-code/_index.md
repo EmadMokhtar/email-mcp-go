@@ -20,7 +20,8 @@ published. Read them before your first change, and before you make a release.
   targets, the Go version, what CI (continuous integration: the checks that
   GitHub runs on each pull request and on each push to `main`) runs, the rules
   of the code, the steps to add a tool, a command, a migration or a package,
-  and how to build the docs site and the container image.
+  which page of the docs to update and the docs check, and how to build the
+  docs site and the container image.
 - [Testing](/tech/work-on-the-code/testing/): the kinds of test, the test
   servers, the end-to-end tests, the build tags and the interop test.
 - [Making a release](/tech/work-on-the-code/release-process/): the setup that
