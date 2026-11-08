@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 712" role="img">
+  <title>The path of a release</title>
+  <desc>A flow from top to bottom, with the failures on the right. 1, merge pull requests into main; each title is a Conventional Commit. 2, release-please opens or updates its pull request chore(main): release X.Y.Z. 3, merge the release pull request; release-please pushes the tag vX.Y.Z and creates a draft release. 4, release.yml, job check: go vet, the tests, govulncheck, and the check that server.json has the version of the tag. 5, approve the deployment to the environment release, when GitHub asks for it. 6, release.yml, job GoReleaser: GoReleaser builds and signs the files, uploads them into the draft and publishes it, with the cask and the image. 7, the same job, after GoReleaser: it checks the signature of checksums.txt and adds the attestations. Last, in a dashed box: the site is published by pages.yml, which a maintainer starts by hand; release.yml does not call it. Three failures, on the right. Next to step 4: the code must change, because a test or govulncheck fails; merge a fix as a fix pull request, and delete the old draft by hand. Next to step 6: a failure before the publish; fix the cause, such as an expired token, then re-run the failed jobs. Next to step 7: a failure after the publish; turn the release back into a draft with gh release edit vX.Y.Z --draft=true, then re-run the failed jobs.</desc>
+
+  <!-- This file is the source of the drawing: edit it by hand. A short script
+       placed the first coordinates, and that script is not kept. The
+       classes are in site/assets/css/site.css. -->
+
+  <rect class="d-box" x="20" y="20" width="400" height="60" rx="8"/>
+  <text class="d-text" x="220" y="41" text-anchor="middle" dominant-baseline="central">1 Merge pull requests into main</text>
+  <text class="d-soft" x="220" y="61" text-anchor="middle" dominant-baseline="central">each title is a Conventional Commit</text>
+  <path class="d-line" d="M220 80V104M214 96L220 104L226 96"/>
+  <rect class="d-box" x="20" y="104" width="400" height="60" rx="8"/>
+  <text class="d-text" x="220" y="125" text-anchor="middle" dominant-baseline="central">2 release-please updates its pull request</text>
+  <text class="d-soft" x="220" y="145" text-anchor="middle" dominant-baseline="central">chore(main): release X.Y.Z</text>
+  <path class="d-line" d="M220 164V188M214 180L220 188L226 180"/>
+  <rect class="d-box" x="20" y="188" width="400" height="60" rx="8"/>
+  <text class="d-text" x="220" y="209" text-anchor="middle" dominant-baseline="central">3 Merge the release pull request</text>
+  <text class="d-soft" x="220" y="229" text-anchor="middle" dominant-baseline="central">release-please pushes vX.Y.Z and makes a draft</text>
+  <path class="d-line" d="M220 248V272M214 264L220 272L226 264"/>
+  <rect class="d-box" x="20" y="272" width="400" height="60" rx="8"/>
+  <text class="d-text" x="220" y="293" text-anchor="middle" dominant-baseline="central">4 release.yml, job check</text>
+  <text class="d-soft" x="220" y="313" text-anchor="middle" dominant-baseline="central">go vet, tests, govulncheck, server.json version</text>
+  <path class="d-line" d="M220 332V356M214 348L220 356L226 348"/>
+  <rect class="d-box" x="20" y="356" width="400" height="60" rx="8"/>
+  <text class="d-text" x="220" y="377" text-anchor="middle" dominant-baseline="central">5 Approve the deployment</text>
+  <text class="d-soft" x="220" y="397" text-anchor="middle" dominant-baseline="central">to the environment release, when GitHub asks</text>
+  <path class="d-line" d="M220 416V440M214 432L220 440L226 432"/>
+  <rect class="d-box" x="20" y="440" width="400" height="60" rx="8"/>
+  <text class="d-text" x="220" y="461" text-anchor="middle" dominant-baseline="central">6 release.yml, job GoReleaser</text>
+  <text class="d-soft" x="220" y="481" text-anchor="middle" dominant-baseline="central">build, sign, upload into the draft, publish</text>
+  <path class="d-line" d="M220 500V524M214 516L220 524L226 516"/>
+  <rect class="d-box" x="20" y="524" width="400" height="60" rx="8"/>
+  <text class="d-text" x="220" y="545" text-anchor="middle" dominant-baseline="central">7 The same job, after GoReleaser</text>
+  <text class="d-soft" x="220" y="565" text-anchor="middle" dominant-baseline="central">check the signature, add the attestations</text>
+  <path class="d-line d-dash" d="M220 584V608M214 600L220 608L226 600"/>
+  <rect class="d-box d-dash" x="20" y="608" width="400" height="60" rx="8"/>
+  <text class="d-text" x="220" y="629" text-anchor="middle" dominant-baseline="central">The site: pages.yml</text>
+  <text class="d-soft" x="220" y="649" text-anchor="middle" dominant-baseline="central">started by hand; release.yml does not call it</text>
+  <rect class="d-box d-bad" x="460" y="272" width="280" height="60" rx="8"/>
+  <text class="d-text" x="600" y="287" text-anchor="middle" dominant-baseline="central">The code must change</text>
+  <text class="d-soft" x="600" y="305" text-anchor="middle" dominant-baseline="central">a test or govulncheck fails: merge</text>
+  <text class="d-soft" x="600" y="321" text-anchor="middle" dominant-baseline="central">a fix, delete the draft by hand</text>
+  <path class="d-line d-bad d-dash" d="M420 302H460M452 296L460 302L452 308"/>
+  <rect class="d-box d-bad" x="460" y="440" width="280" height="60" rx="8"/>
+  <text class="d-text" x="600" y="455" text-anchor="middle" dominant-baseline="central">Fails before the publish</text>
+  <text class="d-soft" x="600" y="473" text-anchor="middle" dominant-baseline="central">fix the cause, such as a token,</text>
+  <text class="d-soft" x="600" y="489" text-anchor="middle" dominant-baseline="central">then re-run the failed jobs</text>
+  <path class="d-line d-bad d-dash" d="M420 470H460M452 464L460 470L452 476"/>
+  <rect class="d-box d-bad" x="460" y="524" width="280" height="60" rx="8"/>
+  <text class="d-text" x="600" y="539" text-anchor="middle" dominant-baseline="central">Fails after the publish</text>
+  <text class="d-soft" x="600" y="557" text-anchor="middle" dominant-baseline="central">gh release edit vX.Y.Z --draft=true,</text>
+  <text class="d-soft" x="600" y="573" text-anchor="middle" dominant-baseline="central">then re-run the failed jobs</text>
+  <path class="d-line d-bad d-dash" d="M420 554H460M452 548L460 554L452 560"/>
+  <text class="d-soft" x="380" y="694" text-anchor="middle" dominant-baseline="central">The boxes on the right are failures and what to do. The dashed box is started by hand.</text>
+</svg>

@@ -18,8 +18,8 @@ Install the program instead (see [Install email-mcp][install]).**
 
 The container image is for testing and for building on, not for daily use. A
 hosted mode for many people (one server that many people use) is planned. It is
-not available. The tech docs page Local development explains how to build the
-image and try it.
+not available. The tech docs page [Local development][d] explains how to build
+the image and try it.
 
 ## Why the container does not work for local use
 
@@ -80,3 +80,4 @@ documentation, on 2026-11-06:
   standard input open.
 
 [install]: /manual/getting-started/install/
+[d]: /tech/work-on-the-code/local-development/#build-and-try-the-container-image

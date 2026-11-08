@@ -1158,8 +1158,9 @@ Must cover (this moves "Development" from the README, and adds to it):
   `-trimpath`), `test` (`go test -race ./...`), `lint`, `vuln`. The note about
   `GOROOT`. The pinned tool versions live in the Makefile and the workflows.
 - Go version: `.go-version` and the `go` line of `go.mod`.
-- CI (`.github/workflows/ci.yml`): the four jobs; actions pinned by commit; read
-  only token. The interop workflow is on `testing`.
+- CI (`.github/workflows/ci.yml`): the five jobs (the fifth, `build site`,
+  came with the foundation); actions pinned by commit; read only token. The
+  interop workflow is on `testing`.
 - Dependabot: weekly, grouped, cooldown, the `fix(deps)` prefix and why.
 - Conventions (from `.github/copilot-instructions.md` and the code): wrapped
   errors, comments that explain why, table-driven tests with `testify/require`,
@@ -1216,9 +1217,12 @@ Must cover:
 - `internal/e2e`: the whole program through `app.Open`, a go-sdk client on an
   in-memory connection, the local HTTP endpoint and the portal. It holds the
   security checklist tests. Name the tests in `security_test.go`.
-- Tests that read the code itself: the routes tests in `web`, the
-  user-only test and `TestEveryToolRunsThroughSafe` in `mcpserver`.
-- Fuzz targets (`Fuzz*` in `mime` and `signing`): they run as normal tests with
+- Tests that check every item of a list that the code keeps: the routes
+  tests in `web` (they go over the table `routes`), the user-only test (it
+  parses the Go files of `mcpserver`) and `TestEveryToolRunsThroughSafe` in
+  `mcpserver` (it calls each listed tool).
+- Fuzz targets (`Fuzz*` in `mime`, `signing` and `thirdparty/xhtml`): they run
+  as normal tests with
   their seed inputs in `go test`. State only what the workflows run. To fuzz for
   longer, run `go test -fuzz`.
 - The race detector: `-race` and the `race_on_test.go` and `race_off_test.go`
@@ -1271,9 +1275,11 @@ Must cover:
   Dockerfile with `--build-arg BINARY_FROM=release`, so the image holds the
   binary that GoReleaser built (`Dockerfile`, `.goreleaser.yaml`).
 - A section "How the site is published" from `.github/workflows/pages.yml` and
-  the foundation: `release.yml` calls it as the last job, after the release job
-  succeeds; a pre-release tag publishes nothing; `workflow_dispatch` is for the
-  first launch and urgent fixes. Add
+  the foundation. Until the cutover (Task 24 of the plan), `release.yml` does
+  not call `pages.yml`: the page says that a maintainer starts it by hand
+  (`workflow_dispatch`), and that `pages.yml` also accepts `workflow_call`. The
+  cutover adds the job in `release.yml` and the text that a release publishes
+  the site and a pre-release tag does not. Add
   two owner steps to the one-time list, because a release cannot deploy the site
   without them: set the Pages source to "GitHub Actions", and allow tags that
   match `v*` to deploy to the `github-pages` environment (foundation, "Steps
