@@ -270,8 +270,8 @@ spec, "What other parts rely on").
 Rule for all pages: do not write how many tools or commands exist. The count
 changes with each feature. Name the function that registers them instead.
 
-Names. This part says "web portal", as `PRODUCT.md` and `DESIGN.md` do. The
-manual says "web pages". The code comments say "web interface". The page
+Names. This part says "web portal". `PRODUCT.md` and `DESIGN.md` say
+"portal". The manual says "web pages". The code comments say "web interface". The page
 `web-portal` says this once and then keeps "web portal". The menu label of the
 approval page is "Waiting for you" (`internal/web/templates/layout.html:52`).
 The route and the code say "approvals". (My call.)
@@ -942,9 +942,10 @@ Must cover:
   codes 0, 1 and 2; a bad flag gets a fixed text, never the text that was typed
   (`parseOnce`).
 - A table: command → file → what it opens (`serve`: `Open`, `Run`, `Close`;
-  `setup`: the same plus the portal; `account`, `token`, `outbox`: `Open` and
-  `CloseNow`; `doctor`: `ExistingKeyOnly`; `key rotate`: `RotateKEK`;
-  `import-env`: a strict parser and the connect flow).
+  `setup`: `Open`, `Run` and the portal, then `Close`, and with
+  `--revoke-sessions` `Open` and `CloseNow`; `account`, `token`, `outbox`:
+  `Open` and `CloseNow`; `doctor`: `ExistingKeyOnly`; `key rotate`:
+  `RotateKEK`; `import-env`: a strict parser and the connect flow).
 - `system` (`console.go`): the terminal, the browser and discovery are replaced
   in tests, so no test needs a terminal.
 - Rules: standard output gets what the user asked for; standard error gets
@@ -982,9 +983,13 @@ Questions:
 Must cover:
 
 - The address must be a loopback address (`httpserve.CheckLoopbackAddr`).
-- The order: limit on concurrent requests (`limitRequests`), `Host`, `Origin`,
-  body size, bearer token, then the SDK handler in stateless mode. Why the
-  order: a DNS rebinding page gets 403 before any token is looked at.
+- The order: limit on concurrent requests (`limitRequests`), the router of
+  `serveHTTP` (only `/mcp` goes on; another path gets 404, and a path that is
+  not clean gets a redirect), `Host`, `Origin`, the stated body size
+  (`Content-Length`), bearer token, the read of the whole body (`readBody`),
+  then the SDK handler in stateless mode. Why the order: a DNS rebinding page
+  gets 403 before any token is looked at, and `readBody` runs after the token
+  check.
 - Stateless mode (`Stateless: true`): the server keeps no session, so it cannot
   call back to the client. It never sends `elicitation/create` over HTTP. A
   client that speaks protocol `2026-07-28` or newer can still get the question,
@@ -1029,7 +1034,8 @@ Questions:
 Must cover:
 
 - Lazy start: `EnsureStarted` on the first link; `127.0.0.1` with a random port;
-  one server for each process; it stops last in `Close`.
+  one server for each process; `Close` shuts it down in its step 5, after the
+  drain of the outbox and before the backends and the store close.
 - Sign in: `email-mcp setup` makes a one-time token (stored hashed, 10 minutes,
   single use) and opens the link through a private file. `/setup` swaps the
   token for a cookie and redirects, so the token leaves the address bar. The
@@ -1038,7 +1044,8 @@ Must cover:
 - The host name `email-mcp.localhost`: why a cookie for `127.0.0.1` would go to
   every local port, and so only this name gets a cookie.
 - The checks in `guard.go`, in order: security headers, `Host`, cross-origin
-  protection, the name, the session, the CSRF token (CSRF is cross-site request
+  protection, `/setup` and `/static/` (answered by the guard, GET and HEAD
+  only), the name, the session, the CSRF token (CSRF is cross-site request
   forgery: another site makes the browser send a request; the token is a signed
   value tied to the session). A GET only reads. The routes list and the tests
   that read it.
@@ -1399,11 +1406,12 @@ Source: the other pages.
   characters, clean the HTML and make the text part, write the message, preview
   of the text part.
 - **D12 `http-checks`** (`local-http`, required). The pipeline of a request:
-  concurrency limit, `Host`, `Origin`, body size, token, stateless SDK handler,
-  middleware, tool. Show the status code of each refusal.
+  concurrency limit, path, `Host`, `Origin`, stated body size, token, read of
+  the body, stateless SDK handler, middleware, tool. Show the status code of each
+  refusal.
 - **D13 `portal-checks`** (`web-portal`, required). The pipeline of the portal:
-  headers, `Host`, cross-origin, name, session, CSRF, route. Show the status
-  code of each refusal.
+  headers, `Host`, cross-origin, `/setup` and `/static/`, name, session, CSRF,
+  route. Show the status code of each refusal.
 - **D14 `portal-sign-in`** (`web-portal`, required). A sequence: `setup` makes
   the token, opens the link through a file, the browser requests `/setup`, the
   cookie is set, the redirect. Show that the token is stored only as a hash.

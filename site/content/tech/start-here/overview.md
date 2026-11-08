@@ -56,8 +56,8 @@ import layers of the packages: the page
    output: the client starts the server and talks to it through two pipes) it
    is `serveStdio` in {{< src "cmd/email-mcp/serve.go" >}}. On local HTTP
    (HyperText Transfer Protocol) it is the HTTP server in the same file, with
-   `limitRequests`, and the checks of the package `httpserve`. The page "Local
-   HTTP mode" in the group "Ways in" goes deeper.
+   `limitRequests`, and the checks of the package `httpserve`. The page
+   [Local HTTP mode](/tech/ways-in/local-http/) goes deeper.
 2. `mcpserver` holds the tools. A tool handler turns its arguments into one
    call of `service`, and turns the answer into a tool result. A tool handler
    is the function that runs one tool. It checks no permission itself. See

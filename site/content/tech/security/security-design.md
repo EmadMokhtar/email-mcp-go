@@ -82,8 +82,8 @@ The agent's channel:
   {{< src "internal/httpserve/httpserve.go" >}} runs four checks, in this order.
   First the Host header (the name of the server that a request asks for). Then
   the Origin header (the web site that a browser request comes from). Then the
-  size of the body. Last the access token. The page "Local HTTP mode" in the
-  group "Ways in" goes deeper.
+  size of the body. Last the access token. The page [Local HTTP
+  mode](/tech/ways-in/local-http/#the-checks-in-order) goes deeper.
 - **The tools.** `addTool` in {{< src "internal/mcpserver/server.go" >}} wraps
   each tool in `safe`, which asks for the caller first. A call with no caller,
   or with a caller that has no tenant, is refused with "not authorized", and the
@@ -113,7 +113,8 @@ The person's channel:
      token (cross-site request forgery token: a value in each form that proves
      that the form came from the portal) for a request that is not GET or HEAD.
 
-  The page "The web portal" in the group "Ways in" goes deeper.
+  The page [The web portal](/tech/ways-in/web-portal/#the-checks-in-order)
+  goes deeper.
 - **The terminal** runs the commands of `cmd/email-mcp` other than `serve`, such
   as `setup` and `token`. The ones that call a use case run as the local tenant.
 - **The reach.** This channel calls the user-only use cases (the use cases that
