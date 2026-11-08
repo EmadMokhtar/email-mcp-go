@@ -9,13 +9,13 @@ code_areas:
   - internal/web/
 ---
 
-These pages explain three ways into email-mcp. The person uses the commands at
-a terminal (a window where you type commands) and the web portal in a browser.
-An AI app that cannot start a program reaches the MCP (Model Context Protocol)
-tools through local HTTP (HyperText Transfer Protocol). Each page names the
-files that it covers, and the checks that a request passes before it reaches
-the use cases. Read them when you add a command, change how a request is
-checked, or add a page.
+These pages explain three ways into email-mcp. The person uses the commands at a
+terminal (a window where you type commands) and the web portal in a browser. An
+AI (artificial intelligence) app that cannot start a program reaches the MCP
+(Model Context Protocol) tools through local HTTP (HyperText Transfer Protocol).
+Each page names the files that it covers. Two pages explain the checks that a
+request passes before it reaches the use cases. Read them when you add a
+command, change how a request is checked, or add a page.
 
 - [The command line](/tech/ways-in/command-line/): how the commands are
   registered and tested, what each one opens, and the rules for passwords,

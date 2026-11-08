@@ -986,8 +986,8 @@ Must cover:
 - The order: limit on concurrent requests (`limitRequests`), `Host`, `Origin`,
   the stated body size (`Content-Length`), bearer token, the read of the whole
   body (`readBody`), then the SDK handler in stateless mode. Why the order: a
-  DNS rebinding page gets 403 before any token is looked at, and a caller
-  without a token cannot make the server read a large body.
+  DNS rebinding page gets 403 before any token is looked at, and `readBody`
+  runs after the token check.
 - Stateless mode (`Stateless: true`): the server keeps no session, so it cannot
   call back to the client. It never sends `elicitation/create` over HTTP. A
   client that speaks protocol `2026-07-28` or newer can still get the question,

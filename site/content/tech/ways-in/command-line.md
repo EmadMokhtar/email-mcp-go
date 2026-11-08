@@ -14,7 +14,10 @@ answers, and how to add one. Read it before you change a file in
 `cmd/email-mcp`. A command is a word after the name of the program, such as
 `serve` or `account add`. A flag is an option after it, such as `--data-dir`.
 The user manual lists each command and flag for the person: see
-[Commands](/manual/reference/commands/).
+[Commands](/manual/reference/commands/). A command writes its results and its
+questions to standard output (the stream for the answer of a program). It
+writes errors and the log to standard error (the stream where a program writes
+messages about itself).
 
 ## How commands are registered and tested
 
@@ -34,12 +37,11 @@ same way. Most commands and groups have their own file. The table in [What
 each command opens](#what-each-command-opens) names them.
 
 `main` calls `run`, which gives `runWith` the real terminal (the window where
-the person types commands), the real browser
-and the real discovery. Discovery is the part that suggests the mail server
-settings of an address. The type `system` in
-{{< src "cmd/email-mcp/console.go" >}} holds these parts as four functions:
-`isTerminal`, `readPassword`, `openBrowser` and `discover`. `realSystem` returns
-the real ones. A test gives `runWith` its own.
+the person types commands), the real browser and the real discovery. Discovery
+is the part that suggests the mail server settings of an address. The type
+`system` in {{< src "cmd/email-mcp/console.go" >}} holds these parts as four
+functions: `isTerminal`, `readPassword`, `openBrowser` and `discover`.
+`realSystem` returns the real ones. A test gives `runWith` its own.
 
 The tests of the commands are in {{< src "cmd/email-mcp/cli_test.go" >}}.
 `runCLI` runs `runWith` with a `fakeSystem`: a terminal or not, the passwords
@@ -49,9 +51,9 @@ with fixed answers. So no test needs a terminal, and no test opens a browser.
 `requireNoLeak` checks that a secret is in neither of them. The tests that
 open data use a real data directory (the folder of the database) in a temporary
 folder, with a key file as the master key (the key that protects the other
-keys). The fake mail servers `imaptest` and
-`smtptest` stand in for IMAP (Internet Message Access Protocol, for reading
-mail) and SMTP (Simple Mail Transfer Protocol, for sending mail).
+keys). The fake mail servers `imaptest` and `smtptest` replace the real IMAP
+(Internet Message Access Protocol, for reading mail) and SMTP (Simple Mail
+Transfer Protocol, for sending mail) servers.
 
 Two tests guard rules that hold for many commands:
 
@@ -60,18 +62,22 @@ Two tests guard rules that hold for many commands:
   with 2 and does not repeat the name.
 - `TestNoArgumentIsEchoed` gives a secret value in each place where a person
   could type one by mistake: an unknown command, an extra argument, an unknown
-  flag, a bad value. It checks that each command exits with 2, that the value
-  is on neither output, and that no data directory was made.
+  flag, a bad value. For the commands in its list (not `outbox`, `serve` or
+  `version`), it checks that the exit code is 2, that the value is on neither
+  output, and that no data directory was made.
+  `TestServeAndVersionNeverEchoABadFlag` does the same for `serve` and
+  `version`.
 
 ## What each command opens
 
-Most commands open the `App`, call one use case (a function of `service` that
-does one job for a caller) and close it. The `App` is what `app.Open` in
+Most commands open the `App`, call the use cases of `service` (the functions
+that do one job for a caller), and close it. The `App` is what `app.Open` in
 {{< src "internal/app/app.go" >}} builds: all the parts of the program,
 connected. The way a command closes it matters. `App.Close` drains the outbox
-(the queue of outgoing mail): it sends the queued messages that are due.
-`App.CloseNow` does not. `serve` speaks MCP (Model Context Protocol) on stdio
-(standard input and output: the AI app starts the program and talks to it
+(the queue of outgoing mail): it sends the queued messages that are due, or
+that become due within 5 minutes (`drainWait`). `App.CloseNow` does not.
+`serve` speaks MCP (Model Context Protocol) on stdio (standard input and
+output: the AI (artificial intelligence) app starts the program and talks to it
 through two pipes), or on local HTTP (HyperText Transfer Protocol) with
 `--http`. The stop budget is one time limit for the whole stop.
 
@@ -79,26 +85,24 @@ through two pipes), or on local HTTP (HyperText Transfer Protocol) with
 |---|---|---|
 | `serve` | {{< src "cmd/email-mcp/serve.go" >}} | `app.Open`, then `App.Run` (the background work), then MCP on stdio or on local HTTP. At the stop, `App.Close` with the stop budget. |
 | `setup` | {{< src "cmd/email-mcp/setup.go" >}} | `app.Open` and `App.Run`, as `serve` does, then the web portal, which `NewSetupURL` starts. It serves the portal until the stop, then `App.Close` with the stop budget. With `--revoke-sessions`: `app.Open`, `RevokeSessions`, and `CloseNow`, with no `Run`. |
-| `account add`, `list`, `reconnect`, `remove`, `test` | {{< src "cmd/email-mcp/account.go" >}}, {{< src "cmd/email-mcp/reconnect.go" >}} | `openApp`, one use case of `service`, then `closeApp`, which calls `CloseNow`. |
+| `account add`, `list`, `reconnect`, `remove`, `test` | {{< src "cmd/email-mcp/account.go" >}}, {{< src "cmd/email-mcp/reconnect.go" >}} | `openApp`, calls to `service`, then `closeApp`, which calls `CloseNow`. |
 | `token create`, `list`, `revoke` | {{< src "cmd/email-mcp/token.go" >}} | The same. `list` reads `tokens.Manager.List`. |
 | `outbox list`, `cancel` | {{< src "cmd/email-mcp/outbox.go" >}} | The same. |
-| `import-env` | {{< src "cmd/email-mcp/importenv.go" >}} | First `parseEnvFile` reads the `.env` file of the old email-mcp. Then the connect flow (see below), between `openApp` and `closeApp`. |
+| `import-env` | {{< src "cmd/email-mcp/importenv.go" >}} | `parseEnvFile` reads the `.env` file of the old email-mcp, and `checkServer` applies the rule of plain connections. Only then `openApp`, the connect flow (see below), and `closeApp`. |
 | `key rotate` | {{< src "cmd/email-mcp/key.go" >}} | `openApp`, `App.RotateKEK`, then `closeApp`. |
 | `doctor` | {{< src "cmd/email-mcp/doctor.go" >}} | It checks the data directory and the database file first, and stops when one is missing. Then `app.Open` with `ExistingKeyOnly` (load the master key, never make one), `ProbeAccount` for each account, and `closeApp`. |
 | `version` | `main.go` | Nothing. |
 
-A short command never calls `Run` and queues no message. So the queue belongs to
-the program that serves, and `CloseNow` leaves it to that program. The page
-[Startup and
-shutdown](/tech/inside-the-server/startup-and-shutdown/#short-commands)
-explains why, and how `serve` and `setup` stop on Ctrl-C (hold the Ctrl key and
-press C).
+A short command never calls `Run` and queues no message, so `CloseNow` leaves
+the queue to the program that serves. See [Startup and
+shutdown](/tech/inside-the-server/startup-and-shutdown/#short-commands).
 
-`parseEnvFile` is strict. A line is empty, a comment, or `NAME=VALUE`. A quoted
-value keeps its text as it is, with no escapes. A name that comes twice is
-refused. An error gives the number of the line, never its text, because a line
-can hold a password. `readEnvFile` reads at most 64 KiB (`maxEnvFileBytes`; a
-KiB is 1,024 bytes).
+A `.env` file is a text file of `NAME=VALUE` lines, which the old email-mcp
+read for its settings. `parseEnvFile` is strict. A line is empty, a comment, or
+`NAME=VALUE`. A quoted value keeps its text as it is, with no escapes. A name
+that comes twice is refused. An error gives the number of the line, never its
+text, because a line can hold a password. `parseEnvFile` refuses a file larger
+than 64 KiB (`maxEnvFileBytes`; a KiB is 1,024 bytes).
 
 ## Passwords, prompts and exit codes
 
@@ -125,11 +129,11 @@ The comment at the top of {{< src "cmd/email-mcp/console.go" >}} gives the rules
 of the output:
 
 - Standard output gets what the person asked for, and the questions. It may show
-  the address of the person's own account, and a new token or the setup link
-  once. `token create` prints its notes on standard error and the token alone on
-  standard output.
+  the address of the person's own account, and once the token that
+  `token create` makes or the setup link. `token create` prints its notes on
+  standard error and the token alone on standard output.
 - Standard error gets the errors, the warnings and the log of the `App`. Nothing
-  there holds an address, a password, a token or the setup link.
+  there may hold an email address, a password, a token or the setup link.
 - A password is never a flag, because other users of the computer can read the
   arguments of a process. `readPassword` reads it from the terminal without
   echo (the typed characters are not shown), or from the first line of standard
@@ -154,7 +158,8 @@ answer, so a command that asks first needs a flag instead: `account remove` and
 
 The commands and the web portal call the same use cases of `service`, such as
 `CreateIMAPAccount`, `ReconnectIMAPAccount`, `RemoveAccount`, `CreateToken` and
-`CancelQueuedSend`. Both are the person's door. `userContext` in
+`CancelQueuedSend`. Both are used by the person, not by the agent (the AI
+program that calls the tools). `userContext` in
 `console.go` gives each call the principal (the caller of a request) of the
 person at the terminal: the local tenant (the owner of the accounts), no scope
 limit (a scope is a permission that an access token carries), and the client
@@ -165,8 +170,11 @@ To connect an account, `account add` and `import-env` share the connect flow of
 {{< src "cmd/email-mcp/connect.go" >}}. `CreateIMAPAccount` tests the settings
 and saves the account, but it does not decide about a certificate (the signed
 proof of identity that a mail server shows) or a plain connection. The command
-line decides with the rules of {{< src "internal/connect/connect.go" >}}, the
-package that the web portal uses too:
+line decides. For a certificate it uses `connect.CheckCertificate` and
+`connect.ErrorText` of {{< src "internal/connect/connect.go" >}}, the package
+that the web portal uses too. For a plain connection it uses `checkPlain` and
+`account.IsLoopbackHost`, and the web portal asks `connect.PlainOnThisComputer`.
+The rules are the same:
 
 - A plain (unencrypted) connection is allowed only to a server on this
   computer, with `--plaintext-i-understand` or a typed `yes` on a terminal. To
@@ -175,7 +183,9 @@ package that the web portal uses too:
   allows it. On a terminal, the person sees the host, the port and the SHA-256
   fingerprint (SHA is Secure Hash Algorithm; the fingerprint is a short value
   computed from the certificate), and answers `y`. A server that is not on this
-  computer also needs a typed `yes`.
+  computer also needs a typed `yes`. The command tells the person to check the
+  fingerprint with the mail provider, through a channel other than this
+  connection.
 - Without a terminal, `--trust-fingerprint` must be the fingerprint that the
   server showed in this run. A server that is not on this computer also needs
   `--accept-remote-certificate`.
@@ -184,11 +194,9 @@ package that the web portal uses too:
 - A failed test prints the fixed text of `connect.ErrorText`, never the text of
   the server.
 
-`account reconnect` follows the same rules for a server that had no pin. For a
-pin that changed, `connect.CheckReconnect` decides. On a terminal the person
-types `yes`, for any host. Without a terminal, the command needs
-`--trust-fingerprint` with the new fingerprint, and
-`--replace-pinned-certificate`. The page [Connecting an
+`account reconnect` uses the same rules for a server that had no pin, and
+`connect.CheckReconnect` for a pin that changed. Without a terminal, that
+change also needs `--replace-pinned-certificate`. The page [Connecting an
 account](/tech/mail/connecting-an-account/#the-shared-package) explains the
 package `connect`.
 
