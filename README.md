@@ -753,7 +753,11 @@ After the import:
   warning, so a reader on such a device can see less than the agent.
 - In the text of a message, a long link is cut, and `...[cut]` marks the place.
   At most 32 characters of the user name and password, the last 64 of the host,
-  64 of the path and 32 of the query stay. The `html` body format has the whole
+  64 of the path (with its first `/`) and 32 of the query and fragment (from the
+  `?` or `#`) stay. These limits count the link as it is written in a url, where
+  each byte of a character that is not ASCII (the basic Latin letters, digits and
+  signs) becomes a three-character `%XX` code, so one Arabic letter counts as 6
+  characters. The `html` body format has the whole
   link. The same cut applies to the text part of mail that goes out and to the
   approval preview. A link in mail that goes out keeps its address only when
   the text shows the whole address, so a link with a cut address goes out without
