@@ -23,9 +23,10 @@ goes up, and what to do when a release fails. Releases come from
 messages in the format `type(scope): description`). The workflow
 {{< src ".github/workflows/release-please.yml" >}} keeps one release pull
 request open, and {{< src ".github/workflows/release.yml" >}} builds and
-publishes every tag that starts with `v`. A workflow is a list of steps that
-GitHub Actions (the automation service of GitHub) runs. A tag is a name that
-marks one commit, such as `vX.Y.Z`.
+publishes every tag that starts with `v`. For a tag with no pre-release part,
+it then publishes the docs site. A workflow is a list of steps that GitHub
+Actions (the automation service of GitHub) runs. A tag is a name that marks one
+commit, such as `vX.Y.Z`.
 
 ## What a release makes
 
@@ -166,6 +167,10 @@ rules allow the run.
    published only after your approval. With one maintainer, leave "Prevent
    self-review" off: the approval is then a pause to check, not a review by
    a second person.
+5. When the job `release` has passed, the last job of `release.yml` publishes
+   the docs site from the tag (see
+   [How the site is published](#how-the-site-is-published)). A pre-release tag
+   skips it.
 
 The release notes come from one place: release-please writes them into the
 draft from `CHANGELOG.md`, and GoReleaser keeps them (`release.mode:
@@ -177,7 +182,7 @@ the draft by its name, which is the tag (`use_existing_draft` and
 {{< diagram "release-flow" >}}
 
 The drawing shows the steps of this list, the jobs of `release.yml` (see
-[What the release workflow does](#what-the-release-workflow-does)), the three
+[What the release workflow does](#what-the-release-workflow-does)), the four
 cases of [When the release fails](#when-the-release-fails), and the site (see
 [How the site is published](#how-the-site-is-published)).
 
@@ -206,26 +211,28 @@ below 1.0.0.
 vulnerabilities), and checks that `server.json` has the version of the tag.
 Then GoReleaser builds and signs the files, uploads them into the draft
 release and publishes it, together with the Homebrew cask and the image. The
-workflow adds the attestations. A tag with a pre-release part, such as
-`v0.2.0-rc.1`, makes a GitHub pre-release, and does not update the tap or the
-`latest` image tag.
+workflow adds the attestations. Last, it publishes the docs site. A tag with a
+pre-release part, such as `v0.2.0-rc.1`, makes a GitHub pre-release, and does
+not update the tap, the `latest` image tag or the site.
 
-The workflow has two jobs:
+The workflow has three jobs:
 
 | Job | Permissions | Steps |
 |---|---|---|
 | `vet, test and govulncheck` (`check`) | `contents: read` | `go vet ./...`, `go test -race ./...`, govulncheck, and the version check of `server.json` |
 | `GoReleaser` (`release`), after `check`, in the environment `release` | `contents: write`, `packages: write`, `id-token: write`, `attestations: write` | install cosign and Syft; set up Buildx (the Docker tool that builds an image for several platforms); sign in to GHCR; GoReleaser; check the signature of `checksums.txt` as the manual tells users to; attest the release files; find the one digest of the image (the hash that names it); attest the image |
+| `publish the site` (`site`), after `release`, not for a pre-release tag | `contents: read`, `pages: write`, `id-token: write` | calls `pages.yml` (see [How the site is published](#how-the-site-is-published)) |
 
-By default the token of the workflow may only read, and only the release job
-gets the write permissions that it needs. Two releases of one tag never run at
-the same time (`concurrency`). Both jobs use no module cache, so a release never
-uses files that another workflow run wrote. The versions of GoReleaser, cosign,
-Syft and govulncheck are pinned (fixed to one exact version) in the workflow,
-and the actions are pinned by commit SHA (the hash that names one commit). The
-Go version is not pinned: the jobs install the newest stable Go, to get the
-fixes of the standard library. A pin also stops fixes from arriving by
-themselves, so update the pins on purpose and read what changed.
+By default the token of the workflow may only read, and only the jobs
+`release` and `site` get the write permissions that they need. Two releases of
+one tag never run at the same time (`concurrency`). No job uses a module cache,
+so a release never uses files that another workflow run wrote. The versions of
+GoReleaser, cosign, Syft and govulncheck are pinned (fixed to one exact
+version) in the workflow, and the actions are pinned by commit SHA (the hash
+that names one commit). The Go version is not pinned: the jobs install the
+newest stable Go, to get the fixes of the standard library. A pin also stops
+fixes from arriving by themselves, so update the pins on purpose and read what
+changed.
 
 ## When the release fails
 
@@ -245,6 +252,10 @@ themselves, so update the pins on purpose and read what changed.
   the attestations after GoReleaser): a re-run finds no draft and stops. First
   turn the release back into a draft with `gh release edit vX.Y.Z --draft=true`,
   then re-run the failed jobs.
+- **When only the site fails** (the job `publish the site`): the release stays
+  published, with its files, the cask and the image. Only the site still shows
+  the old version. Fix the cause, then re-run the failed jobs of the run, or
+  start `pages.yml` by hand on the tag.
 
 A tag pushed by hand also makes a release, after the same approval of the
 `release` environment: GoReleaser then creates the release itself. Set `version`
@@ -317,18 +328,36 @@ Pages. It has two jobs:
 - `deploy` runs in the environment `github-pages`, with `pages: write` and
   `id-token: write`, and deploys the upload.
 
-`release.yml` has no job that calls `pages.yml`, so a release does not publish
-the site. A maintainer starts `pages.yml` by hand (`workflow_dispatch`) on the
-branch or the tag to publish. It publishes whatever is on that branch or tag,
-also work that is not released. The environment `github-pages` accepts the
-default branch and, after step 8 of
-[Once, before the first release](#once-before-the-first-release), the tags
-that match `v*`. `pages.yml`
-also accepts `workflow_call`, so another workflow can call it. The calling job
-must give it `pages: write` and `id-token: write`, because a called workflow
-cannot get more permissions than its caller gives it. Two deploys never run at
-the same time, and a deploy that has started is not cancelled, so the site is
-not left half published.
+A release publishes the site. `pages.yml` is a reusable workflow: a workflow
+that another workflow can call (`workflow_call`). The last job of
+`release.yml`, `publish the site` (`site`), calls it after the job `release`
+has passed. So a failed release publishes nothing, and the site never points
+to files that do not exist yet. The job gives `pages.yml` `contents: read`,
+`pages: write` and `id-token: write`, because a called workflow cannot get
+more permissions than its caller gives it. A `permissions` block in a job sets
+every permission that it does not list to `none`, so a job that calls
+`pages.yml` must list `contents: read` too. Without it, the checkout of the
+job `build` fails. The job `build` stops after 30 minutes and the job `deploy`
+after 10, so a hung run does not hold back the next deploy.
+
+- A pre-release does not publish the site. The job runs only when the tag has
+  no `-`, so a tag such as `v0.2.0-rc.1` skips it, as it skips the tap and the
+  `latest` image.
+- A failed publish leaves the release in place. The job starts after the
+  release is published, so the release, the cask and the image stay. Fix the
+  cause, then re-run the failed jobs of the run, or start `pages.yml` by hand
+  on the tag.
+- The deploy runs for the tag, so the environment `github-pages` must accept
+  the tags that match `v*` (step 8 of
+  [Once, before the first release](#once-before-the-first-release)). Without
+  that rule the job fails, and the release stays as it is.
+
+A maintainer can also start `pages.yml` by hand (`workflow_dispatch`) on a
+branch or a tag, for an urgent fix of the site. It publishes whatever is on
+that branch or tag, also work that is not released. The environment
+`github-pages` accepts the default branch and the tags that match `v*`. Two
+deploys never run at the same time, and a deploy that has started is not
+cancelled, so the site is not left half published.
 
 ## The MCP Registry
 
@@ -336,14 +365,14 @@ not left half published.
 [official MCP Registry](https://registry.modelcontextprotocol.io) as
 `io.github.EmadMokhtar/email-mcp`. It lists no package on purpose. The registry
 supports npm, PyPI, NuGet, Cargo, OCI (Open Container Initiative: container
-images) and MCPB (MCP Bundle)
-packages. None of them fits a local Go binary that needs your keychain (the
-password store of the operating system) and the `email-mcp setup` command: an
-OCI image runs in a container, which has no keychain and no reachable web pages
-(see [Containers](/manual/reference/containers/)), and one MCPB bundle cannot
+images) and MCPB (MCP Bundle) packages. None of them fits a local Go binary
+that needs your keychain (the password store of the operating system) and the
+`email-mcp setup` command: an OCI image runs in a container, which has no
+keychain and no reachable web pages (see
+[Containers](/manual/reference/containers/)), and one MCPB bundle cannot
 choose between the Linux amd64 and arm64 binaries. So the entry points to the
-README of the repository for the install (`websiteUrl`). Publishing to the
-registry is a manual step with `mcp-publisher publish`, after the release.
+docs site for the install (`websiteUrl`). Publishing to the registry is a
+manual step with `mcp-publisher publish`, after the release.
 
 ## Related pages
 

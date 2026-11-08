@@ -1,15 +1,17 @@
 ---
 description: 'Documentation and content creation standards'
-applyTo: 'docs/**/*.md'
+applyTo: 'site/content/**/*.md'
 ---
 
 ## Markdown Content Rules
 
-These rules describe published article content under `docs/`, which is
-rendered by a system that supplies the page title itself. They deliberately do
-not apply to the repository's own documentation: `README.md` and `DOCKER.md`
-open with an H1 and carry no front matter, which is correct for files read
-directly on GitHub.
+These rules describe the pages of the docs site in `site/content/`. Hugo
+builds the site, and it shows the page title from the front matter, so a page
+has no H1. The site check (`test/sitecheck`) enforces the rules when
+`make site` runs. The rules do not apply to the other Markdown files of the
+repository: `README.md` opens with an H1 and carries no front matter, which is
+correct for a file read directly on GitHub, and `docs/superpowers/` holds the
+plans and specs, which are not published.
 
 The following markdown content rules are enforced in the validators:
 
@@ -19,7 +21,7 @@ The following markdown content rules are enforced in the validators:
 4. **Links**: Use proper markdown syntax for links. Ensure that links are valid and accessible.
 5. **Images**: Use proper markdown syntax for images. Include alt text for accessibility.
 6. **Tables**: Use markdown tables for tabular data. Ensure proper formatting and alignment.
-7. **Line Length**: Limit line length to 400 characters for readability.
+7. **Line Length**: Limit line length to 80 characters, except in tables and code blocks.
 8. **Whitespace**: Use appropriate whitespace to separate sections and improve readability.
 9. **Front Matter**: Include YAML front matter at the beginning of the file with required metadata fields.
 
@@ -42,16 +44,13 @@ Ensure compliance with the following validation requirements:
 
 - **Front Matter**: Include the following fields in the YAML front matter:
 
-  - `post_title`: The title of the post.
-  - `author1`: The primary author of the post.
-  - `post_slug`: The URL slug for the post.
-  - `microsoft_alias`: The Microsoft alias of the author.
-  - `featured_image`: The URL of the featured image.
-  - `categories`: The categories for the post. These categories must be from the list in /categories.txt.
-  - `tags`: The tags for the post.
-  - `ai_note`: Indicate if AI was used in the creation of the post.
-  - `summary`: A brief summary of the post. Recommend a summary based on the content when possible.
-  - `post_date`: The publication date of the post.
+  - `title`: The title of the page.
+  - `description`: One sentence about the page, for search engines and link previews.
+  - `weight`: The place of the page in the sidebar. A lower number comes first.
+  - `code_areas`: Manual and tech docs pages only. The repository paths that the page covers. The build fails when a path does not exist.
+  - `aliases`: Optional. The old addresses of a page that moved.
+
+  The landing page (`site/content/_index.md`) has more fields, which its template reads.
 
 - **Content Rules**: Ensure that the content follows the markdown content rules specified above.
 - **Formatting**: Ensure that the content is properly formatted and structured according to the guidelines.

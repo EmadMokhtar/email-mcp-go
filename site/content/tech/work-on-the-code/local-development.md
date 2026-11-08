@@ -100,8 +100,8 @@ stable release.
 
 ## What CI runs
 
-{{< src ".github/workflows/ci.yml" >}} runs on every push and on every pull
-request. It has five jobs:
+{{< src ".github/workflows/ci.yml" >}} runs on every pull request and on every
+push to `main`. It has five jobs:
 
 | Job | What it runs |
 |---|---|

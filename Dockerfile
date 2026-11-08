@@ -5,14 +5,16 @@
 # can change. Without it, BuildKit uses its built-in frontend. This file needs
 # nothing more: ARG before FROM, FROM --platform and COPY --from are built in.
 #
-# For local use, install the binary instead (see the README). In a container,
+# For local use, install the binary instead (see
+# site/content/manual/getting-started/install.md). In a container,
 # email-mcp cannot reach the keychain of your computer, and the address
 # 127.0.0.1 inside the container is the container itself: the computer that runs
 # the container cannot reach a server that listens there. So local HTTP mode and
 # the web interface are reachable only from inside the container. The default
 # command below serves MCP over standard input and output (stdio), which an MCP
 # client can use with "docker run -i". This image is groundwork for hosted mode,
-# which comes in milestone M3. DOCKER.md explains this in more detail.
+# which comes in milestone M3. The page
+# site/content/manual/reference/containers.md explains this in more detail.
 #
 # One Dockerfile serves two builds. The build argument BINARY_FROM chooses
 # where the binary comes from:
