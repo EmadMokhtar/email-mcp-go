@@ -2,8 +2,12 @@ package main
 
 import (
 	"maps"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // mapsPage is a small page with the two maps, in the shape of the real page.
@@ -123,6 +127,17 @@ func TestPageMaps(t *testing.T) {
 			requireOutcome(t, cfg, mapsFile, tc.want)
 		})
 	}
+}
+
+// TestPageMapsRefuseALinkThatLeavesTheRoot covers a path of a map that is a
+// symbolic link to a file outside the repository. The file exists, but the
+// check must not read outside -root, so for the check the path does not exist.
+func TestPageMapsRefuseALinkThatLeavesTheRoot(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "secret.go")
+	require.NoError(t, os.WriteFile(outside, []byte("package x\n"), 0o600))
+	cfg := newSite(t, subPath, mapsRepo(map[string]string{"cmd/a/other.go": ""}))
+	require.NoError(t, os.Symlink(outside, filepath.Join(cfg.Root, "cmd", "a", "other.go")))
+	requireOneProblem(t, cfg, mapsFile, "line 22: `other.go` does not exist in the repository")
 }
 
 // TestPageMapsNeedNoPageOutsideTheModule keeps the other tests small: a root
