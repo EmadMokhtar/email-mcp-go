@@ -235,12 +235,10 @@ the SDK refused before a handler ran. It calls `service.RecordToolCall` in
 never reaches `capture`, so it has no entry.
 
 The arguments are sealed with the key of the tenant. The arguments `body`,
-`html_body` and `data_base64` are never kept (`omittedArguments`). A failure to
-write the entry does not change the answer of the call. A call without a
-principal has no entry either, because the table needs a tenant, and the
-program log gets a fixed code instead. The page
+`html_body` and `data_base64` are never kept (`omittedArguments`). The page
 [Activity log and program log](/tech/inside-the-server/audit-and-logging/) in
-the group "Inside the server" explains the log.
+the group "Inside the server" explains the log and the rules for writing to
+it.
 
 ## What differs between stdio and HTTP
 
@@ -248,7 +246,7 @@ the group "Inside the server" explains the log.
 |---|---|---|
 | Transport | `mcp.IOTransport` in `serveStdio` | `limitRequests`, the checks of `httpserve.Handler`, then the SDK handler in stateless mode (the server keeps nothing between two requests) |
 | Principal | `localPrincipal`: the tenant `local`, no scope limit | `httpserve.Principal`: the tenant and the scopes of the token. The scopes are a list that is never nil, so a token never means "no limit". |
-| A question in the chat | The client may show the confirmation form, where the person answers yes or no (`InBandConfirm` is true) | Only with a token made with `--in-band-confirm`. Other callers get a link to the approval page: the page of the web portal where the person approves or rejects an action. |
+| A question in the chat | The client may show the confirmation form, where the person answers yes or no (`InBandConfirm` is true) | Only with a token that may confirm in band: one made with `--in-band-confirm`, or with the box "Let this app ask me in its own window" in the web portal. Other callers get a link to the approval page: the page of the web portal where the person approves or rejects an action. |
 
 Steps 2 to 10 are the same code for both. `serve` builds one server for each
 transport with `App.MCPServer`, with a different `mcpserver.Options`.

@@ -160,6 +160,11 @@ level of the account can still lower what a token may do.
 - `tokens.Create` refuses a token with no scope, or with a scope that `policy`
   does not know. `httpserve.Principal` copies the scopes into a list that is
   never nil, so a token never means no limit.
+- A token also has an end date. A new token stops working after 90 days by
+  default (`tokens.DefaultLifetime`). `tokens.Verify` refuses a token that is
+  revoked or past its end date. [Storage and
+  secrets](/tech/inside-the-server/storage-and-secrets/#how-long-data-is-kept)
+  says how long each kind of data is kept.
 - When the level of the account would allow the action and the scopes lowered
   it, `PermissionError.TokenLimited` is true. The error then has no link to the
   settings, because the settings cannot help.
@@ -183,8 +188,12 @@ to 300 (`maxUndoWindow`).
 
 The new-recipient check is a switch in `Limits` and is off by default.
 
-- **Hour and day limits.** Each limit is counted for the hour or for the day, in
-  UTC (Coordinated Universal Time). A limit of 0 allows nothing.
+- **Hour and day limits.** Each limit is counted in a fixed window, in UTC
+  (Coordinated Universal Time). The hour window starts at the top of each hour,
+  and the day window at 00:00 UTC (`now.Truncate` in `Limiter.Reserve`). The
+  windows do not slide. So 20 sends at 10:59 and 20 more at 11:00 can both pass.
+  The wait in a full limit is the time until its window ends. A limit of 0
+  allows nothing.
 - **Counting.** `Limiter.Reserve` checks and counts in one database transaction
   (a group of database steps that all happen or none do). So two sends at the
   same time, in one program or in several that share the database, cannot pass a

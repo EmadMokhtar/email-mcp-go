@@ -232,6 +232,7 @@ holds for the `Vault`.
 | Limit counters | 48 hours (`retention`) | `ReserveCounters` |
 | Setup token | 10 minutes (`setupTokenTTL`), and it works once | Its use, or the next setup token |
 | Web session | 24 hours (`sessionTTL`), and 2 hours without use (`sessionIdleTTL`) | Its next use, or the next session |
+| Access token | A new token works for 90 days by default (`DefaultLifetime`). The person can choose from 1 minute to 3,650 days. | Nothing. The row stays after the token ends or is revoked, so the list of tokens can show it. |
 | Everything of an account | Until the account is removed | `ON DELETE CASCADE` |
 
 `App.dailyJobs` runs the prune of the first two rows and a checkpoint of the

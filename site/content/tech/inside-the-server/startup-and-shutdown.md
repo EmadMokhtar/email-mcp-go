@@ -45,7 +45,10 @@ to go out.
    tenant `local` (the owner of the accounts of a local install) exists.
 3. **The master key and the vault.** `loadKEK` finds the master key (the key
    that protects the other keys), or makes it on the first start, under a lock
-   (see [Storage and secrets](/tech/inside-the-server/storage-and-secrets/)).
+   on a file (see [Storage and
+   secrets](/tech/inside-the-server/storage-and-secrets/)). `tryLock` in
+   {{< src "internal/app/lock_unix.go" >}} and
+   {{< src "internal/app/lock_windows.go" >}} takes the lock.
    With `ExistingKeyOnly`, which `doctor` uses, `Open` never makes a key and
    takes no lock. Then it builds the vault, the part that encrypts and decrypts
    the secrets.
@@ -57,7 +60,8 @@ to go out.
    servers), the outbox, the audit log (the activity log), the tokens (the
    secrets that programs use to call the local server) and the discovery (it
    finds the mail settings of an address). The backend factory comes before the
-   outbox, because the sender of the outbox uses it to reach the mail server.
+   outbox, because the sender of the outbox (`newSender` in
+   {{< src "internal/app/sender.go" >}}) uses it to reach the mail server.
 6. **The web server, then the service.** The web server is the local web site of
    the person, and the service runs the use cases. The service needs the links
    of the web server, so the web server comes first. Then `Attach` gives the
@@ -106,7 +110,7 @@ either does nothing.
 | 1 | `BeginStop`: no send, Trash move, approval or tool call can start. | No |
 | 2 | It cancels the context of `Run` (a Go value that tells work to stop). The outbox worker finishes the send that it runs and writes its result. | Yes, with no deadline |
 | 3 | It waits for the tool calls and the service actions that run. | Yes, with no deadline |
-| 4 | `Outbox.Drain` sends the queued messages that are due, or that become due within `drainWait`, 5 minutes, so that none waits for the next start. | Yes, until the deadline |
+| 4 | `Outbox.Drain` sends the queued messages that are due, or that become due within `drainWait`, 5 minutes. The messages that are left stay queued for the next start. | Yes, until the deadline |
 | 5 | It shuts down the web server. | Until the requests end |
 | 6 | It closes the mail backends and the store. | No |
 
@@ -114,6 +118,14 @@ Step 1 makes the service refuse `Send`, `Trash` and `ApprovePending` with
 `ErrStopping`, and `trackToolCalls` refuse every tool call. An action that waits
 for the person keeps waiting. If the stop lasts more than a second, one log line
 says so (`slowStopNotice`).
+
+Two counters of the type `inflight.Tracker` in
+{{< src "internal/inflight/inflight.go" >}} make steps 1 and 3 work. The counter
+of `App` counts the tool calls (`trackToolCalls`), and the counter of the
+service counts its actions. `Stop` makes a counter refuse new work. It returns a
+channel that is closed when no counted work runs. `BeginStop` calls `Stop` on
+both counters, and step 3 waits for the two channels (`callsIdle` and
+`actingIdle`).
 
 **Why steps 2 and 3 ignore the deadline.** A send that has started must finish
 and write its result. If it were cut off, its item would end as "delivery
@@ -160,6 +172,10 @@ do not add up.
   connections and waits for the requests that run, within the budget. If they do
   not end in time, it closes their connections, and a send that has started
   still finishes in the outbox. Then `serve` calls `Close`.
+
+The command `setup` in {{< src "cmd/email-mcp/setup.go" >}} runs the `App` too,
+and serves the web portal until Ctrl-C. It stops in the same way: the first
+signal calls `BeginStop` and starts the budget, and then `setup` calls `Close`.
 
 ## Short commands
 

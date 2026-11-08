@@ -53,9 +53,11 @@ program in a terminal: hold the Ctrl key and press C.
 | Where do errors become the texts that the agent sees? | [One tool call, step by step](/tech/start-here/tool-call/#errors-become-fixed-texts) |
 | What differs between stdio and HTTP? | [One tool call, step by step](/tech/start-here/tool-call/#what-differs-between-stdio-and-http) |
 | What happens when an agent calls `send_message`? | [The send flow](/tech/inside-the-server/send-flow/#the-steps) |
-| When is the person asked, and how? | [The send flow](/tech/inside-the-server/send-flow/#when-the-person-is-asked) |
+| When is the person asked? | [The send flow](/tech/inside-the-server/send-flow/#when-the-person-is-asked) |
+| How is the person asked? | [The send flow](/tech/inside-the-server/send-flow/#two-ways-to-ask) |
 | How does the "yes" of the person bind to the exact message? | [The send flow](/tech/inside-the-server/send-flow/#how-the-yes-is-tied-to-the-message) |
-| What is the undo window, and who can cancel? | [The send flow](/tech/inside-the-server/send-flow/#delivery-and-the-undo-window) |
+| What is the undo window? | [The send flow](/tech/inside-the-server/send-flow/#delivery-and-the-undo-window) |
+| Who can cancel a send, and until when? | [The send flow](/tech/inside-the-server/send-flow/#cancel) |
 | What if the program stops, or the connection breaks, during a send? | [The send flow](/tech/inside-the-server/send-flow/#the-outbox) |
 | How is a double send prevented? | [The send flow](/tech/inside-the-server/send-flow/#the-outbox) |
 | What can an agent do at each level? | [Permissions](/tech/inside-the-server/permissions/#levels) |

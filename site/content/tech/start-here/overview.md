@@ -168,24 +168,14 @@ data of another tenant by guessing an id.
 ## Run modes
 
 `serve` serves MCP on stdio by default, and on local HTTP with `--http`. It
-calls `app.Open`, then `App.Run`, which starts the background work in
-goroutines (functions that Go runs at the same time as the rest of the
-program):
-
-- the outbox worker, every second (`outboxTick` in
-  {{< src "internal/app/app.go" >}});
-- the daily jobs, at the start and then every 24 hours (`jobEvery`);
-- the sweep that closes mail backends that nobody used for a while, every 5
-  minutes (`backendSweepEvery`).
-
-Before it starts them, `Run` cleans up after a program that stopped in the
-middle of its work:
-
-- `Outbox.RecoverInterrupted` marks a send that has been in the state
-  `sending` for more than 15 minutes (`recoverAfter` in `outbox`) as failed.
-  It never sends it again.
-- `expireStaleApproved` ends the approved actions that have no result after
-  their time is over.
+calls `app.Open`, then `App.Run` in {{< src "internal/app/app.go" >}}. `Run`
+first cleans up after a program that stopped in the middle of its work. A send
+that may have gone out is marked failed, and it is never sent again. Then `Run`
+starts the background work in goroutines (functions that Go runs at the same
+time as the rest of the program): the outbox worker, the daily jobs and the
+sweep of unused mail backends. The page
+[Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/) gives each
+step of `Run` and its timing.
 
 The web portal does not start with `serve`. It starts the first time that a
 link to it is needed (`web.Server.EnsureStarted`). `setup` serves the portal

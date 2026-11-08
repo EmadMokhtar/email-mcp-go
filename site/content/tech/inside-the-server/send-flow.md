@@ -111,7 +111,9 @@ that talks to the server). `canElicitInBand` in
 - The caller may confirm in band (`Principal.InBandConfirm`). The caller of
   stdio (standard input and output: the client starts the server and talks to it
   through two pipes) always may. Over HTTP (HyperText Transfer Protocol), only a
-  token that the person made with `--in-band-confirm` may. A token is a secret
+  token that the person allowed to do it may. The person allows it with
+  `--in-band-confirm` at the terminal, or with the box "Let this app ask me in
+  its own window" on the Connections page of the web portal. A token is a secret
   that a program sends with its requests. Any program that holds one can say
   that it shows a form, and then answer the form by itself.
 - The client says that it can show a form (form elicitation: a way for a server
@@ -252,9 +254,10 @@ id of the outbox item.
   program). The result is `sent`, `failed`, or `queued` after a transient error.
   So a send with no window runs inside its tool call or its web request, and
   this is why a stop waits for such calls.
-- **Step 10b, a longer window.** The item is stored as `queued`, with the time
-  `SendAt`. A worker (a background function that sends the queued messages)
-  sends it when it is due.
+- **Step 10b, a longer window.** The item is stored as `queued`. Its
+  `SendAfter` is the end of the undo window, and `SendResult.SendAt` gives the
+  same time to the agent. A worker (a background function that sends the queued
+  messages) sends it when it is due.
 
 `SendResult.SendID` is the id of the action while it waits, and the id of the
 outbox item after it. `SendStatus` follows the action to its result, so
