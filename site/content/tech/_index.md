@@ -33,7 +33,14 @@ cancelled. The master key is the key that protects the other keys. A migration
 is a numbered file that changes the structure of the database. Full autonomy
 means that both confirmation switches of an account are off, so the agent sends
 and moves mail to the Trash with no question. Ctrl-C is the keys that stop a
-program in a terminal: hold the Ctrl key and press C.
+program in a terminal: hold the Ctrl key and press C. SMTP (Simple Mail
+Transfer Protocol) is the protocol for sending mail. A provider is the service
+behind a mail account. A backend is the part of the program that talks to the
+mail server of one account. A certificate is the signed proof of identity that a
+mail server shows when a connection starts. An authority is a body that signs
+certificates, so that a client can trust them. A pin is the fingerprint of a
+certificate that the person chose to trust. HTML (HyperText Markup Language) is
+the language of web pages and of many mails.
 
 | If you want to know... | read... |
 |---|---|
@@ -84,3 +91,28 @@ program in a terminal: hold the Ctrl key and press C.
 | How long can a stop take, and why? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#close-six-steps) |
 | What happens at the next start after a crash? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#after-a-crash) |
 | Why does a short command not wait for the queue? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#short-commands) |
+| What must a mail provider implement? | [The mail backend](/tech/mail/mail-backend/#what-a-provider-implements) |
+| How does the program keep one backend for each account, and see a change that another process made? | [The mail backend](/tech/mail/mail-backend/#one-backend-for-each-account) |
+| How does the backend keep and reuse connections? | [The mail backend](/tech/mail/mail-backend/#the-connection-pool) |
+| How does the backend secure a connection and check a certificate? | [The mail backend](/tech/mail/mail-backend/#the-secure-dialer) |
+| When may a person trust a certificate that no authority signed, when an account is new? | [The mail backend](/tech/mail/mail-backend/#the-secure-dialer) |
+| When may a person replace or remove a pin? | [The mail backend](/tech/mail/mail-backend/#the-secure-dialer) |
+| How are messages, folders and tags addressed? | [The mail backend](/tech/mail/mail-backend/#refs-folders-and-tags) |
+| How does a change to many messages stay safe, and what if it fails half way? | [The mail backend](/tech/mail/mail-backend/#changing-mail) |
+| How does a send reach the SMTP server? | [The mail backend](/tech/mail/mail-backend/#sending-with-smtp) |
+| How does the program find the server settings of an address? | [Connecting an account](/tech/mail/connecting-an-account/#finding-the-settings) |
+| How does an account get connected and tested? | [Connecting an account](/tech/mail/connecting-an-account/#saving-an-account) |
+| What do the web portal and the commands share when they connect an account? | [Connecting an account](/tech/mail/connecting-an-account/#the-shared-package) |
+| What happens when a mail server refuses the stored login? | [Connecting an account](/tech/mail/connecting-an-account/#a-refused-login-and-the-reconnect) |
+| Which limits and lifetimes does the mail backend have? | [The mail backend](/tech/mail/mail-backend/#limits-and-lifetimes) |
+| What would I change to add a provider? | [The mail backend](/tech/mail/mail-backend/#adding-a-provider) |
+| What steps does mail take on the way in and on the way out? | [Mail content](/tech/mail/mail-content/#two-pipelines) |
+| What is removed from incoming text, and why? | [Mail content](/tech/mail/mail-content/#what-cleanuntrusted-removes) |
+| Which parts of a message does an agent read? | [Mail content](/tech/mail/mail-content/#which-parts-are-the-body) |
+| How is HTML turned into text? | [Mail content](/tech/mail/mail-content/#how-html-becomes-text) |
+| What limits stop a hostile message from using all the memory? | [Mail content](/tech/mail/mail-content/#limits) |
+| Why is there a copy of the HTML parser of `golang.org/x/net`? | [Mail content](/tech/mail/mail-content/#the-copied-parser) |
+| How do I change the hidden-text rules safely? | [Mail content](/tech/mail/mail-content/#change-the-hidden-text-rules) |
+| How is an outgoing message built, and what does it refuse? | [Building mail](/tech/mail/building-mail/#what-build-refuses) |
+| How is a saved draft made ready to send? | [Building mail](/tech/mail/building-mail/#a-saved-draft) |
+| Why does the preview start with the text that goes out? | [Building mail](/tech/mail/building-mail/#the-preview-and-the-text-part) |

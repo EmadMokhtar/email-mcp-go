@@ -201,8 +201,8 @@ requests to update dependencies. Its settings are in
 repository. It is the HTML parser of `golang.org/x/net`, with a limit on the
 work of the parser. Only `mime` imports it. Its
 {{< src "internal/thirdparty/xhtml/README.md" >}} lists each change and the
-steps to update it. The page "Mail content" in the group "Mail" explains why
-the limit is needed.
+steps to update it. The page [Mail content](/tech/mail/mail-content/) explains
+why the limit is needed.
 
 ## Related pages
 

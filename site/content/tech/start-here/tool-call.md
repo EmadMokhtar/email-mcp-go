@@ -118,17 +118,10 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
 6. **The backend cache.** The backend of an account is the object that talks
    to its mail servers. `mailBackend` gets the backend of the account from
    `BackendCache.Mail` in {{< src "internal/service/backends.go" >}}. The cache
-   has one slot for each account. A call holds the slot only while it gets or
-   builds the backend (`mailOn`), so two calls for one account wait for each
-   other only then. After that, they can use the same backend at the same time.
-   On every call the cache reads the sealed (encrypted) password from the store
-   and makes a fingerprint: a SHA-256 (Secure Hash Algorithm with a 256-bit
-   result) hash of the server settings, the key version and the sealed password.
-   When the fingerprint is the one of the cached backend, it returns that
-   backend. Otherwise it decrypts the password and builds the backend again with
-   `imapsmtp.New`. It decrypts the password only then. The old backend closes
-   after 2 minutes (`retireAfter`), because a call that started on it may still
-   use it.
+   keeps one backend for each account. It builds a new one with `imapsmtp.New`
+   only when the server settings or the stored password changed. [The mail
+   backend](/tech/mail/mail-backend/#one-backend-for-each-account) explains the
+   slot, the fingerprint and when an old backend closes.
 7. **The IMAP backend.** `Backend.GetMessage` in
    {{< src "internal/provider/imapsmtp/fetch.go" >}} takes a logged-in
    connection from the pool of the account: the small set of open connections
@@ -139,7 +132,7 @@ The numbers match the drawing. Step 1 has a part that runs only on HTTP
    the language of web pages) into text without the parts that a reader cannot
    see (`mime.ReadableText`). One page of the body has 20,000 characters by
    default (`defaultBodyChars`) and 100,000 at most (`maxBodyChars`). The page
-   "The mail backend" in the group "Mail" explains the pool.
+   [The mail backend](/tech/mail/mail-backend/) explains the pool.
 8. **Back in `service`.** `noteBackendError` looks at the error of the
    backend. When it matches `imapsmtp.ErrAuthFailed` (the server refused the
    stored login), it marks the account as one that must be reconnected. The
@@ -205,8 +198,8 @@ The result has two forms. The structured content is the JSON object. The text
 copy is for clients that do not read structured content. `textCopy` makes it,
 and its first line is always the fixed warning `untrustedBanner`. When the HTML
 of the message may hide text, a second fixed line says so
-(`hiddenContentNotice`). The page "Mail content" in the group "Mail" explains
-the cleaning.
+(`hiddenContentNotice`). The page [Mail content](/tech/mail/mail-content/)
+explains the cleaning.
 
 ## Errors become fixed texts
 

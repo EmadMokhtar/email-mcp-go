@@ -90,8 +90,8 @@ import layers of the packages: the page
      [Storage and secrets](/tech/inside-the-server/storage-and-secrets/) goes
      deeper.
    - The mail backend talks to the mail servers. The interface is
-     `mail.Backend`, and `provider/imapsmtp` implements it. The page "The mail
-     backend" goes deeper.
+     `mail.Backend`, and `provider/imapsmtp` implements it. The page
+     [The mail backend](/tech/mail/mail-backend/) goes deeper.
 
 `web` serves only the person: it is the web portal. `cmd/email-mcp` serves both.
 Its command `serve` holds the transport of the agent: `serveStdio`,
@@ -202,8 +202,8 @@ directory and one database. These parts make that safe:
   account) compares a fingerprint of the account settings and the stored
   password on every call (`service.BackendCache`). The fingerprint is a hash
   that changes when the settings or the password change. When another process
-  changes an account, the cache builds the backend again. The page "The mail
-  backend" goes deeper.
+  changes an account, the cache builds the backend again. The page
+  [The mail backend](/tech/mail/mail-backend/) goes deeper.
 
 ## Rules that hold in all code
 
@@ -220,11 +220,14 @@ directory and one database. These parts make that safe:
   [One tool call, step by step][cleaned].
 - Mail is never deleted for good. A delete moves the mail to the Trash, and
   the comment of `mail.Backend` asks this of every implementation. The page
-  "The mail backend" goes deeper.
-- Every check fails closed: when a check cannot decide, the answer is "no".
-  For example, `policy.Decide` refuses an action that it does not know, and it
-  counts a damaged level of an account as level 0, no access
-  (`account.MailOff`). The page "Security design" goes deeper.
+  [The mail backend](/tech/mail/mail-backend/) goes deeper.
+- A check of permission fails closed: when it cannot decide, the answer is
+  "no". For example, `policy.Decide` refuses an action that it does not know,
+  and it counts a damaged level of an account as level 0, no access
+  (`account.MailOff`). The page "Security design" goes deeper. The hidden-text
+  rules work in another way: what they cannot work out stays in the text, and
+  the result is marked as unsure (see [Mail
+  content](/tech/mail/mail-content/)).
 
 ## The mail backend boundary
 
