@@ -3,7 +3,7 @@
   "name": "io.github.EmadMokhtar/email-mcp",
   "title": "email-mcp",
   "description": "Your IMAP and SMTP mail for AI agents, with permission levels and confirmed sends.",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "websiteUrl": "https://github.com/EmadMokhtar/email-mcp-go#readme",
   "repository": {
     "url": "https://github.com/EmadMokhtar/email-mcp-go",
