@@ -31,9 +31,10 @@ account. A scope is a permission that an access token carries. The undo window
 is the time that a send waits before it goes out, while it can still be
 cancelled. The master key is the key that protects the other keys. A migration
 is a numbered file that changes the structure of the database. Full autonomy
-means that both confirmation switches of an account are off, so the agent sends
-and moves mail to the Trash with no question. Ctrl-C is the keys that stop a
-program in a terminal: hold the Ctrl key and press C. SMTP (Simple Mail
+means that both confirmation switches of an account are off, so they ask
+nothing before a send or a move to the Trash. Other checks can still ask.
+Ctrl-C is the keys that stop a program in a terminal: hold the Ctrl key and
+press C. SMTP (Simple Mail
 Transfer Protocol) is the protocol for sending mail. A provider is the service
 behind a mail account. A backend is the part of the program that talks to the
 mail server of one account. A certificate is the signed proof of identity that a
@@ -140,7 +141,7 @@ the language of web pages and of many mails.
 | What must I check when I change security code? | [Security design](/tech/security/security-design/#when-you-change-security-code) |
 | How do I build, test and lint the code? | [Local development](/tech/work-on-the-code/local-development/#the-make-targets) |
 | Which Go version do I need? | [Local development](/tech/work-on-the-code/local-development/#the-go-version) |
-| What does CI (continuous integration: the checks that GitHub runs on each push) run? | [Local development](/tech/work-on-the-code/local-development/#what-ci-runs) |
+| What does CI (continuous integration: the checks that GitHub runs on each pull request and on each push to `main`) run? | [Local development](/tech/work-on-the-code/local-development/#what-ci-runs) |
 | How do I add a tool, a command, a migration or a package? | [Local development](/tech/work-on-the-code/local-development/#add-code) |
 | Which conventions does the code follow? | [Local development](/tech/work-on-the-code/local-development/#rules-of-the-code) |
 | Which kinds of test exist, and what does each one prove? | [Testing](/tech/work-on-the-code/testing/#the-kinds-of-test) |

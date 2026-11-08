@@ -132,17 +132,18 @@ two or more meanings gives each one.
   2. One of the two routes into the use cases: the channel of the agent (the
      tools) and the channel of the person (the web portal and the commands). See
      [Security design][sdc].
-  3. The way a question reaches the person: in band, or the approval page. See
-     [Local HTTP mode][lhw].
+  3. The way a question reaches the person: in band, or the approval page. The
+     send flow calls it the mode of the action: see Mode. See [Local HTTP
+     mode][lhw].
 - **Charset:** the table that maps bytes to characters. See [Mail content][mcp].
 - **CHECK condition:** a rule that a table of the database keeps itself. For
   example, a pending action that waits has its payload and its preview, and one
   that has ended has neither. See [Storage and secrets][sst].
 - **Checkpoint:** a step that copies the write-ahead log into the database file.
   See [Storage and secrets][sso].
-- **CI (continuous integration):** the checks that GitHub runs on each push. A
-  CI runner is a computer that runs them. See [Local development][ldc] and
-  [Testing][tes].
+- **CI (continuous integration):** the checks that GitHub runs on each pull
+  request and on each push to `main`. A CI runner is a computer that runs them.
+  See [Local development][ldc] and [Testing][tes].
 - **`code_areas`:** the list of the code that a page covers, in the settings at
   the top of a page file. The page shows it as "Code covered by this page". See
   [Local development][lda].
@@ -203,7 +204,8 @@ two or more meanings gives each one.
 - **CSS (Cascading Style Sheets):** the language of styles. A small CSS reader
   finds the parts of a mail that a mail client hides. See [Mail content][mch].
 - **Ctrl-C:** the keys that stop a program in a terminal: hold the Ctrl key and
-  press C. See [Startup and shutdown][su].
+  press C. The first one starts a clean stop, and a second one ends the program
+  at once. See [Startup and shutdown][g].
 - **Cursor:** a signed value that marks a position in a folder: where the last
   check for arrived mail stopped. The caller passes it back unchanged. See [The
   mail backend][mbr].
@@ -289,10 +291,10 @@ two or more meanings gives each one.
 - **File mode:** the number that says who may read and write a file. The mode
   0700 of a folder and the mode 0600 of a file let only the owner use them. See
   [Storage and secrets][ssw].
-- **Fingerprint:** a short value computed from bytes. The pin of a certificate
-  is its SHA-256 fingerprint. The backend cache keeps a fingerprint of the
-  server settings, the key version and the sealed password of each account. See
-  [The mail backend][mbd].
+- **Fingerprint:** a hash that names one thing, such as one certificate (see
+  Hash). The pin of a certificate is its SHA-256 fingerprint. The backend cache
+  keeps a fingerprint of the server settings, the key version and the sealed
+  password of each account. See [The mail backend][mbd].
 - **Flag:** an option after a command, such as `--data-dir`. See [The command
   line][cl].
 - **Folder alias:** a name such as `@inbox`, `@sent` or `@trash` that names a
@@ -338,8 +340,9 @@ two or more meanings gives each one.
   meant to be read back from it. See [The send flow][sfy].
 - **Headless Chrome:** Chrome with no window. The screenshots of the docs site
   and some tests use it. See [Local development][lds].
-- **Hex (base 16):** writing bytes with 16 digits, `0` to `9` and `a` to `f`. A
-  pin is written in lower-case hex. See [The web portal][wpp].
+- **Hex (base 16):** writing bytes with 16 digits, `0` to `9` and `a` to `f`.
+  The address of a static file of the web portal has the first 16 hex digits of
+  its SHA-256. A pin is written in hex too. See [The web portal][wpp].
 - **Hidden characters:** characters that a reader cannot see, such as the zero
   width space and the direction marks. `CleanUntrusted` removes the ones on its
   list from text of a third party. It keeps a joiner (an invisible character
@@ -386,8 +389,8 @@ two or more meanings gives each one.
 - **Import cycle:** two packages that import each other, directly or through
   others. See [Map of packages][pml].
 - **In band:** the question to the person appears in the chat of the AI app, as
-  a confirmation form. The other way is the approval page. See [The send
-  flow][sfi].
+  a confirmation form. The other way is the approval page. These are the two
+  modes of an action that waits: see Mode. See [The send flow][sfi].
 - **In-band confirm:** the choice, made when a token is made, that lets the
   token answer a confirmation in its own window (`--in-band-confirm`). Make a
   token with it only for an app that shows you the form. See [Local HTTP
@@ -467,14 +470,13 @@ two or more meanings gives each one.
 - **Marker:** the field and the fixed text that mark text of a third party as
   untrusted in a tool result. It is text that the agent reads, and it does not
   force the agent. See [Mail content][mc].
-- **Master key:** the key that protects the other keys: the KEK. See [Storage
-  and secrets][ssm].
+- **Master key:** the key that protects the other keys. See KEK.
 - **MCP (Model Context Protocol):** the open standard that lets an AI app call
   the tools of another program. See [Architecture overview][ov].
 - **MCPB (MCP Bundle):** a kind of package that the MCP Registry supports. See
   [Making a release][rpr].
-- **MCP client:** the AI app that talks to the server, such as Claude Code. See
-  [Architecture overview][ovc].
+- **MCP client:** the name that MCP gives to the AI app: the program that talks
+  to the server, such as Claude Code. See AI app.
 - **MCP Registry:** the official registry of MCP servers. `server.json`
   describes email-mcp there, and lists no package. See [Making a release][rpr].
 - **Message-ID:** the header that names one message. See [The mail
@@ -489,7 +491,8 @@ two or more meanings gives each one.
   content][mc].
 - **Mode:** a word with three meanings on these pages.
   1. The mode of an action that waits: `in_band` (in the chat) or `approval` (on
-     the approval page). It never changes. See [The send flow][sft].
+     the approval page). It never changes. Local HTTP mode calls it the channel.
+     See [The send flow][sft].
   2. The file mode. See File mode.
   3. The security mode of a mail server: `tls`, `starttls` or `plain`. See [The
      mail backend][mbd].
@@ -545,7 +548,8 @@ two or more meanings gives each one.
 - **Person:** the human who owns the mail accounts. See [Security design][sdm].
 - **Pin:** the SHA-256 fingerprint of the leaf certificate of a mail server, in
   lower-case hex, that the person chose to trust. A pin is saved only for the
-  server that showed the certificate. See [The mail backend][mbd].
+  server (protocol, host and port) that showed the certificate. See [The mail
+  backend][mbd] and [The command line][cls].
 - **Pinned (version):** fixed to one exact version. The workflows pin the
   actions by commit SHA and most of their tools. They do not pin the Go version.
   See [Making a release][rpw].
@@ -648,7 +652,7 @@ two or more meanings gives each one.
   1. The sign-in of one browser to the web portal, kept in the database. See
      [The web portal][wpi].
   2. State that lasts from one request to the next. Local HTTP mode keeps no
-     session. See [Local HTTP mode][lhs].
+     session: see Stateless. See [Local HTTP mode][lhs].
 - **Setup link:** the one-time sign-in link of the web portal. It holds a setup
   token, and the first browser that opens it gets the session. See [The web
   portal][wpi].
@@ -668,8 +672,9 @@ two or more meanings gives each one.
 - **Sigstore:** a public service that gives short-lived certificates for
   signing, so that cosign needs no long-lived signing key. See [Making a
   release][rpm].
-- **SIGTERM:** the signal that asks a program to stop. See [Startup and
-  shutdown][su].
+- **SIGTERM:** the signal that asks a program to stop. As with Ctrl-C, the first
+  signal starts a clean stop, and a second one ends the program at once. See
+  [Startup and shutdown][g].
 - **Site check:** `test/sitecheck`, which reads the built pages and the Markdown
   files of the docs site, and fails on a broken rule, such as a broken link. See
   [Local development][lds].
@@ -707,11 +712,14 @@ two or more meanings gives each one.
   is stateless. See [Local HTTP mode][lhs].
 - **Static binary:** a binary that needs no system library to run. The build
   sets `CGO_ENABLED=0` (no C compiler) for it. See [Local development][ldm].
+- **staticcheck:** a linter for Go. `make lint` runs it with the build tags of
+  the tests. See [Local development][ldm].
 - **stdin:** the standard input of a program. See [Tech docs](/tech/).
 - **stdio (standard input and output):** the client starts the server and talks
   to it through two pipes. See [Architecture overview][ovp].
 - **Stop budget:** one time limit for the whole stop of the program
-  (`app.StopTimeout`). See [Local HTTP mode][lhp].
+  (`app.StopTimeout`). See [Startup and shutdown][suc] and [Local HTTP
+  mode][lhp].
 - **STORE:** the IMAP command that changes the flags of messages. With
   `.SILENT`, the server does not send the flags back. See [The mail
   backend][mbx].
@@ -728,13 +736,15 @@ two or more meanings gives each one.
 
 - **Table-driven test:** one test runs the same check over a table of cases. See
   [Testing][teu].
+- **Table hook:** the template of the docs site that turns a Markdown table into
+  HTML. See [Local development][lds].
 - **Tag:** a word with two meanings on these pages.
   1. In git, a name that marks one commit, such as `vX.Y.Z`. See [Making a
      release][rp].
   2. In mail, a label of a message, made from an IMAP keyword (a flag without a
      backslash). See [The mail backend][mbr].
-- **Tenant:** the owner of a set of accounts. A local install has one, with the
-  id `local`. See [Architecture overview][ovt].
+- **Tenant:** the owner of a set of accounts. A local install has one: see Local
+  tenant. See [Architecture overview][ovt].
 - **Terminal:** a window where you type commands. See [The command line][clr].
 - **Third party:** a person who wrote text that email-mcp passes on and who is
   not the user: the sender of a mail. See [Mail content][mc].
@@ -857,6 +867,8 @@ two or more meanings gives each one.
 [all]: /tech/inside-the-server/audit-and-logging/#the-activity-log
 [alp]: /tech/inside-the-server/audit-and-logging/#the-program-log
 [su]: /tech/inside-the-server/startup-and-shutdown/
+[g]:
+  /tech/inside-the-server/startup-and-shutdown/#the-signals-and-a-second-ctrl-c
 [sr]: /tech/inside-the-server/startup-and-shutdown/#run-clean-up-then-three-jobs
 [suc]: /tech/inside-the-server/startup-and-shutdown/#close-six-steps
 [mb]: /tech/mail/mail-backend/
@@ -888,6 +900,7 @@ two or more meanings gives each one.
 [clo]: /tech/ways-in/command-line/#what-each-command-opens
 [cle]: /tech/ways-in/command-line/#exit-codes-and-flags
 [clp]: /tech/ways-in/command-line/#output-and-passwords
+[cls]: /tech/ways-in/command-line/#what-the-commands-share-with-the-web-portal
 [lh]: /tech/ways-in/local-http/
 [lhl]: /tech/ways-in/local-http/#where-it-listens
 [lhc]: /tech/ways-in/local-http/#the-checks-in-order
