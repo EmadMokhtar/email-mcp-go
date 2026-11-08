@@ -1330,8 +1330,11 @@ Purpose: one line for each term that the tech docs use.
 
 Must cover: every term that a page defines in place, so a reader who skips to a
 page still finds it. Start from the glossary at the end of this spec, and add
-the terms of the pages. Sort in alphabetical order. A term links to the page
-that explains it.
+the terms of the pages. A term of that list that no page uses is left out.
+Sort in alphabetical order. A term links to the page that explains it. The
+glossary has no `code_areas`, because it covers no code of its own. The site
+check does not ask for them on a glossary page, as for the glossary of the
+manual.
 
 Source: the other pages.
 
@@ -1803,8 +1806,9 @@ The code wins in every case. Line numbers: design spec = the file
 
 - All 28 files of the sidebar table exist (20 pages, 7 group pages and the
   home page), and the build passes with no warning.
-- Each page has `code_areas`, and each path in it exists.
-- Each row of the map has a page, and each page has at least one row.
+- Each page except the glossary has `code_areas`, and each path in it exists.
+- Each row of the map has a page, and each page except the glossary has at least
+  one row.
 - Each required diagram exists, has a title, a description and a text form.
 - The layers in `package-map` match `go list` at the commit of the pull request.
 - Every line range that the manual spec hands over is in the tech docs: README
