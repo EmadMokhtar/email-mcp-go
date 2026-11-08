@@ -39,17 +39,18 @@ this mail". The person is the human who owns the mail accounts.
 
 ## The model
 
-The agent is a caller with limited access: it can only call the tools. It
-reaches the use cases only through the tools of `mcpserver` (the package that
-holds the tools), and `service` (the package of the use cases) checks the
-permission of each call before it touches the mail. The person has a second way
-in: the web portal (the local web site of the person) and the commands at the
-terminal. Only that way changes the settings of an account, makes an access
-token, or approves an action on the approval page (the page of the web portal
-where the person approves a waiting send or move to the Trash). A "yes" in the
-chat comes from the form of the AI app, and never from the arguments of a tool.
-So that "yes" is only as good as the app that shows the form (see [Trust in the
-AI app](/manual/daily-use/confirmations/#trust-in-the-ai-app)).
+The agent is a caller with limited access. It reaches the use cases only
+through the tools of `mcpserver` (the package that holds the tools), and
+`service` (the package of the use cases) checks the permission of each call
+before it touches the mail. The person has a second way in: the web portal (the
+local web site of the person) and the commands at the terminal. Only that way
+changes the settings of an account, makes an access token (a secret that a
+program sends with each request to local HTTP), or approves an action on the
+approval page (the page of the web portal where the person approves a waiting
+send or move to the Trash). A "yes" that the person gives in the AI app comes
+from the form of the app, and never from the arguments of a tool. So that "yes"
+is only as good as the app that shows the form (see [Trust in the AI
+app](/manual/daily-use/confirmations/#trust-in-the-ai-app)).
 
 The model is for an agent that can only call the tools and fetch web addresses.
 An agent that runs shell commands as the same operating system user, or that
@@ -65,27 +66,29 @@ shell. This page does not repeat them.
 
 The agent's channel:
 
-- **The transport.** On stdio (standard input and output: the AI app starts the
-  program and talks to it through two pipes), the program reads its calls only
-  from its standard input, and the AI app that started it holds the other end
-  of that pipe. `localPrincipal` gives each call on stdio the local tenant (the
-  owner of a set of accounts; a local install has one) with no limit of scopes
-  (the permissions that an access token carries). On local HTTP (the server
-  that `email-mcp serve --http` starts for programs on the same computer; HTTP
-  is HyperText Transfer Protocol), `Handler` in
-  {{< src "internal/httpserve/httpserve.go" >}} runs four checks, in this order.
-  First the Host header (the name of the server that a request asks for). Then
-  the Origin header (the web site that a browser request comes from). Then the
-  size of the body. Last the access token (a secret that a program sends with
-  each request). The page "Local HTTP mode" in the group "Ways in" goes deeper.
+- **Stdio.** On stdio (standard input and output: the AI app starts the program
+  and talks to it through two pipes; a pipe is a channel between two programs),
+  the program reads its calls only from its standard input, and the AI app that
+  started it holds the other end of that pipe. `localPrincipal` in
+  `cmd/email-mcp` gives each call on stdio the local tenant (the owner of a set
+  of accounts; a local install has one) with no scope limit. Scopes are the
+  permissions that an access token carries.
+- **Local HTTP.** Local HTTP is the server that `email-mcp serve --http` starts
+  for programs on the same computer (HTTP is HyperText Transfer Protocol).
+  `Handler` in {{< src "internal/httpserve/httpserve.go" >}} runs four checks,
+  in this order. First the Host header (the name of the server that a request
+  asks for). Then the Origin header (the web site that a browser request comes
+  from). Then the size of the body. Last the access token. The page "Local HTTP
+  mode" in the group "Ways in" goes deeper.
 - **The tools.** `addTool` in {{< src "internal/mcpserver/server.go" >}} wraps
   each tool in `safe`, which asks for the caller first. A call with no caller,
   or with a caller that has no tenant, is refused with "not authorized", and the
   tool does not run.
-- **The reach.** The tools call the use cases that read or change mail, and
-  none of the use cases of the person. `mcpserver` imports neither `web` nor
-  `tokens` (the package that makes access tokens), and the links that a tool
-  returns carry no secret.
+- **The reach.** The tools call the use cases that read or change mail. They
+  call none of the use cases that a test guards for the person (the list
+  `userOnlyCalls`). `mcpserver` imports neither `web` (the package of the web
+  portal) nor `tokens` (the package that makes access tokens), and the links
+  that a tool returns carry no secret.
 
 The person's channel:
 
@@ -103,9 +106,10 @@ The person's channel:
   starts the session. The page "The web portal" in the group "Ways in" goes
   deeper.
 - **The terminal** runs the commands of `cmd/email-mcp` other than `serve`, such
-  as `setup` and `token`, as the local tenant.
-- **The reach.** This channel calls the user-only use cases, such as
-  `UpdateSettings`, `ApprovePending` and `CreateToken`.
+  as `setup` and `token`. The ones that call a use case run as the local tenant.
+- **The reach.** This channel calls the user-only use cases (the use cases that
+  only the person may call), such as `UpdateSettings`, `ApprovePending` and
+  `CreateToken`.
 
 Both channels end in `service`. Each use case reads the principal (the caller of
 a request: its tenant, the scopes of its token, and the name of its client) with
@@ -147,13 +151,13 @@ to trust a certificate.
 | The web portal refuses a wrong Host header, a cross-origin form post, a request without a session (other than `/setup` and the static files), and a form post without the CSRF token of its session. | `hostAllowed`, `Server.serve` and `checkForm` | `TestLocalUIRefusesWrongHost`; `TestLocalUIRefusesCrossOriginPost`; `TestLocalUILinksRevealNothingWithoutSession`; `TestEveryPostRouteNeedsTheCSRFToken` in `web` |
 | Local HTTP refuses a wrong Host header, and a request with an Origin header that is not on the allow-list, also with a valid token. It refuses a request without a valid token. | `Handler` | `TestLocalUIRefusesWrongHost` and `TestLocalUIRefusesCrossOriginPost`, which test the endpoint too; `TestHTTPRejectsMissingToken` and `TestHTTPCheckOrder` in `httpserve` |
 | A "yes" acts once, in time, for the exact request that the person was asked about, in the channel where it was asked, and for the tenant, the account and the kind of action that asked. | `Manager.Claim` and `HashPayload` in {{< src "internal/confirm/confirm.go" >}}; `claimAnswer`, which checks the account and the kind with `sameAction`, and `samePreview`, in `service`; `accepted` in {{< src "internal/mcpserver/elicit.go" >}} | `TestConfirmationCannotBeSkipped` |
-| The password of an account, the payload and preview of a waiting action, the message of a queued send, and the recipients and arguments of an activity log entry are sealed in the database. Access tokens, setup tokens and session ids are stored as hashes. | `Vault` in {{< src "internal/secrets/vault.go" >}}, which seals a value with a key of the tenant, and the sealed and hashed columns of `store` | `TestNoPlaintextSecretsInDB` |
-| The program log gets fixed codes, ids, counts and names such as the name of a tool, not a secret, a mail address, a subject or a body. | The log rules of each package; `safe`, which logs the name of the tool, a fixed code and the Go types of an error (`errtype.Chain`); `secrets.Secret`, which prints `[redacted]` | `TestNoSecretsInLogs` |
+| The password of an account, the payload and preview (the exact request and its summary) of a waiting action, the message of a queued send, and the recipients and arguments of an activity log entry are sealed in the database. Access tokens, setup tokens and session ids are stored as hashes. | `Vault` in {{< src "internal/secrets/vault.go" >}}, which seals a value with a key of the tenant, and the sealed and hashed columns of `store` | `TestNoPlaintextSecretsInDB` |
+| The program log gets fixed codes, ids, counts and names such as tool names and Go type names, not a secret, a mail address, a subject or a body. | `safe` in {{< src "internal/mcpserver/server.go" >}}, which logs the name of the tool, a fixed code and the Go types of an error (`errtype.Chain`); `secrets.Secret`, which prints `[redacted]`; the log rules of each package | `TestNoSecretsInLogs` |
 | A connection to a remote mail server uses TLS 1.2 or newer (`tls.VersionTLS12` in `newPinnedTLSConfig`) and checks the certificate, or its pin. Plain text is allowed only to a loopback host, on a local install. | `MailServer.Validate` in {{< src "internal/domain/account/account.go" >}}; the secure dialer in {{< src "internal/provider/imapsmtp/tlsdial.go" >}} | `TestPlainTextToRemoteRefused`; `TestTLSCertificateChecksEnforced` |
 | `mail.Backend` has no method that deletes mail for good, and its comment asks each implementation to keep it so. `move_messages` refuses a Trash folder that email-mcp recognizes, at every level. `trash_messages` needs level 5, and `discard_draft` moves a draft to the Trash at level 3. | The comment of `mail.Backend` in {{< src "internal/domain/mail/backend.go" >}}; in `service`: `Trash`, which needs `policy.ActTrash` (level 5), `DiscardDraft`, and `Move`, which refuses such a folder with `ErrMoveToTrash` | `TestTrashMoveBlockedBelowLevel5` |
 | The text that a sender wrote (the name, the subject, the body and the names of the attachments) is cleaned of characters that a reader cannot see, and it is put inside an `Untrusted` wrapper. An address stays outside the wrapper only when it has the plain form that `mime.IsPlainAddress` accepts. | `CleanUntrusted` in {{< src "internal/mime/untrusted.go" >}}; `messageOut` and the `Untrusted` wrapper in {{< src "internal/mcpserver/shape.go" >}} | `TestCleanUntrustedRemovesInvisible` and `TestCleanUntrustedRemovesWholeRanges` in `mime`; `TestUntrustedCleaned` and `TestSearchResultMarksUntrusted` in `mcpserver` |
 | The agent gets a text that email-mcp wrote for each known error, and "internal error" for any other. | `toolError`, `permissionFailure`, `reauthFailure` and `rateLimitFailure` in {{< src "internal/mcpserver/errors.go" >}} | `TestToolErrorMapping` and `TestUnknownErrorIsInternalError` in `mcpserver` |
-| Request states, page tokens, cursors, form tokens and certificate offers are signed. | `Signer` in {{< src "internal/signing/signing.go" >}}; `seal` and `open` in `provider/imapsmtp`, which add the scope of the account to the purpose | `TestOpenTamperedInvalid` and `TestOpenWrongPurposeInvalid` in `signing`; `TestListNewMessagesRejectsAForgedCursor` in `mcpserver` |
+| Request states, page tokens, cursors, form tokens and certificate offers are signed. | `Signer` in {{< src "internal/signing/signing.go" >}}; `seal` and `open` in `provider/imapsmtp`, which add the tenant and the account to the purpose | `TestOpenTamperedInvalid` and `TestOpenWrongPurposeInvalid` in `signing`; `TestListNewMessagesRejectsAForgedCursor` in `mcpserver` |
 
 The pages that own each area give the details: [The send
 flow](/tech/inside-the-server/send-flow/#how-the-yes-is-tied-to-the-message) for
@@ -167,14 +171,16 @@ step](/tech/start-here/tool-call/#errors-become-fixed-texts) for the error
 texts, [The mail backend](/tech/mail/mail-backend/#the-secure-dialer) for TLS
 and the pins, and [Mail content](/tech/mail/mail-content/) for the cleaning.
 
-Three kinds of error add a field that `service` or `policy` wrote for the agent:
-the reason and the link of a permission error, the link of a reconnect error,
-and the sentence of a reached limit (`*policy.RateLimitError`), which names the
-kind of limit and the wait.
+Two rows need a note. For the row about errors: three kinds of error add a field
+that `service` or `policy` wrote for the agent. They are the reason and the link
+of a permission error, the link of a reconnect error, and the sentence of a
+reached limit (`*policy.RateLimitError`), which names the kind of limit and the
+wait.
 
-In HTML (HyperText Markup Language) mail, email-mcp cannot always tell what a
-reader sees (see [Known limitations](/manual/reference/known-limitations/)).
-When it matters, open the mail yourself.
+For the cleaning row, note a limit: in HTML (HyperText Markup Language) mail,
+email-mcp cannot always tell what a reader sees (see [Known
+limitations](/manual/reference/known-limitations/)). When it matters, open the
+mail yourself.
 
 ## Failing closed
 
@@ -186,7 +192,7 @@ The checks below fail closed: when one cannot decide, the answer is no.
   `PrincipalFrom` counts such a principal as no principal.
 - The zero value (the value that Go gives a field that nobody set) of
   `Principal.InBandConfirm` is false. So a caller that nobody thought about
-  cannot answer a confirmation in the chat, and gets the approval page.
+  cannot answer a confirmation in the AI app, and gets the approval page.
 - A `Signer` that was not made with `New` has no key, and it opens no token
   (`TestZeroSignerFailsClosed` in `signing`).
 - When the link of a permission error cannot be built, the action is still
@@ -204,21 +210,22 @@ with a secret key. The key comes from the server key with the label
 secrets](/tech/inside-the-server/storage-and-secrets/#keys)).
 
 - Anyone who holds a token can read it, so no secret goes into a token.
-- A token that was changed, or made without the key, fails the check.
 - `Open` accepts a token only for the purpose that it was made for. `signing`
   names four purposes: `PurposeCursor`, `PurposePage`, `PurposeRequestState`
   and `PurposeCSRF`. `web` adds `cert_offer` for the offer to trust a
-  certificate. `provider/imapsmtp` adds the scope of the account (`TokenScope`)
-  to the purpose of a page token and a cursor, so a token of one account fails
-  for another account.
-- A token that fails the check gives `ErrInvalid`, and the caller cannot tell
-  why. A genuine token whose time has passed gives `ErrExpired`.
+  certificate. `provider/imapsmtp` adds the tenant and the account
+  (`TokenScope`) to the purpose of a page token and a cursor, so a token of one
+  account fails for another account (see [The mail
+  backend](/tech/mail/mail-backend/#refs-folders-and-tags)).
+- A token that is changed, made without the key, made for another purpose or
+  not well formed gives `ErrInvalid`, and the caller cannot tell these cases
+  apart. A genuine token whose time has passed gives `ErrExpired`.
 - `Open` reads at most 64 KiB (kibibytes: 65,536 bytes; `maxTokenLen`), and
   `New` needs a key of at least 32 bytes (`minKeyLen`).
 - A signer keeps no record of the tokens that it made. A use that must happen
-  once keeps its own record. For a "yes" in the chat, `confirm` claims the
+  once keeps its own record. For a "yes" in the AI app, `confirm` claims the
   action: one database statement moves it from waiting to approved, and only
-  one caller can win.
+  one caller succeeds.
 
 The other values that the agent passes back, such as a message ref, an
 attachment id and a send id, are not signed. They give no right, because every
@@ -238,8 +245,8 @@ of this package uses the network outside the computer.
 
 - The test secrets are long and unusual strings, so a match in a log or in a
   file cannot be chance.
-- A test of a refusal checks the text that the agent gets, so a failure shows
-  which check refused.
+- Most tests of a refusal check the text or the status that the caller gets, so
+  a failure shows which check refused.
 - The test of the levels compares, before and after each refused call, the
   commands that reached the IMAP (Internet Message Access Protocol) server, the
   connections and messages of the SMTP (Simple Mail Transfer Protocol) server,

@@ -8,7 +8,7 @@ code_areas:
 ---
 
 This group explains the security design of email-mcp: the two channels into
-the use cases, the rules that hold the design together, where the code enforces
+the use cases, the main rules of the design, where the code enforces
 each one, and which test fails when one breaks. Read it before you change code
 that checks a caller, a permission, a confirmation, a secret or a connection.
 
