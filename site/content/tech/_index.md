@@ -121,3 +121,19 @@ the language of web pages and of many mails.
 | Which test fails if a security rule breaks? | [Security design](/tech/security/security-design/#rules-and-their-tests) |
 | Which values does the server sign, and how? | [Security design](/tech/security/security-design/#signed-values) |
 | What must I check when I change security code? | [Security design](/tech/security/security-design/#when-you-change-security-code) |
+| How do I build, test and lint the code? | [Local development](/tech/work-on-the-code/local-development/#the-make-targets) |
+| Which Go version do I need? | [Local development](/tech/work-on-the-code/local-development/#the-go-version) |
+| What does CI (continuous integration: the checks that GitHub runs on each push) run? | [Local development](/tech/work-on-the-code/local-development/#what-ci-runs) |
+| How do I add a tool, a command, a migration or a package? | [Local development](/tech/work-on-the-code/local-development/#add-code) |
+| Which conventions does the code follow? | [Local development](/tech/work-on-the-code/local-development/#rules-of-the-code) |
+| Which kinds of test exist, and what does each one prove? | [Testing](/tech/work-on-the-code/testing/#the-kinds-of-test) |
+| How do I test code that talks to IMAP, SMTP or the web portal (the pages that email-mcp shows in the browser)? | [Testing](/tech/work-on-the-code/testing/#test-servers) |
+| What is in `internal/e2e`? | [Testing](/tech/work-on-the-code/testing/#the-end-to-end-tests) |
+| What are the build tags (words that a Go file asks for before it is built), and what does the interop test (the test against real mail servers) need? | [Testing](/tech/work-on-the-code/testing/#build-tags) |
+| Which tests run in CI, in the nightly interop run and in the release? | [Testing](/tech/work-on-the-code/testing/#what-ci-and-the-release-run) |
+| What must be set up once, before the first release? | [Making a release](/tech/work-on-the-code/release-process/#once-before-the-first-release) |
+| What do I do for each release? | [Making a release](/tech/work-on-the-code/release-process/#for-each-release) |
+| How does the version go up? | [Making a release](/tech/work-on-the-code/release-process/#how-the-version-goes-up) |
+| What do I do when a release fails? | [Making a release](/tech/work-on-the-code/release-process/#when-the-release-fails) |
+| How can I try the build without publishing? | [Making a release](/tech/work-on-the-code/release-process/#try-the-build-on-your-computer) |
+| How is the docs site published? | [Making a release](/tech/work-on-the-code/release-process/#how-the-site-is-published) |
