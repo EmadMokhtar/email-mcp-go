@@ -66,6 +66,16 @@ MiB.
   then true. A text part with a file name is an attachment, unless the message
   has no other body. `get_attachment` reads only the attachments that
   `get_message` lists, not the body.
+- **`create_draft` and `send_message`:** The body is plain text (`body`) or
+  HTML (`html_body`), not both. With HTML, the message has an HTML part and a
+  plain text part that email-mcp makes from it. Headings, paragraphs, bold,
+  italic, lists, tables, quotes, code and links stay. Styles (colors, fonts and
+  sizes), images and all attributes except a link's url are removed. The plain
+  text part shows the url of each link after the link text, so you can see
+  where every link goes. A link keeps its url only when the plain text part
+  shows that url in full. A very long url is cut there (for example, a path
+  longer than 64 characters), so its link loses the url and only the link text
+  stays. To get a formatted draft, ask the agent to use HTML.
 - **`get_send_status`:** The status is one of `queued`, `sending`, `sent`,
   `failed`, `cancelled`, `pending_approval`, `declined` and `expired`. A send
   that you rejected is `declined`. A send that was cancelled, or that the agent

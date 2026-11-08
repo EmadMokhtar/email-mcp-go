@@ -94,6 +94,11 @@ func TestToolsListFullSet(t *testing.T) {
 			require.NotNil(t, tool.InputSchema)
 			require.NotNil(t, tool.OutputSchema, "every tool has an output schema")
 			require.NotEmpty(t, tool.Description)
+			if tool.Name == toolCreateDraft {
+				// Agents read only the description to choose a field. Without
+				// this hint they write plain text drafts.
+				require.Contains(t, tool.Description, "html_body", "the description points to the HTML body")
+			}
 			requireNoPathArgument(t, tool.Name, tool.InputSchema)
 		})
 	}

@@ -256,6 +256,8 @@ func registerWriteTools(srv *mcp.Server, d *deps) {
 	addTool(srv, d, &mcp.Tool{
 		Name: toolCreateDraft,
 		Description: "Save a new draft: a new message, a reply (reply_to) or a forward (forward_of). " +
+			"For formatting (headings, bold, lists, tables, links), give html_body instead of body: styles and images are removed, " +
+			"and a link to a very long url keeps only its text. " +
 			"Attachments are base64 data, never file paths, at most 10 MB together. Returns the ref of the draft. Needs Mail 3 (draft).",
 		Annotations: writeHints(false, false, false),
 	}, d.createDraft)
