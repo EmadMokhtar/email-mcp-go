@@ -41,13 +41,21 @@ type Config struct {
 	// connection allowed, and only to a loopback host.
 	Local bool
 
-	// DialTimeout limits one attempt to connect, start TLS, read the greeting
-	// and log in.
+	// DialTimeout limits one attempt to open a connection. For IMAP, it limits
+	// the whole dial: connect, start TLS, read the greeting and log in (see
+	// dialIMAP). For SMTP, it limits only the connect and, with the security
+	// mode "tls", the TLS handshake, both together (see withSMTP). The other
+	// steps of SMTP (STARTTLS, the greeting, the hello and the login) run under
+	// the time limit of the whole conversation (see smtpDeadline).
 	DialTimeout time.Duration
 	// CommandTimeout limits one pooled operation. When it ends, the
 	// connection is closed.
 	CommandTimeout time.Duration
-	// IdleTimeout is how long an unused pooled connection may stay open.
+	// IdleTimeout is how long a connection may wait in the idle list of the
+	// pool and still be used again. The pool has no timer of its own. When a
+	// call asks the pool for a connection, the pool closes each idle connection
+	// that has waited longer than IdleTimeout (see takeIdle). Backend.Close
+	// closes all idle connections.
 	IdleTimeout time.Duration
 	// PoolSize is the largest number of IMAP connections for the account.
 	PoolSize int

@@ -31,9 +31,10 @@ account. A scope is a permission that an access token carries. The undo window
 is the time that a send waits before it goes out, while it can still be
 cancelled. The master key is the key that protects the other keys. A migration
 is a numbered file that changes the structure of the database. Full autonomy
-means that both confirmation switches of an account are off, so the agent sends
-and moves mail to the Trash with no question. Ctrl-C is the keys that stop a
-program in a terminal: hold the Ctrl key and press C. SMTP (Simple Mail
+means that both confirmation switches of an account are off, so they ask
+nothing before a send or a move to the Trash. Other checks can still ask.
+Ctrl-C is the keys that stop a program in a terminal: hold the Ctrl key and
+press C. SMTP (Simple Mail
 Transfer Protocol) is the protocol for sending mail. A provider is the service
 behind a mail account. A backend is the part of the program that talks to the
 mail server of one account. A certificate is the signed proof of identity that a

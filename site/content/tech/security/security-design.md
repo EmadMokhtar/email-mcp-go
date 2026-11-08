@@ -211,8 +211,9 @@ checks that fail closed are these:
 
 `Signer` makes a small token that the server gives to the agent or to a
 browser, and gets back later. The token is the JSON (JavaScript Object Notation)
-of a purpose, an expiry and a value, in base64url (a text form of bytes that is
-safe in a web address), with an HMAC-SHA-256 signature. HMAC (hash-based message
+of a purpose, an expiry (or none, for a token that does not expire) and a value,
+in base64url (a text form of bytes that is safe in a web address), with an
+HMAC-SHA-256 signature. HMAC (hash-based message
 authentication code) with SHA-256 (a hash with a 256-bit result) makes a hash
 with a secret key. The key comes from the server key with the label
 `signing/v1` (see [Storage and

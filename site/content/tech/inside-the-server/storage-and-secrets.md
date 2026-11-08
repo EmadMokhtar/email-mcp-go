@@ -235,7 +235,8 @@ holds for the `Vault`.
 | Access token | A new token works for 90 days by default (`DefaultLifetime`). The person can choose from 1 minute to 3,650 days. | Nothing. The row stays after the token ends or is revoked, so the list of tokens can show it. |
 | Everything of an account | Until the account is removed | `ON DELETE CASCADE` |
 
-`App.dailyJobs` runs the prune of the first two rows and a checkpoint of the
+`App.dailyJobs` expires the stale approved actions (those that nothing
+finishes), then runs the prune of the first two rows and a checkpoint of the
 write-ahead log (`store.CheckpointWAL`). It runs when `Run` starts, and then
 every 24 hours (`jobEvery`). The page [Startup and
 shutdown](/tech/inside-the-server/startup-and-shutdown/) explains `Run`.
