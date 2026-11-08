@@ -276,8 +276,8 @@ in step 3. (My call.)
   - "0 Off". "The agent cannot use the account."
   - "1 Read". "Search and read messages and attachments."
   - "2 Organize". "Mark as read, flag, tag, make folders and move messages.
-    These moves never go to a folder that email-mcp recognizes as the Trash,
-    or to a folder inside it."
+    These moves, and new folders, never go into a folder that email-mcp
+    recognizes as the Trash, or into a folder inside that folder."
   - "3 Draft". "Write drafts, and move a draft to the Trash. Moving a draft does
     not ask you."
   - "4 Send". "Send, reply and forward. A new account starts here. By default,
@@ -302,11 +302,13 @@ in step 3. (My call.)
   The page uses the portal name and explains it in the same row.
 - Three rows changed after review, to match the code, which is the source of
   truth. `move_messages` refuses, at every level, a folder that email-mcp
-  recognizes as the Trash and every folder inside it (`ErrMoveToTrash` in
-  `internal/service/write.go`), so level 2 says this. `discard_draft` moves a
-  draft to the Trash at level 3 and never asks (`DiscardDraft`), so level 3
-  names that move, and level 5 says "each of these moves" and not "every move"
-  (T16).
+  recognizes as the Trash and every folder inside it, and `create_folder`
+  refuses to make a folder there (`ErrMoveToTrash` and the backend name check,
+  in `internal/service/write.go` and `internal/provider/imapsmtp/folders.go`).
+  So level 2 says that its moves and new folders never go into such a folder,
+  or into a folder inside one. `discard_draft` moves a draft to the Trash at
+  level 3 and never asks (`DiscardDraft`), so level 3 names that move, and
+  level 5 says "each of these moves" and not "every move" (T16).
 - "Only you can change a level" holds for an agent that can only call the
   tools of email-mcp, and not for one that runs shell commands as you or
   controls your browser. The manual says so each time. The page adds no claim:
@@ -895,10 +897,13 @@ the email tools.**
   `internal/web/settings.go` (`levelAllows`);
   `internal/policy/policy.go` (`RequiredMailLevel`).
 - The portal names level 5 "Delete". It moves mail to the Trash (T17).
-- Level 2, no move to a folder that email-mcp recognizes as the Trash:
-  `internal/service/write.go` (`ErrMoveToTrash`, `refuseTrashTarget` and
-  `inTrash`: `move_messages` refuses, at every level, a folder that email-mcp
-  recognizes as the Trash and every folder inside it).
+- Level 2, no move to a folder that email-mcp recognizes as the Trash, and no
+  new folder there: `internal/service/write.go` (`ErrMoveToTrash`,
+  `refuseTrashTarget` and `inTrash`: `move_messages` refuses, at every level,
+  a folder that email-mcp recognizes as the Trash and every folder inside it,
+  and `CreateFolder` refuses to make a folder there);
+  `internal/provider/imapsmtp/folders.go` (`CreateFolder` refuses a name
+  that holds the hierarchy delimiter).
 - Level 3 includes moving a draft to the Trash:
   `internal/mcpserver/write_tools.go` (`discard_draft`, "Needs Mail 3");
   `internal/service/write.go` (`DiscardDraft` uses the draft action).
