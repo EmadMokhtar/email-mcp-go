@@ -141,7 +141,9 @@ site/content/tech/
   mail/                           group 3
     _index.md
     mail-backend.md
+    connecting-an-account.md
     mail-content.md
+    building-mail.md
   ways-in/                        group 4
     _index.md
     command-line.md
@@ -171,7 +173,9 @@ site/content/tech/
 | Inside the server | `audit-and-logging` | Activity log and program log | 40 |
 | Inside the server | `startup-and-shutdown` | Startup and shutdown | 50 |
 | Mail | `mail-backend` | The mail backend | 10 |
-| Mail | `mail-content` | Mail content | 20 |
+| Mail | `connecting-an-account` | Connecting an account | 20 |
+| Mail | `mail-content` | Mail content | 30 |
+| Mail | `building-mail` | Building mail | 40 |
 | Ways in | `command-line` | The command line | 10 |
 | Ways in | `local-http` | Local HTTP mode | 20 |
 | Ways in | `web-portal` | The web portal | 30 |
@@ -185,7 +189,7 @@ The weights of the groups are: Start here 10, Inside the server 20, Mail 30,
 Ways in 40, Security 50, Work on the code 60 and Reference 70. The weight of a
 page is its weight inside its group.
 
-That is 18 pages with content, 7 group pages and the home page: 26 files. A
+That is 20 pages with content, 7 group pages and the home page: 28 files. A
 group page has the title of the group and two or three sentences that say what
 the group answers. The home page `_index.md` has the title "Tech docs", a short
 introduction, and a table "If you want to know... read...", with one row for
@@ -196,8 +200,8 @@ a page by its file name without `.md`.
 
 ### Changes to the expected list
 
-The expected list had twelve pages. All twelve are kept. Six are added, because
-the code has an area with its own rules that no other page can hold:
+The expected list had twelve pages. All twelve are kept. Eight are added,
+because the code has an area with its own rules that no other page can hold:
 
 - `audit-and-logging`: the `audit` package and the log rules. Every other area
   follows these rules, and no other page would hold them.
@@ -206,10 +210,15 @@ the code has an area with its own rules that no other page can hold:
   never lost and never sent twice.
 - `command-line`: `cmd/email-mcp` (2,969 lines), nine commands with shared
   prompts and rules.
-- `mail-backend`: `domain/mail`, `provider/imapsmtp` (5,277 lines), `discovery`
-  and `connect`. It is the one place where a new mail provider goes.
-- `mail-content`: `internal/mime` (6,556 lines) and the copied HTML parser. It
-  has its own rules for text from third parties.
+- `mail-backend`: `domain/mail` and `provider/imapsmtp` (5,277 lines). It is the
+  one place where a new mail provider goes.
+- `connecting-an-account`: `discovery`, `connect`, and the use cases that save
+  and reconnect an account. It was part of `mail-backend`. The page was too
+  long, so it was split.
+- `mail-content`: the files of `internal/mime` (6,556 lines) that read mail, and
+  the copied HTML parser. It has its own rules for text from third parties.
+- `building-mail`: the files of `internal/mime` that build mail. It was part of
+  `mail-content`. That page was too long too, so it was split.
 - `glossary`: the foundation asks for it.
 
 Not added, by design:
@@ -521,7 +530,7 @@ Diagrams: D4, D5, D6.
 Manual (link with `relref`): `daily-use/confirmations`,
 `daily-use/app-confirmation` and `daily-use/activity-and-undo`.
 
-Leave out: how a message is built (`mail-content`).
+Leave out: how a message is built (`building-mail`).
 
 ### `permissions`: Permissions
 
@@ -753,16 +762,16 @@ Questions:
 
 - What must a provider implement?
 - How does the backend keep connections, and how does it stay safe?
+- How does the backend check a certificate, and when may a pin be offered?
 - How are messages, folders and tags addressed?
 - How does a send reach the SMTP server?
-- How does an account get connected and tested?
 - What would I change to add a provider?
 
 Must cover:
 
 - `mail.Backend`: neutral types, opaque `Ref` values, batch calls that check
-  every ref before they change anything, `ErrPartial`, and the rule that no
-  method deletes mail for good.
+  every ref before they change anything, `ErrPartial`, `ErrRefStale`, and the
+  rule that no method deletes mail for good.
 - `BackendFactory` and `BackendCache`: one backend for each account in its own
   slot; a fingerprint of the server settings and the sealed password, compared
   on each call, so a change made by another process is seen; a replaced backend
@@ -770,32 +779,60 @@ Must cover:
 - `imapsmtp`: the pool (`pool.go`: two slots, forced close of the network
   connection, retry once for calls that are safe to repeat, never for `APPEND`);
   the secure dialer (`tlsdial.go`: TLS 1.2 or newer, `STARTTLS` without
-  fallback, certificate pin by SHA-256 of the leaf, the rule for when a pin may
-  be offered); refs (`ref.go`: mailbox, UIDVALIDITY and UID); folder aliases
-  from `SPECIAL-USE`; tags as IMAP keywords when the inbox allows them; `Move`
-  with `MOVE`, or `COPY` and a `UID EXPUNGE` of the same UIDs, never a plain
-  `EXPUNGE`; cursors; drafts with `APPEND`.
+  fallback, certificate pin by SHA-256 of the leaf, one table for the rule of
+  when a pin may be offered, replaced or removed); refs (`ref.go`: mailbox,
+  UIDVALIDITY and UID); folder aliases from `SPECIAL-USE`; tags as IMAP keywords
+  when the inbox allows them; `Move` with `MOVE`, or `COPY` and a `UID EXPUNGE`
+  of the same UIDs, never a plain `EXPUNGE`; cursors; drafts with `APPEND`; what
+  `GetMessage`, `GetAttachment` and `GetRaw` fetch.
 - Send (`smtp.go`): a new SMTP connection for each message, `AUTH PLAIN` only,
   all-or-nothing for recipients, a Sent copy that cannot fail the send, and
   `ErrDeliveryUnknown` when nobody can tell if the server took the message.
-- Connecting an account: `discovery` (four sources, only the domain is sent),
-  `Service.CreateIMAPAccount` (settings checked, the probe must pass for IMAP
-  and SMTP, the account and sealed password saved in one transaction), the
-  shared `connect` package (fixed texts, certificate decision) used by the web
-  portal and the commands, `needs_reauth` and `ReconnectIMAPAccount`.
 - Adding a provider: start from the packages that import `imapsmtp` today
   (`go list` shows them): `service`, `mcpserver`, `connect`, `web`, `app`,
   `cmd/email-mcp`. State this as a starting list, not as a recipe that was
   tested.
+- Link to `connecting-an-account` for the steps that connect an account.
 
 Source: `internal/domain/mail/*.go`, `internal/provider/imapsmtp/*.go`,
-`internal/service/backends.go`, `accounts.go`, `reconnect.go`,
-`internal/discovery/discovery.go`, `internal/connect/connect.go`,
-`internal/domain/account/account.go`.
+`internal/service/backends.go`, `internal/domain/account/account.go`.
 
-Design spec (history): sections 4.5, 8.4, 8.5 and 13.1.
+Design spec (history): sections 4.5 and 13.1.
 
 Diagram: D10.
+
+### `connecting-an-account`: Connecting an account
+
+Path: `site/content/tech/mail/connecting-an-account.md`
+
+Purpose: explain how the server settings of an address are found, how an account
+is tested and saved, and how it is reconnected after a server refused the login.
+
+Questions:
+
+- How does the program find the server settings of an address?
+- How does an account get connected and tested?
+- What do the web portal and the commands share?
+- What happens when a mail server refuses the stored login?
+- When may a person replace or remove a pin?
+
+Must cover:
+
+- `discovery`: four sources, only the domain is sent, and the rules for a host
+  name.
+- `Service.CreateIMAPAccount`: settings checked, the probe must pass for IMAP
+  and SMTP, the account and sealed password saved in one transaction.
+- The shared `connect` package: fixed texts, the decision about a certificate.
+  The web portal and the commands both use it.
+- `needs_reauth` and `ReconnectIMAPAccount`: what a reconnect keeps, and what it
+  may do with a pin (`ReconnectPinChange`). The table of the cases is in
+  `mail-backend`.
+
+Source: `internal/discovery/discovery.go`, `internal/connect/connect.go`,
+`internal/service/accounts.go`, `reconnect.go`, `internal/web/accounts.go` (the
+life of an offer to pin).
+
+Design spec (history): sections 8.4 and 8.5.
 
 Manual (link with `relref`): `getting-started/connect-account`,
 `daily-use/manage-accounts` and `daily-use/troubleshooting`.
@@ -804,48 +841,86 @@ Manual (link with `relref`): `getting-started/connect-account`,
 
 Path: `site/content/tech/mail/mail-content.md`
 
-Purpose: explain how text from third parties is made safe for an agent, how
-outgoing mail is built so that the preview equals the message, and why the
-repository holds a copy of an HTML parser.
+Purpose: explain how email-mcp cleans text from third parties before an agent
+reads it, how HTML becomes text, and why the repository holds a copy of an HTML
+parser.
 
 Questions:
 
 - What is removed from incoming text, and why?
 - How is HTML turned into text?
 - What limits stop a hostile message from using all the memory?
-- How is an outgoing message built, and what does it refuse?
 - Why is there a copy of `golang.org/x/net/html`?
 - How do I change the hidden-text rules safely?
 
 Must cover:
 
-- `CleanUntrusted`: what categories it removes and why it keeps the zero-width
-  joiners (scripts such as Persian need them).
+- `CleanUntrusted`: what categories it removes and why it keeps the joiners that
+  a script such as Persian needs. Say that cleaning does not make the text
+  trusted (link to the manual, `daily-use/what-the-agent-can-do`).
 - `HTMLToText`: the groups of things it leaves out (hidden by attribute, by
-  style, by inherited size or visibility, comments). Link to the long comment in
-  `html.go` for the full list. The principle: a hiding rule on an element wins,
-  and when a style cannot be worked out, the answer fails closed.
-- Limits: HTML part size, the work budget of the parser, the output cap, the
-  nesting depth. Name the constants in the fact sheet.
+  style, by inherited size or visibility, comments). The rules are in `html.go`
+  and `css.go`. Name the groups, and say that email-mcp cannot always tell what
+  a reader sees. The principle: a hiding rule on an element wins. A value that
+  needs a calculation counts as hiding. Another style that cannot be worked out
+  keeps the element, and the report says so.
+- Limits: HTML part size, the work budget of the parser, the output caps, the
+  nesting depth, and the limits of `ParseMessage`. Name the constants in the fact
+  sheet.
 - The copied parser: why a size limit is not enough (see the README of
   `internal/thirdparty/xhtml`), what the patch does (a work budget, marked with
   `// email-mcp:`), how to update it.
-- Building mail (`Build`, `FromDraft`): reply and reply-all rules, forward,
-  header injection refused, quoted local parts and domain literals refused,
-  hidden characters refused in subject, text and display names, HTML reduced to
-  text, headings, lists, tables and `http`, `https` and `mailto` links, Bcc kept
-  out of the headers, the ASCII form (punycode) shown for a non-ASCII domain.
-- The link to the send flow: the text part of a message made from HTML is what
-  the preview shows.
+- The two pipelines of D11. Link to `building-mail` for the outgoing steps.
 
-Source: `internal/mime/*.go`, `internal/thirdparty/xhtml/README.md`,
-`internal/provider/imapsmtp/fetch.go`, `internal/mcpserver/shape.go`.
+Source: `internal/mime/untrusted.go`, `html.go`, `visible.go`, `css.go`,
+`parts.go`, `decode.go`, `multipart.go`, `params.go`, `compare.go`,
+`internal/thirdparty/xhtml/README.md`, `internal/provider/imapsmtp/fetch.go`,
+`summary.go`, `internal/mcpserver/shape.go`.
 
 Design spec (history): sections 6.6 and 10.2.
 
 Diagram: D11.
 
-Manual (link with `relref`): `daily-use/what-the-agent-can-do`.
+Manual (link with `relref`): `daily-use/what-the-agent-can-do` and
+`reference/known-limitations`.
+
+### `building-mail`: Building mail
+
+Path: `site/content/tech/mail/building-mail.md`
+
+Purpose: explain how outgoing mail is built, what it refuses, how a saved draft
+is made ready to send, and why the preview starts with the text that goes out.
+
+Questions:
+
+- How is an outgoing message built, and what does it refuse?
+- How is a saved draft made ready to send?
+- Why does the preview start with the text that goes out?
+
+Must cover:
+
+- Building mail (`Build`): reply and reply-all rules, forward, header injection
+  refused, quoted local parts and domain literals refused, hidden characters
+  refused in subject, text and display names, HTML reduced to text, headings,
+  lists, tables and `http`, `https` and `mailto` links, Bcc kept out of the
+  headers, the ASCII form (punycode) shown for a non-ASCII domain.
+- `FromDraft`: the draft goes out as it was saved, minus the `Bcc` fields. It
+  refuses a bare CR, a missing sender, an unreadable address and a draft with no
+  recipient. It does not refuse or clean hidden characters or HTML.
+- What goes out and what the preview shows: a message that the agent writes goes
+  out as the preview can show it. A draft that a person wrote elsewhere goes out
+  as it was saved, and the preview shows its text only. Link to the manual,
+  `daily-use/security`.
+- The link to the send flow: the text part of a message made from HTML starts
+  the preview. Link to the outgoing pipeline of D11 on `mail-content`.
+
+Source: `internal/mime/build.go`, `body.go`, `recipients.go`, `draft.go`,
+`address.go`; `internal/service/send.go` (`composedContent`, `draftContent`).
+
+Design spec (history): section 10.2.
+
+Manual (link with `relref`): `daily-use/what-the-agent-can-do` and
+`daily-use/security`.
 
 ### `command-line`: The command line
 
@@ -1418,8 +1493,8 @@ page.
 | `internal/app` | startup-and-shutdown | storage-and-secrets, send-flow |
 | `internal/audit` | audit-and-logging | storage-and-secrets |
 | `internal/confirm` | send-flow | security-design |
-| `internal/connect` | mail-backend | command-line, web-portal |
-| `internal/discovery` | mail-backend | |
+| `internal/connect` | connecting-an-account | command-line, web-portal |
+| `internal/discovery` | connecting-an-account | |
 | `internal/domain/account` | permissions | storage-and-secrets |
 | `internal/domain/mail` | mail-backend | tool-call |
 | `internal/e2e` | testing | security-design |
@@ -1427,7 +1502,7 @@ page.
 | `internal/httpserve` | local-http | tool-call |
 | `internal/inflight` | startup-and-shutdown | |
 | `internal/mcpserver` | tool-call | send-flow, audit-and-logging |
-| `internal/mime` | mail-content | mail-backend |
+| `internal/mime` | mail-content | building-mail, mail-backend |
 | `internal/outbox` | send-flow | startup-and-shutdown |
 | `internal/policy` | permissions | |
 | `internal/provider/imapsmtp` | mail-backend | tool-call |
@@ -1478,8 +1553,13 @@ Rules for the map:
   - `calls.go`: `audit-and-logging`;
   - `tokens.go`: `local-http`;
   - `accounts.go`: `permissions` for the settings and the risk acceptance,
-    `mail-backend` for connecting an account;
-  - `reconnect.go` and `backends.go`: `mail-backend`.
+    `connecting-an-account` for connecting an account;
+  - `reconnect.go`: `connecting-an-account`;
+  - `backends.go`: `mail-backend`.
+- `mime` has two pages. The author picks the page by the file:
+  - `build.go`, `body.go`, `recipients.go`, `draft.go` and `address.go`:
+    `building-mail`;
+  - the other files: `mail-content`.
 - The map is part of `local-development` after the cutover, as a short section
   "Which page do I update?". The map of the manual spec joins it there, and the
   pull request template links to that section. (My call.)
@@ -1692,7 +1772,7 @@ The code wins in every case. Line numbers: design spec = the file
 
 ### Done when
 
-- All 26 files of the sidebar table exist (18 pages, 7 group pages and the
+- All 28 files of the sidebar table exist (20 pages, 7 group pages and the
   home page), and the build passes with no warning.
 - Each page has `code_areas`, and each path in it exists.
 - Each row of the map has a page, and each page has at least one row.
