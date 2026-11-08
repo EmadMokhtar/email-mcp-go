@@ -99,12 +99,12 @@ levels:
   # as the Trash and every folder inside it (ErrMoveToTrash, refuseTrashTarget
   # and inTrash in internal/service/write.go). So the page speaks only of the
   # folders that email-mcp recognizes, as the tech page Permissions does
-  # (content/tech/inside-the-server/permissions.md).
+  # (site/content/tech/inside-the-server/permissions.md).
   - term: 2 Organize
     text: >-  # T13
       Mark as read, flag, tag, make folders and move messages. These moves
       never go to a folder that email-mcp recognizes as the Trash, or to a
-      folder inside it.
+      folder inside that folder.
   # discard_draft moves a draft to the Trash at level 3, and it never asks
   # (internal/service/write.go, DiscardDraft), so the page says so after
   # "Write drafts".
