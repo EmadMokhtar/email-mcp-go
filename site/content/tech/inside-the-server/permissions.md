@@ -119,7 +119,11 @@ manual says more.
 ## Full autonomy and the risk acceptance
 
 Full autonomy means that both switches, `ConfirmSends` and `ConfirmDeletes`, are
-off. The agent then sends and moves mail to the Trash with no question.
+off. These two switches then ask nothing before a send or a move to the Trash.
+Other checks can still ask: an address with a character outside ASCII (the
+basic set of characters: English letters, digits and common signs), and the
+new-recipient check (see [When the person is
+asked](/tech/inside-the-server/send-flow/#when-the-person-is-asked)).
 `NeedsRiskAcceptance` in {{< src "internal/service/accounts.go" >}} says when a
 save needs the person to accept the risk. It has three cases:
 

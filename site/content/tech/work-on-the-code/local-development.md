@@ -34,9 +34,9 @@ code_areas:
 
 This page explains how to build, test and change the code of email-mcp on your
 own computer. It names the make targets, the Go version, the checks of CI
-(continuous integration: the checks that GitHub runs on each push), the rules
-of the code, and the steps to add a tool, a command, a migration or a package.
-Read it before your first change.
+(continuous integration: the checks that GitHub runs on each pull request and
+on each push to `main`), the rules of the code, and the steps to add a tool, a
+command, a migration or a package. Read it before your first change.
 
 ## The make targets
 
