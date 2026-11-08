@@ -28,6 +28,7 @@ code_areas:
   - internal/testutil/chrometest/chrometest.go
   - site/layouts/_shortcodes/screenshot.html
   - test/sitecheck/main.go
+  - test/sitecheck/maps.go
   - test/docscheck/main.go
   - .github/workflows/docs-check.yml
   - .github/pull_request_template.md
@@ -37,9 +38,10 @@ code_areas:
 
 This page explains how to build, test and change the code of email-mcp on your
 own computer. It names the make targets, the Go version, the checks of CI
-(continuous integration: the checks that GitHub runs on each push), the rules
-of the code, the steps to add a tool, a command, a migration or a package, and
-which page of the docs to update. Read it before your first change.
+(continuous integration: the checks that GitHub runs on each pull request and
+on each push to `main`), the rules of the code, the steps to add a tool, a
+command, a migration or a package, and which page of the docs to update. Read
+it before your first change.
 
 ## The make targets
 
@@ -309,11 +311,12 @@ when a change of the program leaves out one of the two kinds.
 
 The workflow {{< src ".github/workflows/docs-check.yml" >}} (a workflow is a
 file of steps that GitHub runs) has the job `docs check`. The job runs when a
-pull request is opened or reopened, when it gets a new commit, and when a label
-is added or removed. A label is a short name that a person attaches to a pull
-request. The job gives the list of the files that the pull request changes to
-{{< src "test/docscheck/main.go" >}}. A moved file counts with its old path and
-its new path, so a file that moves out of `internal/` still counts.
+pull request is opened or reopened, when a commit is pushed to it, and when a
+label is added or removed. A label is a short name that a person attaches to a
+pull request. The job gives the list of the files that the pull request
+changes to {{< src "test/docscheck/main.go" >}}. A moved file counts with its
+old path and its new path, so a file that moves out of `internal/` still
+counts.
 
 First, the check looks for a change of behaviour (of what the program does). A
 change counts as behaviour when it touches:
@@ -423,7 +426,7 @@ of web servers) is one of the two ways that an AI app talks to the server.
 
 | Code area | Main tech page | Also check |
 |---|---|---|
-| `cmd/email-mcp` | [The command line][t-cli] | [Startup and shutdown][t-startup], [Local HTTP mode][t-http] |
+| `cmd/email-mcp` | [The command line][t-cli] | [Startup and shutdown][t-startup], [Local HTTP mode][t-http], this page |
 | `internal/app` | [Startup and shutdown][t-startup] | [Storage and secrets][t-storage], [The send flow][t-send] |
 | `internal/audit` | [Activity log and program log][t-audit] | [Storage and secrets][t-storage] |
 | `internal/confirm` | [The send flow][t-send] | [Security design][t-security] |
@@ -441,7 +444,7 @@ of web servers) is one of the two ways that an AI app talks to the server.
 | `internal/policy` | [Permissions][t-perm] | |
 | `internal/provider/imapsmtp` | [The mail backend][t-backend] | [One tool call, step by step][t-call] |
 | `internal/secrets` | [Storage and secrets][t-storage] | [Security design][t-security] |
-| `internal/service` | [One tool call, step by step][t-call] | [The send flow][t-send], [Permissions][t-perm] |
+| `internal/service` | [One tool call, step by step][t-call] | [The send flow][t-send], [Permissions][t-perm], this page |
 | `internal/signing` | [Security design][t-security] | [The send flow][t-send], [The web portal][t-portal] |
 | `internal/store` | [Storage and secrets][t-storage] | |
 | `internal/testutil/chrometest` | [Testing][t-testing] | this page |
@@ -486,8 +489,10 @@ the first three rows. It does not count the other rows.
 | `.golangci.yml`, `.go-version`, `.github/copilot-instructions.md` | this page | |
 | `go.mod`, `.github/dependabot.yml` | this page | [Map of packages][t-packages] |
 | `.github/workflows/ci.yml` | this page | [Testing][t-testing] |
-| `.github/workflows/docs-check.yml`, `test/docscheck/`, `.github/pull_request_template.md` | this page | |
+| `.github/workflows/docs-check.yml`, `test/docscheck/`, `.github/pull_request_template.md` | this page | [Testing][t-testing] |
 | `test/sitecheck/` | this page | [Testing][t-testing] |
+| `test/socialcard/` | this page | [Testing][t-testing] |
+| `.hugo-version`, `site/hugo.toml`, `site/config/`, `site/layouts/`, `site/assets/` | this page | |
 | `.github/workflows/interop.yml`, `test/interop/` | [Testing][t-testing] | |
 | `.github/workflows/release-please.yml`, `.github/workflows/pages.yml` | [Making a release][t-release] | |
 | `.github/workflows/release.yml` | [Making a release][t-release] | [Testing][t-testing] |
@@ -508,6 +513,11 @@ A new package gets a row in this map in the same pull request, and a row in
 row in the map of the user manual below, or a place in its list of areas with
 no manual page. A new file in `internal/service` or `internal/mime` gets a line
 in the list of its package above.
+
+The site check ({{< src "test/sitecheck/maps.go" >}}) fails when a Go package
+of `cmd/` or `internal/` has no row in one of the two maps, and when the first
+column of a map names a path that does not exist. It does not check the lists
+of `internal/service` and `internal/mime`, or the pages that a row names.
 
 ### Map of the user manual
 
@@ -552,6 +562,8 @@ list.
 | `internal/web/approvals.go`, `templates/approval.html`, `templates/approvals.html` | [Confirmations][m-confirm], [The web pages][m-web]; `approvals.go` and `approval.html` also [Your first use][m-first] |
 | `internal/web/activity.go`, `templates/activity.html` | [Activity and undo][m-activity] |
 | `internal/web/connections.go`, `templates/connections.html` | [Local HTTP mode][m-http], [The web pages][m-web] |
+| `internal/web/templates/message.html` (the notice page, such as "It is too late to cancel this send") | [Activity and undo][m-activity] |
+| `internal/web/static/` (the styles, the script and the icon of the web pages) | [The web pages][m-web]. `make site` makes the images of the manual again, so a change of the look alone needs no text change. |
 | `internal/web/templates/no_session.html`, `use_name.html` | [Connect your first account][m-connect], [Troubleshooting][m-trouble], [The web pages][m-web] |
 | `internal/mime` | [What the agent can do][m-agent], [Security][m-security], [Known limitations][m-limits] |
 | `internal/provider/imapsmtp` | [What the agent can do][m-agent], [Connect your first account][m-connect], [Troubleshooting][m-trouble] |
@@ -570,10 +582,10 @@ These areas have no manual page: `internal/service`, `internal/domain/mail`,
 `internal/signing`, `internal/inflight`, `internal/errtype`,
 `internal/thirdparty`, `internal/e2e` and `internal/testutil`. A change in
 `internal/service` reaches the person through a tool or a web page, so use the
-row of that tool or page. A file with no row, such as a file of
-`internal/web/static/` or another file of `internal/app`, has no manual page of
-its own. If a person can see its change, update the page that shows that screen
-or that behaviour.
+row of that tool or page. Some files of a mapped package have no row, such as
+`internal/app/sender.go`, because no manual page describes them. If a change of
+such a file is something that a person can see, find the page that shows it,
+and add a row here.
 
 ### Find the pages that name a path
 
@@ -581,10 +593,12 @@ The maps name the pages to read first. A search finds the pages that contain a
 path, in their `code_areas` (the list of code in the front matter, the block of
 settings at the top of the file) or in their text. Run it from the root of the
 repository. `grep -rl` prints the name of each file that holds the text (`-r`:
-in every folder below, `-l`: only the names of the files):
+in every folder below, `-l`: only the names of the files).
+`--exclude=local-development.md` leaves out this page, because its maps name
+most paths:
 
 ```sh
-grep -rl 'internal/outbox/' site/content
+grep -rl --exclude=local-development.md 'internal/outbox/' site/content
 ```
 
 A page may name a file by its short name only, such as `outbox.go`, so search

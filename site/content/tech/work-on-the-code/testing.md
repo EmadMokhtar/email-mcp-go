@@ -24,6 +24,7 @@ code_areas:
   - test/interop/
   - test/sitecheck/
   - .github/workflows/ci.yml
+  - .github/workflows/docs-check.yml
   - .github/workflows/interop.yml
   - .github/workflows/release.yml
   - Makefile
@@ -277,6 +278,7 @@ and stops them also when the test failed.
 | Workflow | When | What it runs |
 |---|---|---|
 | {{< src ".github/workflows/ci.yml" >}} | each pull request and each push to `main` | the five jobs of [What CI runs](/tech/work-on-the-code/local-development/#what-ci-runs): the tests with `-race`, the linters with the three tags, `goreleaser check`, govulncheck (a check for known vulnerabilities), and `make site`, which runs the screenshot, layout and site tests |
+| {{< src ".github/workflows/docs-check.yml" >}} | each pull request: when it is opened or reopened, when a commit is pushed to it, and when a label is added or removed | `go run ./test/docscheck` with the list of the files that the pull request changes (see [The docs check](/tech/work-on-the-code/local-development/#the-docs-check)) |
 | {{< src ".github/workflows/interop.yml" >}} | each night, each `v*` tag, by hand | the interop test with `-race -count=1` |
 | {{< src ".github/workflows/release.yml" >}} | each `v*` tag | `go vet ./...` without tags, `go test -race ./...`, govulncheck and the version check of `server.json`, before it builds anything; after the release, `make site` through `pages.yml`, except for a pre-release tag |
 

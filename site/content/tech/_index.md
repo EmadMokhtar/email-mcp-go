@@ -140,7 +140,7 @@ the language of web pages and of many mails.
 | What must I check when I change security code? | [Security design](/tech/security/security-design/#when-you-change-security-code) |
 | How do I build, test and lint the code? | [Local development](/tech/work-on-the-code/local-development/#the-make-targets) |
 | Which Go version do I need? | [Local development](/tech/work-on-the-code/local-development/#the-go-version) |
-| What does CI (continuous integration: the checks that GitHub runs on each push) run? | [Local development](/tech/work-on-the-code/local-development/#what-ci-runs) |
+| What does CI (continuous integration: the checks that GitHub runs on each pull request and on each push to `main`) run? | [Local development](/tech/work-on-the-code/local-development/#what-ci-runs) |
 | How do I add a tool, a command, a migration or a package? | [Local development](/tech/work-on-the-code/local-development/#add-code) |
 | Which conventions does the code follow? | [Local development](/tech/work-on-the-code/local-development/#rules-of-the-code) |
 | Which page of the docs do I update when I change the code? | [Local development](/tech/work-on-the-code/local-development/#which-page-do-i-update) |
