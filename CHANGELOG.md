@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.2](https://github.com/EmadMokhtar/email-mcp-go/compare/v0.6.1...v0.6.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **mcpserver:** point agents to html_body in the create_draft description ([#63](https://github.com/EmadMokhtar/email-mcp-go/issues/63)) ([f7387bd](https://github.com/EmadMokhtar/email-mcp-go/commit/f7387bdb752982760dc774176e462936fd501e8b))
+* **site:** keep tables as tables and scroll them in a named box ([#56](https://github.com/EmadMokhtar/email-mcp-go/issues/56)) ([2e2a3a7](https://github.com/EmadMokhtar/email-mcp-go/commit/2e2a3a74bda81d69345dda06aa697ea11a632d8c))
+
 ## [0.6.1](https://github.com/EmadMokhtar/email-mcp-go/compare/v0.6.0...v0.6.1) (2026-11-07)
 
 
