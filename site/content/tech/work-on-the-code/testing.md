@@ -42,8 +42,8 @@ the tests of a feature.
 | End-to-end tests | `internal/e2e` | `go test -race ./...` | The whole program, started as in a real run, behaves as each named test says (see [the list](#the-end-to-end-tests)). |
 | Screenshots and layout | `internal/e2e`, build tag `screenshots` | `make screenshots` | Each page of the program that the manual shows exists and has the expected texts. The images of the manual come from here. |
 | Site tests | `test/sitecheck` | `go test ./...`, and `make site` with the build tags | The checker of the docs site finds what it must find. |
-| Interop test | `test/interop`, build tag `interop` | by hand or in `interop.yml` | The mail code works with real Dovecot and Postfix servers. |
-| Fuzz targets | `Fuzz*` functions in `internal/mime`, `internal/signing` and `internal/thirdparty/xhtml` | `go test`, with their seed inputs only | The checks of each target hold for its seed inputs. |
+| Interop test | `test/interop`, build tag `interop` | by hand or in `interop.yml` | The mail code works with real mail servers: Dovecot (an IMAP server) and Postfix (an SMTP server), in Docker (a tool that runs programs in containers). |
+| Fuzz targets (tests that Go can run with generated inputs) | `Fuzz*` functions in `internal/mime`, `internal/signing` and `internal/thirdparty/xhtml` | `go test`, with their seed inputs (the inputs written in the test) only | The checks of each target hold for its seed inputs. |
 
 A build tag is a word that a Go file asks for before it is built, in a line
 such as `//go:build interop`. `go test ./...` does not build such a file, so
@@ -133,7 +133,7 @@ breaks a rule. They are not a proof that the program is secure.
 | `TestNoSecretsInLogs` | The log of a full scenario holds no test secret and no token. |
 | `TestNoPlaintextSecretsInDB` | The files of the database hold none of the test secrets in plain text: no password, message, address of a third party or token, also while sends wait. Some data, such as the address of the account, is plain text by design. |
 | `TestEveryWriteToolRefusedBelowItsLevel` | Each tool is refused at each level below the one it needs, and the call reaches no mail server and stores no action. |
-| `TestConfirmationCannotBeSkipped` | A confirmation acts once, for the exact request that was shown, in time, and only in the channel where it was asked. The test cannot show that a person read the question: that depends on the app that shows it (see [Confirmations](/manual/daily-use/confirmations/)). |
+| `TestConfirmationCannotBeSkipped` | A confirmation acts once, for the exact request that it was made for, in time, and only in the channel where it was asked. The test cannot show that a person read the question or all of the text: that depends on the app that shows it (see [Confirmations](/manual/daily-use/confirmations/)). |
 | `TestTrashMoveBlockedBelowLevel5` | Below level 5 (Delete, which only moves mail to the Trash), no tool and no approval moves mail to the Trash on the test server, by the paths that the test tries. Mail servers differ, so this is a check of the test server and not a promise for every server. |
 | `TestPlainTextToRemoteRefused` | A connection without TLS is allowed only to a mail server on this computer, on a local install. |
 | `TestTLSCertificateChecksEnforced` | A certificate that differs from the pin, that no trusted authority signed, or that is for another host name is refused, and no login reaches the server. |
@@ -229,9 +229,10 @@ Go keeps an input that fails in `testdata/fuzz/` of the package. Then each
 | `screenshots` | the shots and the layout test in `internal/e2e`, `internal/testutil/chrometest`, the phone test of `test/sitecheck`, `test/socialcard` | Chrome | `make screenshots`, `make site` and `make social-card` |
 | `sitebuild` | the table tests of {{< src "test/sitecheck/" >}} | a built site with the test tables | `make site` |
 
-`go vet`, staticcheck and golangci-lint read the files of all three tags, so a
-change that breaks one of these files fails CI, also where its test does not
-run.
+The linters (tools that find mistakes in code without running it) `go vet`,
+staticcheck and golangci-lint read the files of all three tags, so a change
+that breaks one of these files fails CI, also where its test does not run. The
+page [Local development][make] says what each one runs.
 
 ### The interop test
 
@@ -272,7 +273,7 @@ and stops them also when the test failed.
 
 | Workflow | When | What it runs |
 |---|---|---|
-| {{< src ".github/workflows/ci.yml" >}} | each push and each pull request | the five jobs of [What CI runs](/tech/work-on-the-code/local-development/#what-ci-runs): the tests with `-race`, the linters with the three tags, `goreleaser check`, govulncheck, and `make site`, which runs the screenshot, layout and site tests |
+| {{< src ".github/workflows/ci.yml" >}} | each push and each pull request | the five jobs of [What CI runs](/tech/work-on-the-code/local-development/#what-ci-runs): the tests with `-race`, the linters with the three tags, `goreleaser check`, govulncheck (a check for known vulnerabilities), and `make site`, which runs the screenshot, layout and site tests |
 | {{< src ".github/workflows/interop.yml" >}} | each night, each `v*` tag, by hand | the interop test with `-race -count=1` |
 | {{< src ".github/workflows/release.yml" >}} | each `v*` tag | `go vet ./...` without tags, `go test -race ./...`, govulncheck and the version check of `server.json`, before it builds anything |
 
@@ -290,3 +291,4 @@ The {{< src "Makefile" >}} has a target for most of these commands:
 - [Map of packages](/tech/start-here/package-map/)
 
 [shot]: /tech/work-on-the-code/local-development/#add-or-change-a-shot
+[make]: /tech/work-on-the-code/local-development/#the-make-targets

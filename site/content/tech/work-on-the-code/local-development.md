@@ -56,15 +56,17 @@ make vuln     # govulncheck
 If your shell sets `GOROOT` to another Go install, run make as
 `env -u GOROOT make test`. `GOROOT` is the variable that names the folder of a
 Go install. `env -u GOROOT` runs the command without that variable (`-u`:
-unset), so `go` and golangci-lint both use the same Go. The interop test runs
-the mail scenario against real Dovecot and Postfix servers in Docker. See
+unset), so `go` and golangci-lint (a program that runs many linters at once)
+both use the same Go. The interop test runs the mail scenario against real mail
+servers, Dovecot (an IMAP server) and Postfix (an SMTP server), in Docker (a
+tool that runs programs in containers). See
 [The interop test](/tech/work-on-the-code/testing/#the-interop-test).
 
 | Target | What it runs |
 |---|---|
 | `build` | `CGO_ENABLED=0 go build -trimpath -o bin/email-mcp ./cmd/email-mcp`. `CGO_ENABLED=0` means no C compiler, so the binary is static: it needs no system library to run. `-trimpath` removes the file paths of your computer from the binary. The build sets no version, so `email-mcp version` prints `email-mcp dev`. |
 | `test` | `go test -race ./...`: every test that needs no build tag, with the race detector (a check that finds two goroutines, functions that run at the same time, that use the same memory without a lock). |
-| `lint` | `go vet` and staticcheck (a linter for Go) with the build tags `interop`, `screenshots` and `sitebuild`, then `golangci-lint run` (a program that runs many linters at once). The tags make the linters read the files that `go test ./...` leaves out. Install golangci-lint v2 first. |
+| `lint` | `go vet` and staticcheck (a linter for Go) with the build tags `interop`, `screenshots` and `sitebuild`, then `golangci-lint run`. The tags make the linters read the files that `go test ./...` leaves out. Install golangci-lint v2 first. |
 | `vuln` | govulncheck, which checks the code and the dependencies for known vulnerabilities. |
 | `screenshots` | The images of the user manual. See [The docs site](#the-docs-site). |
 | `site` | The images, then the docs site and its checks. |
@@ -74,8 +76,9 @@ the mail scenario against real Dovecot and Postfix servers in Docker. See
 The Makefile runs staticcheck and govulncheck with `go run tool@version`, so
 there is nothing to install: Go downloads and builds that version of the tool
 the first time. The versions are the variables `STATICCHECK_VERSION` and
-`GOVULNCHECK_VERSION` of the Makefile. The workflows pin the same versions,
-and a comment in each file says to keep them in step.
+`GOVULNCHECK_VERSION` of the Makefile. The workflows pin (fix to one exact
+version) the same versions, and a comment in each file says to keep them in
+step.
 
 The settings of golangci-lint are in {{< src ".golangci.yml" >}}. It runs the
 standard set of linters (errcheck, govet, ineffassign, staticcheck and unused)
@@ -87,11 +90,12 @@ HTML (HyperText Markup Language) parser (see
 ## The Go version
 
 The `go` line of {{< src "go.mod" >}} (`go 1.26.0`) is the oldest Go that can
-build the module. {{< src ".go-version" >}} holds the Go version of the project
-(`1.27.3`), for tools that choose the Go version of a folder, such as goenv. The
+build the module. {{< src ".go-version" >}} holds the Go version of the
+project, for tools that choose the Go version of a folder, such as goenv. The
 workflows do not read it: they install the newest stable Go
-(`go-version: stable` of `actions/setup-go`). The Dockerfile pins a Go image of
-the same version as `.go-version` by digest (a hash of the exact image).
+(`go-version: stable` of `actions/setup-go`). The Dockerfile pins its Go image
+by digest (a hash of the exact image), and its comment says to use the latest
+stable release.
 
 ## What CI runs
 
@@ -106,20 +110,19 @@ request. It has five jobs:
 | `govulncheck` | govulncheck |
 | `build site` | `make site`, then it uploads the images as a workflow artifact (files that a run keeps for download) for 7 days, also when `make site` failed |
 
-The workflows of the repository follow these rules:
+The workflows of the repository follow these rules. Keep them when you add or
+change a workflow:
 
-- Each workflow sets `permissions: contents: read` at the top, so the token
-  that GitHub gives the run (`GITHUB_TOKEN`) may only read the repository. A
-  job that needs more asks for it in its own block, and only for what it needs,
-  such as the job `release` of `release.yml` and the job `deploy` of
-  `pages.yml`.
-- Each action is pinned (fixed to one exact version) by its full commit SHA
-  (Secure Hash Algorithm: here, the hash that names one commit), with the
-  release tag in a comment after it.
-- The checkout does not keep the token in its git settings
-  (`persist-credentials: false`).
-- No step puts a `${{ }}` value into a `run:` script. A value goes through
-  `env:` and is used as a shell variable in quotes.
+- Set `permissions: contents: read` at the top, so the token that GitHub gives
+  the run (`GITHUB_TOKEN`) may only read the repository by default. Give a job
+  that needs more its own block, with only what it needs, as the job `release`
+  of `release.yml` and the job `deploy` of `pages.yml` have.
+- Pin each action by its full commit SHA (Secure Hash Algorithm: here, the hash
+  that names one commit), with the release tag in a comment after it.
+- Set `persist-credentials: false` on the checkout, so it does not keep the
+  token in its git settings.
+- Put no `${{ }}` value into a `run:` script. Pass a value through `env:`, and
+  use it as a shell variable in quotes.
 
 The interop test runs in its own workflow. The page
 [Testing](/tech/work-on-the-code/testing/#what-ci-and-the-release-run) lists
@@ -149,9 +152,11 @@ dependencies. Its settings are in {{< src ".github/dependabot.yml" >}}:
   govulncheck.
 
 The comment at the top of the file lists what Dependabot does not see, so a
-person updates it by hand: the BuildKit and Syft scanner images of the release,
-the tool versions that `go run` uses, the Hugo version in `.hugo-version`, the
-cosign and Syft versions that `release.yml` gives to two installer actions, the
+person updates it by hand: the images of BuildKit (the build engine of Docker)
+and of the Syft scanner (it lists the modules inside an image) of the release,
+the tool versions that `go run` uses, the version of Hugo (the program that
+builds the docs site) in `.hugo-version`, the versions of cosign (a tool that
+signs files) and Syft that `release.yml` gives to two installer actions, the
 golangci-lint version of `ci.yml`, chromedp, and the release-please version in
 the `$schema` address of `release-please-config.json`.
 
@@ -201,8 +206,8 @@ tests to change.
 
 ### Add a tool
 
-A tool is one action that an agent (the AI, artificial intelligence, program
-that calls the tools) can call, such as `get_message`.
+A tool is one action that an agent can call, such as `get_message`. The agent
+is the AI (artificial intelligence) program that calls the tools.
 
 1. **The use case.** Add a method to `service.Service`. It checks the
    permission first, with the `policy.Action` that it needs. See [One tool
@@ -327,7 +332,7 @@ program that `CHROME_PATH` names when it is set, or else the first of a list of
 the usual places on Linux and macOS. One Chrome may run for at most 2 minutes
 (`timeLimit`), so a page that never loads fails the test.
 
-Make runs the test when the stamp file `site/assets/screenshots/.done` is
+Make runs the tests when the stamp file `site/assets/screenshots/.done` is
 missing, or when a file in `cmd/` or `internal/`, `go.mod` or `go.sum` is newer
 than it. So a change of the text of the site does not start Chrome. This
 command makes the images again even when nothing changed (`-B`: treat every
@@ -378,7 +383,9 @@ stay.
 
 ## Build and try the container image
 
-The image is for tests and for building on, not for daily use. The manual page
+A container is a way to run a program in its own closed space, and the image
+is the package that holds the program. The image is for tests and for building
+on, not for daily use. The manual page
 [Containers](/manual/reference/containers/) explains why it does not suit use
 on your own computer.
 
@@ -417,9 +424,9 @@ docker run --rm -i -e EMAIL_MCP_KEK=file:/home/nonroot/kek.key email-mcp:dev
 ```
 
 The data (the database and the key file) is lost when the container stops,
-because it is not on a volume. Do not add a real mail account to this
-container. If you keep its data on a volume, keep the key file in a different
-place from the database.
+because it is not on a volume (a folder that Docker keeps outside the
+container). Do not add a real mail account to this container. If you keep its
+data on a volume, keep the key file in a different place from the database.
 
 ## Related pages
 

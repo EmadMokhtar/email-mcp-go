@@ -44,10 +44,13 @@ settings are in {{< src ".goreleaser.yaml" >}}:
   `checksums.txt.sigstore.json` (cosign is a tool that signs files). cosign
   signs "keyless": it gets a short-lived certificate from Sigstore (a public
   service that gives such certificates) for the identity of the release
-  workflow, so there is no long-lived signing key to look after. The signature
-  shows which workflow, at which tag, made the files. It is as strong as the
-  control of that workflow, of the tags and of the `release` environment;
-- the Homebrew cask (the install recipe of Homebrew) in the tap
+  workflow, so there is no long-lived signing key to keep safe. The signature
+  shows which workflow, at which tag, signed the checksums. The signature and
+  the attestations below are only as strong as the control of who can change
+  that workflow, push tags and approve the `release` environment (see
+  [Once, before the first release](#once-before-the-first-release));
+- the Homebrew cask (the install recipe of Homebrew, a package manager for
+  macOS and Linux) in the tap
   `EmadMokhtar/homebrew-tap` (a repository that holds Homebrew recipes);
 - the container image `ghcr.io/emadmokhtar/email-mcp` on GHCR (GitHub Container
   Registry), for `linux/amd64` and `linux/arm64`;
@@ -96,11 +99,13 @@ rules allow the run.
    "Required reviewers", add yourself, so that every release waits for your
    approval. Add the token there as the secret `HOMEBREW_TAP_GITHUB_TOKEN`.
    Only a job that uses this environment can read the token, and only after
-   the tag rule and the approval. Keep the list of people who can write to
-   the repository short.
-4. Make a ruleset named "release tags" for the tags that match `v*`. Turn on
-   "Restrict updates", "Restrict deletions" and "Block force pushes". The
-   ruleset then blocks moving and deleting a published tag.
+   the tag rule and the approval. Keep the list of people who can write to the
+   repository or change its settings short.
+4. Make a ruleset (a set of rules that GitHub applies to branches or tags)
+   named "release tags" for the tags that match `v*`. Turn on "Restrict
+   updates", "Restrict deletions" and "Block force pushes", and leave the
+   bypass list empty. The ruleset then blocks moving and deleting a published
+   tag.
 5. Give release-please its own token through a GitHub App (an account for a
    program, with the permissions that its owner gives it). The `GITHUB_TOKEN`
    of the workflow is not enough: GitHub starts no workflow for a pull request
@@ -185,9 +190,10 @@ leads to a proposed patch release, which you then merge (see
 [Dependabot](/tech/work-on-the-code/local-development/#dependabot)). Other
 types, such as `docs:`, `ci:` and the `build(deps):` pull requests of
 Dependabot for actions and Docker images, make no release alone and do not
-show in the changelog. To choose the version yourself, for example a
-pre-release, put the footer `Release-As: 0.2.0-rc.1` in the message of a
-commit on `main`.
+show in the changelog. An updated base image reaches users only with the next
+release. After a security update of a base image, make a release on purpose.
+To choose the version yourself, for example a pre-release, put the footer
+`Release-As: 0.2.0-rc.1` in the message of a commit on `main`.
 
 `bump-minor-pre-major` in `release-please-config.json` is the setting that
 makes a breaking change raise the minor number, and not the major number,
@@ -208,17 +214,17 @@ The workflow has two jobs:
 | Job | Permissions | Steps |
 |---|---|---|
 | `vet, test and govulncheck` (`check`) | `contents: read` | `go vet ./...`, `go test -race ./...`, govulncheck, and the version check of `server.json` |
-| `GoReleaser` (`release`), after `check`, in the environment `release` | `contents: write`, `packages: write`, `id-token: write`, `attestations: write` | install cosign and Syft; set up Buildx (the Docker tool that builds an image for several platforms); sign in to GHCR; GoReleaser; check the signature of `checksums.txt` as the manual tells users to; attest the release files; find the one digest of the image; attest the image |
+| `GoReleaser` (`release`), after `check`, in the environment `release` | `contents: write`, `packages: write`, `id-token: write`, `attestations: write` | install cosign and Syft; set up Buildx (the Docker tool that builds an image for several platforms); sign in to GHCR; GoReleaser; check the signature of `checksums.txt` as the manual tells users to; attest the release files; find the one digest of the image (the hash that names it); attest the image |
 
-The token of the workflow may only read, and only the release job gets the
-write permissions that it needs. Two releases of one tag never run at the same
-time (`concurrency`). Both jobs use no module cache, so a release never uses
-files that another workflow run wrote. The versions of GoReleaser, cosign,
-Syft and govulncheck are pinned by version in the workflow, and the actions
-are pinned by commit SHA (the hash that names one commit). The Go version is
-not pinned: the jobs install the newest stable Go, to get the fixes of the
-standard library. A pin also stops fixes from arriving by themselves, so
-update the pins on purpose and read what changed.
+By default the token of the workflow may only read, and only the release job
+gets the write permissions that it needs. Two releases of one tag never run at
+the same time (`concurrency`). Both jobs use no module cache, so a release never
+uses files that another workflow run wrote. The versions of GoReleaser, cosign,
+Syft and govulncheck are pinned (fixed to one exact version) in the workflow,
+and the actions are pinned by commit SHA (the hash that names one commit). The
+Go version is not pinned: the jobs install the newest stable Go, to get the
+fixes of the standard library. A pin also stops fixes from arriving by
+themselves, so update the pins on purpose and read what changed.
 
 ## When the release fails
 
@@ -227,21 +233,22 @@ update the pins on purpose and read what changed.
   token, and re-run the failed jobs. GoReleaser finds the same draft again and
   replaces the files that the failed run had uploaded
   (`replace_existing_artifacts`).
-- **When the code must change** (a test or `govulncheck` fails, or
-  `server.json` does not have the version of the tag): the tag cannot be
-  moved, so this version cannot be released. Merge the fix into `main` as a
-  `fix:` pull request. release-please then proposes the next patch version.
-  Delete the old draft release by hand.
+- **When the code must change** (a test or `govulncheck` fails, or `server.json`
+  does not have the version of the tag): the ruleset "release tags" does not let
+  you move the tag, so this version cannot be released. Merge the fix into
+  `main` as a `fix:` pull request. release-please then proposes the next patch
+  version. Delete the old draft release by hand.
 - **After GoReleaser published the release** (the Homebrew cask comes after
   the release inside GoReleaser, and the workflow checks the signature and adds
   the attestations after GoReleaser): a re-run finds no draft and stops. First
   turn the release back into a draft with `gh release edit vX.Y.Z --draft=true`,
   then re-run the failed jobs.
 
-A tag pushed by hand still makes a release: GoReleaser then creates the
-release itself. Set `version` in `server.json` and in
-`.release-please-manifest.json` to the version first. Otherwise release-please
-counts from the old version and proposes a release that already exists.
+A tag pushed by hand also makes a release, after the same approval of the
+`release` environment: GoReleaser then creates the release itself. Set `version`
+in `server.json` and in `.release-please-manifest.json` to the version first.
+Otherwise release-please counts from the old version and proposes a release that
+already exists.
 
 ## Try the build on your computer
 
@@ -268,8 +275,8 @@ commands is the version of `release.yml` and `ci.yml`.
   package manager, and it runs as the user `nonroot` (UID 65532; a UID is the
   number of a user).
 - Both base images (the Go image that compiles and the distroless image that
-  runs) are pinned by digest (a hash of the exact image), so a build always
-  uses the same files.
+  runs) are pinned by digest (a hash of the exact image), so a build starts
+  from the same base files. This does not make two builds identical.
 - The Dockerfile has no `# syntax=` line, so BuildKit (the build engine of
   Docker) reads it with its built-in frontend. No other image is downloaded to
   read the Dockerfile.
@@ -277,15 +284,16 @@ commands is the version of `release.yml` and `ci.yml`.
   `.github/workflows/release.yml`) and the Syft scanner image that makes the
   SBOM of the image (in `.goreleaser.yaml`) are pinned by digest too.
 
-The release builds the image from the same {{< src "Dockerfile" >}} as a
-local build, with `--build-arg BINARY_FROM=release` (`dockers_v2` in
+The release builds the image from the same {{< src "Dockerfile" >}} as a local
+build, with `--build-arg BINARY_FROM=release` (`dockers_v2` in
 `.goreleaser.yaml`). The build argument `BINARY_FROM` chooses the stage that
 gives the binary. The default, `source`, compiles it. `release` copies the
 binary that GoReleaser built and put in the build context at
-`<os>/<arch>/email-mcp`, so the image holds the same file as the signed
-archives. That stage only copies files, so the release needs no emulator for
-the second platform. The image gets two tags: the version, and `latest` when
-the version is not a pre-release.
+`<os>/<arch>/email-mcp`, so the image holds the same binary as the release
+archives. The signature of `checksums.txt` does not cover the image: check it
+with its attestation. That stage only copies files, so the release needs no
+emulator for the second platform. The image gets two tags: the version, and
+`latest` when the version is not a pre-release.
 
 The SBOM of the image comes from the flag `--attest=type=sbom` with the scanner
 image pinned by digest, and not from the option `sbom: true`, which would run a
@@ -311,8 +319,9 @@ Pages. It has two jobs:
 the site. A maintainer starts `pages.yml` by hand (`workflow_dispatch`) on the
 branch or the tag to publish. It publishes whatever is on that branch or tag,
 also work that is not released. The environment `github-pages` accepts the
-default branch, and the tags of step 8 of
-[Once, before the first release](#once-before-the-first-release). `pages.yml`
+default branch and, after step 8 of
+[Once, before the first release](#once-before-the-first-release), the tags
+that match `v*`. `pages.yml`
 also accepts `workflow_call`, so another workflow can call it. The calling job
 must give it `pages: write` and `id-token: write`, because a called workflow
 cannot get more permissions than its caller gives it. Two deploys never run at
@@ -324,7 +333,8 @@ not left half published.
 `server.json` describes the server for the
 [official MCP Registry](https://registry.modelcontextprotocol.io) as
 `io.github.EmadMokhtar/email-mcp`. It lists no package on purpose. The registry
-supports npm, PyPI, NuGet, Cargo, OCI (container images) and MCPB (MCP Bundle)
+supports npm, PyPI, NuGet, Cargo, OCI (Open Container Initiative: container
+images) and MCPB (MCP Bundle)
 packages. None of them fits a local Go binary that needs your keychain (the
 password store of the operating system) and the `email-mcp setup` command: an
 OCI image runs in a container, which has no keychain and no reachable web pages
