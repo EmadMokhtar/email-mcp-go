@@ -236,8 +236,9 @@ The rules match the manual, so a reader meets the same shape in both parts.
 - Front matter with `title`, `description` (one sentence, plain words) and
   `weight`. In addition, `code_areas`: the repository paths that the page
   covers, one per line. The manual spec offers `code_areas` as an option and
-  does not show it. The tech docs use it on every page, and the template shows
-  it as a list "Code covered by this page", with links to the code. (My call.)
+  does not show it. The tech docs use it on every page except the glossary,
+  and the template shows it as a list "Code covered by this page", with links
+  to the code. (My call.)
   If the template cannot do this, the writer writes the list by hand with the
   shortcode `src`. A page that moves also gets `aliases`.
 - The title is in the front matter. The body starts with an H2. Use H2 and H3
@@ -1807,8 +1808,9 @@ The code wins in every case. Line numbers: design spec = the file
 - All 28 files of the sidebar table exist (20 pages, 7 group pages and the
   home page), and the build passes with no warning.
 - Each page except the glossary has `code_areas`, and each path in it exists.
-- Each row of the map has a page, and each page except the glossary has at least
-  one row.
+- Each row of the map has a page, and each page except `overview` and the
+  glossary has at least one row. `overview` covers the whole program, so no
+  single code area points to it.
 - Each required diagram exists, has a title, a description and a text form.
 - The layers in `package-map` match `go list` at the commit of the pull request.
 - Every line range that the manual spec hands over is in the tech docs: README

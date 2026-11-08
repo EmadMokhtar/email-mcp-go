@@ -9,17 +9,18 @@ a link to the page that explains it. It is for a reader who meets a term on a
 page and wants its meaning. Each page of the tech docs also defines its terms
 where it uses them, so that a page can be read alone.
 
-The list holds ideas, short names, units and tools, in alphabetical order. It
-does not hold the names in the code, such as functions, types and constants:
-the pages and the comments in the code explain those. A term with two meanings
-gives both.
+The list holds ideas, short names, units and tools, in alphabetical order. A
+name from the code, such as a function, a type or a constant, is in the list
+only when the pages use it as a term: the pages and the comments in the code
+explain the others. Each short name is written out in its own entry. A term with
+two or more meanings gives each one.
 
 ## A
 
 - **AAD (associated data):** extra text that sealing binds to a value. It is not
   stored and not encrypted, and opening needs the same text. Here it names the
-  tenant, the account and the field, so a sealed value cannot be opened in
-  another place. See [Storage and secrets][ssk].
+  tenant, the account and the field, so a sealed value does not open under
+  another tenant, account or field. See [Storage and secrets][ssk].
 - **Access token:** the secret that a program sends with each request on local
   HTTP mode. It starts with `emcp_` and carries scopes. The database keeps only
   its hash. See [Local HTTP mode][lht].
@@ -40,6 +41,9 @@ gives both.
 - **Allow-list (of origins):** the list of browser origins that local HTTP mode
   accepts. It is empty by default, and the flag `--allow-origin` adds one. See
   [Local HTTP mode][lhl].
+- **Anchor:** the part of a web address after `#`. It points to a heading of a
+  page. The site check fails on a link to an anchor that does not exist. See
+  [Local development][lds].
 - **`App`:** what `app.Open` builds: all the parts of the program, connected.
   Each command that needs them opens the `App` and closes it. See [The command
   line][clo].
@@ -57,27 +61,28 @@ gives both.
   of characters: English letters, digits and common signs. See [Building
   mail][bmf].
 - **Atomic claim:** one database statement that changes a row only when the row
-  still has the expected state, so only one caller wins. The outbox claims a
-  send this way, and `confirm` claims a "yes". See [The send flow][sfo].
+  still has the expected state (a compare-and-set), so only one caller succeeds.
+  The outbox claims a send this way, and `confirm` claims a "yes". See [The send
+  flow][sfo].
 - **Attestation (build provenance):** a signed record that says which workflow
   built which file from which commit. See [Making a release][rpm].
+- **Authority (certificate authority):** a body that signs certificates, so that
+  a client can trust them. See [The mail backend][mbd].
 - **AUTH PLAIN:** the SMTP command that sends the user name and the password in
   one step. It is the only SMTP login that email-mcp uses. See [The mail
   backend][mbs].
-- **Authority (certificate authority):** a body that signs certificates, so that
-  a client can trust them. See [The mail backend][mbd].
 
 ## B
 
-- **Backend (mail backend):** the part of the program that talks to the mail
-  servers of one account. It implements the interface `mail.Backend`. See [The
-  mail backend][mb].
 - **Backend cache:** the cache of one mail backend for each account, in each
-  process. It builds a new backend when the fingerprint of the settings of the
-  account changes. See [The mail backend][mbo].
+  process. It builds another backend when the server settings, the key version
+  or the sealed password of the account change. See [The mail backend][mbo].
 - **Backend factory:** the code that builds the backend of an account
   (`BackendFactory`). The backend cache is the default factory. See [The mail
   backend][mbo].
+- **Backend (mail backend):** the part of the program that talks to the mail
+  servers of one account. It implements the interface `mail.Backend`. See [The
+  mail backend][mb].
 - **Bare CR:** a carriage return with no line feed after it. See [Building
   mail][bmd].
 - **Base32:** a text form of bytes. Access tokens use it in lower case, with the
@@ -91,14 +96,17 @@ gives both.
 - **Base URL:** the start of every address of the web portal. See [The web
   portal][wps].
 - **Bcc (blind copy):** a recipient that the other recipients do not see. The
-  built message has no `Bcc` header. See [Building mail][bmr].
+  message that goes out has no `Bcc` header. A saved draft keeps it. See
+  [Building mail][bmr].
 - **Bearer token:** a secret in the header `Authorization: Bearer <token>`. See
   [Local HTTP mode][lhc].
+- **bluemonday:** the library that cleans HTML (`mime.SanitizeHTML`). See [Map
+  of packages][pmb].
 - **BODY.PEEK:** the IMAP way to read a message without marking it as read. See
   [One tool call, step by step][tcs].
+- **BuildKit:** the build engine of Docker. See [Making a release][rpi].
 - **Build tag:** a word that a Go file asks for before it is built, in a line
   such as `//go:build interop`. See [Testing][tet].
-- **BuildKit:** the build engine of Docker. See [Making a release][rpi].
 - **Buildx:** the Docker tool that builds an image for several platforms. See
   [Making a release][rpw].
 
@@ -106,15 +114,18 @@ gives both.
 
 - **Call entry:** an entry of the activity log for one `tools/call` request of
   the agent. See [Activity log and program log][all].
-- **Capabilities:** what one side says it can do. The capabilities of a client
-  decide whether it can show the confirmation form in band. The capabilities of
-  a backend say what it supports, such as tags, and the most refs in one batch
-  call. See [Local HTTP mode][lhw] and [One tool call, step by step][tcp].
+- **Capabilities:** what one side says it can do. A client says, for example,
+  that it can show a form. The confirmation form appears in band only when the
+  caller may also confirm in band. The capabilities of a backend say what it
+  supports, such as tags, and the most refs in one batch call. See [Local HTTP
+  mode][lhw] and [One tool call, step by step][tcp].
 - **Certificate:** the signed proof of identity that a server shows when a
   connection starts. See [The mail backend][mbd].
 - **Certificate offer:** the offer of the web portal to trust (pin) a
   certificate. It is a signed token with a short life (`certOfferTTL`). See [The
   web portal][wpr].
+- **Changelog:** the list of changes of each release. See [Making a
+  release][rpe].
 - **Channel:** a word with three meanings on these pages.
   1. A Go value that passes values between goroutines. See [The mail
      backend][mbo].
@@ -123,18 +134,21 @@ gives both.
      [Security design][sdc].
   3. The way a question reaches the person: in band, or the approval page. See
      [Local HTTP mode][lhw].
-- **Changelog:** the list of changes of each release. See [Making a
-  release][rpe].
 - **Charset:** the table that maps bytes to characters. See [Mail content][mcp].
+- **CHECK condition:** a rule that a table of the database keeps itself. For
+  example, a pending action that waits has its payload and its preview, and one
+  that has ended has neither. See [Storage and secrets][sst].
 - **Checkpoint:** a step that copies the write-ahead log into the database file.
   See [Storage and secrets][sso].
-- **CI (continuous integration):** the checks that GitHub runs on each push. See
-  [Local development][ldc].
+- **CI (continuous integration):** the checks that GitHub runs on each push. A
+  CI runner is a computer that runs them. See [Local development][ldc].
 - **`code_areas`:** the list of the code that a page covers, in the settings at
   the top of a page file. The page shows it as "Code covered by this page". See
   [Local development][lda].
 - **Command:** a word after the name of the program, such as `serve` or
   `account add`. See [The command line][cl].
+- **Compare-and-set:** a change of a row that happens only if the row still has
+  the expected value. See Atomic claim.
 - **Confirmation form:** the form where the person answers yes or no in the chat
   of the AI app. See [The send flow][sfi].
 - **Confirmation switches:** the two settings of an account that ask the person
@@ -172,6 +186,9 @@ gives both.
 - **Credentials version:** a number of an account that goes up by one at each
   reconnect, so a call from before the reconnect cannot undo it. See [Connecting
   an account][car].
+- **CR, LF, NUL (carriage return, line feed, the zero byte):** control
+  characters. A header value with one is refused, because a line break would let
+  the value add a header. See [Building mail][bmf].
 - **Cross-origin check:** the check of the web portal that refuses a request
   that the browser marks as coming from another site, unless it is GET, HEAD or
   OPTIONS (`http.CrossOriginProtection`). See [The web portal][wpc].
@@ -190,9 +207,10 @@ gives both.
 
 ## D
 
-- **Daily jobs:** the work that runs when `Run` starts, and then every 24 hours
-  (`jobEvery`): the prune of old rows and a checkpoint of the write-ahead log.
-  See [Storage and secrets][ssh].
+- **Daily jobs:** the housekeeping that runs when `Run` starts, and then every
+  24 hours (`jobEvery`). It expires the stale approved actions (those that
+  nothing finishes), deletes old rows, and runs a checkpoint of the write-ahead
+  log. See [Storage and secrets][ssh].
 - **Data folder:** the folder of the database and the other files of email-mcp.
   The flag `--data-dir` or the variable `EMAIL_MCP_DATA_DIR` chooses another
   one, and the flag wins. See [Storage and secrets][ssw].
@@ -219,9 +237,15 @@ gives both.
   the use cases. See [Architecture overview][ov].
 - **Dovecot:** an IMAP server. The interop test runs it in Docker. See
   [Testing][tei].
+- **Draft:** a message that is saved but not sent. The agent can send a saved
+  draft by its `draft_ref`, and the draft goes out as it was saved. See [The
+  send flow][sfs].
 - **Drain:** the step of a stop that sends the queued messages that are due, or
   that become due within `drainWait`. The others stay queued for the next start.
   See [Startup and shutdown][suc].
+- **DSN (data source name):** the connection string of the database. The
+  settings of SQLite are in it, so every connection of the pool gets them. See
+  [Storage and secrets][sso].
 
 ## E
 
@@ -234,13 +258,13 @@ gives both.
   portal][wpp].
 - **End-to-end test:** a test that drives the whole program from the outside.
   See [Testing][tee].
-- **`.env` file:** a text file of `NAME=VALUE` lines, which the old email-mcp
-  read for its settings. See [The command line][clo].
-- **Envelope (of a mail):** the list of addresses that the mail goes to. See
-  [The send flow][sfw].
 - **Envelope encryption:** a key wraps (encrypts) other keys, and those keys
   seal the data. Here the master key wraps the data keys and the server key. See
   [Storage and secrets][ssk].
+- **Envelope (of a mail):** the list of addresses that the mail goes to. See
+  [The send flow][sfw].
+- **`.env` file:** a text file of `NAME=VALUE` lines, which the old email-mcp
+  read for its settings. See [The command line][clo].
 - **Environment (GitHub):** a set of rules and secrets of the repository that a
   job names. GitHub gives the secrets only to a job that names it, and only when
   the rules allow the run. See [Making a release][rpo].
@@ -248,31 +272,36 @@ gives both.
   surroundings, such as `EMAIL_MCP_KEK`. See [Local development][ldy].
 - **Error chain:** an error and the errors that it wraps. See [Map of
   packages][pma].
-- **Exit code:** the number that a program gives back when it ends: 0 when the
-  command did its job, 1 when it failed, and 2 for a wrong use. See [The command
-  line][cle].
+- **Exit code:** the number that a program gives back when it ends: 0 (`exitOK`)
+  when the command did its job, 1 (`exitError`) when it failed, and 2
+  (`exitUsage`) for a wrong use. See [The command line][cle].
 - **EXPUNGE:** the IMAP command that removes the messages that are marked
   `\Deleted`. The only one that email-mcp sends is `UID EXPUNGE` of the messages
   that the fallback of `Move` has just copied. See [The mail backend][mbx].
 
 ## F
 
-- **Fail closed:** when a check cannot decide, the answer is "no". See [Security
-  design][sdf].
+- **Fail closed:** when a check cannot decide, the answer is "no". The security
+  design lists the checks that work this way. See [Security design][sdf].
 - **File mode:** the number that says who may read and write a file. The mode
   0700 of a folder and the mode 0600 of a file let only the owner use them. See
   [Storage and secrets][ssw].
 - **Fingerprint:** a short value computed from bytes. The pin of a certificate
-  is its SHA-256 fingerprint, and the backend cache keeps a fingerprint of the
-  settings of each account. See [The mail backend][mbd].
+  is its SHA-256 fingerprint. The backend cache keeps a fingerprint of the
+  server settings, the key version and the sealed password of each account. See
+  [The mail backend][mbd].
 - **Flag:** an option after a command, such as `--data-dir`. See [The command
   line][cl].
 - **Folder alias:** a name such as `@inbox`, `@sent` or `@trash` that names a
   well-known folder without knowing its name at the provider. See [The mail
-  backend][mbr].
-- **Full autonomy:** both confirmation switches of an account are off, so the
-  agent sends and moves mail to the Trash with no question. Turning it on needs
-  the risk acceptance. See [Permissions][pa].
+  backend][mbp].
+- **Foreign key:** a column that must match a row of another table. SQLite
+  checks the foreign keys in every connection. See [Storage and secrets][sso].
+- **Full autonomy:** both confirmation switches of an account are off, so they
+  do not ask before a send or a move to the Trash. Other checks can still ask,
+  such as the check of an address outside ASCII and the new-recipient check, and
+  the level must allow the action. A save that turns it on needs the risk
+  acceptance. See [Permissions][pa] and [The send flow][sfw].
 - **Fuzz target:** a test that Go can run with many generated inputs. Each one
   has seed inputs (the inputs that the test gives by hand). See [Testing][tef].
 
@@ -302,30 +331,38 @@ gives both.
   encryption. See [The mail backend][mbs].
 - **Harness (of the end-to-end tests):** the test code that starts and drives
   the program. See [Testing][tee].
-- **Hash:** a short value computed from bytes, from which the bytes cannot be
-  read back. See [The send flow][sfy].
+- **Hash:** a short value computed from bytes. It is one-way: the bytes are not
+  meant to be read back from it. See [The send flow][sfy].
 - **Headless Chrome:** Chrome with no window. The screenshots of the docs site
   and some tests use it. See [Local development][lds].
 - **Hex (base 16):** writing bytes with 16 digits, `0` to `9` and `a` to `f`. A
-  pin is written in lower-case hex. See [The mail backend][mbd].
+  pin is written in lower-case hex. See [The web portal][wpp].
 - **Hidden characters:** characters that a reader cannot see, such as the zero
-  width space and the direction marks. `CleanUntrusted` removes them from text
-  of a third party. An outgoing message with one in its subject, its text body
-  or a display name is refused. See [Mail content][mcr].
+  width space and the direction marks. `CleanUntrusted` removes the ones on its
+  list from text of a third party, and it keeps a joiner where the joiner
+  changes the shape of a word or an emoji. A message that the agent writes is
+  refused when its subject, its text body or a display name has one. A draft
+  that the person saved goes out as it was saved. See [Mail content][mcr] and
+  [Building mail][bmf].
 - **Hidden text:** the parts of an HTML mail that a mail client would not show,
-  because of their element, an attribute or a style. email-mcp leaves them out
-  of the text for the agent and says so in the result. See [Mail content][mch].
+  because of their element, an attribute or a style. email-mcp leaves out the
+  hidden parts that its rules find, and the result says how many. A style that
+  it cannot work out sets a warning (`hidden_content_suspected`). It cannot
+  always tell what a reader sees, so read the mail itself when it matters. See
+  [Mail content][mch].
 - **HMAC (hash-based message authentication code):** a hash made with a secret
   key. email-mcp uses HMAC-SHA-256 for keyed hashes and for signed values. See
   [Storage and secrets][sss].
-- **Homebrew:** a package manager for macOS and Linux. A release updates its
-  cask (install recipe) in the tap `EmadMokhtar/homebrew-tap` (a repository of
-  recipes). See [Making a release][rpm].
+- **Homebrew:** a package manager for macOS and Linux. A release that is not a
+  pre-release updates its cask (install recipe) in the tap
+  `EmadMokhtar/homebrew-tap` (a repository of recipes). See [Making a
+  release][rpm].
+- **Hosted mode:** one server that many people use. No command runs the program
+  this way. Some end-to-end tests open a hosted install (one that is not local).
+  See [Architecture overview][ovb].
 - **Host header:** the line of a request that names the server that the request
   asks for. Each local server accepts only its own names. See [Local HTTP
   mode][lhc].
-- **Hosted mode:** one server that many people use. The code does not have it.
-  See [Architecture overview][ovb].
 - **Hosts file:** the file of the computer that maps names to addresses. See
   [The web portal][wph].
 - **HTML (HyperText Markup Language):** the language of web pages, and of the
@@ -333,6 +370,8 @@ gives both.
 - **HTTP (HyperText Transfer Protocol):** the protocol of the web. The program
   has two HTTP servers: local HTTP mode and the web portal. See [Map of
   packages][pma].
+- **HttpOnly:** a mark of a cookie: a script of a page cannot read the cookie.
+  See [The web portal][wpi].
 - **Hugo:** a program that makes web pages from Markdown files. It builds the
   docs site. See [Local development][lds].
 
@@ -346,8 +385,9 @@ gives both.
   a confirmation form. The other way is the approval page. See [The send
   flow][sfi].
 - **In-band confirm:** the choice, made when a token is made, that lets the
-  token answer a confirmation in its own window (`--in-band-confirm`). See
-  [Local HTTP mode][lht].
+  token answer a confirmation in its own window (`--in-band-confirm`). Make a
+  token with it only for an app that shows you the form. See [Local HTTP
+  mode][lht].
 - **Interop test:** the test that runs the mail scenario against real mail
   servers, Dovecot and Postfix, in Docker. See [Testing][tei].
 - **IPv4, IPv6 (Internet Protocol version 4 and version 6):** the two kinds of
@@ -368,13 +408,13 @@ gives both.
 - **KEK (key encryption key):** the master key. It wraps the data keys and the
   server key, so the database holds only wrapped keys. See [Storage and
   secrets][ssk].
+- **Keychain:** the password store of the operating system. It is the default
+  place of the master key. See [Storage and secrets][ssm].
 - **Key file:** a file that holds the master key as base64 text. email-mcp
   refuses a key file that the group or other users can access, on systems that
   have file modes. See [Storage and secrets][ssm].
 - **Key version:** the number of a data key. Each sealed value has its key
   version next to it. See [Storage and secrets][sss].
-- **Keychain:** the password store of the operating system. It is the default
-  place of the master key. See [Storage and secrets][ssm].
 - **KiB (kibibyte):** 1,024 bytes. See [Mail content][mcl].
 - **Known recipients:** the addresses that an account has sent to, kept as keyed
   hashes for the new-recipient check. See [The send flow][sfw].
@@ -387,25 +427,27 @@ gives both.
   packages of lower layers. See [Map of packages][pml].
 - **Leaf certificate:** the certificate of the server itself, the first one in
   the chain. See [The mail backend][mbd].
-- **Level:** a number from 0 to 5 that says what the agent may do with the mail
-  of an account: Off, Read, Organize, Draft, Send and Delete. A level includes
-  every level under it. Level 5, Delete, moves mail to the Trash and never
-  deletes mail for good. See [Permissions][pel].
+- **Level:** a number from 0 to 5 (`account.Level`) that says what the agent may
+  do with the mail of an account: Off, Read, Organize, Draft, Send and Delete. A
+  level includes every level under it. Level 5, Delete, moves mail to the Trash
+  and never deletes mail for good. See [Permissions][pel].
 - **Limiter:** the part that counts the sends and the moves to the Trash, and
   checks them against the limits of the account. See [Permissions][pli].
-- **Limits:** the numbers of an account (`account.Limits`): sends in an hour and
-  in a day, recipients in a message, moves to the Trash in a day, and the undo
-  windows. See [Permissions][pli].
+- **Limits:** the settings of an account in `account.Limits`: sends in an hour
+  and in a day, recipients in a message, moves to the Trash in a day, the undo
+  windows, and the new-recipient check. See [Permissions][pli].
 - **Linter:** a tool that finds mistakes in code without running it. See [Local
   development][ldm].
+- **LIST-STATUS:** an IMAP extension that sends the counts of messages with the
+  list of folders. See [The mail backend][mbr].
+- **`localhost` names:** a name under `localhost` is meant for this computer, so
+  Chrome, Edge and Firefox reach it without DNS. The web portal uses
+  `email-mcp.localhost`. See [The web portal][wph].
 - **Local HTTP mode:** the HTTP server that `email-mcp serve --http` starts, for
   an AI app that cannot start a program. It listens only on a loopback address,
   and each request needs an access token. See [Local HTTP mode][lh].
 - **Local tenant:** the one tenant of a local install, with the id `local`. See
   [Architecture overview][ovt].
-- **`localhost` names:** a name under `localhost` is meant for this computer, so
-  the browser reaches it without DNS. The web portal uses `email-mcp.localhost`.
-  See [The web portal][wph].
 - **Lock file:** a file that one program locks while it looks for the master key
   and makes it. So two programs that start at once on a first install do not
   make two keys. See [Storage and secrets][ssf].
@@ -423,10 +465,14 @@ gives both.
   force the agent. See [Mail content][mc].
 - **Master key:** the key that protects the other keys: the KEK. See [Storage
   and secrets][ssm].
-- **MCP (Model Context Protocol):** the open standard that lets an AI app call
-  the tools of another program. See [Architecture overview][ov].
+- **MCPB (MCP Bundle):** a kind of package that the MCP Registry supports. See
+  [Making a release][rpr].
 - **MCP client:** the AI app that talks to the server, such as Claude Code. See
   [Architecture overview][ovc].
+- **MCP (Model Context Protocol):** the open standard that lets an AI app call
+  the tools of another program. See [Architecture overview][ov].
+- **MCP Registry:** the official registry of MCP servers. `server.json`
+  describes email-mcp there, and lists no package. See [Making a release][rpr].
 - **Message-ID:** the header that names one message. See [The mail
   backend][mbx].
 - **MiB (mebibyte):** 1,048,576 bytes, or 1,024 KiB. See [Mail content][mcp].
@@ -437,10 +483,12 @@ gives both.
 - **MIME (Multipurpose Internet Mail Extensions):** the format that gives a mail
   its parts, such as the text, the HTML and the attachments. See [Mail
   content][mc].
-- **Mode:** a word with two meanings on these pages.
+- **Mode:** a word with three meanings on these pages.
   1. The mode of an action that waits: `in_band` (in the chat) or `approval` (on
      the approval page). It never changes. See [The send flow][sft].
   2. The file mode. See File mode.
+  3. The security mode of a mail server: `tls`, `starttls` or `plain`. See [The
+     mail backend][mbd].
 - **Module:** the Go module of this repository,
   `github.com/EmadMokhtar/email-mcp-go`. See [Map of packages][pm].
 - **MRTR (multi round-trip request):** a tool answers "I need input", and the
@@ -449,14 +497,14 @@ gives both.
   more than one form, such as text and HTML. A client shows the last form that
   it can show. See [Mail content][mcb].
 - **Mutex:** a lock. See [The mail backend][mbo].
-- **MX record:** the DNS record that names the mail server of a domain. See
-  [Connecting an account][caf].
+- **MX (mail exchange) record:** the DNS record that names the mail server of a
+  domain. See [Connecting an account][caf].
 
 ## N
 
 - **`needs_reauth`:** the status of an account whose mail server refused the
-  stored login. A reconnect saves the new password and sets the status back to
-  `ok`. See [Connecting an account][car].
+  stored login. A passing account test (`ProbeAccount`) or a reconnect sets the
+  status back to `ok`. See [Connecting an account][car].
 - **New-recipient check:** a setting of an account that asks the person before a
   send to an address that the account never sent to. See [The send flow][sfw].
 
@@ -464,13 +512,16 @@ gives both.
 
 - **OCI (Open Container Initiative):** the format of container images. See
   [Making a release][rpr].
+- **ON DELETE CASCADE:** an SQL rule: when a row is deleted, the rows of other
+  tables that point to it are deleted too. So everything of a removed account
+  goes. See [Map of packages][pmw].
 - **Opaque value:** a string that the backend makes, and that the caller passes
   back unchanged without reading it: a ref, a cursor or a page token. See [The
   mail backend][mbp].
 - **Origin (browser origin):** the scheme, the host and the port of a web page,
   such as `http://localhost:5173`. See [Local HTTP mode][lhl].
 - **Outbox:** the queue of outgoing mail. A send waits there for its undo
-  window, and a worker sends it at most once. See [The send flow][sfo].
+  window, and a worker delivers it at most once. See [The send flow][sfo].
 
 ## P
 
@@ -484,12 +535,16 @@ gives both.
 - **Pending action:** an action that waits for the person: a send or a move to
   the Trash. Its states are `pending`, `approved`, `rejected`, `expired` and
   `done`. See [The send flow][sfo].
+- **PERMANENTFLAGS:** the IMAP answer that lists the flags that a client may
+  keep. The backend reads it for the inbox, to know whether the account
+  supports tags. See [The mail backend][mbr].
 - **Person:** the human who owns the mail accounts. See [Security design][sdm].
 - **Pin:** the SHA-256 fingerprint of the leaf certificate of a mail server, in
   lower-case hex, that the person chose to trust. A pin is saved only for the
   server that showed the certificate. See [The mail backend][mbd].
-- **Pinned (version):** fixed to one exact version. The workflows pin their
-  tools, and they pin the actions by commit SHA. See [Making a release][rpw].
+- **Pinned (version):** fixed to one exact version. The workflows pin the
+  actions by commit SHA and most of their tools. They do not pin the Go version.
+  See [Making a release][rpw].
 - **Pipe:** a channel between two programs. On stdio, the client and the server
   talk through two pipes. See [Security design][sdc].
 - **Plain connection:** a connection with no encryption. email-mcp allows it
@@ -524,12 +579,16 @@ gives both.
   which anyone can register a name. See [Map of packages][pmb].
 - **Punycode:** the ASCII form of a domain name that has characters outside
   ASCII. It starts with `xn--`. See [Building mail][bml].
+- **Pure function:** a function that changes no state. See [Map of
+  packages][pmi].
 
 ## R
 
 - **Race detector:** the Go check (`-race`) that finds two goroutines that use
   the same memory without a lock. It makes the code many times slower. See
   [Testing][ter].
+- **Redirect:** an answer that sends the browser on to another address, such as
+  303 (See Other). See [The web portal][wpi].
 - **Ref:** an opaque string that names one message, made from the folder name,
   the UIDVALIDITY of the folder and the UID of the message. A ref gives no
   right: every call checks the permission first. See [The mail backend][mbr].
@@ -538,22 +597,32 @@ gives both.
 - **release-please:** the tool that reads the Conventional Commits on `main` and
   keeps one release pull request open. See [Making a release][rp].
 - **Request state:** a signed token that names an action that waits for the
-  person, with the hash of its request. See [The send flow][sfi].
-- **Retired backend:** the old backend of an account after its settings changed.
-  It closes after `retireAfter`. See [The mail backend][mbo].
+  person, with the hash of its request. See [The send flow][sfy].
+- **Retired backend:** the backend of an account that another backend replaced
+  after a change of the settings. It closes after `retireAfter`. See [The mail
+  backend][mbo].
 - **RFC (Request for Comments):** a numbered document that defines an internet
-  standard, such as RFC 5322 for the format of a mail. See [Mail content][mcp].
-- **Risk acceptance:** the box that the person must tick before a save turns on
-  full autonomy. Without it, the save is refused. See [Permissions][pa].
+  standard. RFC 5322, for example, defines the format of a mail. See [Mail
+  content][mcp] and [Building mail][bmo].
+- **Risk acceptance:** the box that the person must tick before a save that
+  turns `ConfirmSends` off, that lets the agent start to send with no question,
+  or that ends with both confirmation switches off. Without it, the save is
+  refused. See [Permissions][pa].
 - **Root certificates:** the list of certificate authorities that the system
   trusts. See [The mail backend][mbd].
 - **Route:** a method and a path of the web portal, such as `GET /accounts`,
-  with its handler. A GET route only reads. See [The web portal][wpg].
+  with its handler. A GET route only reads. The setup link, outside the routes,
+  is the one exception. See [The web portal][wpg].
+- **Router (mux):** the part that picks the handler of a path, such as
+  `http.ServeMux` of the Go library. See [The web portal][wpc].
 - **Ruleset:** a set of rules that GitHub applies to branches or tags. See
   [Making a release][rpo].
 
 ## S
 
+- **SameSite=Lax:** a mark of a cookie: from another site, the browser sends the
+  cookie only with a top-level GET, such as a click on a link. So a GET route of
+  the web portal must only read. See [The web portal][wpi].
 - **SBOM (software bill of materials):** the list of every module inside a
   binary. See [Making a release][rpm].
 - **Scope:** a permission that an access token carries, such as `email:read`.
@@ -582,11 +651,11 @@ gives both.
   its hash. See [The web portal][wpi].
 - **SHA (Secure Hash Algorithm):** a family of hashes. SHA-256 has a 256-bit
   result. A commit SHA is the hash that names one commit. See [Storage and
-  secrets][sss].
+  secrets][sss] and [Local development][ldc].
+- **Shortcode:** a Hugo tag that inserts a snippet into a page, such as `src` or
+  `screenshot`. See [Local development][ldo].
 - **Shot:** one screen of the program for the docs site, saved as a light and a
   dark image. See [Local development][ldo].
-- **SIGTERM:** the signal that asks a program to stop. See [Startup and
-  shutdown][su].
 - **Signed token (signed value):** a value that the server made and can check.
   It holds a purpose, an expiry or none, and a value, in base64url, with an
   HMAC-SHA-256 signature. Cursors, page tokens, request states, CSRF tokens and
@@ -594,6 +663,8 @@ gives both.
 - **Sigstore:** a public service that gives short-lived certificates for
   signing, so that cosign needs no long-lived signing key. See [Making a
   release][rpm].
+- **SIGTERM:** the signal that asks a program to stop. See [Startup and
+  shutdown][su].
 - **Site check:** `test/sitecheck`, which reads the built pages and the Markdown
   files of the docs site, and fails on a broken rule, such as a broken link. See
   [Local development][lds].
@@ -610,14 +681,14 @@ gives both.
 - **SPECIAL-USE:** the IMAP feature that marks folders such as Sent and Trash,
   so that folder aliases such as `@trash` can find them. See [The mail
   backend][mbr].
-- **SQL (Structured Query Language):** the language of the database. See
-  [Storage and secrets][ssg].
 - **SQLite:** a database engine that keeps the whole database in one file. See
   [Storage and secrets][ssw].
+- **SQL (Structured Query Language):** the language of the database. See
+  [Storage and secrets][ssg].
 - **Squash merge:** a merge that makes the title of the pull request the commit
   message on `main`. See [Local development][ldt].
-- **SRV record:** a DNS record that names the host and the port of a service.
-  See [Connecting an account][caf].
+- **SRV (service) record:** a DNS record that names the host and the port of a
+  service. See [Connecting an account][caf].
 - **Stamp file:** the file `site/assets/screenshots/.done`. Make runs the
   screenshot tests again when it is missing, or when the code is newer. See
   [Local development][lds].
@@ -631,14 +702,22 @@ gives both.
   is stateless. See [Local HTTP mode][lhs].
 - **Static binary:** a binary that needs no system library to run. The build
   sets `CGO_ENABLED=0` (no C compiler) for it. See [Local development][ldm].
-- **stdin:** the standard input of a program. See [The command line][clp].
+- **stdin:** the standard input of a program. See [Startup and shutdown][su].
 - **stdio (standard input and output):** the client starts the server and talks
   to it through two pipes. See [Architecture overview][ovp].
 - **Stop budget:** one time limit for the whole stop of the program
   (`app.StopTimeout`). See [Local HTTP mode][lhp].
+- **STORE:** the IMAP command that changes the flags of messages. With
+  `.SILENT`, the server does not send the flags back. See [The mail
+  backend][mbx].
 - **Structured content:** the JSON object of a tool result. The text copy of the
   result is for clients that do not read it. See [One tool call, step by
   step][tcc].
+- **SVG (Scalable Vector Graphics):** a picture made of shapes. The preview
+  picture of the landing page is made from an SVG file. See [Local
+  development][ldm].
+- **Syft:** a tool that lists the modules of a program. A release makes its
+  SBOMs with it. See [Making a release][rpm].
 
 ## T
 
@@ -674,7 +753,10 @@ gives both.
 
 - **U+FFFD:** the replacement character. Bytes that are not valid UTF-8 become
   U+FFFD, which a reader sees. See [Mail content][mcp].
-- **UID:** a word with two meanings on these pages.
+- **UIDPLUS:** an IMAP extension that makes the server report the UIDs of the
+  messages that it copies (`COPYUID`) or stores (`APPENDUID`). See [The mail
+  backend][mbx].
+- **UID (unique identifier):** a word with two meanings on these pages.
   1. In IMAP, the number that a folder gives to a message. It stays the same
      when other messages are removed. See [The mail backend][mbr].
   2. In an operating system, the number of a user. See [Making a release][rpi].
@@ -696,8 +778,8 @@ gives both.
 - **UTC (Coordinated Universal Time):** the world standard of time, with no time
   zone offset. The hour and day limits count their windows in UTC. See
   [Permissions][pli].
-- **UTF-8:** a way to write each character as one to four bytes. See [Mail
-  content][mcp].
+- **UTF-8 (Unicode Transformation Format, 8-bit):** a way to write each
+  character as one to four bytes. See [Mail content][mcp].
 
 ## V
 
@@ -740,10 +822,13 @@ gives both.
 [pm]: /tech/start-here/package-map/
 [pml]: /tech/start-here/package-map/#the-layer-rule
 [pma]: /tech/start-here/package-map/#all-packages
+[pmi]: /tech/start-here/package-map/#imports-that-you-may-not-expect
+[pmw]: /tech/start-here/package-map/#where-to-add-code
 [pmb]: /tech/start-here/package-map/#libraries
 [tcs]: /tech/start-here/tool-call/#the-steps
 [tcp]: /tech/start-here/tool-call/#where-the-permission-is-checked
 [tcc]: /tech/start-here/tool-call/#where-text-from-the-mail-is-cleaned
+[sfs]: /tech/inside-the-server/send-flow/#the-steps
 [sfw]: /tech/inside-the-server/send-flow/#when-the-person-is-asked
 [sft]: /tech/inside-the-server/send-flow/#two-ways-to-ask
 [sfi]: /tech/inside-the-server/send-flow/#in-band
@@ -758,6 +843,7 @@ gives both.
 [ssw]: /tech/inside-the-server/storage-and-secrets/#where-the-data-lives
 [sso]: /tech/inside-the-server/storage-and-secrets/#how-the-database-opens
 [ssg]: /tech/inside-the-server/storage-and-secrets/#migrations
+[sst]: /tech/inside-the-server/storage-and-secrets/#the-tables
 [sss]: /tech/inside-the-server/storage-and-secrets/#sealed-hashed-or-plain
 [ssk]: /tech/inside-the-server/storage-and-secrets/#keys
 [ssm]: /tech/inside-the-server/storage-and-secrets/#the-master-key
@@ -786,6 +872,7 @@ gives both.
 [mch]: /tech/mail/mail-content/#how-html-becomes-text
 [mcl]: /tech/mail/mail-content/#limits
 [mcc]: /tech/mail/mail-content/#the-copied-parser
+[bmo]: /tech/mail/building-mail/#what-goes-out
 [bmf]: /tech/mail/building-mail/#what-build-refuses
 [bmr]: /tech/mail/building-mail/#recipients
 [bml]: /tech/mail/building-mail/#addresses-that-look-like-others
