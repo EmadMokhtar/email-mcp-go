@@ -59,7 +59,8 @@ permission. The portal is where a human decision is made and recorded.
 
 ## Evidence on Hand
 
-- `README.md` and `docs/superpowers/specs/2026-10-27-email-mcp-rewrite-design.md`.
+- The user manual in `site/content/manual/` and
+  `docs/superpowers/specs/2026-10-27-email-mcp-rewrite-design.md`.
 - No customers, testimonials or benchmarks exist. Do not invent any.
 
 ## Product Principles

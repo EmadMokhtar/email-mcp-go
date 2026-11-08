@@ -7,9 +7,9 @@ applyTo: 'docs/**/*.md'
 
 These rules describe published article content under `docs/`, which is
 rendered by a system that supplies the page title itself. They deliberately do
-not apply to the repository's own documentation: `README.md` and `DOCKER.md`
-open with an H1 and carry no front matter, which is correct for files read
-directly on GitHub.
+not apply to the repository's own documentation: `README.md` opens with an H1
+and carries no front matter, which is correct for a file read directly on
+GitHub. The docs site in `site/` has its own rules.
 
 The following markdown content rules are enforced in the validators:
 

@@ -6,7 +6,8 @@ name: Release Please
 # Merge it to make a release: on that push, release-please creates the tag
 # vX.Y.Z and a draft GitHub release with the changelog. The tag starts
 # release.yml, and GoReleaser uploads the files into the draft and publishes
-# it (see .goreleaser.yaml and the README, "Making a release").
+# it (see .goreleaser.yaml and
+# site/content/tech/work-on-the-code/release-process.md).
 #
 # The settings are in release-please-config.json.
 on:
@@ -38,7 +39,8 @@ jobs:
     timeout-minutes: 10
     # A deployment environment. Keep the secrets of the GitHub App in this
     # environment, and allow only the branch main to deploy to it: then no
-    # other workflow or branch can read them (see the README).
+    # other workflow or branch can read them (see "Once, before the first
+    # release" in site/content/tech/work-on-the-code/release-process.md).
     environment: release-please
     permissions:
       contents: read
@@ -51,7 +53,8 @@ jobs:
       # This is a token for this repository only, with only the two
       # permissions that release-please needs. It expires after one hour and
       # is revoked when the job ends. The action stops with a clear error when
-      # a secret is empty (see the README, "Making a release").
+      # a secret is empty (see "Once, before the first release" in
+      # site/content/tech/work-on-the-code/release-process.md).
       - name: get a token of the GitHub App
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
