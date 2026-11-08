@@ -116,8 +116,10 @@ type BuildContext struct {
 //
 // A reply goes to the Reply-To addresses of the original, or else to its
 // sender. A reply to all also copies the To and Cc addresses of the original
-// to Cc. Addresses in BuildContext.Self are then removed from To and Cc.
-// Compose.To, Cc and Bcc are added to those. The reply gets In-Reply-To and
+// to Cc. Then Compose.To, Cc and Bcc are added to To, Cc and Bcc. For a reply
+// to all, the addresses in BuildContext.Self are then removed from To and Cc.
+// This also removes a Self address that the caller gave in Compose.To or Cc.
+// Self addresses are not removed from Bcc. The reply gets In-Reply-To and
 // References headers. Build does not quote the original text.
 //
 // A forward puts the text of the original under a short "Forwarded message"
