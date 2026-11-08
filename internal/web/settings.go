@@ -340,7 +340,8 @@ func levelUpdate(a *account.Account, level account.Level, accepted bool) service
 }
 
 // levelAllows says what a mail level lets the agent do, for the sentence
-// "Level N ...". The levels are those of the README.
+// "Level N ...". The levels are those of the user manual
+// (site/content/manual/daily-use/permission-levels.md).
 func levelAllows(level account.Level) string {
 	switch level {
 	case account.MailRead:

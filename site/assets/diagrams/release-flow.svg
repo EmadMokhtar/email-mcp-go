@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 712" role="img">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 732" role="img">
   <title>The path of a release</title>
-  <desc>A flow from top to bottom, with the failures on the right. 1, merge pull requests into main; each title is a Conventional Commit. 2, release-please opens or updates its pull request chore(main): release X.Y.Z. 3, merge the release pull request; release-please pushes the tag vX.Y.Z and creates a draft release. 4, release.yml, job check: go vet, the tests, govulncheck, and the check that server.json has the version of the tag. 5, check the commit and the workflow file, then approve the deployment to the environment release, when GitHub asks for it. 6, release.yml, job GoReleaser: GoReleaser builds and signs the files, uploads them into the draft and publishes it, with the cask and the image. 7, the same job, after GoReleaser: it checks the signature of checksums.txt and adds the attestations. Last, in a dashed box: the site is published by pages.yml, which a maintainer starts by hand; release.yml does not call it. Three failures, on the right. Next to step 4: the code must change, because a check fails: a test, govulncheck or the version of server.json; merge a fix as a fix pull request, and delete the old draft by hand. Next to step 6: a failure before the publish; fix the cause, such as an expired token, then re-run the failed jobs. Next to steps 6 and 7: a failure after the publish, in the cask at the end of step 6, or in the signature check or the attestations of step 7; turn the release back into a draft with gh release edit vX.Y.Z --draft=true, then re-run the failed jobs.</desc>
+  <desc>A flow from top to bottom, with the failures on the right. 1, merge pull requests into main; each title is a Conventional Commit. 2, release-please opens or updates its pull request chore(main): release X.Y.Z. 3, merge the release pull request; release-please pushes the tag vX.Y.Z and creates a draft release. 4, release.yml, job check: go vet, the tests, govulncheck, and the check that server.json has the version of the tag. 5, check the commit and the workflow file, then approve the deployment to the environment release, when GitHub asks for it. 6, release.yml, job GoReleaser: GoReleaser builds and signs the files, uploads them into the draft and publishes it, with the cask and the image. 7, the same job, after GoReleaser: it checks the signature of checksums.txt and adds the attestations. 8, release.yml, job publish the site: it calls pages.yml, which builds the docs site and deploys it; a pre-release tag skips this job. Four failures, on the right. Next to step 4: the code must change, because a check fails: a test, govulncheck or the version of server.json; merge a fix as a fix pull request, and delete the old draft by hand. Next to step 6: a failure before the publish; fix the cause, such as an expired token, then re-run the failed jobs. Next to steps 6 and 7: a failure after the publish, in the cask at the end of step 6, or in the signature check or the attestations of step 7; turn the release back into a draft with gh release edit vX.Y.Z --draft=true, then re-run the failed jobs. Next to step 8: only the site fails; the release stays published; re-run the failed jobs.</desc>
 
   <!-- This file is the source of the drawing: edit it by hand. A short script
        placed the first coordinates, and that script is not kept. The
@@ -33,10 +33,10 @@
   <rect class="d-box" x="20" y="524" width="400" height="60" rx="8"/>
   <text class="d-text" x="220" y="545" text-anchor="middle" dominant-baseline="central">7 The same job, after GoReleaser</text>
   <text class="d-soft" x="220" y="565" text-anchor="middle" dominant-baseline="central">check the signature, add the attestations</text>
-  <path class="d-line d-dash" d="M220 584V608M214 600L220 608L226 600"/>
-  <rect class="d-box d-dash" x="20" y="608" width="400" height="60" rx="8"/>
-  <text class="d-text" x="220" y="629" text-anchor="middle" dominant-baseline="central">The site: pages.yml</text>
-  <text class="d-soft" x="220" y="649" text-anchor="middle" dominant-baseline="central">started by hand; release.yml does not call it</text>
+  <path class="d-line" d="M220 584V628M214 620L220 628L226 620"/>
+  <rect class="d-box" x="20" y="628" width="400" height="60" rx="8"/>
+  <text class="d-text" x="220" y="649" text-anchor="middle" dominant-baseline="central">8 release.yml, job publish the site</text>
+  <text class="d-soft" x="220" y="669" text-anchor="middle" dominant-baseline="central">pages.yml; skipped for a pre-release tag</text>
   <rect class="d-box d-bad" x="460" y="272" width="300" height="60" rx="8"/>
   <text class="d-text" x="610" y="287" text-anchor="middle" dominant-baseline="central">The code must change</text>
   <text class="d-soft" x="610" y="305" text-anchor="middle" dominant-baseline="central">a check fails: merge a fix, and</text>
@@ -54,5 +54,10 @@
   <text class="d-soft" x="610" y="589" text-anchor="middle" dominant-baseline="central">--draft=true, then re-run the failed jobs</text>
   <path class="d-line d-bad d-dash" d="M420 554H460M452 548L460 554L452 560"/>
   <path class="d-line d-bad d-dash" d="M420 488L460 540M451 537L460 540L460.5 530.5"/>
-  <text class="d-soft" x="390" y="694" text-anchor="middle" dominant-baseline="central">The boxes on the right are failures and what to do. The dashed box is started by hand.</text>
+  <rect class="d-box d-bad" x="460" y="628" width="300" height="60" rx="8"/>
+  <text class="d-text" x="610" y="643" text-anchor="middle" dominant-baseline="central">Only the site fails</text>
+  <text class="d-soft" x="610" y="661" text-anchor="middle" dominant-baseline="central">the release stays published:</text>
+  <text class="d-soft" x="610" y="677" text-anchor="middle" dominant-baseline="central">re-run the failed jobs</text>
+  <path class="d-line d-bad d-dash" d="M420 658H460M452 652L460 658L452 664"/>
+  <text class="d-soft" x="390" y="714" text-anchor="middle" dominant-baseline="central">The boxes on the right are failures and what to do.</text>
 </svg>

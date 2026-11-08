@@ -81,8 +81,8 @@ checksum:
 # a short-lived certificate from Sigstore for the identity of the release
 # workflow, so there is no private key to keep. The checksums file lists every
 # archive and every SBOM, so this one signature covers all of them. The bundle
-# file holds the signature and the certificate. The README shows how to verify
-# it.
+# file holds the signature and the certificate. The user manual shows how to
+# verify it (site/content/manual/reference/verify-a-release.md).
 signs:
   - cmd: cosign
     artifacts: checksum
@@ -150,7 +150,8 @@ homebrew_casks:
       name: homebrew-tap
       # A token that may push to the tap repository. The GITHUB_TOKEN of the
       # workflow can write only to this repository, so the release workflow
-      # passes a separate secret (see the README, "Making a release").
+      # passes a separate secret (see
+      # site/content/tech/work-on-the-code/release-process.md).
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     commit_msg_template: "Update the email-mcp cask to {{ .Tag }}"
     # Do not update the tap for a pre-release, such as v1.0.0-rc.1.
@@ -161,9 +162,11 @@ homebrew_casks:
         # that has the "quarantine" mark of a download. This step removes the
         # mark, so Gatekeeper does not check the binary. A cask user does not
         # see the cosign signature; the cask is only as safe as the tap and its
-        # token. The README says this, and points to the release archive for a
-        # cosign check. install_steps uses the declarative steps of Homebrew
-        # (postflight_steps); .StagedPath becomes Homebrew's {{staged_path}}.
+        # token. The install page of the user manual says this, and points to
+        # the release archive for a cosign check
+        # (site/content/manual/getting-started/install.md). install_steps uses
+        # the declarative steps of Homebrew (postflight_steps); .StagedPath
+        # becomes Homebrew's {{staged_path}}.
         install_steps: |
           on_macos do
             run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/email-mcp"]

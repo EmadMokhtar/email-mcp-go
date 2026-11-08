@@ -5,14 +5,14 @@ name: Pages
 # result is deployed.
 #
 # Two ways to start it:
-#   - workflow_call lets release.yml call it as its last job, after the
-#     release job succeeds. Then a failed release publishes nothing, and the
-#     site never points to files that do not exist yet. A called workflow
-#     cannot get more permissions than its caller gives it, so the job in the
-#     caller needs "pages: write" and "id-token: write". release.yml has no
-#     such job before the cutover of the docs plan (Task 24 of
-#     docs/superpowers/plans/2026-11-06-docs-site.md), so until then a release
-#     does not publish the site.
+#   - workflow_call lets release.yml call it as its last job, "publish the
+#     site", after the release job succeeds. Then a failed release publishes
+#     nothing, and the site never points to files that do not exist yet. A
+#     pre-release tag skips that job. A called workflow cannot get more
+#     permissions than its caller gives it, so the job in the caller needs
+#     "contents: read", "pages: write" and "id-token: write". A permissions
+#     block in a job sets every scope that it does not list to none, so
+#     without "contents: read" the checkout of the build job fails.
 #   - workflow_dispatch starts it by hand, for the first launch and for urgent
 #     fixes. It publishes whatever is on the chosen branch or tag, also work
 #     that is not released.
@@ -45,6 +45,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A full run took about 3 minutes. The limit stops a hung Chrome or Hugo
+    # early, so a release does not wait for the default limit of 6 hours, and
+    # the next deploy does not wait in the concurrency group behind it.
+    timeout-minutes: 30
     # A permissions block replaces the one above, so contents is listed again.
     permissions:
       contents: read # check out the code
@@ -86,6 +90,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # A deployment environment. GitHub Pages needs it, and the owner controls
     # which branches and tags may deploy to it (see the top of this file).
     environment: github-pages
