@@ -15,11 +15,14 @@ code_areas:
   - internal/mcpserver/write_tools.go
   - internal/mcpserver/capture.go
   - internal/mcpserver/capture_test.go
+  - internal/mcpserver/read_tools_test.go
   - internal/mcpserver/write_tools_test.go
   - internal/mcpserver/useronly_test.go
   - internal/service/accounts.go
   - internal/e2e/security_test.go
+  - internal/e2e/capture_test.go
   - cmd/email-mcp/main.go
+  - cmd/email-mcp/serve_test.go
   - internal/store/migrations/
   - internal/e2e/screenshots_test.go
   - internal/testutil/chrometest/chrometest.go
@@ -60,33 +63,35 @@ the mail scenario against real Dovecot and Postfix servers in Docker. See
 | Target | What it runs |
 |---|---|
 | `build` | `CGO_ENABLED=0 go build -trimpath -o bin/email-mcp ./cmd/email-mcp`. `CGO_ENABLED=0` means no C compiler, so the binary is static: it needs no system library to run. `-trimpath` removes the file paths of your computer from the binary. The build sets no version, so `email-mcp version` prints `email-mcp dev`. |
-| `test` | `go test -race ./...`: every test of the module, with the race detector (a check that finds two goroutines that use the same memory at the same time). |
-| `lint` | `go vet` and staticcheck with the build tags `interop`, `screenshots` and `sitebuild`, then `golangci-lint run`. The tags make the linters read the tests that `go test ./...` leaves out. Install golangci-lint v2 first. |
+| `test` | `go test -race ./...`: every test that needs no build tag, with the race detector (a check that finds two goroutines, functions that run at the same time, that use the same memory without a lock). |
+| `lint` | `go vet` and staticcheck (a linter for Go) with the build tags `interop`, `screenshots` and `sitebuild`, then `golangci-lint run` (a program that runs many linters at once). The tags make the linters read the files that `go test ./...` leaves out. Install golangci-lint v2 first. |
 | `vuln` | govulncheck, which checks the code and the dependencies for known vulnerabilities. |
 | `screenshots` | The images of the user manual. See [The docs site](#the-docs-site). |
 | `site` | The images, then the docs site and its checks. |
 | `site-serve` | The images, then a preview of the site that rebuilds when a file changes. |
-| `social-card` | `site/assets/social-card.png`, the preview picture of the landing page, from its SVG. Run it only after a change of the SVG. |
+| `social-card` | `site/assets/social-card.png`, the preview picture of the landing page, from its SVG file (Scalable Vector Graphics: a picture made of shapes). Run it only after a change of the SVG. |
 
 The Makefile runs staticcheck and govulncheck with `go run tool@version`, so
-there is nothing to install: Go downloads and builds the tool the first time.
-The versions are the variables `STATICCHECK_VERSION` and `GOVULNCHECK_VERSION`
-of the Makefile. The workflows pin the same versions, and a comment in each
-file says to keep them in step.
+there is nothing to install: Go downloads and builds that version of the tool
+the first time. The versions are the variables `STATICCHECK_VERSION` and
+`GOVULNCHECK_VERSION` of the Makefile. The workflows pin the same versions,
+and a comment in each file says to keep them in step.
 
 The settings of golangci-lint are in {{< src ".golangci.yml" >}}. It runs the
 standard set of linters (errcheck, govet, ineffassign, staticcheck and unused)
 and gosec, a linter for security mistakes, and it checks the format with gofmt.
 It reads the same three build tags. It skips `internal/thirdparty`, the copied
-HTML parser (see [Map of packages](/tech/start-here/package-map/)).
+HTML (HyperText Markup Language) parser (see
+[Map of packages](/tech/start-here/package-map/)).
 
 ## The Go version
 
 The `go` line of {{< src "go.mod" >}} (`go 1.26.0`) is the oldest Go that can
-build the module. {{< src ".go-version" >}} names the Go version that the
-project works with. The workflows do not read it: they install the newest
-stable Go (`go-version: stable` of `actions/setup-go`). The Dockerfile pins its
-Go image by digest (a hash of the exact image).
+build the module. {{< src ".go-version" >}} holds the Go version of the project
+(`1.27.3`), for tools that choose the Go version of a folder, such as goenv. The
+workflows do not read it: they install the newest stable Go
+(`go-version: stable` of `actions/setup-go`). The Dockerfile pins a Go image of
+the same version as `.go-version` by digest (a hash of the exact image).
 
 ## What CI runs
 
@@ -97,16 +102,20 @@ request. It has five jobs:
 |---|---|
 | `vet and test` | `go vet` with the three build tags, then `go test -race ./...` |
 | `lint` | staticcheck with the three build tags, then golangci-lint, which the job builds with its own Go |
-| `goreleaser check` | `goreleaser check`, which reads `.goreleaser.yaml`. A bad key then fails the pull request, and not the release after the tag exists. |
+| `goreleaser check` | `goreleaser check`, which reads `.goreleaser.yaml`, the settings of GoReleaser (the tool that builds the release). A bad key then fails the pull request, and not the release after the tag exists. |
 | `govulncheck` | govulncheck |
 | `build site` | `make site`, then it uploads the images as a workflow artifact (files that a run keeps for download) for 7 days, also when `make site` failed |
 
-The rules of every workflow:
+The workflows of the repository follow these rules:
 
-- The token of the workflow may only read the repository
-  (`permissions: contents: read`).
-- Each action is pinned by its full commit SHA (the hash of one commit), with
-  the release tag in a comment after it.
+- Each workflow sets `permissions: contents: read` at the top, so the token
+  that GitHub gives the run (`GITHUB_TOKEN`) may only read the repository. A
+  job that needs more asks for it in its own block, and only for what it needs,
+  such as the job `release` of `release.yml` and the job `deploy` of
+  `pages.yml`.
+- Each action is pinned (fixed to one exact version) by its full commit SHA
+  (Secure Hash Algorithm: here, the hash that names one commit), with the
+  release tag in a comment after it.
 - The checkout does not keep the token in its git settings
   (`persist-credentials: false`).
 - No step puts a `${{ }}` value into a `run:` script. A value goes through
@@ -124,17 +133,20 @@ dependencies. Its settings are in {{< src ".github/dependabot.yml" >}}:
 - It looks once a week, and it opens one pull request for each ecosystem (a
   kind of dependency): the Go modules, the actions, the images of the
   Dockerfiles, and the image of the interop compose file.
-- A new version must be 7 days old before Dependabot offers it (the cooldown,
+- A version must be 7 days old before Dependabot offers it (the cooldown,
   `default-days: 7`). Security updates do not wait.
 - The pull requests of the Go modules start with `fix(deps):`. The Go modules
-  are inside the released program, and release-please counts a `fix` as a
-  change that needs a patch release. So a security fix in a module ships in the
-  next release. Without the prefix, Dependabot would write `build(deps):`,
+  are inside the released program, and release-please (the tool that proposes
+  each release) counts a `fix` as a change that needs a patch release. So a
+  security fix in a module leads to a proposed release, which a maintainer
+  then merges. Without the prefix, Dependabot would write `build(deps):`,
   which makes no release.
 - It does not update `go-imap/v2`, which is pinned to one beta version on
   purpose, or chromedp and `go-json-experiment/json`, which only the tests use.
   With the `fix` prefix, each update of a test module would propose a release
-  of a program that did not change.
+  of a program that did not change. A fix in a pinned module does not arrive by
+  itself: watch the releases of that module, and read the result of
+  govulncheck.
 
 The comment at the top of the file lists what Dependabot does not see, so a
 person updates it by hand: the BuildKit and Syft scanner images of the release,
@@ -151,18 +163,20 @@ code:
 - Format the code with `gofmt`. The lint fails when a file is not formatted.
 - Return errors, and do not panic. Wrap an error with
   `fmt.Errorf("...: %w", err)`, so the caller can still find the cause.
-- Each exported name has a comment that starts with the name. A comment says
-  why, because the code already says what.
-- Tests are table-driven (one test runs the same check over a table of cases),
-  with `github.com/stretchr/testify/require`.
-- A message id in the tool API is an IMAP UID (the number of a message in its
+- Give each exported name a comment that starts with the name. Make a comment
+  say why, because the code already says what.
+- Write table-driven tests (one test runs the same check over a table of
+  cases), with `github.com/stretchr/testify/require`.
+- A message id in the tool API (application programming interface: here, the
+  tools and their arguments) is an IMAP UID (IMAP: Internet Message Access
+  Protocol, for reading mail; a UID is the unique id of a message in its
   folder, which stays the same when other messages are removed), never a
   sequence number (the position of a message, which changes). Address messages
   with UID sets in each IMAP command, never with sequence sets.
 - Fetch with `BODY.PEEK` (a fetch that does not mark the message as read),
   unless the purpose is to mark it as read.
 - Log no mail content and no secret. The page
-  [Activity log and program log][log-rules] has the rules for a new log line.
+  [Activity log and program log][log-rules] has the rules for a log line.
 
 The design documents under `docs/superpowers/specs/` are history. The page
 [Architecture overview](/tech/start-here/overview/#the-design-documents) says
@@ -187,14 +201,16 @@ tests to change.
 
 ### Add a tool
 
-A tool is one action that an agent can call, such as `get_message`.
+A tool is one action that an agent (the AI, artificial intelligence, program
+that calls the tools) can call, such as `get_message`.
 
 1. **The use case.** Add a method to `service.Service`. It checks the
    permission first, with the `policy.Action` that it needs. See [One tool
    call, step by step][permission].
 2. **The input.** Add an input struct in `mcpserver`. The `json` tag of a field
    is the name of the argument, and the `jsonschema` tag is its description.
-   The SDK builds the schema of the tool from the struct.
+   The SDK (software development kit: the Go library for MCP, Model Context
+   Protocol) builds the schema of the tool from the struct.
 3. **The handler.** Add it in `registerReadTools` in
    {{< src "internal/mcpserver/read_tools.go" >}} or `registerWriteTools` in
    {{< src "internal/mcpserver/write_tools.go" >}}, with `addTool`. Give it a
@@ -210,13 +226,21 @@ A tool is one action that an agent can call, such as `get_message`.
    {{< src "internal/mcpserver/capture_test.go" >}}. Decide on purpose.
    `TestEveryArgumentOfEveryToolIsKeptOrOmitted` fails for an argument that is
    in neither. Add the name of the tool to `auditTools` in
-   {{< src "internal/service/accounts.go" >}}, so the Activity page can filter
-   by it.
-5. **The lists of the tests.** Add the tool and its hints to `wantTools` in
-   {{< src "internal/mcpserver/write_tools_test.go" >}}, and change the number
-   of tools that `TestToolsListFullSet` expects. Add its level and arguments to
-   `requiredLevel` and `args` in {{< src "internal/e2e/security_test.go" >}}.
-   These tests fail for a tool that the server lists and they do not know.
+   {{< src "internal/service/accounts.go" >}}, with a name constant as the
+   other tools have, so the Activity page can filter by it.
+5. **The lists of the tests.** These tests fail for a tool that the server
+   lists and they do not know:
+   - `wantTools` and the number of tools in `TestToolsListFullSet`, in
+     {{< src "internal/mcpserver/write_tools_test.go" >}};
+   - for a read tool, the list `want` of `TestToolsListStableAndAnnotated`, in
+     {{< src "internal/mcpserver/read_tools_test.go" >}};
+   - the number of tools in the serve test of
+     {{< src "cmd/email-mcp/serve_test.go" >}};
+   - `requiredLevel`, and the map `args` inside
+     `TestEveryWriteToolRefusedBelowItsLevel`, in
+     {{< src "internal/e2e/security_test.go" >}};
+   - a call of the tool in `TestEveryToolCallIsInTheActivityLog`, in
+     {{< src "internal/e2e/capture_test.go" >}}.
 6. **Only for the person?** A use case that only the person may call gets no
    tool. Add it to `userOnlyCalls` in
    {{< src "internal/mcpserver/useronly_test.go" >}}, and the test fails when
@@ -242,9 +266,10 @@ program and handle passwords and exit codes.
 
 ### Add a migration
 
-A migration is a numbered SQL file in {{< src "internal/store/migrations/" >}}
-that changes the structure of the database. Add the file with the next number,
-and its methods in a file of the package `store`. The page
+A migration is a numbered SQL (Structured Query Language) file in
+{{< src "internal/store/migrations/" >}} that changes the structure of the
+database. Add the file with the next number, and its methods in a file of the
+package `store`. The page
 [Storage and secrets](/tech/inside-the-server/storage-and-secrets/#migrations)
 has the rules. Read them first: a migration that rebuilds a table can delete
 the stored passwords.
@@ -255,10 +280,11 @@ the stored passwords.
    [Map of packages](/tech/start-here/package-map/#all-packages).
 2. Write or change the tech docs page that explains it, and add its path to the
    `code_areas` of that page (the list of the code that a page covers).
-3. A file with a build tag that is not in use yet needs the tag in `go vet`
-   and staticcheck in the Makefile and in `ci.yml`, and in `build-tags` of
-   `.golangci.yml`. Otherwise no linter reads the file. A tag that is in use
-   needs no change, because each of them reads every package.
+3. A file with a build tag that is not one of `interop`, `screenshots` and
+   `sitebuild` needs that tag in `go vet` and staticcheck in the Makefile and in
+   `ci.yml`, and in `build-tags` of `.golangci.yml`. Otherwise no linter reads
+   the file. A file with one of the three tags needs no change, because each
+   linter reads every package with them.
 
 ## The docs site
 
@@ -277,21 +303,19 @@ files. Its files are under `site/`. Three targets build it:
 1. Hugo builds the site. `--panicOnWarning` turns a Hugo warning into an error,
    so a warning cannot reach the published site.
 2. The site check {{< src "test/sitecheck/main.go" >}} reads the built pages
-   and the Markdown files. The comment at its top lists each rule. It fails,
-   for example, on a link that leaves the site or points to a missing page or
-   anchor, a script or a file from another site, an image with no alt text, a
-   table with no name, a page with no `code_areas`, a path in `code_areas` or in
-   a code link that does not exist, an image that no page uses, an H1 or a
-   heading below H3, a code block with no language, and a line of more than 80
+   and the Markdown files. It fails on each rule that the comment at its top
+   lists, for example a broken link or anchor, an image with no alt text, a
+   path in `code_areas` that does not exist, or a line of more than 80
    characters outside a code block and a table.
-3. Hugo builds the site again with the test pages of the table hook, the check
-   reads that build too, and a test checks each test table.
+3. Hugo builds the site again with the test pages of the table hook (the
+   template that turns a Markdown table into HTML). The check reads that build
+   too, and a test checks each test table.
 4. A test opens every page in Chrome at the width of a phone, and fails when a
    page scrolls sideways.
 
-The links to the code on a page that you build go to the branch `main`. The
-publish workflow sets them to the release tag (see
-[Making a release][publish]).
+The links to the code on a page that you build go to the branch `main`. On a
+tag, the publish workflow points them at the tag, and on any other run at the
+commit (see [Making a release][publish]).
 
 `make screenshots` needs Chrome, and so does the last step of `make site`. The
 images come from `TestScreenshots` in
@@ -303,11 +327,11 @@ program that `CHROME_PATH` names when it is set, or else the first of a list of
 the usual places on Linux and macOS. One Chrome may run for at most 2 minutes
 (`timeLimit`), so a page that never loads fails the test.
 
-The target runs only when a file in `cmd/` or `internal/`, `go.mod` or `go.sum`
-changed, because make compares them with the stamp file
-`site/assets/screenshots/.done`. So a change of the text of the site does not
-start Chrome. This command makes the images again even when nothing changed
-(`-B`: treat every target as out of date):
+Make runs the test when the stamp file `site/assets/screenshots/.done` is
+missing, or when a file in `cmd/` or `internal/`, `go.mod` or `go.sum` is newer
+than it. So a change of the text of the site does not start Chrome. This
+command makes the images again even when nothing changed (`-B`: treat every
+target as out of date):
 
 ```sh
 make -B screenshots
@@ -342,6 +366,10 @@ This is the shortcode on a page:
 {{</* screenshot name="waiting" alt="The approval page with the send" */>}}
 ```
 
+A long alt text does not fit on one line of 80 characters. Write it between
+back quotes (`` ` ``) over several lines: the shortcode joins the lines into
+one.
+
 To change a shot, change its steps or its `want` texts. To remove one, remove
 its `s.shot` call and its shortcode. The site check fails when a page uses a
 shot that does not exist, or when an image is not used. `TestScreenshots`
@@ -369,26 +397,29 @@ docker run --rm email-mcp:dev version
 
 The Dockerfile compiles the binary from the source code by default. The
 release uses the same Dockerfile with `--build-arg BINARY_FROM=release`: then
-it copies the binary that GoReleaser built, instead of compiling a new one (see
-[The container image][image]).
-The build does not send the files that {{< src ".dockerignore" >}} lists to
-the builder, such as `.git/`, `docs/`, `site/` and the Markdown files.
+it copies the binary that GoReleaser built, instead of compiling it again (see
+[The container image][image]). The build does not send the files that
+{{< src ".dockerignore" >}} lists to the builder, such as `.git/`, `docs/`,
+`site/` and the Markdown files in the root of the repository.
 
 ### Try it
 
 This starts the server inside the container with a key file in the home
-folder of the container. It serves MCP over stdio, so it reads MCP messages
-from standard input (`-i`) and waits for them. `-e` sets an environment
-variable (a named setting that a program reads from its surroundings) in the
-container: `EMAIL_MCP_KEK` says where the master key is. It has no account, so
-it is only a smoke test (a short test that only shows that the program starts):
+folder of the container. It serves MCP over stdio (standard input and output),
+so it reads MCP messages from standard input (`-i`) and waits for them. `-e`
+sets an environment variable (a named setting that a program reads from its
+surroundings) in the container: `EMAIL_MCP_KEK` says where the master key (the
+key that protects the other keys) is. It has no account, so it is only a smoke
+test (a short test that only shows that the program starts):
 
 ```sh
 docker run --rm -i -e EMAIL_MCP_KEK=file:/home/nonroot/kek.key email-mcp:dev
 ```
 
 The data (the database and the key file) is lost when the container stops,
-because it is not on a volume.
+because it is not on a volume. Do not add a real mail account to this
+container. If you keep its data on a volume, keep the key file in a different
+place from the database.
 
 ## Related pages
 
