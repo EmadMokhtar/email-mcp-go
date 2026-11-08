@@ -159,8 +159,9 @@ rules allow the run.
    tags" blocks moving and deleting it. So merge the release pull request only
    when `main` is ready to ship. Run `make test` and `make vuln` on `main`
    first.
-4. The tag starts `release.yml`. GitHub asks you to approve the deployment to
-   the `release` environment. Before you approve, open the run and check the
+4. The tag starts `release.yml`. When its job `check` has passed, GitHub asks
+   you to approve the deployment of the job `release` to the `release`
+   environment. Before you approve, open the run and check the
    commit and the workflow file. The release files, the image and the cask are
    published only after your approval. With one maintainer, leave "Prevent
    self-review" off: the approval is then a pause to check, not a review by
@@ -228,9 +229,10 @@ themselves, so update the pins on purpose and read what changed.
 
 ## When the release fails
 
-- **Before GoReleaser publishes the release** (the checks, the build, the
-  image, or the upload into the draft): fix the cause, for example an expired
-  token, and re-run the failed jobs. GoReleaser finds the same draft again and
+- **Before GoReleaser publishes the release** (a check that fails for a cause
+  outside the code, such as a network error, or the build, the image, or the
+  upload into the draft): fix the cause, for example an expired token, and
+  re-run the failed jobs. GoReleaser finds the same draft again and
   replaces the files that the failed run had uploaded
   (`replace_existing_artifacts`).
 - **When the code must change** (a test or `govulncheck` fails, or `server.json`

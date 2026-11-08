@@ -57,10 +57,7 @@ If your shell sets `GOROOT` to another Go install, run make as
 `env -u GOROOT make test`. `GOROOT` is the variable that names the folder of a
 Go install. `env -u GOROOT` runs the command without that variable (`-u`:
 unset), so `go` and golangci-lint (a program that runs many linters at once)
-both use the same Go. The interop test runs the mail scenario against real mail
-servers, Dovecot (an IMAP server) and Postfix (an SMTP server), in Docker (a
-tool that runs programs in containers). See
-[The interop test](/tech/work-on-the-code/testing/#the-interop-test).
+both use the same Go.
 
 | Target | What it runs |
 |---|---|
@@ -72,6 +69,10 @@ tool that runs programs in containers). See
 | `site` | The images, then the docs site and its checks. |
 | `site-serve` | The images, then a preview of the site that rebuilds when a file changes. |
 | `social-card` | `site/assets/social-card.png`, the preview picture of the landing page, from its SVG file (Scalable Vector Graphics: a picture made of shapes). Run it only after a change of the SVG. |
+
+No target runs the interop test, because it needs Docker (a tool that runs
+programs in containers). See
+[The interop test](/tech/work-on-the-code/testing/#the-interop-test).
 
 The Makefile runs staticcheck and govulncheck with `go run tool@version`, so
 there is nothing to install: Go downloads and builds that version of the tool
@@ -249,7 +250,10 @@ is the AI (artificial intelligence) program that calls the tools.
 6. **Only for the person?** A use case that only the person may call gets no
    tool. Add it to `userOnlyCalls` in
    {{< src "internal/mcpserver/useronly_test.go" >}}, and the test fails when
-   the code of `mcpserver` calls it.
+   the code of `mcpserver` calls it. A tool name must not contain `settings`,
+   `remove`, `approve`, `reject`, `token`, `autonomy` or `approval`:
+   `TestNoToolIsNamedForAUserOnlyUseCase` in the same file fails for such a
+   name.
 
 Then update the manual page
 [What the agent can do](/manual/daily-use/what-the-agent-can-do/).
@@ -265,9 +269,6 @@ Then update the manual page
    terminal and opens no browser (see
    [Testing](/tech/work-on-the-code/testing/#clocks-and-fakes)).
 4. Update the manual page [Commands](/manual/reference/commands/).
-
-The tech docs page "The command line" explains how the commands open the
-program and handle passwords and exit codes.
 
 ### Add a migration
 
@@ -334,9 +335,9 @@ the usual places on Linux and macOS. One Chrome may run for at most 2 minutes
 
 Make runs the tests when the stamp file `site/assets/screenshots/.done` is
 missing, or when a file in `cmd/` or `internal/`, `go.mod` or `go.sum` is newer
-than it. So a change of the text of the site does not start Chrome. This
-command makes the images again even when nothing changed (`-B`: treat every
-target as out of date):
+than it. So a change of the text of the site does not make the images again.
+The last step of `make site` still opens Chrome. This command makes the images
+again even when nothing changed (`-B`: treat every target as out of date):
 
 ```sh
 make -B screenshots
@@ -376,8 +377,9 @@ back quotes (`` ` ``) over several lines: the shortcode joins the lines into
 one.
 
 To change a shot, change its steps or its `want` texts. To remove one, remove
-its `s.shot` call and its shortcode. The site check fails when a page uses a
-shot that does not exist, or when an image is not used. `TestScreenshots`
+its `s.shot` call and its shortcode. The Hugo build fails when a page uses a
+shot that has no images, because the shortcode stops it. The site check fails
+when an image is not used. `TestScreenshots`
 removes the old images at the start, so the image of a removed shot does not
 stay.
 
@@ -403,11 +405,10 @@ docker run --rm email-mcp:dev version
 ```
 
 The Dockerfile compiles the binary from the source code by default. The
-release uses the same Dockerfile with `--build-arg BINARY_FROM=release`: then
-it copies the binary that GoReleaser built, instead of compiling it again (see
-[The container image][image]). The build does not send the files that
-{{< src ".dockerignore" >}} lists to the builder, such as `.git/`, `docs/`,
-`site/` and the Markdown files in the root of the repository.
+release builds its image from the same Dockerfile with the binary that
+GoReleaser built (see [The container image][image]). The build does not send
+the files that {{< src ".dockerignore" >}} lists to the builder, such as
+`.git/`, `docs/`, `site/` and the Markdown files in the root of the repository.
 
 ### Try it
 

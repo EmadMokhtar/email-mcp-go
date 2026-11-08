@@ -171,7 +171,10 @@ tool that you add is then checked with no extra test:
 - The user-only tests in {{< src "internal/mcpserver/useronly_test.go" >}}
   parse the Go files of `mcpserver` (not its tests). They fail when the code
   names a use case that only the person may call, such as `ApprovePending`, or
-  imports `web` or `tokens`.
+  imports `web` or `tokens`. `TestNoToolIsNamedForAUserOnlyUseCase` goes over
+  the tools that the server lists, and fails for a name that contains
+  `settings`, `remove`, `approve`, `reject`, `token`, `autonomy` or
+  `approval`.
 
 ## Clocks and fakes
 
