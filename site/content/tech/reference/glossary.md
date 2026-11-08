@@ -74,15 +74,15 @@ two or more meanings gives each one.
 
 ## B
 
+- **Backend (mail backend):** the part of the program that talks to the mail
+  servers of one account. It implements the interface `mail.Backend`. See [The
+  mail backend][mb].
 - **Backend cache:** the cache of one mail backend for each account, in each
   process. It builds another backend when the server settings, the key version
   or the sealed password of the account change. See [The mail backend][mbo].
 - **Backend factory:** the code that builds the backend of an account
   (`BackendFactory`). The backend cache is the default factory. See [The mail
   backend][mbo].
-- **Backend (mail backend):** the part of the program that talks to the mail
-  servers of one account. It implements the interface `mail.Backend`. See [The
-  mail backend][mb].
 - **Bare CR:** a carriage return with no line feed after it. See [Building
   mail][bmd].
 - **Base32:** a text form of bytes. Access tokens use it in lower case, with the
@@ -141,7 +141,8 @@ two or more meanings gives each one.
 - **Checkpoint:** a step that copies the write-ahead log into the database file.
   See [Storage and secrets][sso].
 - **CI (continuous integration):** the checks that GitHub runs on each push. A
-  CI runner is a computer that runs them. See [Local development][ldc].
+  CI runner is a computer that runs them. See [Local development][ldc] and
+  [Testing][tes].
 - **`code_areas`:** the list of the code that a page covers, in the settings at
   the top of a page file. The page shows it as "Code covered by this page". See
   [Local development][lda].
@@ -187,8 +188,10 @@ two or more meanings gives each one.
   reconnect, so a call from before the reconnect cannot undo it. See [Connecting
   an account][car].
 - **CR, LF, NUL (carriage return, line feed, the zero byte):** control
-  characters. A header value with one is refused, because a line break would let
-  the value add a header. See [Building mail][bmf].
+  characters. A header value that the caller gives is refused when it has one,
+  because a line break would let the value add a header. A value from the
+  original message is cleaned, and an address from it is refused. See [Building
+  mail][bmf].
 - **Cross-origin check:** the check of the web portal that refuses a request
   that the browser marks as coming from another site, unless it is GET, HEAD or
   OPTIONS (`http.CrossOriginProtection`). See [The web portal][wpc].
@@ -210,10 +213,10 @@ two or more meanings gives each one.
 - **Daily jobs:** the housekeeping that runs when `Run` starts, and then every
   24 hours (`jobEvery`). It expires the stale approved actions (those that
   nothing finishes), deletes old rows, and runs a checkpoint of the write-ahead
-  log. See [Storage and secrets][ssh].
+  log. See [Storage and secrets][ssh] and [Startup and shutdown][sr].
 - **Data folder:** the folder of the database and the other files of email-mcp.
   The flag `--data-dir` or the variable `EMAIL_MCP_DATA_DIR` chooses another
-  one, and the flag wins. See [Storage and secrets][ssw].
+  one, and the flag has priority. See [Storage and secrets][ssw].
 - **DEK (data encryption key):** the random key of one tenant, with a version,
   that seals its values. The database keeps it only wrapped by the master key.
   See [Storage and secrets][ssk].
@@ -258,11 +261,11 @@ two or more meanings gives each one.
   portal][wpp].
 - **End-to-end test:** a test that drives the whole program from the outside.
   See [Testing][tee].
+- **Envelope (of a mail):** the list of addresses that the mail goes to. See
+  [The send flow][sfw].
 - **Envelope encryption:** a key wraps (encrypts) other keys, and those keys
   seal the data. Here the master key wraps the data keys and the server key. See
   [Storage and secrets][ssk].
-- **Envelope (of a mail):** the list of addresses that the mail goes to. See
-  [The send flow][sfw].
 - **`.env` file:** a text file of `NAME=VALUE` lines, which the old email-mcp
   read for its settings. See [The command line][clo].
 - **Environment (GitHub):** a set of rules and secrets of the repository that a
@@ -339,9 +342,10 @@ two or more meanings gives each one.
   pin is written in lower-case hex. See [The web portal][wpp].
 - **Hidden characters:** characters that a reader cannot see, such as the zero
   width space and the direction marks. `CleanUntrusted` removes the ones on its
-  list from text of a third party, and it keeps a joiner where the joiner
-  changes the shape of a word or an emoji. A message that the agent writes is
-  refused when its subject, its text body or a display name has one. A draft
+  list from text of a third party. It keeps a joiner (an invisible character
+  that joins two letters or two emoji) where the joiner changes the shape of a
+  word or an emoji. A message that the agent writes is refused when its subject,
+  its text body or a display name has one of the removed characters. A draft
   that the person saved goes out as it was saved. See [Mail content][mcr] and
   [Building mail][bmf].
 - **Hidden text:** the parts of an HTML mail that a mail client would not show,
@@ -465,12 +469,12 @@ two or more meanings gives each one.
   force the agent. See [Mail content][mc].
 - **Master key:** the key that protects the other keys: the KEK. See [Storage
   and secrets][ssm].
+- **MCP (Model Context Protocol):** the open standard that lets an AI app call
+  the tools of another program. See [Architecture overview][ov].
 - **MCPB (MCP Bundle):** a kind of package that the MCP Registry supports. See
   [Making a release][rpr].
 - **MCP client:** the AI app that talks to the server, such as Claude Code. See
   [Architecture overview][ovc].
-- **MCP (Model Context Protocol):** the open standard that lets an AI app call
-  the tools of another program. See [Architecture overview][ov].
 - **MCP Registry:** the official registry of MCP servers. `server.json`
   describes email-mcp there, and lists no package. See [Making a release][rpr].
 - **Message-ID:** the header that names one message. See [The mail
@@ -536,8 +540,8 @@ two or more meanings gives each one.
   the Trash. Its states are `pending`, `approved`, `rejected`, `expired` and
   `done`. See [The send flow][sfo].
 - **PERMANENTFLAGS:** the IMAP answer that lists the flags that a client may
-  keep. The backend reads it for the inbox, to know whether the account
-  supports tags. See [The mail backend][mbr].
+  keep. The backend reads it for the inbox, to know whether the account supports
+  tags. See [The mail backend][mbr].
 - **Person:** the human who owns the mail accounts. See [Security design][sdm].
 - **Pin:** the SHA-256 fingerprint of the leaf certificate of a mail server, in
   lower-case hex, that the person chose to trust. A pin is saved only for the
@@ -598,16 +602,16 @@ two or more meanings gives each one.
   keeps one release pull request open. See [Making a release][rp].
 - **Request state:** a signed token that names an action that waits for the
   person, with the hash of its request. See [The send flow][sfy].
-- **Retired backend:** the backend of an account that another backend replaced
-  after a change of the settings. It closes after `retireAfter`. See [The mail
-  backend][mbo].
+- **Retired backend:** the backend of an account that another backend replaced,
+  after a change of the server settings, the key version or the sealed password.
+  It closes after `retireAfter`. See [The mail backend][mbo].
 - **RFC (Request for Comments):** a numbered document that defines an internet
   standard. RFC 5322, for example, defines the format of a mail. See [Mail
   content][mcp] and [Building mail][bmo].
 - **Risk acceptance:** the box that the person must tick before a save that
-  turns `ConfirmSends` off, that lets the agent start to send with no question,
-  or that ends with both confirmation switches off. Without it, the save is
-  refused. See [Permissions][pa].
+  turns `ConfirmSends` off, that lets the agent start to send without the send
+  confirmation, or that ends with both confirmation switches off. Without it,
+  the save is refused. See [Permissions][pa].
 - **Root certificates:** the list of certificate authorities that the system
   trusts. See [The mail backend][mbd].
 - **Route:** a method and a path of the web portal, such as `GET /accounts`,
@@ -622,7 +626,8 @@ two or more meanings gives each one.
 
 - **SameSite=Lax:** a mark of a cookie: from another site, the browser sends the
   cookie only with a top-level GET, such as a click on a link. So a GET route of
-  the web portal must only read. See [The web portal][wpi].
+  the web portal must only read. See [The web portal][wpi] and [A GET only
+  reads][wpg].
 - **SBOM (software bill of materials):** the list of every module inside a
   binary. See [Making a release][rpm].
 - **Scope:** a permission that an access token carries, such as `email:read`.
@@ -681,10 +686,10 @@ two or more meanings gives each one.
 - **SPECIAL-USE:** the IMAP feature that marks folders such as Sent and Trash,
   so that folder aliases such as `@trash` can find them. See [The mail
   backend][mbr].
-- **SQLite:** a database engine that keeps the whole database in one file. See
-  [Storage and secrets][ssw].
 - **SQL (Structured Query Language):** the language of the database. See
   [Storage and secrets][ssg].
+- **SQLite:** a database engine that keeps the whole database in one file. See
+  [Storage and secrets][ssw].
 - **Squash merge:** a merge that makes the title of the pull request the commit
   message on `main`. See [Local development][ldt].
 - **SRV (service) record:** a DNS record that names the host and the port of a
@@ -702,7 +707,7 @@ two or more meanings gives each one.
   is stateless. See [Local HTTP mode][lhs].
 - **Static binary:** a binary that needs no system library to run. The build
   sets `CGO_ENABLED=0` (no C compiler) for it. See [Local development][ldm].
-- **stdin:** the standard input of a program. See [Startup and shutdown][su].
+- **stdin:** the standard input of a program. See [Tech docs](/tech/).
 - **stdio (standard input and output):** the client starts the server and talks
   to it through two pipes. See [Architecture overview][ovp].
 - **Stop budget:** one time limit for the whole stop of the program
@@ -753,13 +758,13 @@ two or more meanings gives each one.
 
 - **U+FFFD:** the replacement character. Bytes that are not valid UTF-8 become
   U+FFFD, which a reader sees. See [Mail content][mcp].
-- **UIDPLUS:** an IMAP extension that makes the server report the UIDs of the
-  messages that it copies (`COPYUID`) or stores (`APPENDUID`). See [The mail
-  backend][mbx].
 - **UID (unique identifier):** a word with two meanings on these pages.
   1. In IMAP, the number that a folder gives to a message. It stays the same
      when other messages are removed. See [The mail backend][mbr].
   2. In an operating system, the number of a user. See [Making a release][rpi].
+- **UIDPLUS:** an IMAP extension that makes the server report the UIDs of the
+  messages that it copies (`COPYUID`) or stores (`APPENDUID`). See [The mail
+  backend][mbx].
 - **UIDVALIDITY:** a number of an IMAP folder that changes when the folder
   starts its UIDs again, so an old UID may then name another message. See [The
   mail backend][mbr].
