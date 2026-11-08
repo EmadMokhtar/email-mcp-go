@@ -253,9 +253,10 @@ screenshot, a broken internal link or a build warning fails the job.
 **Docs check.** It looks at which files the pull request changes.
 
 - A change counts as behaviour when it touches a non-test Go file in `cmd/` or
-  `internal/`, or any file in `internal/web/templates/` or
-  `internal/web/static/`. Test files, `internal/testutil`, `internal/e2e` and
-  `internal/thirdparty` do not count.
+  `internal/`, or any file in `internal/web/templates/`,
+  `internal/web/static/` or `internal/store/migrations/`. The program embeds
+  the files of these three folders. Test files, `internal/testutil`,
+  `internal/e2e` and `internal/thirdparty` do not count.
 - A change that alters only the look of a page can use the label, because the
   screenshots update by themselves.
 - If behaviour changed, the pull request must either change a file under

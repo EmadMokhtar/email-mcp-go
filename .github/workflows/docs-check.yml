@@ -1,0 +1,72 @@
+name: Docs check
+
+# Checks that a pull request that changes behaviour also changes the docs: the
+# user manual (site/content/manual/) and the tech docs (site/content/tech/).
+# The label no-manual-change clears the manual part, and the label
+# no-tech-docs-change clears the tech docs part. The rules are in
+# test/docscheck/main.go.
+#
+# This is its own workflow, so adding or removing a label runs only this job
+# again, and not all of CI. There is no path filter on purpose: a required
+# check that does not run blocks the merge forever.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+# Read-only token. The job reads the code and the list of changed files.
+permissions:
+  contents: read
+  pull-requests: read
+
+# A newer run of the same pull request makes an older run out of date, so the
+# older run is cancelled.
+concurrency:
+  group: docs-check-${{ github.event.number }}
+  cancel-in-progress: true
+
+# Every action is pinned by full commit SHA. The comment after the SHA is the
+# release tag. To update an action, look up the SHA of the new tag first.
+#
+# No step puts a ${{ }} value into a "run:" script. Values go through "env:"
+# and are used as quoted shell variables.
+
+jobs:
+  docs:
+    name: docs check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          # The check uses only the standard library, so it needs no module
+          # cache.
+          cache: false
+      # The labels and the number of changed files are read from the API when
+      # the job runs, not from the event. So "Re-run jobs" on an old run uses
+      # the labels that the pull request has now.
+      #
+      # The API lists the changed files of the pull request, and --paginate
+      # reads every page. For a moved file the jq filter also prints the old
+      # path, so a file that moves out of internal/ still counts. The API
+      # lists at most 3000 files of one pull request, with no error.
+      # docscheck compares PR_CHANGED_FILES with that limit, and fails when
+      # it cannot see every file.
+      #
+      # "shell: bash" turns on pipefail, so the step fails when gh fails. The
+      # default shell has no pipefail, and then only the exit code of
+      # docscheck would count. docscheck also fails when it reads no path.
+      - name: docs check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          PR_LABELS="$(gh api "repos/$REPO/pulls/$PR" --jq '[.labels[].name]')"
+          PR_CHANGED_FILES="$(gh api "repos/$REPO/pulls/$PR" --jq '.changed_files')"
+          export PR_LABELS PR_CHANGED_FILES
+          gh api --paginate "repos/$REPO/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' | go run ./test/docscheck
