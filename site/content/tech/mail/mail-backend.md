@@ -120,7 +120,7 @@ through `mailBackend` in `service`, which calls `authorize` first and then
   nothing asks this process for it again. `SweepIdle` closes the backends that
   no call asked for during `backendIdle`, 30 minutes. `sweepBackends` in
   {{< src "internal/app/app.go" >}} calls it every `backendSweepEvery`, 5
-  minutes, and skips a slot that a call holds.
+  minutes. `SweepIdle` skips a slot that a call holds.
 - **A missing password.** When the store has no sealed password, `Mail` closes
   the cached backend and returns an error that says so. It does not pass on
   `store.ErrNotFound`, because a caller could take it for "account not found".

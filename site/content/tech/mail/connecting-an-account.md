@@ -50,7 +50,8 @@ source that fails gives nothing, and the others still count. `Mail` returns
 network use. A host name is accepted only as a plain DNS name with at least two
 labels. A label is one part of a name between dots, such as `imap`, `example`
 and `com` in `imap.example.com`. A name that ends in a number is refused. So is
-a name that is clearly for this computer or for a local network.
+a name whose last label is for this computer or a local network, or is kept for
+tests and examples and never names a public server.
 
 The result is only a list of suggestions. The web portal shows it before it asks
 for a password, because an MX guess can name the host of a third party, such as

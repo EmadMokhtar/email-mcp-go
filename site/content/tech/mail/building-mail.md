@@ -42,7 +42,7 @@ other text of the message.
 | `ErrHiddenText` | The subject, the text body or a display name has a character that `CleanUntrusted` would remove. |
 | `ErrEmptyHTML` | Nothing is left of the HTML body after the parts that a reader cannot see, and those that cannot go out, are removed. |
 | `ErrInvalidFilename` | The file name of an attachment has a character that `CleanUntrusted` would remove, or a line or paragraph separator. |
-| `ErrInvalidContentType` | The content type of an attachment cannot be written, is multipart, has a charset other than UTF-8 or US-ASCII, or has a media type over `MaxMediaTypeBytes`. |
+| `ErrInvalidContentType` | The content type of an attachment cannot be written, is multipart, has a charset other than UTF-8 or US-ASCII, or has a media type over `MaxMediaTypeBytes` (100 bytes). |
 | `ErrNoOriginal`, `ErrReplyAndForward` | A reply or a forward has no original message, or one request asks for both. |
 | `mail.ErrTooLarge` | The attachments are together over `MaxAttachmentBytes`, 10 MiB. A MiB (mebibyte) is 1,048,576 bytes. |
 | `ErrHTMLTooComplex` | The HTML body is too complex to clean or to make the text of. |
@@ -115,7 +115,10 @@ minus the `Bcc` fields. It refuses a bare CR (a carriage return with no line
 feed after it) in the header (`ErrHeaderInjection`), a missing sender or an
 unreadable address (`ErrInvalidAddress`), and a draft with no recipient
 (`ErrNoRecipients`). It does not refuse or clean hidden characters or HTML the
-way `Build` does.
+way `Build` does: a draft goes out as the person saved it. The preview of a
+draft counts its hidden characters and shows its text only. Check a draft that
+came from another mail program before you send it (see
+[Security](/manual/daily-use/security/)).
 
 ## The preview and the text part
 

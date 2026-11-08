@@ -298,9 +298,9 @@ the steps. In short:
    `TestVisibleHTMLNeverShowsWhatHTMLToTextHides` checks that the text of the
    HTML result is the text of `HTMLToText`.
 3. **Update the comment of `HTMLToText`** so that it matches the rules.
-4. **Add a case to `hiddenPayloads`** in `hidden_test.go`. Each case has a word
-   in a place that a reader does not see. If the code works the case out, the
-   word must be gone. If it does not, the report must say so.
+4. **Add a test case** to the hidden-text tests in `hidden_test.go`. Each case
+   has a word in a place that a reader does not see. If the code works the case
+   out, the word must be gone. If it does not, the report must say so.
 5. **Report what you cannot work out.** A style that you cannot work out sets
    `unsure`, and the report says so. Do not show the element with no sign.
 6. **Keep the work bounded.** `walk` is a loop. `prune` calls itself, and the

@@ -102,6 +102,7 @@ the language of web pages and of many mails.
 | How does a send reach the SMTP server? | [The mail backend](/tech/mail/mail-backend/#sending-with-smtp) |
 | How does the program find the server settings of an address? | [Connecting an account](/tech/mail/connecting-an-account/#finding-the-settings) |
 | How does an account get connected and tested? | [Connecting an account](/tech/mail/connecting-an-account/#saving-an-account) |
+| What do the web portal and the commands share when they connect an account? | [Connecting an account](/tech/mail/connecting-an-account/#the-shared-package) |
 | What happens when a mail server refuses the stored login? | [Connecting an account](/tech/mail/connecting-an-account/#a-refused-login-and-the-reconnect) |
 | Which limits and lifetimes does the mail backend have? | [The mail backend](/tech/mail/mail-backend/#limits-and-lifetimes) |
 | What would I change to add a provider? | [The mail backend](/tech/mail/mail-backend/#adding-a-provider) |
