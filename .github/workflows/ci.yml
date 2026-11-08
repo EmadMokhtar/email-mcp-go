@@ -1,7 +1,15 @@
 name: CI
 
+# A push to a branch with an open pull request starts both events. Without
+# the branch filter on push, every job ran twice for one commit. The
+# pull_request run is the useful one: it tests the branch merged into the
+# current main. The push run on main stays, because the main ruleset does not
+# require a branch to be up to date before merge. Two pull requests can each
+# pass alone and still break main together, and this run finds that.
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 # Read-only token. No job in this file needs to write to the repository.
