@@ -512,10 +512,11 @@ func TestImageWithoutAltFails(t *testing.T) {
 	}
 }
 
-// scrollBoxAttrs is the attribute of the box that the table hook writes around
-// a table (layouts/_markup/render-table.html). The hook writes a plain
-// <div class="table-scroll">, so the cases of the check use this one place for
-// it. The real hook is tested on the fixture pages (tables_build_test.go).
+// scrollBoxAttrs is the attribute of the box around a table that the check
+// reads. The table hook (layouts/_markup/render-table.html) writes more
+// attributes, but the check reads only the class, so the cases of the check use
+// this one place for it. The real hook is tested on the fixture pages
+// (tables_build_test.go).
 const scrollBoxAttrs = `class="table-scroll"`
 
 // boxWith returns a box with the given attributes around inside.

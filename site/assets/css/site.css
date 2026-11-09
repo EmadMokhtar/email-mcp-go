@@ -306,11 +306,10 @@ pre code {
   when the table is wider than the column. The words of the table stay whole,
   so a narrow screen scrolls the box and does not break the words of a cell.
 
-  The box has no tabindex. A browser gives the keyboard focus to a box that
-  scrolls, so the keyboard can scroll it, and a box that does not scroll is not
-  a Tab stop. Chrome (from version 130) and Firefox do this. This relies on the
-  browser. Safari is not verified. The focus ring is the global :focus-visible
-  rule above, so the box needs no rule of its own.
+  The box has tabindex="0", so the keyboard can move to it and scroll it in
+  every browser. Safari does not give the focus to a box that scrolls by
+  itself. The focus ring is the global :focus-visible rule above, so the box
+  needs no rule of its own.
 */
 .table-scroll {
   max-width: 100%;

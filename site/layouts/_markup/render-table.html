@@ -5,16 +5,24 @@
 
   A table that is wider than the column must scroll sideways. A scroll box
   around the table does that, so the table itself does not change. The box is
-  a plain <div class="table-scroll"> with no tabindex, no role and no name:
-  - A box that can scroll gets the keyboard focus from the browser, so a person
-    who uses only the keyboard can scroll it with the arrow keys. Chrome (from
-    version 130) and Firefox do this. It relies on the browser: this site has
-    no script and no tabindex for it. Safari is not verified.
-  - A box that does not scroll (the table fits) is not a Tab stop, and it is
-    not a landmark. A tabindex="0" on every box would add both for each table.
+  <div class="table-scroll" role="region" aria-label="..." tabindex="0">, like
+  the box of a drawing (layouts/_shortcodes/diagram.html):
+  - tabindex="0" makes the box a Tab stop. Then a person who uses only the
+    keyboard can move to the box and scroll it with the arrow keys. Chrome
+    (from version 130) and Firefox give the focus to a box that scrolls even
+    without a tabindex, but Safari does not. So in Safari, without it, the
+    keyboard cannot scroll a wide table that has no link (checked in WebKit
+    26.4, the engine of Safari 26.4).
+  - A box that takes the focus needs a role and a name, so that a screen
+    reader can say what it is. The role is region, and the name is the name of
+    the table.
+  - So every box is a Tab stop and a landmark, also when its table fits and
+    the box does not scroll. The site has no script, so this file cannot know
+    which boxes scroll on the screen of the reader.
 
-  The name is on the <table>, as aria-label. A screen reader lists the tables
-  of a page by name, so each name must be different. The name is the header
+  The name is on the <table>, as aria-label, and the box has the same name. A
+  screen reader can list the tables and the regions of a page by name, so each
+  name must be different. The name is the header
   cells, such as "Command, What it does". The role already says "table", so
   the name does not repeat it. The header cells say what the table is about,
   and the page needs no extra text for it. These rules choose the words:
@@ -84,7 +92,7 @@
 {{- end -}}
 {{- $_ := .Page.Store.SetInMap "tableNames" (printf "%d" .Ordinal) $label -}}
 
-<div class="table-scroll">
+<div class="table-scroll" role="region" aria-label="{{ $label }}" tabindex="0">
   <table aria-label="{{ $label }}"{{ range $name, $value := .Attributes }}{{ printf " %s=\"%s\"" $name (printf "%v" $value | htmlEscape) | safeHTMLAttr }}{{ end }}>
     <thead>
       {{- range .THead }}

@@ -19,9 +19,8 @@
 //     name. Every <table> is also the only child element of a scroll box: an
 //     element with the class table-scroll. A table that scrolls by itself needs
 //     display:block, and then a browser or a screen reader may stop reading it
-//     as a table. The box scrolls, and the table keeps its normal display. The
-//     box has no tabindex and no role: a browser gives the focus to a box that
-//     scrolls.
+//     as a table. The box scrolls, and the table keeps its normal display.
+//     TestTableHookBox checks the other attributes of the box.
 //   - Every link to the source code (blob or tree) goes to a path that exists
 //     in the repository, and so does every code-area meta tag.
 //   - Every regular page of the manual and the tech docs has a code-area, and a
