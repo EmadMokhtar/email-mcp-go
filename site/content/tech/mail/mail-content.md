@@ -207,11 +207,10 @@ starts with `- `, and table cells are kept apart by a space. A link is written
 as `text (url)`. The address is parsed and written with spaces, round brackets
 and other unsafe characters as `%XX` (a percent sign and two hexadecimal
 digits), so that it is one word. It is shown only for `http`, `https` and
-`mailto`, only if it is at most 2,048 characters (`maxShownURL`), and only if
-the link can be seen. A part of an address that is too long is cut, and
-`...[cut]` marks the place, because text can hide in an address and a person
-rarely reads it. The manual has the numbers (see [Known
-limitations](/manual/reference/known-limitations/)).
+`mailto`, and only if the link can be seen. A part of an address that is too
+long is cut, and `...[cut]` marks the place, because text can hide in an
+address and a person rarely reads it. If the whole address is very long, it is
+not shown, and only the text of the link stays.
 
 **HTML as the result.** The `html` body format uses `ReadableHTML`, and outgoing
 mail uses `outgoingHTML`. Both are in {{< src "internal/mime/visible.go" >}} and
@@ -219,8 +218,10 @@ run `prunedHTML`. It applies the same rules (`prune` uses the same `visibility`
 as the walk of `HTMLToText`), renders what is left, and cleans it with the
 policy of `SanitizeHTML` (built on `bluemonday`, a library that cleans HTML).
 The result has no `img`, `script` or `style` element and no `style` attribute.
-The attributes that stay are `href` and the fixed `rel="nofollow"`, and a link
-that cannot be seen loses its `href`.
+The attributes that stay are `href` and the fixed `rel="nofollow"`. A link that
+cannot be seen loses its `href`. In outgoing mail (`outgoingHTML`), a link also
+loses its `href` when the text does not show its whole address, for example
+when the address is long.
 
 ## Limits
 
