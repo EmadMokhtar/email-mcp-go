@@ -7,7 +7,11 @@ code_areas:
   - internal/connect/connect.go
   - internal/service/accounts.go
   - internal/service/reconnect.go
+  - internal/service/service.go
+  - internal/service/write.go
+  - internal/app/sender.go
   - internal/web/accounts.go
+  - internal/web/reconnect.go
 ---
 
 This page explains how an account gets connected to email-mcp: how server
@@ -50,9 +54,9 @@ source that fails gives nothing, and the others still count. `Mail` returns
 `discovery.ErrInvalidAddress` for an address that it cannot use, before any
 network use. A host name is accepted only as a plain DNS name with at least two
 labels. A label is one part of a name between dots, such as `imap`, `example`
-and `com` in `imap.example.com`. A name that ends in a number is refused. So is
-a name whose last label is for this computer or a local network, or is kept for
-tests and examples and never names a public server.
+and `com` in `imap.example.com`. A name that ends in a number is refused. A few
+names that are for this computer, a local network, tests or examples are
+refused too.
 
 The result is only a list of suggestions. The web portal shows it before it asks
 for a password, because an MX guess can name the host of a third party, such as

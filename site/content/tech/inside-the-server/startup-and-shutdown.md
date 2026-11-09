@@ -8,6 +8,7 @@ code_areas:
   - internal/app/lock_unix.go
   - internal/app/lock_windows.go
   - internal/app/sender.go
+  - internal/service/service.go
   - internal/inflight/inflight.go
   - internal/outbox/outbox.go
   - cmd/email-mcp/serve.go

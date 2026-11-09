@@ -22,12 +22,16 @@ outside `internal/`. The module is the Go module of this repository,
 `github.com/EmadMokhtar/email-mcp-go`. Go does not let code outside this module
 import a package under `internal/`.
 
-The module has three more packages, under `test/`. `test/interop` runs the
+The module has five more packages, under `test/`. `test/interop` runs the
 interop test: the mail scenario against real mail servers. It builds only with
 the build tag `interop` (a word that a Go file asks for before it is built).
 `test/interop/gencerts` makes the certificates of that test, and
-`test/sitecheck` checks the built docs site. They are tools of the repository
-and not part of the program, so this page leaves them out.
+`test/sitecheck` checks the built docs site. `test/docscheck` checks that a
+pull request that changes what the program does also changes the docs (see
+[The docs check](/tech/work-on-the-code/local-development/#the-docs-check)),
+and `test/socialcard` makes the preview picture of the landing page (build tag
+`screenshots`). They are tools of the repository and not part of the program,
+so this page leaves them out.
 
 ## The layer rule
 
@@ -91,7 +95,7 @@ the owner of the mail accounts.
 | {{< src "internal/outbox/" >}} | 3 | The queue of outgoing mail with its undo window (the time when a send can still be cancelled), and the worker that sends it at most once. | `outbox.Outbox` |
 | {{< src "internal/provider/imapsmtp/" >}} | 3 | The IMAP and SMTP backend: secure connections, a small pool of IMAP connections (open connections that calls share), reading, drafts and sending. | `imapsmtp.New`, `imapsmtp.Backend` |
 | {{< src "internal/policy/" >}} | 2 | Decides what the agent may do with an account, and limits sends and moves to the Trash. | `policy.Decide`, `policy.Limiter` |
-| {{< src "internal/secrets/" >}} | 2 | Encryption: a `Secret` type that never prints its value, sealed (encrypted) values, the vault (the part that seals and opens values with the keys in the database), and the sources of the master key (the key that protects the other keys). | `secrets.Vault`, `secrets.Secret` |
+| {{< src "internal/secrets/" >}} | 2 | Encryption: a `Secret` type that prints `[redacted]` and not its value in the normal cases, sealed (encrypted) values, the vault (the part that seals and opens values with the keys in the database), and the sources of the master key (the key that protects the other keys). | `secrets.Vault`, `secrets.Secret` |
 | {{< src "internal/discovery/" >}} | 1 | Suggests IMAP and SMTP settings from an email address. | `discovery.Finder` |
 | {{< src "internal/mime/" >}} | 1 | Mail content: cleans text from third parties, turns HTML into text, and builds outgoing mail. | `mime.CleanUntrusted`, `mime.Build` |
 | {{< src "internal/store/" >}} | 1 | The one package that talks to the SQLite database (a database engine that keeps the whole database in one file), with its migrations: numbered SQL (Structured Query Language) files that change the structure of the database. | `store.Open`, `store.Store` |
@@ -184,16 +188,15 @@ the packages of the program. Tests import more.
 | `github.com/stretchr/testify` | tests only | The checks of the tests (`require`). |
 | `github.com/chromedp/chromedp`, `github.com/chromedp/cdproto` | tests only | Drives Chrome for the screenshots of the docs site. |
 
-Two of them are not updated by Dependabot, the GitHub service that opens pull
-requests to update dependencies. Its settings are in
-{{< src ".github/dependabot.yml" >}}:
+`go-imap/v2` is a beta version. The project pins it to exactly
+`v2.0.0-beta.8`, and it changes the version only on purpose. Only
+`provider/imapsmtp` and the test server import it, so the rest of the code
+depends on `mail.Backend` and not on this library.
 
-- `go-imap/v2` is a beta version. The project pins it to exactly
-  `v2.0.0-beta.8`, and it changes the version only on purpose. Only
-  `provider/imapsmtp` and the test server import it, so the rest of the code
-  depends on `mail.Backend` and not on this library.
-- `chromedp` is only in the tests. An update would propose a release of a
-  program that did not change.
+Dependabot (the GitHub service that opens pull requests to update
+dependencies) does not update `go-imap/v2` or `chromedp`. The section
+[Dependabot](/tech/work-on-the-code/local-development/#dependabot) lists the
+modules that it leaves out, and why.
 
 ## The copied HTML parser
 

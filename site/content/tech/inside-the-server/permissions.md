@@ -14,6 +14,7 @@ code_areas:
   - internal/mcpserver/errors.go
   - internal/web/settings.go
   - internal/tokens/tokens.go
+  - internal/app/sender.go
 ---
 
 This page explains what the agent may do with an account, who can change it, and
@@ -195,9 +196,8 @@ The new-recipient check is a switch in `Limits` and is off by default.
 - **Hour and day limits.** Each limit is counted in a fixed window, in UTC
   (Coordinated Universal Time). The hour window starts at the top of each hour,
   and the day window at 00:00 UTC (`now.Truncate` in `Limiter.Reserve`). The
-  windows do not slide. So 20 sends at 10:59 and 20 more at 11:00 can both pass.
-  The wait in a full limit is the time until its window ends. A limit of 0
-  allows nothing.
+  windows do not slide: a count starts again when its window ends. The wait in
+  a full limit is the time until its window ends. A limit of 0 allows nothing.
 - **Counting.** `Limiter.Reserve` checks and counts in one database transaction
   (a group of database steps that all happen or none do). So two sends at the
   same time, in one program or in several that share the database, cannot pass a

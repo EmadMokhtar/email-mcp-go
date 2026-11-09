@@ -29,11 +29,16 @@ code_areas:
   - site/layouts/_shortcodes/screenshot.html
   - test/sitecheck/main.go
   - test/sitecheck/maps.go
+  - test/socialcard/
   - test/docscheck/main.go
   - .github/workflows/docs-check.yml
   - .github/pull_request_template.md
   - Dockerfile
   - .dockerignore
+  - .hugo-version
+  - site/hugo.toml
+  - site/config/
+  - site/assets/
 ---
 
 This page explains how to build, test and change the code of email-mcp on your
@@ -179,12 +184,13 @@ code:
   say why, because the code already says what.
 - Write table-driven tests (one test runs the same check over a table of
   cases), with `github.com/stretchr/testify/require`.
-- A message id in the tool API (application programming interface: here, the
-  tools and their arguments) is an IMAP UID (IMAP: Internet Message Access
-  Protocol, for reading mail; a UID is the unique id of a message in its
-  folder, which stays the same when other messages are removed), never a
-  sequence number (the position of a message, which changes). Address messages
-  with UID sets in each IMAP command, never with sequence sets.
+- A message in the tool API (application programming interface: here, the
+  tools and their arguments) is named by a ref, never by a sequence number
+  (the position of a message, which changes). The agent passes a ref back
+  unchanged (see [Refs, folders and
+  tags](/tech/mail/mail-backend/#refs-folders-and-tags)). Address messages
+  with UID (unique id) sets in each IMAP (Internet Message Access Protocol)
+  command, never with sequence sets.
 - Fetch with `BODY.PEEK` (a fetch that does not mark the message as read),
   unless the purpose is to mark it as read.
 - Log no mail content and no secret. The page
@@ -192,7 +198,8 @@ code:
 
 The design documents under `docs/superpowers/specs/` are history. The page
 [Architecture overview](/tech/start-here/overview/#the-design-documents) says
-how to read them.
+how to read them. One part is kept current (see [The landing page truth
+table](#the-landing-page-truth-table)).
 
 ## Commit and pull request titles
 
@@ -208,8 +215,8 @@ page [Making a release][bump] says which type raises which number.
 ## Add code
 
 The page [Map of packages](/tech/start-here/package-map/#where-to-add-code)
-says which package gets which kind of code. These lists name the files and the
-tests to change.
+says which package gets which kind of code. The sections below name the files
+and the tests to change, or link to the page that does.
 
 ### Add a tool
 
@@ -256,25 +263,16 @@ is the AI (artificial intelligence) program that calls the tools.
 6. **Only for the person?** A use case that only the person may call gets no
    tool. Add it to `userOnlyCalls` in
    {{< src "internal/mcpserver/useronly_test.go" >}}, and the test fails when
-   the code of `mcpserver` calls it. A tool name must not contain `settings`,
-   `remove`, `approve`, `reject`, `token`, `autonomy` or `approval`:
-   `TestNoToolIsNamedForAUserOnlyUseCase` in the same file fails for such a
-   name.
+   the code of `mcpserver` calls it. A test of the same file also checks the
+   name of each tool: see [Tests that check every item of a
+   list](/tech/work-on-the-code/testing/#tests-that-check-every-item-of-a-list).
 
 Then update the manual page
 [What the agent can do](/manual/daily-use/what-the-agent-can-do/).
 
 ### Add a command
 
-1. Add an entry to the list `commands` in
-   {{< src "cmd/email-mcp/main.go" >}}: the name, one line for the help, and its
-   function.
-2. Write the function in a file of `cmd/email-mcp`, with its own
-   `flag.FlagSet` (the set of flags of one command).
-3. Test it through `runWith`, with a fake `system`, so the test needs no
-   terminal and opens no browser (see
-   [Testing](/tech/work-on-the-code/testing/#clocks-and-fakes)).
-4. Update the manual page [Commands](/manual/reference/commands/).
+See [Add a command](/tech/ways-in/command-line/#add-a-command).
 
 ### Add a migration
 
@@ -412,7 +410,9 @@ The pull request template {{< src ".github/pull_request_template.md" >}} adds
 two checkboxes, one for each kind of docs, and a link to this section. GitHub
 fills it in when you open a pull request on github.com. A pull request that a
 tool opens with its own text does not get it. The docs check runs in both
-cases.
+cases. When a change alters what the landing page states, also read its truth
+notes again (see [The landing page truth
+table](#the-landing-page-truth-table)).
 
 ### Map of the tech docs
 
@@ -580,6 +580,11 @@ list.
 | `.goreleaser.yaml` | [Install email-mcp][m-install], [Verifying a release][m-verify] |
 | `.github/workflows/release.yml` | [Verifying a release][m-verify] |
 | `Dockerfile` | [Containers][m-containers] |
+| The code of the behaviour that the landing page states: the levels, the defaults of a new account, the approval page, the Trash rules, the activity log | Not a manual page: read again the words with the truth notes (`T1`, `T2` and so on) in `site/content/_index.md` |
+
+The landing page is not a page of the manual, but the person reads it first.
+Its claims have truth notes (see [The landing page truth
+table](#the-landing-page-truth-table)).
 
 These areas have no manual page: `internal/service`, `internal/domain/mail`,
 `internal/signing`, `internal/inflight`, `internal/errtype`,
@@ -589,6 +594,21 @@ row of that tool or page. Some files of a mapped package have no row, such as
 `internal/app/sender.go`, because no manual page describes them. If a change of
 such a file is something that a person can see, find the page that shows it,
 and add a row here.
+
+### The landing page truth table
+
+The truth table is the list of the claims of the landing page, each with the
+code that proves it. It is in the design document of the landing page,
+{{< src "docs/superpowers/specs/2026-11-05-landing-page-design.md" >}}. The
+other design documents are history, but this table is kept current, because
+`site/content/_index.md` and `test/sitecheck/landing_test.go` point to it.
+
+Each claim on the landing page has a truth note, such as `T13`: a comment in
+the front matter (the block of settings at the top of the file), or the
+shortcode `truth` in the body. The note names the row of the claim in the
+table. When a change touches the code that a row names, read the words with
+that note again. These rows cover the levels, the defaults of a new account,
+the approval page, the Trash rules and the activity log.
 
 ### Find the pages that name a path
 

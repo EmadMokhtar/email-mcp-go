@@ -57,8 +57,10 @@ hosted mode come in later milestones, with their own packages.
 
 ## Project-specific rules
 
-- Message IDs in the tool API are IMAP **UIDs**, never sequence numbers.
-  Sequence numbers shift when a message is expunged.
+- A message in the tool API is named by a **ref**, never by a sequence
+  number. A ref is an opaque string that holds the folder name, the
+  UIDVALIDITY and the IMAP UID. Sequence numbers shift when a message is
+  expunged.
 - Address messages with UID sets, never sequence sets, for every IMAP
   operation.
 - Fetch with `BODY.PEEK` unless the intent really is to mark mail as read.

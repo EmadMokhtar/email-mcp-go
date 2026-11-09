@@ -88,7 +88,8 @@ the language of web pages and of many mails.
 | How do I add a log line safely? | [Activity log and program log](/tech/inside-the-server/audit-and-logging/#add-a-log-line) |
 | What does `app.Open` build, and in what order? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#open-six-steps) |
 | What background work runs? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#run-clean-up-then-three-jobs) |
-| What happens when I press Ctrl-C, or the client closes stdin? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#the-signals-and-a-second-ctrl-c) |
+| What happens when I press Ctrl-C? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#the-signals-and-a-second-ctrl-c) |
+| What happens when the client closes stdin? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#stdio-and-http) |
 | How long can a stop take, and why? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#close-six-steps) |
 | What happens at the next start after a crash? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#after-a-crash) |
 | Why does a short command not wait for the queue? | [Startup and shutdown](/tech/inside-the-server/startup-and-shutdown/#short-commands) |
@@ -120,7 +121,7 @@ the language of web pages and of many mails.
 | How are the commands registered and tested? | [The command line](/tech/ways-in/command-line/#how-commands-are-registered-and-tested) |
 | Which commands open the parts of the program (the `App`), and how does each one close it? | [The command line](/tech/ways-in/command-line/#what-each-command-opens) |
 | How do the commands handle passwords, prompts and exit codes (the number that a program gives back when it ends)? | [The command line](/tech/ways-in/command-line/#passwords-prompts-and-exit-codes) |
-| What do the web portal and the commands share? | [The command line](/tech/ways-in/command-line/#what-the-commands-share-with-the-web-portal) |
+| Which use cases and which kind of caller do the commands share with the web portal? | [The command line](/tech/ways-in/command-line/#what-the-commands-share-with-the-web-portal) |
 | How do I add a command? | [The command line](/tech/ways-in/command-line/#add-a-command) |
 | Which checks run before a request of `serve --http` reaches a tool, and in what order? | [Local HTTP mode](/tech/ways-in/local-http/#the-checks-in-order) |
 | How do the access tokens of local HTTP work? | [Local HTTP mode](/tech/ways-in/local-http/#tokens) |
@@ -142,7 +143,7 @@ the language of web pages and of many mails.
 | How do I build, test and lint the code? | [Local development](/tech/work-on-the-code/local-development/#the-make-targets) |
 | Which Go version do I need? | [Local development](/tech/work-on-the-code/local-development/#the-go-version) |
 | What does CI (continuous integration: the checks that GitHub runs on each pull request and on each push to `main`) run? | [Local development](/tech/work-on-the-code/local-development/#what-ci-runs) |
-| How do I add a tool, a command, a migration or a package? | [Local development](/tech/work-on-the-code/local-development/#add-code) |
+| Which files and tests do I change to add a tool, a command, a migration or a package? | [Local development](/tech/work-on-the-code/local-development/#add-code) |
 | Which conventions does the code follow? | [Local development](/tech/work-on-the-code/local-development/#rules-of-the-code) |
 | Which page of the docs do I update when I change the code? | [Local development](/tech/work-on-the-code/local-development/#which-page-do-i-update) |
 | Which kinds of test exist, and what does each one prove? | [Testing](/tech/work-on-the-code/testing/#the-kinds-of-test) |
@@ -156,3 +157,4 @@ the language of web pages and of many mails.
 | What do I do when a release fails? | [Making a release](/tech/work-on-the-code/release-process/#when-the-release-fails) |
 | How can I try the build without publishing? | [Making a release](/tech/work-on-the-code/release-process/#try-the-build-on-your-computer) |
 | How is the docs site published? | [Making a release](/tech/work-on-the-code/release-process/#how-the-site-is-published) |
+| What does this term, short name or unit mean? | [Glossary](/tech/reference/glossary/) |
