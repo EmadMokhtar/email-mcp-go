@@ -22,9 +22,9 @@
 # message, and says when the message also has characters that cannot be seen
 # (Body and MoreChars in internal/service/approvals.go). Body is text: for a
 # draft written in another mail program, it is the text that a mail program
-# would show (ShownText and LayoutOf in internal/mime/parts.go), without the
-# styles or images. The page shows each attachment by name and media type, not
-# its content (Attachments). In
+# would show (ShownText in internal/mime/decode.go, LayoutOf in
+# internal/mime/parts.go), without the styles or images. The page shows each
+# attachment by name and media type, not its content (Attachments). In
 # section 3, a link to the Security page of the manual follows "Only you can
 # change a level": like the manual, the page says where that holds. It holds
 # for an agent that can only call the tools of email-mcp, not for one that

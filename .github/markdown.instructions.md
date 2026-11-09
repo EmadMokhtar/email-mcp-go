@@ -8,9 +8,10 @@ applyTo: 'site/content/**/*.md'
 These rules describe the pages of the docs site in `site/content/`. Hugo
 builds the site, and it shows the page title from the front matter, so a page
 has no H1. The validators are the programs that check the pages when
-`make site` runs: the site check (`test/sitecheck`), and the Hugo templates in
-`site/layouts/_markup/` that draw each link and each table and stop the build
-on a broken internal link. They check some of the rules (see the list below).
+`make site` runs: the site check (`test/sitecheck`), and the Hugo template
+`site/layouts/_markup/render-link.html`, which draws each link and stops the
+build on a broken internal link. They check some of the rules (see the list
+below).
 The rules do not apply to the other Markdown files of the repository:
 `README.md` opens with an H1 and carries no front matter, which is correct for
 a file read directly on GitHub, and `docs/superpowers/` holds the plans and
