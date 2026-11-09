@@ -20,10 +20,11 @@
 # a window shows only the start of the text (previewBodyChars in
 # internal/mcpserver/elicit.go). The approval page shows the whole text of the
 # message, and says when the message also has characters that cannot be seen
-# (Body and MoreChars in internal/service/approvals.go). Body is the text of
-# the HTML when the message has HTML, so for a draft written in another mail
-# program the page shows the text and not the styles or images. It shows each
-# attachment by name and media type, not its content (Attachments). In
+# (Body and MoreChars in internal/service/approvals.go). Body is text: for a
+# draft written in another mail program, it is the text that a mail program
+# would show (ShownText and LayoutOf in internal/mime/parts.go), without the
+# styles or images. The page shows each attachment by name and media type, not
+# its content (Attachments). In
 # section 3, a link to the Security page of the manual follows "Only you can
 # change a level": like the manual, the page says where that holds. It holds
 # for an agent that can only call the tools of email-mcp, not for one that
@@ -155,6 +156,9 @@ local:
     text: >-  # T26
       email-mcp does not keep a copy of your mailbox. Your messages stay on
       your mail server.
+  # Chrome, Edge and Firefox send every name that ends in .localhost to your
+  # own computer by themselves (uiHost in internal/web/server.go). Another
+  # browser may need a line in the hosts file, so the page names the three.
   - term: Web pages
     text: >-  # T27
       The approval page and the settings pages run only on your computer, at
@@ -235,9 +239,10 @@ it.{{< truth "T3" >}} On the approval page, you see who will get it,
 including hidden copies (Bcc), the subject, the attachments and the whole text
 of the message.{{< truth "T19" >}} If the message also has characters that
 cannot be seen, the page says so.{{< truth "T19" >}} For a draft that you wrote
-in another mail program, the page shows its text, not its styles or
-images.{{< truth "T19" >}} The page lists each attachment by name and
-type.{{< truth "T19" >}} Then you press **Reject** or **Approve and send**.
+in another mail program, the page shows the text that a mail program would
+show, without its styles or images.{{< truth "T19" >}} The page lists each
+attachment by name and type.{{< truth "T19" >}} Then you press **Reject** or
+**Approve and send**.
 
 {{< rows "decide" "ul" >}}
 

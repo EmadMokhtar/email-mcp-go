@@ -299,7 +299,8 @@ in step 3. (My call.)
 - Level 4 is not marked with green. "New account starts here" is said in words.
   Green marks the current place and the primary action, and this is neither.
   (My call.)
-- Level 5 is called "Delete" in the portal and "Move to Trash" in the README.
+- Level 5 is called "Delete" in the portal and "Move to Trash" in the table of
+  `manual/daily-use/permission-levels.md`.
   The page uses the portal name and explains it in the same row.
 - Three rows changed after review, to match the code, which is the source of
   truth. `move_messages` refuses, at every level, a folder that email-mcp
@@ -328,8 +329,9 @@ that moment.
   copies (Bcc), the subject, the attachments and the whole text of the
   message. If the message also has characters that cannot be seen, the page
   says so. For a draft that you wrote in another mail program, the page shows
-  its text, not its styles or images. The page lists each attachment by name
-  and type. Then you press Reject or Approve and send."
+  the text that a mail program would show, without its styles or images. The
+  page lists each attachment by name and type. Then you press Reject or
+  Approve and send."
 - Four rows, one sentence each:
   - "Approve and send appears only when the page can show the whole text of
     the message."
@@ -429,8 +431,8 @@ surprise.
 
 **Notes.**
 
-- "Planned" is softer than the README words ("come next", "come later"). Do not
-  write a date or a version.
+- "Planned" is softer than the words that the README first used ("come next",
+  "come later"). Do not write a date or a version.
 - The "AI apps" row depends on the manual keeping the setup for these five
   apps (the pages under `manual/getting-started/connect-ai-app/`). If the
   manual drops one, the builder removes its name from this row.
@@ -559,9 +561,8 @@ the lighter green with dark text (contrast 7.63; see "Accessibility").
 **What it does not claim.** Some apps, such as Claude Code over stdio, ask in
 their own window and not on this page (`manual/daily-use/confirmations.md`;
 `manual/daily-use/app-confirmation.md`). Section 4 says this in words (T24).
-The caption
-says "the approval page", which is true: this page exists, and the agent links
-to it when the app cannot ask.
+The caption says "the approval page", which is true: this page exists, and the
+agent links to it when the app cannot ask.
 
 ## Calls to action
 
@@ -975,15 +976,16 @@ for access, which only gives a link, and nothing changes until you choose.**
 - Qualifier: "The agent has no tool for this." Keep exactly this scope. Do not
   rewrite it as "the agent cannot".
 - Limit: it holds for an agent that can only call the tools of email-mcp
-  (manual `daily-use/security`, `daily-use/permission-levels`). The page links
-  to the Security page of the manual right after the paragraph, and adds no
-  claim.
+  (`manual/daily-use/security.md`, `manual/daily-use/permission-levels.md`).
+  The page links to the Security page of the manual right after the
+  paragraph, and adds no claim.
 
 **T19. On the approval page, you see who gets it (Bcc included), the subject,
 the attachments and the whole text of the message. If the message also has
 characters that cannot be seen, the page says so. For a draft that you wrote in
-another mail program, the page shows its text, not its styles or images. The
-page lists each attachment by name and type.**
+another mail program, the page shows the text that a mail program would show,
+without its styles or images. The page lists each attachment by name and
+type.**
 - Manual: `manual/daily-use/confirmations.md` ("What you see": the approval
   page shows the whole text; the preview of the AI app shows the first 500
   characters); `manual/daily-use/security.md` (a confirmation shows the media
@@ -996,8 +998,12 @@ page lists each attachment by name and type.**
   file name of each attachment, with its media type; `MoreChars`: the count of
   the characters that cannot be seen);
   `internal/service/send.go` (`sendContent`: `body` and `hidden`;
-  `draftUnseen`); `internal/web/approvals.go` (the page shows `Body` and adds
-  the `MoreChars` line).
+  `draftUnseen`; for a draft, `Body` is `ShownText`, the text of the parts that
+  a mail program shows, as `LayoutOf` in `internal/mime/parts.go` decides);
+  `internal/web/approvals.go` (the page shows `Body` and adds the `MoreChars`
+  line).
+- The comment on `Body` says "the whole text that the recipient sees". The page
+  says less than that comment: "the whole text of the message".
 - Scope: the approval page only. An AI app that asks in its own window shows
   the start of the text (T24), so the heading of section 4 and step 4 of
   section 2 say "the message", not "the whole message".
@@ -1071,7 +1077,7 @@ your mail server.**
 `email-mcp.localhost`, a name that Chrome, Edge and Firefox send to your own
 computer.**
 - Manual: `manual/getting-started/connect-account.md` ("If your browser does
-  not find `email-mcp.localhost`"); `manual/daily-use/web-pages.md`.
+  not find `email-mcp.localhost`").
 - Code: `internal/web/server.go` (`uiHost = "email-mcp.localhost"` and
   `listenAddr`).
 - Qualifier: "Chrome, Edge and Firefox". Do not write "always" or "every

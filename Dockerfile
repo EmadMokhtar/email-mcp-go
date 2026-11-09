@@ -13,8 +13,7 @@
 # the web interface are reachable only from inside the container. The default
 # command below serves MCP over standard input and output (stdio), which an MCP
 # client can use with "docker run -i". This image is groundwork for hosted mode,
-# which is planned (see site/content/manual/reference/containers.md). That page
-# explains this in more detail.
+# which is planned (see site/content/manual/reference/containers.md).
 #
 # One Dockerfile serves two builds. The build argument BINARY_FROM chooses
 # where the binary comes from:

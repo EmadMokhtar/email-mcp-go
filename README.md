@@ -15,11 +15,12 @@ apps, such as Claude Code, call tools that other programs offer.
 - You decide what the agent may do, per account: only read (level 1), also
   organize (2), also write drafts (3), also send (4), also move mail to the
   Trash (5). Level 0 gives no access.
-- By default, every send waits for your "yes". Moving mail to the Trash needs
-  level 5. Mail servers differ, so email-mcp may not recognize every Trash
-  folder. By default, each move to the Trash at level 5 waits for your "yes"
-  too. The one exception is a draft: at level 3, the agent can move a draft to
-  the Trash, and it does not ask you.
+- By default, every send waits for your "yes".
+- Moving mail to the Trash needs level 5. Mail servers differ, so email-mcp
+  may not recognize every Trash folder. By default, each move to the Trash at
+  level 5 waits for your "yes", as a send does. The one exception is a draft:
+  at level 3, the agent can move a draft to the Trash, and it does not ask
+  you.
 - One server can hold several accounts.
 
 This version covers mail only. Calendar and contacts, and sign-in with Google
@@ -51,10 +52,10 @@ check the signature of a release.
 
 All documentation is on the site <https://emadmokhtar.github.io/email-mcp-go/>.
 The site shows the newest published docs. They can be ahead of the newest
-release. The pages for an older version are in the source code at its tag, in
-the folder `site/content/` (for 0.6.1 and newer) or in its `README.md` (before
-0.6.1). For example, the pages for version 0.6.2 are in
-[`site/content/` at the tag v0.6.2][v062].
+release, because the site can also be published by hand. The pages for an older
+version are in the source code at its tag, in the folder `site/content/` (for
+0.6.1 and newer) or in its `README.md` (before 0.6.1). For example, the pages
+for version 0.6.2 are in [`site/content/` at the tag v0.6.2][v062].
 
 - [The start page][site]: what email-mcp does, on one page.
 - [The user manual][manual]: install email-mcp, connect an account and an AI
