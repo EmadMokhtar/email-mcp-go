@@ -174,8 +174,8 @@ entry.
 2. Add only ids, counts, fixed codes and the name of a tool. Never add a secret,
    an address, a subject, a body, a token or the text of an error.
 3. For an error, add `errtype.Chain(err)`.
-4. Keep a secret value in the type `secrets.Secret`, and check the comment of
-   the type.
+4. Keep a secret value in the type `secrets.Secret`, and still keep it out of
+   the log line.
 5. Write nothing to standard output.
 6. If the person should see what happened, add an audit entry too, with a
    `detail` code.

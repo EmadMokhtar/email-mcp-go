@@ -765,9 +765,7 @@ two or more meanings gives each one.
 - **Transport:** the way that the MCP messages travel: stdio or local HTTP. See
   [Map of packages][pma].
 - **Truth table:** the list of the claims of the landing page, each with the
-  code that proves it, in the design document of the landing page. Each claim
-  of the page has a note with its row, such as `T13`. See [Local
-  development][ldr].
+  code that proves it. See [Local development][ldu].
 
 ## U
 
@@ -930,6 +928,7 @@ two or more meanings gives each one.
 [ldc]: /tech/work-on-the-code/local-development/#what-ci-runs
 [ldd]: /tech/work-on-the-code/local-development/#dependabot
 [ldr]: /tech/work-on-the-code/local-development/#rules-of-the-code
+[ldu]: /tech/work-on-the-code/local-development/#the-landing-page-truth-table
 [ldt]: /tech/work-on-the-code/local-development/#commit-and-pull-request-titles
 [lda]: /tech/work-on-the-code/local-development/#add-a-package
 [lds]: /tech/work-on-the-code/local-development/#the-docs-site

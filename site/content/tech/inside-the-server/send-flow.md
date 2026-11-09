@@ -106,12 +106,14 @@ message cannot be approved twice: once in the chat and once on the page.
 
 In band means that the question appears in the chat of the client (the AI app
 that talks to the server). `canElicitInBand` in
-{{< src "internal/mcpserver/elicit.go" >}} decides whether this caller may
-confirm in band, and whether the client can show the question as a form in
-this call (form elicitation: a way for a server to ask the person a question
-through the app). [Who gets which
-channel](/tech/ways-in/local-http/#who-gets-which-channel) has its three
-conditions and the channel of each caller.
+{{< src "internal/mcpserver/elicit.go" >}} decides whether the question is in
+band. It needs three things: a caller that may confirm in band
+(`Principal.InBandConfirm`), form elicitation in the client (a way for a server
+to ask the person a question through a form in the app), and a way to ask
+(`canAsk`), which depends on the
+protocol version of the client, or on a setting for older clients on stdio.
+[Who gets which channel](/tech/ways-in/local-http/#who-gets-which-channel) has
+the details and the channel of each caller.
 
 {{< diagram "send-two-calls" >}}
 
@@ -314,9 +316,11 @@ the level to Off and then cancel what waits (`CancelQueuedSend` in
 {{< src "internal/service/queue.go" >}} and
 {{< src "cmd/email-mcp/outbox.go" >}}). Once a send is running, the cancel is
 too late (`outbox.ErrTooLate`). While the program stops, it refuses every tool
-call, `cancel_send` too. [Startup and
-shutdown](/tech/inside-the-server/startup-and-shutdown/#close-six-steps) says
-how the person can still cancel during a stop.
+call, `cancel_send` too. The person can still cancel a queued send in two ways.
+The command `email-mcp outbox cancel` works from another process that uses the
+same data directory. The Activity page works during step 4 of the stop, when
+this program already runs the web server (see [Close: six
+steps](/tech/inside-the-server/startup-and-shutdown/#close-six-steps)).
 
 ## Trash uses the same path
 
