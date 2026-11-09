@@ -327,8 +327,8 @@ that moment.
 - Paragraph: "By default, email-mcp holds a message when your agent wants to
   send it. On the approval page, you see who will get it, including hidden
   copies (Bcc), the subject, the attachments and the whole text of the
-  message. If the message also has characters that cannot be seen, the page
-  says so. For a draft that you wrote in another mail program, the page shows
+  message. If the text of the message also has characters that cannot be
+  seen, the page says so. For a draft that you wrote in another mail program, the page shows
   the text that a mail program would show, without its styles or images. The
   page lists each attachment by name and type. Then you press Reject or
   Approve and send."
@@ -362,14 +362,14 @@ that moment.
   on AI apps says what such a window shows (T19, T24).
 - The approval page shows the text of the message, not every character that
   goes out. So the page says "the whole text of the message" and not "the full
-  text", and it says that the page tells you when the message also has
-  characters that cannot be seen (T19, T20). This is the meaning of the manual
+  text", and it says that the page tells you when the text of the message
+  also has characters that cannot be seen (T19, T20). This is the meaning of the manual
   (`manual/daily-use/confirmations.md`: "The approval page shows the whole
   text").
-- The page said "the whole text as the recipient will see it" before review.
-  The approval page shows text: for a message with HTML, `Body` is the text of
-  the HTML, so a draft written in another mail program shows no styles or
-  images. Attachments are shown by name and media type, not by content
+- The page said "the whole text as the recipient will see it" in the first
+  draft. The approval page shows text: for a message with HTML, `Body` is the
+  text of the HTML, so a draft written in another mail program shows no styles
+  or images. Attachments are shown by name and media type, not by content
   (`manual/daily-use/security.md`). So the paragraph now says "the whole text
   of the message" and names these two limits (T19).
 
@@ -389,7 +389,7 @@ that moment.
   - "Web pages". "The approval page and the settings pages run only on your
     computer, at `email-mcp.localhost`, a name that Chrome, Edge and Firefox
     send to your own computer." (It said "That name always means your own
-    computer" before review. Another browser may need a line in the hosts
+    computer" in the first draft. Another browser may need a line in the hosts
     file, as `manual/getting-started/connect-account.md` says. T27.)
   - "Activity". "Every tool call of your agent is written to an Activity page
     that you can read. The log never stores message bodies or attachment data."
@@ -981,11 +981,11 @@ for access, which only gives a link, and nothing changes until you choose.**
   paragraph, and adds no claim.
 
 **T19. On the approval page, you see who gets it (Bcc included), the subject,
-the attachments and the whole text of the message. If the message also has
-characters that cannot be seen, the page says so. For a draft that you wrote in
-another mail program, the page shows the text that a mail program would show,
-without its styles or images. The page lists each attachment by name and
-type.**
+the attachments and the whole text of the message. If the text of the message
+also has characters that cannot be seen, the page says so. For a draft that you
+wrote in another mail program, the page shows the text that a mail program
+would show, without its styles or images. The page lists each attachment by
+name and type.**
 - Manual: `manual/daily-use/confirmations.md` ("What you see": the approval
   page shows the whole text; the preview of the AI app shows the first 500
   characters); `manual/daily-use/security.md` (a confirmation shows the media

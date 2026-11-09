@@ -19,8 +19,8 @@
 # the paragraph says what an AI app shows when it asks in its own window. Such
 # a window shows only the start of the text (previewBodyChars in
 # internal/mcpserver/elicit.go). The approval page shows the whole text of the
-# message, and says when the message also has characters that cannot be seen
-# (Body and MoreChars in internal/service/approvals.go). Body is text: for a
+# message, and says when the text of the message also has characters that
+# cannot be seen (Body and MoreChars in internal/service/approvals.go). Body is text: for a
 # draft written in another mail program, it is the text that a mail program
 # would show (ShownText in internal/mime/decode.go, LayoutOf in
 # internal/mime/parts.go), without the styles or images. The page shows each
@@ -237,12 +237,12 @@ manual page [Security](/manual/daily-use/security/) says when this holds.
 By default, email-mcp holds a message when your agent wants to send
 it.{{< truth "T3" >}} On the approval page, you see who will get it,
 including hidden copies (Bcc), the subject, the attachments and the whole text
-of the message.{{< truth "T19" >}} If the message also has characters that
-cannot be seen, the page says so.{{< truth "T19" >}} For a draft that you wrote
-in another mail program, the page shows the text that a mail program would
-show, without its styles or images.{{< truth "T19" >}} The page lists each
-attachment by name and type.{{< truth "T19" >}} Then you press **Reject** or
-**Approve and send**.
+of the message.{{< truth "T19" >}} If the text of the message also has
+characters that cannot be seen, the page says so.{{< truth "T19" >}} For a
+draft that you wrote in another mail program, the page shows the text that a
+mail program would show, without its styles or images.{{< truth "T19" >}} The
+page lists each attachment by name and type.{{< truth "T19" >}} Then you press
+**Reject** or **Approve and send**.
 
 {{< rows "decide" "ul" >}}
 
