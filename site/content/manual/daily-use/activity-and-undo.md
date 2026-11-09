@@ -24,7 +24,9 @@ agent. Every tool and every outcome has one: a read, a refused call, and a call
 with wrong arguments too. An *action* is what email-mcp or you did, such as a
 send. So a call that changes something has a request and an action. A send or a
 move to Trash that you confirm in your AI app has two requests: the first asks
-you, and the second brings your answer.
+you, and the second brings your answer. A tool call that comes while email-mcp
+stops is refused, and it has no row (see [When email-mcp
+stops](#when-email-mcp-stops)).
 
 A request keeps the arguments of the call, encrypted, so you can see what the
 agent searched for or which messages it asked for. This includes search text,
@@ -66,7 +68,8 @@ both times. See [All settings of an account][all].
 
 The agent or you can cancel a send during this window. You can cancel at any
 permission level (a level is a number from 0 to 5 that says what the agent may
-do with the mail of an account).
+do with the mail of an account). While email-mcp stops, the agent cannot cancel
+(see [When email-mcp stops](#when-email-mcp-stops)).
 
 To cancel in the browser (if the web pages are closed, see [Open the pages
 again][open] first):
@@ -84,9 +87,10 @@ again][open] first):
 If the page says "It is too late to cancel this send: it is being sent, or it
 has ended.", the send already left, or it is leaving now.
 
-A send that still waits for your answer is not in this list. It is on **Waiting
-for you**. Click **Reject** there. The agent can also withdraw such a send with
-the tool `cancel_send`. The page then says **Cancelled**. See
+A send that waits for your answer is not in this list. If your AI app shows the
+form, answer it there. The agent can also withdraw the send with the tool
+`cancel_send`. If the agent gave you an approval link, the send is on **Waiting
+for you**: click **Reject** there. See
 [Confirmations](/manual/daily-use/confirmations/).
 
 To cancel without a browser, run these two commands in a terminal (a window
@@ -103,6 +107,39 @@ The first command prints the columns `ID`, `ACCOUNT`, `GOES OUT` and `STATE`.
 When nothing waits, it prints "No message waits to go out." The second command
 prints "Cancelled the send" and the id, and "It will not go out." The page
 [Commands](/manual/reference/commands/) lists every command of email-mcp.
+
+### When email-mcp stops
+
+When you stop email-mcp (Ctrl-C, or you close the AI app), it does not end at
+once. Ctrl-C means: hold the Ctrl key and press C. email-mcp first waits for the
+sends that are going out. Then it waits up to 5 minutes and sends the queued
+messages when their window ends. A message that is not due in those 5 minutes,
+such as a send that will try again later, stays queued. A stop usually takes a
+few seconds, and at most about 20 minutes.
+
+During the stop, the agent cannot call `cancel_send`: email-mcp refuses every
+tool call. Cancel with `email-mcp outbox cancel <id>` in another terminal, or on
+the Activity page if that program already shows the pages.
+
+A send that waits for your answer cannot be confirmed during the stop. What
+happens next depends on how email-mcp asked you (see [Two ways to
+answer](/manual/daily-use/confirmations/#two-ways-to-answer)):
+
+- **An approval link.** The send keeps waiting. You can approve it after the
+  next start, until it expires 24 hours after the agent asked. You can still
+  reject it on **Waiting for you**, if that program shows the pages.
+- **The form of your AI app.** The app sends your answer to email-mcp in a
+  new tool call. email-mcp refuses it during the stop, and nothing is sent.
+  The form works for 10 minutes after the agent asked. After that, the agent
+  must ask again.
+
+A second Ctrl-C ends the program at once. The queued messages stay queued for
+the next email-mcp program that sends mail (`email-mcp serve` or `email-mcp
+setup`). An AI app can also end the program at once, with the same result. A
+send that is going out at that moment is later marked "delivery unknown" (after
+15 minutes, by an email-mcp program that sends mail): email-mcp cannot
+tell whether the mail server took the message. email-mcp does not send it
+again.
 
 [all]: /manual/daily-use/full-autonomy-and-limits/#all-settings-of-an-account
 [open]: /manual/daily-use/web-pages/#open-the-pages-again

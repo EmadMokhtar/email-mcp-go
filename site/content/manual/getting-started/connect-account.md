@@ -60,9 +60,9 @@ email-mcp setup
 It prints a link and opens it in your browser. The link starts with
 `http://email-mcp.localhost:` and works once, for 10 minutes. It signs your
 browser in to the local web pages of email-mcp, which run at
-`email-mcp.localhost` (a name that always means your own computer). The
-sign-in lasts 24 hours, and it ends sooner after 2 hours without use. Run
-`email-mcp setup` again to sign in again.
+`email-mcp.localhost` (a name that Chrome, Edge and Firefox send to your own
+computer). The sign-in lasts 24 hours, and it ends sooner after 2 hours without
+use. Run `email-mcp setup` again to sign in again.
 
 The command keeps running. Keep this terminal open, and open a second terminal
 for any other command. The terminal also shows log lines, such as
@@ -103,8 +103,16 @@ it.
    looks up the IMAP (Internet Message Access Protocol: the protocol for
    reading mail) and SMTP (Simple Mail Transfer Protocol: the protocol for
    sending mail) servers of your provider. It sends only the domain of your
-   address (the part after `@`) over the network, and it tests nothing yet. You
-   can also click **Enter the settings yourself**.
+   address (the part after `@`) over the network, and it tests nothing yet. The
+   domain goes to three places:
+
+   - the database of Thunderbird, the mail program of Mozilla. It is a public
+     list of the settings of mail providers;
+   - the autoconfig server of the domain. This is the server `autoconfig.` and
+     your domain, where a provider can publish its settings;
+   - DNS (Domain Name System), the service that finds the servers of a name.
+
+   You can also click **Enter the settings yourself**.
 
 3. If the page says that no server settings were found, click **Enter the
    settings yourself**, and go on with the form below. Otherwise, check the

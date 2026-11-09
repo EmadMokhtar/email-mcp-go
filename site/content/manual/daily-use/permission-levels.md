@@ -46,9 +46,14 @@ before the agent moves mail to the Trash. So:
 - reading, organizing and writing drafts (messages that are saved but not sent)
   happen without questions;
 - every send asks you first;
-- moving mail to the Trash is not possible until you raise the level to 5. The
-  one exception is a draft: at level 3, the agent can move a draft to the Trash
-  with `discard_draft`, and it does not ask you.
+- moving mail to the Trash needs level 5. Mail servers differ, so email-mcp may
+  not recognize every Trash folder. The exceptions are drafts. At level 3
+  `discard_draft` moves a draft to the Trash without a question. When the agent
+  sends a saved draft (`send_message` with `draft_ref`, the reference of the
+  draft), email-mcp moves that draft to the Trash after the mail server takes
+  the message (level 4 is enough). Neither counts toward the daily Trash limit
+  (see [Limits that stay
+  on](/manual/daily-use/full-autonomy-and-limits/#limits-that-stay-on)).
 
 The page [Confirmations](/manual/daily-use/confirmations/) explains the two
 switches.

@@ -12,6 +12,8 @@ code_areas:
 This is the local threat model, word for word from the design (section 10.1).
 The numbers in brackets are sections of the design document at
 {{< src "docs/superpowers/specs/2026-10-27-email-mcp-rewrite-design.md" >}}.
+The design document is history. Where it differs from the code, the code is
+right.
 
 > - **Local mode stops an agent that can only call this server's tools and
 >   fetch URLs.**
@@ -100,15 +102,11 @@ in your mail program before you send them.
 
 **Other web services on your computer.** A browser sends a cookie to every port
 (the number that names one service on an address) of a host. So a sign-in cookie
-on `127.0.0.1` would also go to every other local web service that you open in
-that browser, such as a dev server (a program that a developer runs to test a
-website), a notebook, a dashboard or a local AI tool. That service, a dependency
-inside it (a library that it uses), or its request log could then use your
-sign-in to approve a send or make a token (a secret that an app sends to the
-local server). This is why the web pages have their own name,
-`email-mcp.localhost`, a name that other local web services do not normally
-use. Only that name gets the cookie, and no sign-in works on `127.0.0.1` or
-`localhost`.
+could also go to another local web service that you open in that browser. This
+is why the web pages have their own name, `email-mcp.localhost`, a name that
+other local web services do not normally use. No sign-in works on `127.0.0.1`
+or `localhost`. Do not open any other service under the name
+`email-mcp.localhost`.
 
 A sign-in lasts at most 24 hours and ends after 2 hours without use. Click
 **Sign out** when you finish. Do not open the web pages from an old bookmark or
