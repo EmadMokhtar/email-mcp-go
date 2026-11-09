@@ -4,6 +4,8 @@ When a pull request changes the code of the program, the docs check asks for a c
 
 If this pull request changes no code of the program, leave both boxes empty.
 
+If the change alters behaviour that the landing page states (levels, new-account defaults, approval page, Trash rules, activity log), re-read the `# Tnn` notes in `site/content/_index.md` (the `truth` shortcodes in its body are the same notes), and their rows in the truth table of `docs/superpowers/specs/2026-11-05-landing-page-design.md`.
+
 - [ ] I updated the user manual (`site/content/manual/`), or this pull request needs the label `no-manual-change` (ask a maintainer to add it).
 - [ ] I updated the tech docs (`site/content/tech/`), or this pull request needs the label `no-tech-docs-change` (ask a maintainer to add it).
 

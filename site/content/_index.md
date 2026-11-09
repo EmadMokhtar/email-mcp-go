@@ -18,9 +18,16 @@
 # 4, the heading says "You see the message" and not "the whole message", and
 # the paragraph says what an AI app shows when it asks in its own window. Such
 # a window shows only the start of the text (previewBodyChars in
-# internal/mcpserver/elicit.go). The approval page shows the whole text as the
-# recipient will see it, and says when the message also has characters that
-# cannot be seen (Body and MoreChars in internal/service/approvals.go). In
+# internal/mcpserver/elicit.go). The approval page shows the whole text of the
+# message, and says when the text of the message also has characters that
+# cannot be seen (Body and MoreChars in internal/service/approvals.go). Body is
+# plain text, without formatting, styles or images. For a message that the
+# agent writes in the send call, it is the text part that Build makes: the
+# plain text of the request or, when the request has HTML, the text of the
+# reduced HTML (composedContent in internal/service/send.go). For a draft, it
+# is the text of the parts that a mail program would show (ShownText in
+# internal/mime/decode.go, LayoutOf in internal/mime/parts.go). The page shows
+# each attachment by name and media type, not its content (Attachments). In
 # section 3, a link to the Security page of the manual follows "Only you can
 # change a level": like the manual, the page says where that holds. It holds
 # for an agent that can only call the tools of email-mcp, not for one that
@@ -83,7 +90,9 @@ steps:
       search, read, organize, write drafts and send.
   - title: Decide.
     # An AI app that asks in its own window shows only the start of the text,
-    # so the page says "the message" and not "the whole message" (T19, T24).
+    # and the approval page shows the message as plain text, without
+    # formatting, styles or images. So the page says "the message" and not
+    # "the whole message" (T19, T24).
     text: >-  # T3 T19
       By default, email-mcp holds each send until you approve it. You see the
       message first.
@@ -127,12 +136,12 @@ levels:
       first. email-mcp has no tool that deletes mail for good.
 
 # Section 4: what the approval page promises. One sentence each.
-# The page offers Approve only when it can show the whole text that the
-# recipient will see (CanApprove in internal/web/approvals.go).
+# The page offers Approve only when it can show the whole text of the message
+# (CanApprove in internal/web/approvals.go).
 decide:
   - >-  # T20
     **Approve and send** appears only when the page can show the whole text
-    that the recipient will see.
+    of the message.
   - If the message changes after you look at it, it does not go out.  # T21
   - >-  # T22
     After you decide, the page tells you what happened. It says **Sent** only
@@ -150,10 +159,14 @@ local:
     text: >-  # T26
       email-mcp does not keep a copy of your mailbox. Your messages stay on
       your mail server.
+  # Chrome, Edge and Firefox send every name that ends in .localhost to your
+  # own computer by themselves (uiHost in internal/web/server.go). Another
+  # browser may need a line in the hosts file, so the page names the three.
   - term: Web pages
     text: >-  # T27
       The approval page and the settings pages run only on your computer, at
-      the name `email-mcp.localhost`. That name always means your own computer.
+      `email-mcp.localhost`, a name that Chrome, Edge and Firefox send to your
+      own computer.
   - term: Activity
     text: >-  # T28
       Every tool call of your agent is written to an Activity page that you can
@@ -227,9 +240,11 @@ manual page [Security](/manual/daily-use/security/) says when this holds.
 By default, email-mcp holds a message when your agent wants to send
 it.{{< truth "T3" >}} On the approval page, you see who will get it,
 including hidden copies (Bcc), the subject, the attachments and the whole text
-as the recipient will see it.{{< truth "T19" >}} If the message also has
-characters that cannot be seen, the page says so.{{< truth "T19" >}} Then you
-press **Reject** or **Approve and send**.
+of the message.{{< truth "T19" >}} If the text of the message also has
+characters that cannot be seen, the page says so.{{< truth "T19" >}} The page
+shows the message as plain text: the text that a mail program would
+show.{{< truth "T19" >}} The page lists each attachment by name and
+type.{{< truth "T19" >}} Then you press **Reject** or **Approve and send**.
 
 {{< rows "decide" "ul" >}}
 

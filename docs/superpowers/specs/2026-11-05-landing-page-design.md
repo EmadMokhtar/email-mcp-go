@@ -142,8 +142,9 @@ For a quick review. Each is marked "(My call.)" where it appears.
 
 One point stays open, with a default:
 
-- **The "AI apps" row** (section 6). It names five apps from
-  `docs/harnesses.md`. Default: keep it while the manual keeps those pages.
+- **The "AI apps" row** (section 6). It names the five apps that have a page
+  under `manual/getting-started/connect-ai-app/`. Default: keep it while the
+  manual keeps those pages.
 
 ## Where the page lives
 
@@ -298,7 +299,8 @@ in step 3. (My call.)
 - Level 4 is not marked with green. "New account starts here" is said in words.
   Green marks the current place and the primary action, and this is neither.
   (My call.)
-- Level 5 is called "Delete" in the portal and "Move to Trash" in the README.
+- Level 5 is called "Delete" in the portal and "Move to Trash" in the table of
+  `manual/daily-use/permission-levels.md`.
   The page uses the portal name and explains it in the same row.
 - Three rows changed after review, to match the code, which is the source of
   truth. `move_messages` refuses, at every level, a folder that email-mcp
@@ -324,12 +326,15 @@ that moment.
 - Heading: "You see the message before you decide".
 - Paragraph: "By default, email-mcp holds a message when your agent wants to
   send it. On the approval page, you see who will get it, including hidden
-  copies (Bcc), the subject, the attachments and the whole text as the
-  recipient will see it. If the message also has characters that cannot be
-  seen, the page says so. Then you press Reject or Approve and send."
+  copies (Bcc), the subject, the attachments and the whole text of the
+  message. If the text of the message also has characters that cannot be
+  seen, the page says so. The page shows the message as plain text: the text
+  that a mail program would show. The page lists each attachment by name and
+  type. Then you press Reject or
+  Approve and send."
 - Four rows, one sentence each:
-  - "Approve and send appears only when the page can show the whole text that
-    the recipient will see."
+  - "Approve and send appears only when the page can show the whole text of
+    the message."
   - "If the message changes after you look at it, it does not go out."
   - "After you decide, the page tells you what happened. It says Sent only when
     the mail server accepted the message."
@@ -355,12 +360,19 @@ that moment.
   part of the text and a count of what it leaves out, so the heading says "the
   message", the first paragraph says "On the approval page", and the paragraph
   on AI apps says what such a window shows (T19, T24).
-- The approval page shows the text as the recipient will see it, not every
-  character that goes out. So the page says "the whole text as the recipient
-  will see it" and not "the full text", and it says that the page tells you
-  when the message also has characters that cannot be seen (T19, T20). This is
-  the meaning of the manual (`daily-use/confirmations`: "The approval page
-  shows the whole text").
+- The approval page shows the text of the message, not every character that
+  goes out. So the page says "the whole text of the message" and not "the full
+  text", and it says that the page tells you when the text of the message
+  also has characters that cannot be seen (T19, T20). This is the meaning of
+  the manual (`manual/daily-use/confirmations.md`: "The approval page shows
+  the whole text").
+- The page said "the whole text as the recipient will see it" in the first
+  draft. The approval page shows plain text: for a message with HTML, `Body`
+  is the text of the HTML, so the page shows no formatting, styles or images.
+  This holds for a message that the agent writes and for a draft that you
+  wrote in another mail program. Attachments are shown by name and media type,
+  not by content (`manual/daily-use/security.md`). So the paragraph now says
+  "the whole text of the message" and names these two limits (T19).
 
 ### 5. email-mcp runs on your computer
 
@@ -376,8 +388,10 @@ that moment.
   - "Your mail". "email-mcp does not keep a copy of your mailbox. Your messages
     stay on your mail server."
   - "Web pages". "The approval page and the settings pages run only on your
-    computer, at the name `email-mcp.localhost`. That name always means your own
-    computer."
+    computer, at `email-mcp.localhost`, a name that Chrome, Edge and Firefox
+    send to your own computer." (It said "That name always means your own
+    computer" in the first draft. Another browser may need a line in the hosts
+    file, as `manual/getting-started/connect-account.md` says. T27.)
   - "Activity". "Every tool call of your agent is written to an Activity page
     that you can read. The log never stores message bodies or attachment data."
   - "What your agent reads". "When your agent reads a message, the text goes to
@@ -388,8 +402,8 @@ that moment.
 **Notes.**
 
 - The last row is a limit. Without it, "runs on your computer" could suggest
-  that the content of mail never leaves the computer. (My call: it is not in
-  the README today. I add it because hiding it would mislead.)
+  that the content of mail never leaves the computer. (My call: I add it
+  because hiding it would mislead. The owner confirmed this sentence, T29.)
 - `email-mcp.localhost` uses the inline code style of DESIGN.md.
 
 ### 6. What it covers today
@@ -418,11 +432,11 @@ surprise.
 
 **Notes.**
 
-- "Planned" is softer than the README words ("come next", "come later"). Do not
-  write a date or a version.
+- "Planned" is softer than the words that the README first used ("come next",
+  "come later"). Do not write a date or a version.
 - The "AI apps" row depends on the manual keeping the setup for these five
-  apps (today `docs/harnesses.md`). If the manual spec drops one, the builder
-  removes its name from this row.
+  apps (the pages under `manual/getting-started/connect-ai-app/`). If the
+  manual drops one, the builder removes its name from this row.
 
 ### 7. Start with the manual
 
@@ -546,10 +560,10 @@ scrolling at 320px wide. Addresses break with `overflow-wrap: anywhere`.
 the lighter green with dark text (contrast 7.63; see "Accessibility").
 
 **What it does not claim.** Some apps, such as Claude Code over stdio, ask in
-their own window and not on this page (README, "Confirmations and full
-autonomy"; `docs/harnesses.md`). Section 4 says this in words (T24). The caption
-says "the approval page", which is true: this page exists, and the agent links
-to it when the app cannot ask.
+their own window and not on this page (`manual/daily-use/confirmations.md`;
+`manual/daily-use/app-confirmation.md`). Section 4 says this in words (T24).
+The caption says "the approval page", which is true: this page exists, and the
+agent links to it when the app cannot ask.
 
 ## Calls to action
 
@@ -811,27 +825,32 @@ not replace the passes above.
 
 ## Truth table
 
-Each claim of the page, with the proof. Paths are in the repository. "README"
-names a section of `README.md`, which moves to the manual, so the builder reads
-the section of the same name in the manual too. If the code and the README
-disagree, the code is the source of truth, and the difference is reported
-(foundation).
+Each claim of the page, with the proof. Paths are in the repository. A page of
+the docs site is named by its path under `site/content/`, such as
+`manual/daily-use/confirmations.md`, and a section of that page is named in
+quotes. If the code and a page disagree, the code is the source of truth, and
+the difference is reported (foundation). The rows were first written against
+sections of `README.md`. Those sections moved to the manual, so each row now
+names the manual page.
 
 "Qualifier" is a word that must stay on the page.
 
 **T1. Connects an AI agent, such as Claude Code, to your email.**
-- README: opening list; "Quick start" step 2.
+- Manual: `manual/_index.md` (the opening list);
+  `manual/getting-started/connect-ai-app/`.
 - Code: `cmd/email-mcp/serve.go` (MCP server over stdio);
   `internal/mcpserver/server.go`.
 
 **T2. The agent can read, organize and write mail.**
-- README: "What the agent can do"; "Permission levels".
+- Manual: `manual/daily-use/what-the-agent-can-do.md`;
+  `manual/daily-use/permission-levels.md`.
 - Code: `internal/mcpserver/read_tools.go`, `write_tools.go` (the tools);
   `internal/policy/policy.go` (levels).
 - Qualifier: "can". The level decides (T13).
 
 **T3. By default, every send waits until you approve it.**
-- README: "Permission levels" (new account); "Confirmations and full autonomy".
+- Manual: `manual/daily-use/permission-levels.md` ("A new account");
+  `manual/daily-use/confirmations.md` ("The two switches").
 - Code: `internal/domain/account/account.go` (`NewIMAPAccount`:
   `ConfirmSends: true`); `internal/policy/policy.go` (`Decide`);
   `internal/service/send.go` (`Send`, reason `confirm_sends`).
@@ -839,27 +858,34 @@ disagree, the code is the source of truth, and the difference is reported
   "always" or "never".
 
 **T4. Runs on your computer.**
-- README: opening list; "Quick start" step 1.
+- Manual: `manual/_index.md` (the opening list; "How the parts fit");
+  `manual/getting-started/connect-account.md`.
 - Code: `internal/web/server.go` (`listenAddr = "127.0.0.1:0"`);
   `cmd/email-mcp/serve.go`.
 
 **T5. Stores your mail passwords on your computer, encrypted (AES-256-GCM). By
 default the key is in the operating system keychain.**
-- README: "The master key"; "Where the data lives".
+- Manual: `manual/reference/master-key.md`;
+  `manual/reference/data-folder.md`.
 - Code: `internal/secrets/aead.go` (AES-256-GCM, 32-byte key);
   `internal/secrets/kek.go` (keychain entry `email-mcp` / `master-key`);
   `internal/secrets/vault.go`.
 - Qualifier: "By default". The master key can be a file (`EMAIL_MCP_KEK`).
 
 **T6. Works with IMAP and SMTP mail, with a password or an app password.**
-- README: opening list; "Quick start" step 1.
+- Manual: `manual/getting-started/connect-account.md`;
+  `manual/reference/known-limitations.md` (what the mail server needs).
 - Code: `internal/provider/imapsmtp/`.
-- The README says "any mail provider that offers IMAP and SMTP". The page does
-  not say "any". The interop test runs against Dovecot and Postfix only (README,
-  "Development"). See "Not proven" below.
+- The page does not say "any", and the README does not either. Some tools need
+  more from the mail server: a move needs MOVE or UIDPLUS (`applyMove` in
+  `internal/provider/imapsmtp/move.go`), tags need support from the server
+  (`Tag` in `organize.go`), and an address outside ASCII needs SMTPUTF8
+  (`ErrSMTPUTF8Unsupported` in `smtp.go`). The interop test runs against
+  Dovecot and Postfix only (`tech/work-on-the-code/testing.md`). See "Not
+  proven" below.
 
 **T7. For each account, you choose how far the agent may go.**
-- README: "Permission levels".
+- Manual: `manual/daily-use/permission-levels.md`.
 - Code: `internal/domain/account/account.go` (`Levels` per account);
   `internal/web/settings.go`.
 
@@ -870,28 +896,30 @@ default the key is in the operating system keychain.**
 - Kept equal by the test in "Keeping the page true".
 
 **T9. MCP is an open standard. email-mcp is an MCP server.**
-- README: opening paragraph; "Glossary".
+- Manual: `manual/_index.md` (the opening paragraph);
+  `manual/reference/glossary.md`.
 - Code: `internal/mcpserver/server.go`.
 
 **T10. email-mcp tests the connection and saves the account only when the test
 passes.**
-- README: "Quick start" step 1, item 4.
+- Manual: `manual/getting-started/connect-account.md` ("Add the account").
 - Code: `internal/service/accounts.go` (`probe`, before the save);
   `internal/web/templates/connect.html` ("Test the connection and save").
 
 **T11. The agent uses the email tools to search, read, organize, write drafts
 and send.**
-- README: "What the agent can do" (tool table).
+- Manual: `manual/daily-use/what-the-agent-can-do.md` ("The tools").
 - Code: `internal/mcpserver/read_tools.go`, `write_tools.go`.
 
 **T12. You add email-mcp to your AI app once. After that, your agent can use
 the email tools.**
-- README: "Quick start" step 2 (`--scope user` makes it available in every
-  project).
+- Manual: `manual/getting-started/connect-ai-app/claude-code.md` (`--scope
+  user` makes it available in every project), and the other pages under
+  `manual/getting-started/connect-ai-app/`.
 - Code: `cmd/email-mcp/serve.go`.
 
 **T13. The six levels and what each allows.**
-- README: "Permission levels".
+- Manual: `manual/daily-use/permission-levels.md` ("The levels").
 - Code: `internal/domain/account/account.go` (`MailOff` to `MailDelete`, and
   `MailName`: Off, Read, Organize, Draft, Send, Delete);
   `internal/web/settings.go` (`levelAllows`);
@@ -913,15 +941,15 @@ the email tools.**
   `internal/policy/policy.go` (`Decide` compares `current < required`).
 
 **T15. A new account starts at Send.**
-- README: "Permission levels".
+- Manual: `manual/daily-use/permission-levels.md` ("A new account").
 - Code: `internal/domain/account/account.go` (`NewIMAPAccount`:
   `AreaMail: MailSend`).
 
 **T16. By default, each move to the Trash at level 5 asks you first. Moving a
 draft to the Trash at level 3 does not ask.**
-- README: "Confirmations and full autonomy" (Confirm deletes). The README
-  opening says "every move to the Trash" waits; the code has one exception, and
-  the manual (`daily-use/confirmations`, `daily-use/permission-levels`) states
+- Manual: `manual/daily-use/confirmations.md` ("The two switches": Confirm
+  deletes); `manual/daily-use/permission-levels.md`. The code has one
+  exception, the move of a draft at level 3. The manual and the README state
   it.
 - Code: `NewIMAPAccount` (`ConfirmDeletes: true`);
   `internal/policy/policy.go` (`Decide` asks only for `ActTrash`);
@@ -931,7 +959,8 @@ draft to the Trash at level 3 does not ask.**
   "every move to the Trash".
 
 **T17. email-mcp has no tool that deletes mail for good.**
-- README: "What the agent can do" (`trash_messages`); the list of guardrails.
+- Manual: `manual/daily-use/what-the-agent-can-do.md` (`trash_messages`);
+  `manual/daily-use/full-autonomy-and-limits.md` ("Limits that stay on").
 - Code: `internal/mcpserver/write_tools.go` (tool list and the description of
   `trash_messages`); `internal/provider/imapsmtp/move.go` (`Trash`: "It
   deletes nothing for good").
@@ -939,7 +968,8 @@ draft to the Trash at level 3 does not ask.**
 
 **T18. Only you can change a level. The agent has no tool for this. It can ask
 for access, which only gives a link, and nothing changes until you choose.**
-- README: "Permission levels" (last paragraph).
+- Manual: `manual/daily-use/permission-levels.md` ("Only you change a
+  level").
 - Code: `internal/mcpserver/useronly_test.go` (the tools may not call
   `UpdateSettings`, `ApprovePending` and the other user-only calls);
   `internal/service/links.go` (`PermissionLink`: "It changes nothing");
@@ -947,28 +977,47 @@ for access, which only gives a link, and nothing changes until you choose.**
 - Qualifier: "The agent has no tool for this." Keep exactly this scope. Do not
   rewrite it as "the agent cannot".
 - Limit: it holds for an agent that can only call the tools of email-mcp
-  (manual `daily-use/security`, `daily-use/permission-levels`). The page links
-  to the Security page of the manual right after the paragraph, and adds no
-  claim.
+  (`manual/daily-use/security.md`, `manual/daily-use/permission-levels.md`).
+  The page links to the Security page of the manual right after the
+  paragraph, and adds no claim.
 
-**T19. On the approval page, you see who gets it (Bcc included), the subject,
-the attachments and the whole text as the recipient will see it. If the
-message also has characters that cannot be seen, the page says so.**
-- README: "Confirmations and full autonomy" (the approval page shows the whole
-  text; the preview of the AI app shows the first 500 characters).
+**T19. On the approval page, you see who will get it, including hidden copies
+(Bcc), the subject, the attachments and the whole text of the message. If the
+text of the message also has characters that cannot be seen, the page says so.
+The page shows the message as plain text: the text that a mail program would
+show. The page lists each attachment by name and type.**
+- Manual: `manual/daily-use/confirmations.md` ("What you see": the approval
+  page shows the whole text; the preview of the AI app shows the first 500
+  characters); `manual/daily-use/security.md` (a confirmation shows the media
+  type of each attachment and not its content; the HTML of a message that an
+  agent writes is reduced, and the text of the message is made from it; a
+  draft that you write in another mail program).
 - Code: `internal/web/templates/approval.html` (the labels `From`, `To, every
   recipient (Bcc included)` and `Attachments`, and `message-body`);
   `internal/service/approvals.go` (`Body`: "the whole text that the recipient
-  sees"; `MoreChars`: the count of the characters that cannot be seen);
+  sees: the text of the HTML when the message has HTML"; `Attachments`: the
+  file name of each attachment, with its media type; `MoreChars`: the count of
+  the characters that cannot be seen);
   `internal/service/send.go` (`sendContent`: `body` and `hidden`;
-  `draftUnseen`); `internal/web/approvals.go` (the page shows `Body` and adds
-  the `MoreChars` line).
+  `composedContent`: for a message that the agent writes with HTML, `Body` is
+  the text part that `mime.Build` makes from the reduced HTML, with the block
+  of a forward (`outgoingHTML` in `internal/mime/visible.go` reduces it);
+  `draftUnseen`; for a draft, `Body` is `ShownText` in
+  `internal/mime/decode.go`, the text of the parts that a mail program shows,
+  as `LayoutOf` in `internal/mime/parts.go` decides);
+  `internal/web/approvals.go` (the page shows `Body` and adds the `MoreChars`
+  line).
+- The comment on `Body` says "the whole text that the recipient sees". The page
+  says less than that comment: "the whole text of the message".
 - Scope: the approval page only. An AI app that asks in its own window shows
   the start of the text (T24), so the heading of section 4 and step 4 of
   section 2 say "the message", not "the whole message".
+- Limit: `Body` is plain text. The page does not show the formatting, the
+  styles or the images of any message with HTML, so the page says "the whole
+  text of the message" and not "as the recipient will see it".
 
-**T20. Approve and send appears only when the page can show the whole text that
-the recipient will see.**
+**T20. Approve and send appears only when the page can show the whole text of
+the message.**
 - Code: `internal/web/templates/approval.html` (`{{if .CanApprove}}`);
   `internal/web/approvals.go` (`CanApprove` is set only with the detail of
   the message, which holds `Body` and `MoreChars`; otherwise
@@ -976,8 +1025,9 @@ the recipient will see.**
   `internal/service/approvals.go` (`Body`, `MoreChars`).
 
 **T21. If the message changes after you look at it, it does not go out.**
-- README: "Security: what local mode protects against" ("What you approve is
-  what goes out"): a change means that you are asked again.
+- Manual: `manual/daily-use/security.md` (the list under the bold lead-in
+  "What you approve is what goes out": the approval covers the whole message,
+  and a change means that you are asked again).
 - Code: `internal/confirm/confirm.go` (`Claim` checks the payload hash);
   `internal/service/send.go` (`answerSend`);
   `internal/web/approvals.go` (`msgMessageChanged`: "nothing was sent").
@@ -990,7 +1040,8 @@ accepted the message.**
   the message."; `outcomeFailed`: "Not sent"; `sendOutcome`).
 
 **T23. If you do nothing, the request expires and nothing is sent.**
-- README: "Confirmations and full autonomy" (the link expires after 24 hours).
+- Manual: `manual/daily-use/confirmations.md` ("Two ways to answer": the link
+  expires after 24 hours).
 - Code: `internal/confirm/confirm.go` (`StateExpired`, `ApprovalLifetime`);
   `internal/web/approvals.go` (`outcomeExpired`).
 - The page gives no number of hours.
@@ -998,8 +1049,8 @@ accepted the message.**
 **T24. Some AI apps can ask you in their own window. There, email-mcp shows the
 start of the text, and says how much of it is not shown. For the others, your
 agent gives you a link to the approval page.**
-- README: "Confirmations and full autonomy" ("In the AI app" and "With an
-  approval link"); `docs/harnesses.md`, "How each app confirms a send".
+- Manual: `manual/daily-use/confirmations.md` ("Two ways to answer");
+  `manual/daily-use/app-confirmation.md` ("What each app can do").
 - Code: `internal/mcpserver/elicit.go` (the form, and the fallback
   `pending_approval` with a link; `previewBodyChars` and `sendPreview`: the
   first 500 characters of the text, and a last line that says how many
@@ -1010,8 +1061,8 @@ agent gives you a link to the approval page.**
 
 **T25. You can turn the question off. email-mcp asks you to tick a box that
 accepts the risk. Limits still apply.**
-- README: "Confirmations and full autonomy" (Confirm sends; "These guardrails
-  stay on in full autonomy").
+- Manual: `manual/daily-use/full-autonomy-and-limits.md` ("Turn off Confirm
+  sends"; "Limits that stay on").
 - Code: `internal/service/accounts.go` (`NeedsRiskAcceptance`);
   `internal/web/templates/settings.html`;
   `internal/domain/account/account.go` (`DefaultLimits`);
@@ -1020,7 +1071,8 @@ accepts the risk. Limits still apply.**
 
 **T26. email-mcp does not keep a copy of your mailbox. Your messages stay on
 your mail server.**
-- README: "Where the data lives" ("email-mcp does not store your mail").
+- Manual: `manual/reference/data-folder.md` ("What is stored": "email-mcp
+  does not store your mail").
 - Code: `internal/store/migrations/` (the tables are accounts, keys, tokens, web
   sessions, the outbox, pending actions, the activity log and counters; there is no
   table for messages).
@@ -1028,52 +1080,60 @@ your mail server.**
   or ends. They are not a copy of the mailbox.
 
 **T27. The approval page and the settings pages run only on your computer, at
-`email-mcp.localhost`, a name that always means your own computer.**
-- README: "Quick start" step 1.
+`email-mcp.localhost`, a name that Chrome, Edge and Firefox send to your own
+computer.**
+- Manual: `manual/getting-started/connect-account.md` ("If your browser does
+  not find `email-mcp.localhost`").
 - Code: `internal/web/server.go` (`uiHost = "email-mcp.localhost"` and
   `listenAddr`).
+- Qualifier: "Chrome, Edge and Firefox". Do not write "always" or "every
+  browser".
 
 **T28. Every tool call is written to an Activity page that you can read. The log
 never stores message bodies or attachment data.**
-- README: "Confirmations and full autonomy" (the Activity page); "Where the data
-  lives".
+- Manual: `manual/daily-use/activity-and-undo.md` ("The Activity page");
+  `manual/reference/data-folder.md`.
 - Code: `internal/mcpserver/capture.go` (a call entry for every `tools/call`);
   `internal/audit/audit.go` (no body, no attachment data);
   `internal/web/activity.go`.
-- README: a call with a wrong access token has no row, because nothing says
-  whose log it belongs to. The page says "your agent", so the claim holds.
+- Manual, `manual/daily-use/activity-and-undo.md`: a request with a wrong
+  access token has no row, because nothing says whose log it belongs to. The
+  page says "your agent", so the claim holds.
 
 **T29. When your agent reads a message, the text goes to your AI app.**
 - Code: `internal/mcpserver/read_tools.go` (`get_message` returns the body to
   the caller).
-- This claim is a limit that the README does not state. It is true by how MCP
-  works, and it stops "runs on your computer" from being read as more than it
-  is. The owner confirmed this sentence.
+- This claim is a limit. It is true by how MCP works, and it stops "runs on
+  your computer" from being read as more than it is. The owner confirmed this
+  sentence.
 
 **T30. This release covers mail. Calendar and contacts are planned.**
-- README: opening note.
+- Manual: `manual/_index.md` ("What is not in this version").
 - Code: the tool lists in `internal/mcpserver/read_tools.go` and
   `write_tools.go` hold mail tools only.
 
 **T31. Google and Microsoft: sign-in on their website (OAuth) is planned. Until
 then, use an app password. Your provider must offer app passwords.**
-- README: opening note; "Quick start" step 1, item 3.
+- Manual: `manual/_index.md` ("What is not in this version");
+  `manual/getting-started/connect-account.md` ("App passwords").
 - Code: `cmd/email-mcp/importenv.go` (an `.env` with `USE_OAUTH=true` is refused
   with "Connect this account with an app password instead.").
-- That a provider offers app passwords is the provider's choice. The README
+- That a provider offers app passwords is the provider's choice. The manual
   states it. Code cannot prove it. See "Not proven" below.
 
 **T32. An app password is a separate password that you make in the security
 settings of your mail account.**
-- README: "Quick start" step 1, item 3; "Glossary".
+- Manual: `manual/getting-started/connect-account.md` ("App passwords");
+  `manual/reference/glossary.md`.
 
 **T33. The manual shows the setup for Claude Code, Claude Desktop, Cursor, VS
 Code and the Codex CLI.**
-- Source: `docs/harnesses.md`, which the foundation moves to the manual.
+- Manual: `manual/getting-started/connect-ai-app/` (one page for each of the
+  five apps).
 - Depends on the manual spec. Check at build time. If a name is gone, remove it.
 
 **T34. Release builds exist for macOS, Linux and Windows.**
-- README: "Install".
+- Manual: `manual/getting-started/install.md` ("A release archive").
 - Code: `.goreleaser.yaml` (`targets`: linux amd64 and arm64, darwin arm64 and
   amd64, windows amd64).
 - The page says "builds exist". It does not say "tested on", because the
@@ -1081,17 +1141,18 @@ Code and the Codex CLI.**
   on Linux only.
 
 **T35. Open source under the MIT license: use, copy and change the code.**
-- README: "License". Code: `LICENSE`.
+- README: "License"; manual: `manual/_index.md`. Code: `LICENSE`.
 
 **T36. The manual shows how to install email-mcp, connect an account and add it
 to your AI app.**
-- README: "Install" and "Quick start" (the content that the foundation moves to
-  the manual).
+- Manual: `manual/getting-started/install.md`,
+  `manual/getting-started/connect-account.md` and
+  `manual/getting-started/connect-ai-app/`.
 - Depends on the manual spec.
 
-**T37. Terms.** MCP (T9), IMAP and SMTP (README "Glossary"), keychain (README
-"Glossary"), Bcc (a hidden copy of a message), Trash (the folder of the mail
-account).
+**T37. Terms.** MCP (T9), IMAP and SMTP, and keychain
+(`manual/reference/glossary.md`), Bcc (a hidden copy of a message), Trash (the
+folder of the mail account).
 
 **Not proven by this repository.**
 
@@ -1099,8 +1160,10 @@ account).
   and SMTP mail", not "any provider" (T6).
 - That a given provider offers app passwords (T31).
 - That Claude Code and the other apps show the form in their own window. This
-  comes from the documents of those apps, as `docs/harnesses.md` records. The
-  page does not name an app next to this claim (T24).
+  comes from the documents of those apps, as the "Source and date" section of
+  each page under `manual/getting-started/connect-ai-app/` records, and
+  `manual/daily-use/app-confirmation.md` sums up. The page does not name an app
+  next to this claim (T24).
 
 ## Depends on the other specs
 
