@@ -188,7 +188,9 @@ them.
 
 The line says: `database schema: FAIL this data was written by a newer
 email-mcp; install that version or newer`. A newer email-mcp used this data
-folder. Install that version or a newer one.
+folder. Install that version or a newer one. To go back to an older version,
+you need a copy of the data folder from before the update. See [Go back to an
+older version](/manual/reference/update/#go-back-to-an-older-version).
 
 ### An account fails
 

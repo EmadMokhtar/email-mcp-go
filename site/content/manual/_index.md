@@ -70,6 +70,8 @@ Read these four pages in order. After them, you have a working setup.
 ## Find your task
 
 - I want to [install email-mcp](/manual/getting-started/install/).
+- I want to [update email-mcp to a new
+  version](/manual/reference/update/).
 - I want to [connect a mail
   account](/manual/getting-started/connect-account/).
 - I want to [connect a second

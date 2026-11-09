@@ -530,16 +530,16 @@ list.
 
 | Code | Manual pages |
 |---|---|
-| `cmd/email-mcp/main.go` (the list of commands, the help) | [Commands][m-commands], [Install email-mcp][m-install] |
+| `cmd/email-mcp/main.go` (the list of commands, the help) | [Commands][m-commands], [Install email-mcp][m-install], [Update email-mcp][m-update] |
 | `cmd/email-mcp/serve.go` | [Commands][m-commands], [Local HTTP mode][m-http], [Containers][m-containers], [Connect an AI app][m-apps] and its five app pages |
 | `cmd/email-mcp/setup.go` | [Connect your first account][m-connect], [The web pages][m-web], [Commands][m-commands] |
 | `cmd/email-mcp/account.go`, `connect.go` | [Connect your first account][m-connect], [Manage accounts][m-manage], [Commands][m-commands] |
 | `cmd/email-mcp/reconnect.go` | [Connect your first account][m-connect], [Manage accounts][m-manage], [Commands][m-commands], [Known limitations][m-limits] |
 | `cmd/email-mcp/token.go` | [Local HTTP mode][m-http], [Commands][m-commands] |
-| `cmd/email-mcp/outbox.go` | [Activity and undo][m-activity], [Commands][m-commands] |
+| `cmd/email-mcp/outbox.go` | [Activity and undo][m-activity], [Commands][m-commands], [Update email-mcp][m-update] |
 | `cmd/email-mcp/importenv.go` | [Moving from the old email-mcp][m-move], [Commands][m-commands] |
 | `cmd/email-mcp/key.go` | [The master key][m-key], [Commands][m-commands] |
-| `cmd/email-mcp/doctor.go` | [Your first use][m-first], [Troubleshooting][m-trouble], [The master key][m-key], [Commands][m-commands] |
+| `cmd/email-mcp/doctor.go` | [Your first use][m-first], [Troubleshooting][m-trouble], [The master key][m-key], [Commands][m-commands], [Update email-mcp][m-update] |
 | `cmd/email-mcp/console.go` (the flags that all commands share) | [Commands][m-commands], [Where the data lives][m-data] |
 | `internal/mcpserver/read_tools.go`, `write_tools.go` | [What the agent can do][m-agent], [Permission levels][m-levels] |
 | `internal/mcpserver/shape.go` | [What the agent can do][m-agent], [Known limitations][m-limits] |
@@ -574,12 +574,12 @@ list.
 | `internal/connect` | [Connect your first account][m-connect], [Manage accounts][m-manage], [Troubleshooting][m-trouble] |
 | `internal/secrets` | [The master key][m-key], [Where the data lives][m-data], [Recommended Claude Code deny rules][m-deny], [Troubleshooting][m-trouble] |
 | `internal/app/kek.go` | [The master key][m-key], [Where the data lives][m-data], [Containers][m-containers] |
-| `internal/app/app.go` | [Where the data lives][m-data], [Activity and undo][m-activity], [Recommended Claude Code deny rules][m-deny] |
-| `internal/store` | [Where the data lives][m-data], [Troubleshooting][m-trouble] |
-| `internal/version` | [Install email-mcp][m-install] |
-| `.goreleaser.yaml` | [Install email-mcp][m-install], [Verifying a release][m-verify] |
+| `internal/app/app.go` | [Where the data lives][m-data], [Activity and undo][m-activity], [Recommended Claude Code deny rules][m-deny], [Update email-mcp][m-update] |
+| `internal/store` | [Where the data lives][m-data], [Troubleshooting][m-trouble], [Update email-mcp][m-update] |
+| `internal/version` | [Install email-mcp][m-install], [Update email-mcp][m-update] |
+| `.goreleaser.yaml` | [Install email-mcp][m-install], [Update email-mcp][m-update], [Verifying a release][m-verify] |
 | `.github/workflows/release.yml` | [Verifying a release][m-verify] |
-| `Dockerfile` | [Containers][m-containers] |
+| `Dockerfile` | [Containers][m-containers], [Update email-mcp][m-update] |
 | The code of the behaviour that the landing page states: the levels, the defaults of a new account, the approval page, the Trash rules, the activity log | Not a manual page: read again the words with the truth notes (`T1`, `T2` and so on) in `site/content/_index.md` |
 
 The landing page is not a page of the manual, but the person reads it first.
@@ -817,3 +817,4 @@ data on a volume, keep the key file in a different place from the database.
 [m-limits]: /manual/reference/known-limitations/
 [m-move]: /manual/reference/move-from-old-version/
 [m-verify]: /manual/reference/verify-a-release/
+[m-update]: /manual/reference/update/
