@@ -174,10 +174,11 @@ func TestTableHookAlignment(t *testing.T) {
 }
 
 // TestTableHookBox requires, on every table of the build (the fixtures and the
-// real pages), what the site check does not: the box is a plain box with no
-// tabindex, no role and no name (a browser gives the focus to a box that
-// scrolls, and the name is on the table), the header cells have scope="col",
-// and no cell has an inline style.
+// real pages), what the site check does not: the table has a name that is not
+// empty; the box is a Tab stop (tabindex="0") with role="region" and the same
+// name, because Safari does not give the focus to a box that scrolls; the box
+// has no inline style; the header cells have scope="col"; and no cell has an
+// inline style.
 func TestTableHookBox(t *testing.T) {
 	dir := tablesBuild(t)
 	pages := indexPages(t, dir)
@@ -193,10 +194,15 @@ func TestTableHookBox(t *testing.T) {
 			require.True(t, hasClass(box, scrollBox), "%s: a table is not in a box", rel)
 			class, _ := attr(box, "class")
 			require.Equal(t, scrollBox, class, "%s: the box has other classes", rel)
-			for _, name := range []string{"role", "tabindex", "aria-label", "style"} {
-				_, has := attr(box, name)
-				require.False(t, has, "%s: the box has %s", rel, name)
+			name, _ := attr(table, "aria-label")
+			require.NotEmpty(t, strings.TrimSpace(name), "%s: a table has no name", rel)
+			for _, want := range [][2]string{{"role", "region"}, {"tabindex", "0"}, {"aria-label", name}} {
+				got, has := attr(box, want[0])
+				require.True(t, has, "%s: the box has no %s", rel, want[0])
+				require.Equal(t, want[1], got, "%s: the %s of the box", rel, want[0])
 			}
+			_, has := attr(box, "style")
+			require.False(t, has, "%s: the box has an inline style", rel)
 			for cell := range table.Descendants() {
 				if cell.Type != html.ElementNode || (cell.Data != "th" && cell.Data != "td") {
 					continue
