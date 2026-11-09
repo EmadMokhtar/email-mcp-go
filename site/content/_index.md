@@ -18,9 +18,12 @@
 # 4, the heading says "You see the message" and not "the whole message", and
 # the paragraph says what an AI app shows when it asks in its own window. Such
 # a window shows only the start of the text (previewBodyChars in
-# internal/mcpserver/elicit.go). The approval page shows the whole text as the
-# recipient will see it, and says when the message also has characters that
-# cannot be seen (Body and MoreChars in internal/service/approvals.go). In
+# internal/mcpserver/elicit.go). The approval page shows the whole text of the
+# message, and says when the message also has characters that cannot be seen
+# (Body and MoreChars in internal/service/approvals.go). Body is the text of
+# the HTML when the message has HTML, so for a draft written in another mail
+# program the page shows the text and not the styles or images. It shows each
+# attachment by name and media type, not its content (Attachments). In
 # section 3, a link to the Security page of the manual follows "Only you can
 # change a level": like the manual, the page says where that holds. It holds
 # for an agent that can only call the tools of email-mcp, not for one that
@@ -83,7 +86,9 @@ steps:
       search, read, organize, write drafts and send.
   - title: Decide.
     # An AI app that asks in its own window shows only the start of the text,
-    # so the page says "the message" and not "the whole message" (T19, T24).
+    # and the approval page shows the text but not the styles or images of a
+    # draft written in another mail program. So the page says "the message"
+    # and not "the whole message" (T19, T24).
     text: >-  # T3 T19
       By default, email-mcp holds each send until you approve it. You see the
       message first.
@@ -127,12 +132,12 @@ levels:
       first. email-mcp has no tool that deletes mail for good.
 
 # Section 4: what the approval page promises. One sentence each.
-# The page offers Approve only when it can show the whole text that the
-# recipient will see (CanApprove in internal/web/approvals.go).
+# The page offers Approve only when it can show the whole text of the message
+# (CanApprove in internal/web/approvals.go).
 decide:
   - >-  # T20
     **Approve and send** appears only when the page can show the whole text
-    that the recipient will see.
+    of the message.
   - If the message changes after you look at it, it does not go out.  # T21
   - >-  # T22
     After you decide, the page tells you what happened. It says **Sent** only
@@ -153,7 +158,8 @@ local:
   - term: Web pages
     text: >-  # T27
       The approval page and the settings pages run only on your computer, at
-      the name `email-mcp.localhost`. That name always means your own computer.
+      `email-mcp.localhost`, a name that Chrome, Edge and Firefox send to your
+      own computer.
   - term: Activity
     text: >-  # T28
       Every tool call of your agent is written to an Activity page that you can
@@ -227,9 +233,11 @@ manual page [Security](/manual/daily-use/security/) says when this holds.
 By default, email-mcp holds a message when your agent wants to send
 it.{{< truth "T3" >}} On the approval page, you see who will get it,
 including hidden copies (Bcc), the subject, the attachments and the whole text
-as the recipient will see it.{{< truth "T19" >}} If the message also has
-characters that cannot be seen, the page says so.{{< truth "T19" >}} Then you
-press **Reject** or **Approve and send**.
+of the message.{{< truth "T19" >}} If the message also has characters that
+cannot be seen, the page says so.{{< truth "T19" >}} For a draft that you wrote
+in another mail program, the page shows its text, not its styles or
+images.{{< truth "T19" >}} The page lists each attachment by name and
+type.{{< truth "T19" >}} Then you press **Reject** or **Approve and send**.
 
 {{< rows "decide" "ul" >}}
 

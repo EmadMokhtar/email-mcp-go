@@ -13,8 +13,8 @@
 # the web interface are reachable only from inside the container. The default
 # command below serves MCP over standard input and output (stdio), which an MCP
 # client can use with "docker run -i". This image is groundwork for hosted mode,
-# which comes in milestone M3. The page
-# site/content/manual/reference/containers.md explains this in more detail.
+# which is planned (see site/content/manual/reference/containers.md). That page
+# explains this in more detail.
 #
 # One Dockerfile serves two builds. The build argument BINARY_FROM chooses
 # where the binary comes from:
@@ -64,9 +64,10 @@ USER nonroot:nonroot
 ENTRYPOINT ["/email-mcp"]
 # The default command serves MCP over stdio. An MCP client starts the container
 # with "docker run -i" (-i keeps standard input open) and talks to it as it
-# talks to a local binary. HTTP inside a container waits for hosted mode (M3):
-# local HTTP mode listens only on a loopback address, and 127.0.0.1 here is the
-# loopback address of the container, not of your computer. Publishing the port
-# with "docker run -p" does not help either. Hosted mode adds a server that may
-# listen on other addresses, behind TLS and sign-in.
+# talks to a local binary. HTTP inside a container waits for hosted mode, which
+# is planned (see site/content/manual/reference/containers.md). Local HTTP mode
+# listens only on a loopback address, and 127.0.0.1 here is the loopback
+# address of the container, not of your computer. Publishing the port with
+# "docker run -p" does not help either. The plan for hosted mode is a server
+# that may listen on other addresses, behind TLS and sign-in.
 CMD ["serve"]
