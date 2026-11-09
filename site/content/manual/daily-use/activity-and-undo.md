@@ -119,11 +119,19 @@ few seconds, and at most about 20 minutes.
 
 During the stop, the agent cannot call `cancel_send`: email-mcp refuses every
 tool call. Cancel with `email-mcp outbox cancel <id>` in another terminal, or on
-the Activity page if that program already shows the pages. A send that waits
-for your approval cannot be approved during the stop. It keeps waiting, and you
-can approve it after the next start, until it expires 24 hours after the agent
-asked. You can still reject it on **Waiting for you**, if that program shows
-the pages.
+the Activity page if that program already shows the pages.
+
+A send that waits for your answer cannot be confirmed during the stop. What
+happens next depends on how email-mcp asked you (see [Two ways to
+answer](/manual/daily-use/confirmations/#two-ways-to-answer)):
+
+- **An approval link.** The send keeps waiting. You can approve it after the
+  next start, until it expires 24 hours after the agent asked. You can still
+  reject it on **Waiting for you**, if that program shows the pages.
+- **The form of your AI app.** The app sends your answer to email-mcp in a
+  new tool call. email-mcp refuses it during the stop, and nothing is sent.
+  The form works for 10 minutes after the agent asked. After that, the agent
+  must ask again.
 
 A second Ctrl-C ends the program at once. The queued messages stay queued for
 the next email-mcp program that sends mail (`email-mcp serve` or `email-mcp

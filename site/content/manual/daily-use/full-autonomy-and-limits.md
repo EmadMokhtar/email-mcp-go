@@ -76,10 +76,14 @@ account:
 - at most 20 sends in one clock hour and 200 in one day. The hours and the
   days are those of UTC (Coordinated Universal Time: the world standard of
   time, with no time zone offset), so 00:00 UTC may not be midnight where you
-  live. The count starts again at the top of each hour and at 00:00 UTC. It
-  does not count back 60 minutes or 24 hours from now. The table below says
-  more;
-- at most 50 recipients per message (you can raise it to 200, not more);
+  live. The hour count starts again at minute 00 of each hour (such as 14:00
+  UTC), and the day count at 00:00 UTC. It does not count back 60 minutes or 24
+  hours from now. The table below says more;
+- at most 50 recipients per message. The recipients are the addresses in To,
+  Cc (carbon copy: the people who get a copy) and Bcc (blind carbon copy: the
+  people who get a copy, while the other recipients do not see them).
+  The settings page accepts a higher number, but email-mcp refuses a send to
+  more than 200 recipients, whatever you set;
 - at most 500 messages moved to the Trash per day. The drafts that
   `discard_draft` moves, and the draft that email-mcp moves after it sends a
   saved draft, do not count;
@@ -107,7 +111,7 @@ The settings page of an account has these settings. Open it with **Accounts**,
 and then **Permissions and settings** on the account. Click **Save** to keep
 your changes. A count is a whole number from 0 to 1,000,000. An undo window is a
 whole number of seconds from 0 to 300. A count of 0 allows nothing. The send
-and Trash counts use UTC: an hour count starts again at the top of each hour,
+and Trash counts use UTC: an hour count starts again at minute 00 of each hour,
 and a day count at 00:00 UTC.
 
 | Setting (as on the page) | What it does | Default |
@@ -115,9 +119,9 @@ and a day count at 00:00 UTC.
 | **Mail level** | The level of the account: what the agent may do with its mail. The list has 0 Off, 1 Read, 2 Organize, 3 Draft, 4 Send and 5 Delete (moves mail to the Trash). | 4 Send |
 | **Confirm sends** | Asks you before the agent sends a message. | On |
 | **Confirm deletes** | Asks you before the agent moves mail to the Trash. It does not apply to `discard_draft`, which moves a draft to the Trash at level 3, or to the draft that email-mcp moves to the Trash after it sends a saved draft. | On |
-| **Sends per hour** | The most sends in one clock hour (UTC); the count restarts at the top of each hour. | 20 |
+| **Sends per hour** | The most sends in one clock hour (UTC); the count restarts at minute 00 of each hour. | 20 |
 | **Sends per day** | The most sends in one UTC day; restarts at 00:00 UTC, not a sliding 24 hours. | 200 |
-| **Recipients per message** | The most recipients (To, Cc and Bcc) in one message. email-mcp never allows more than 200, whatever you set. | 50 |
+| **Recipients per message** | The most recipients (To, Cc and Bcc, hidden copies included) in one message. The page accepts a higher number, but email-mcp never sends to more than 200, whatever you set. | 50 |
 | **Messages moved to Trash per day** | The most messages that the agent moves to the Trash in one UTC day; restarts at 00:00 UTC. The draft moves of `discard_draft`, and of a send of a saved draft, do not count. | 500 |
 | **Undo window without a confirmation, in seconds (0 to 300)** | How long a send waits before it goes out, when you did not confirm it. You and the agent can cancel it in this time. While email-mcp stops, only you can cancel. | 30 seconds |
 | **Undo window after a confirmation, in seconds (0 to 300)** | The same wait, after you confirmed the send. | 0 seconds |

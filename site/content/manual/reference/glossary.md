@@ -48,9 +48,11 @@ alphabetical order.
   means that only you can open a folder.
 - **Fingerprint:** a short, unique code of a certificate (its SHA-256 checksum).
   You compare it before you trust a certificate.
-- **Full autonomy:** both confirmation switches are off, so they do not ask
-  before a send or a move to the Trash. The check of an address outside ASCII
-  and the new-recipient check can still ask. See [Full
+- **Full autonomy:** both confirmation switches (Confirm sends and Confirm
+  deletes) are off, so email-mcp does not ask before a send or a move to the
+  Trash. The check of an address outside ASCII (the basic set of characters:
+  English letters, digits and common signs) and the new-recipient check can
+  still ask. See [Full
   autonomy](/manual/daily-use/full-autonomy-and-limits/#full-autonomy).
 - **Gatekeeper:** the program check of macOS. It looks at a program that has the
   quarantine mark.

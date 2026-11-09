@@ -104,11 +104,14 @@ it.
    reading mail) and SMTP (Simple Mail Transfer Protocol: the protocol for
    sending mail) servers of your provider. It sends only the domain of your
    address (the part after `@`) over the network, and it tests nothing yet. The
-   domain goes to three places: the database of Thunderbird (the mail program
-   of Mozilla), a public list of the settings of mail providers; the autoconfig
-   server of the domain (the server `autoconfig.` and your domain, where a
-   provider can publish its settings); and DNS (Domain Name System: the service
-   that finds the servers of a name).
+   domain goes to three places:
+
+   - the database of Thunderbird, the mail program of Mozilla. It is a public
+     list of the settings of mail providers;
+   - the autoconfig server of the domain. This is the server `autoconfig.` and
+     your domain, where a provider can publish its settings;
+   - DNS (Domain Name System), the service that finds the servers of a name.
+
    You can also click **Enter the settings yourself**.
 
 3. If the page says that no server settings were found, click **Enter the

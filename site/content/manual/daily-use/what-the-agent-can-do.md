@@ -45,9 +45,13 @@ means that the tool needs no level. email-mcp reads and writes mail over IMAP
 A MiB (mebibyte) is 1,048,576 bytes, so 10 MiB is 10 times 1,048,576 bytes.
 `get_attachment` returns one attachment of at most 10 MiB. A message that the
 agent sends can hold at most 10 MiB of attachments in all (after base64
-decoding: base64 is a way to write bytes as text). The same limit holds for a
-draft. The texts that email-mcp gives to the agent say "10 MB" (MB: megabyte,
-1,000,000 bytes), but the limit in the program is 10 MiB.
+decoding: base64 is a way to write bytes as text). The same limit holds for the
+attachments of a draft that the agent writes with `create_draft`. The agent can
+also send a saved draft with `send_message` and `draft_ref` (the reference of
+the draft). Such a draft has another limit. email-mcp refuses it when the whole
+draft, as the mail server stores it, is larger than 25 MiB. The texts that
+email-mcp gives to the agent say "10 MB" (MB: megabyte, 1,000,000 bytes), but
+the limit in the program is 10 MiB.
 
 `trash_messages` and `discard_draft` need a Trash folder that email-mcp can find
 on the server. If it finds none, they fail. Then move the mail to the Trash in

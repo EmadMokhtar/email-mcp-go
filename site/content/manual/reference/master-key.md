@@ -186,7 +186,7 @@ one](/manual/daily-use/troubleshooting/#the-master-key-is-the-wrong-one).
 replace it with a new one. The command re-encrypts only the wrapped keys (the
 keys that protect your passwords, each one encrypted with the master key), so it
 is quick. It does not change your mail passwords. If the old master key may have
-leaked, also change the mail passwords at your mail provider.
+leaked, read the last paragraph of this section too.
 
 1. Stop every program that uses the data folder: `serve`, `setup`, and the AI
    apps that start email-mcp.
