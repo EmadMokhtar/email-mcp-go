@@ -308,7 +308,7 @@ pre code {
 
   The box has tabindex="0", so the keyboard can move to it and scroll it in
   every browser. Safari does not give the focus to a box that scrolls by
-  itself. The focus ring is the global :focus-visible rule above, so the box
+  itself (see layouts/_markup/render-table.html). The focus ring is the global :focus-visible rule above, so the box
   needs no rule of its own.
 */
 .table-scroll {

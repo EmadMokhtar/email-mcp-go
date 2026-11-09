@@ -8,8 +8,12 @@
   takes the keyboard focus, so a person without a mouse can scroll it.
 
   The name of the box is the text of the <title> of the drawing. A screen
-  reader lists the boxes of a page by name, so a page with two drawings must
-  not call both "Diagram". A drawing with no <title> stops the build.
+  reader lists the regions of a page by name: the boxes of the drawings and
+  the boxes of the tables (layouts/_markup/render-table.html). So a page with
+  two drawings must not call both "Diagram", and a drawing must not have the
+  name of a table of the same page. test/sitecheck fails the build when two
+  regions of a page have the same name. A drawing with no <title> stops the
+  build.
 */ -}}
 {{- with .Get 0 -}}
   {{- $name := . -}}

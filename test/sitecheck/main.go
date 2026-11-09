@@ -21,6 +21,11 @@
 //     display:block, and then a browser or a screen reader may stop reading it
 //     as a table. The box scrolls, and the table keeps its normal display.
 //     TestTableHookBox checks the other attributes of the box.
+//   - Every element with role="region" (the box of a table or of a drawing)
+//     has an aria-label that is not empty, and no other region of the page has
+//     the same one, because a screen reader lists the regions by name. A table
+//     and its own box have the same name, and that is allowed: one is a table
+//     and the other is a region.
 //   - Every link to the source code (blob or tree) goes to a path that exists
 //     in the repository, and so does every code-area meta tag.
 //   - Every regular page of the manual and the tech docs has a code-area, and a
@@ -199,13 +204,18 @@ func (c *checker) page(file, rel string) {
 	}
 	pageURL := c.base + pagePath(rel)
 	var kind string
-	var codeAreas, tables int
-	names := map[string]int{} // the aria-label of each table, and its number
+	var codeAreas, tables, regions int
+	names := map[string]int{}       // the aria-label of each table, and its number
+	regionNames := map[string]int{} // the aria-label of each region, and its number
 	for n := range doc.Descendants() {
 		if n.Type != html.ElementNode {
 			continue
 		}
 		c.attributes(file, n)
+		if role, _ := attr(n, "role"); role == "region" {
+			regions++
+			c.region(file, n, regions, regionNames)
+		}
 		for _, name := range loaders[n.Data] {
 			if ref, _ := attr(n, name); ref != "" {
 				c.resource(file, pageURL, "<"+n.Data+" "+name+">", ref)
@@ -306,6 +316,25 @@ func (c *checker) table(file string, n *html.Node, number int, names map[string]
 	}
 	if elements != 1 {
 		c.add(file, "table %d: its box has %d child elements, and the table must be the only one", number, elements)
+	}
+}
+
+// region checks an element with role="region". It must have an aria-label that
+// is not empty and different from the aria-label of every earlier region of the
+// page. number is the place of the region in the page, and names holds the
+// aria-label of each earlier region, with its number. region adds this one.
+func (c *checker) region(file string, n *html.Node, number int, names map[string]int) {
+	label, _ := attr(n, "aria-label")
+	label = strings.TrimSpace(label)
+	switch earlier, seen := names[label]; {
+	case label == "":
+		c.add(file, "region %d (<%s role=\"region\">) has no aria-label, so a screen reader cannot name it", number, n.Data)
+	case seen:
+		c.add(file, "region %d has the same aria-label as region %d: %q. "+
+			"A screen reader lists the regions by name, so each name must be different. "+
+			"A table and a drawing of one page may not have the same name", number, earlier, label)
+	default:
+		names[label] = number
 	}
 }
 

@@ -597,6 +597,39 @@ func TestTableNeedsNameAndScrollBox(t *testing.T) {
 	})
 }
 
+// TestRegionNamesAreUnique guards the names of the regions of one page: the
+// boxes of the tables and of the drawings. A screen reader lists the regions by
+// name, so a table and a drawing must not have the same name. A table and its
+// own box have the same name, and that is allowed.
+func TestRegionNamesAreUnique(t *testing.T) {
+	tableBox := func(label string) string {
+		return boxWith(scrollBoxAttrs+` role="region" aria-label="`+label+`" tabindex="0"`, namedTable(label))
+	}
+	drawing := func(label string) string {
+		return `<div class="diagram" role="region" aria-label="` + label + `" tabindex="0"><svg></svg></div>`
+	}
+	for _, tc := range []struct{ name, body, want string }{
+		{"a table and its box", tableBox("A"), ""},
+		{"a table and a drawing", tableBox("A") + "\n" + drawing("B"), ""},
+		{"two drawings", drawing("A") + "\n" + drawing("B"), ""},
+		{"a table and a drawing with one name", tableBox("A") + "\n" + drawing("A"),
+			`region 2 has the same aria-label as region 1: "A"`},
+		{"two drawings with one name", drawing("A") + "\n" + drawing("A"),
+			`region 2 has the same aria-label as region 1: "A"`},
+		{"a region with no aria-label", `<div role="region">Text</div>`,
+			`region 1 (<div role="region">) has no aria-label`},
+		{"a region with a blank aria-label", `<section role="region" aria-label=" ">Text</section>`,
+			`region 1 (<section role="region">) has no aria-label`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := newSite(t, subPath, map[string]string{
+				"site/public/index.html": htmlPage("", tc.body),
+			})
+			requireOutcome(t, cfg, "site/public/index.html", tc.want)
+		})
+	}
+}
+
 // TestTableNamesAreUnique guards the names of the tables of one page. A screen
 // reader lists the tables by name, so two tables with the same name are two
 // entries that it cannot tell apart. Another page may use the same name.

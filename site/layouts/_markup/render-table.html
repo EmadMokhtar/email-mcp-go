@@ -8,11 +8,13 @@
   <div class="table-scroll" role="region" aria-label="..." tabindex="0">, like
   the box of a drawing (layouts/_shortcodes/diagram.html):
   - tabindex="0" makes the box a Tab stop. Then a person who uses only the
-    keyboard can move to the box and scroll it with the arrow keys. Chrome
-    (from version 130) and Firefox give the focus to a box that scrolls even
-    without a tabindex, but Safari does not. So in Safari, without it, the
-    keyboard cannot scroll a wide table that has no link (checked in WebKit
-    26.4, the engine of Safari 26.4).
+    keyboard can move to the box and scroll it with the arrow keys.
+  - Chrome (from version 130) and Firefox give the focus to a box that
+    scrolls, even without a tabindex. Safari does not. In Safari, the keyboard
+    can reach a link inside a box, and the box then scrolls to show the link.
+    But a table with no link in it has nothing that takes the focus, so the
+    keyboard cannot scroll it. A test in WebKit 26.4 (the engine of Safari
+    26.4) showed this, and showed that tabindex="0" fixes it.
   - A box that takes the focus needs a role and a name, so that a screen
     reader can say what it is. The role is region, and the name is the name of
     the table.
@@ -20,12 +22,16 @@
     the box does not scroll. The site has no script, so this file cannot know
     which boxes scroll on the screen of the reader.
 
-  The name is on the <table>, as aria-label, and the box has the same name. A
-  screen reader can list the tables and the regions of a page by name, so each
-  name must be different. The name is the header
-  cells, such as "Command, What it does". The role already says "table", so
-  the name does not repeat it. The header cells say what the table is about,
-  and the page needs no extra text for it. These rules choose the words:
+  The name is on the <table>, as aria-label, and the box has the same name. So
+  a screen reader can say the name twice: once for the region and once for the
+  table. A screen reader can list the tables and the regions of a page by name,
+  so each name must be different. test/sitecheck checks this for the tables,
+  and for all regions of a page, so the boxes of the drawings count too.
+
+  The name is the header cells, such as "Command, What it does". The role
+  already says "table", so the name does not repeat it. The header cells say
+  what the table is about, and the page needs no extra text for it. These
+  rules choose the words:
   - An empty header cell is "column N" (N counts from 1), so the position of
     the other cells is not lost: "column 1, z".
   - When every header cell is empty, or there is no header, the cells of the
