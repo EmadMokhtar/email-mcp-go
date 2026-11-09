@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	uhtml "golang.org/x/net/html"
+
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/timelimit"
 )
 
 // treeCost returns the cost of the nodes of a tree, the node itself included:
@@ -487,9 +489,7 @@ func TestAmplifyingDocumentsAreStoppedByTheLimit(t *testing.T) {
 			require.ErrorIs(t, err, ErrTooComplex)
 			require.Nil(t, doc)
 			require.LessOrEqual(t, p.cost, limit+NodeCost+(AttrCost+len(markup))*maxAttrs(markup))
-			if !raceEnabled {
-				require.Less(t, elapsed, 2*time.Second)
-			}
+			timelimit.Less(t, "the parser", elapsed, 2*time.Second, func() { _, _, _ = parseCounted(markup, limit, true) })
 		})
 	}
 }
@@ -536,12 +536,12 @@ func TestRepeatedHTMLTagsCostTheAttributesThatTheyGoOver(t *testing.T) {
 	require.Equal(t, want, p.cost)
 
 	// 20,000 tags (249 KB) were 13 seconds of work. The limit stops them early.
+	tags := htmlTagsWithAttributes(20_000)
 	started := time.Now()
-	_, _, err = parseCounted(htmlTagsWithAttributes(20_000), 16_000_000, true)
+	_, _, err = parseCounted(tags, 16_000_000, true)
+	elapsed := time.Since(started)
 	require.ErrorIs(t, err, ErrTooComplex)
-	if !raceEnabled {
-		require.Less(t, time.Since(started), time.Second)
-	}
+	timelimit.Less(t, "the parser", elapsed, time.Second, func() { _, _, _ = parseCounted(tags, 16_000_000, true) })
 }
 
 // A frameset takes the body out of the tree, but the parser can still copy its

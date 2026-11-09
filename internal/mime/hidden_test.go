@@ -619,6 +619,7 @@ func TestHiddenCompoundRulesHaveAWorkLimit(t *testing.T) {
 // cannot recover from a stack overflow: it ends the whole server. So no shape of
 // sheet may make the code call itself once per character or per block.
 func TestHiddenHostileStyleSheets(t *testing.T) {
+	skipUnderRace(t)
 	const size = 4 << 20
 	fill := func(s string) string { return strings.Repeat(s, size/len(s)) }
 	tests := map[string]string{

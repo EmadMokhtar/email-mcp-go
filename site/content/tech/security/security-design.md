@@ -270,7 +270,7 @@ Security code is code that checks a caller, a permission, a confirmation, a
 secret or a connection, or that cleans text from a third party.
 
 1. Run `make test`. It runs every test that needs no build tag, so the
-   end-to-end tests run too. Most packages run with the flag `-race`, which
+   end-to-end tests run too. Every package runs with the flag `-race`, which
    turns on the race detector (a check that finds two goroutines, functions
    that Go runs at the same time, that use the same memory without a lock).
 2. Add a test for the rule that you add or change: in `security_test.go` for a

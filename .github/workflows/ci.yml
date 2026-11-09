@@ -40,8 +40,8 @@ jobs:
       # so a change that breaks them shows up at once.
       - name: go vet
         run: go vet -tags interop,screenshots,sitebuild ./...
-      # "make test" runs most packages with -race, and the packages of
-      # NORACE_PKGS in the Makefile without it. See the Makefile for why.
+      # "make test" runs every package with -race, then the packages of
+      # NORACE_PKGS in the Makefile again without it. See the Makefile for why.
       - name: make test
         run: make test
 

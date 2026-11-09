@@ -38,6 +38,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/imaptest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/smtptest"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/storetest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/webtest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/tokens"
 )
@@ -176,8 +177,13 @@ func (s localServers) server() account.MailServer {
 
 // openData opens the store and the vault of a data directory with the key file,
 // as a second program would. The caller closes the store.
+//
+// When no command made the data directory yet, it starts with a migrated
+// database (storetest.Seed), so the migrations do not run again for each test.
+// The tests of a first start run a command on a new directory first.
 func openData(t *testing.T, dir, keyPath string) (*store.Store, *secrets.Vault) {
 	t.Helper()
+	storetest.Seed(t, dir)
 	st, err := store.Open(context.Background(), dir)
 	require.NoError(t, err)
 	kek, err := secrets.NewFileKEK(keyPath)

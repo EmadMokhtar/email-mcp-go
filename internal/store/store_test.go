@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/seedfile"
 )
 
 // testNow is a fixed time with a millisecond part. The store keeps time as
@@ -29,12 +29,8 @@ var testNow = time.Date(2026, 10, 27, 9, 30, 15, 123_000_000, time.UTC)
 // themselves.
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	migratedFile.once.Do(func() {
-		migratedFile.data, migratedFile.err = makeMigratedFile()
-	})
-	require.NoError(t, migratedFile.err)
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, DBFileName), migratedFile.data, 0o600))
+	migratedFile.Seed(t, dir)
 
 	s, err := Open(context.Background(), dir)
 	require.NoError(t, err)
@@ -42,47 +38,23 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
-// migratedFile holds the bytes of a database file that has every migration. It
-// is made once in the test binary. With the race detector the migrations of a
-// new file take about 170 ms, and most tests of this package open a new store.
+// migratedFile is a database file that has every migration. It is made once
+// in the test binary. With the race detector the migrations of a new file take
+// about 170 ms, and most tests of this package open a new store.
 //
-// The package internal/testutil/storetest does the same for the other
-// packages. The tests of this package cannot use it: storetest imports store,
-// so the import would be a cycle.
-var migratedFile struct {
-	once sync.Once
-	data []byte
-	err  error
-}
-
-// makeMigratedFile migrates a new database in a temporary directory and
-// returns the bytes of its database file.
-func makeMigratedFile() ([]byte, error) {
-	dir, err := os.MkdirTemp("", "store-test-")
+// It is the same file as the one of internal/testutil/storetest, which the
+// other packages use. The tests of this package cannot import storetest:
+// storetest imports store, so the import would be a cycle. So the few lines
+// that make the file are here a second time. Closing the last connection
+// copies the write-ahead log into the database file and removes the log;
+// seedfile fails when the log stays.
+var migratedFile = seedfile.New(DBFileName, func(dir string) error {
+	s, err := Open(context.Background(), dir)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
-
-	ctx := context.Background()
-	s, err := Open(ctx, dir)
-	if err != nil {
-		return nil, err
-	}
-	// The checkpoint copies the write-ahead log into the database file and
-	// cuts the log, so the database file alone has every table.
-	complete, err := s.CheckpointWAL(ctx, CheckpointTruncate)
-	if cerr := s.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !complete {
-		return nil, errors.New("the checkpoint did not copy the whole log")
-	}
-	return os.ReadFile(filepath.Join(dir, DBFileName)) //nolint:gosec // G304: a temporary directory plus a fixed name
-}
+	return s.Close()
+})
 
 // testServer returns valid mail server settings.
 func testServer() account.MailServer {

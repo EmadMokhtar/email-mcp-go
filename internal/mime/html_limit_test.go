@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/timelimit"
 	"github.com/EmadMokhtar/email-mcp-go/internal/thirdparty/xhtml"
 )
 
@@ -210,9 +211,7 @@ func requireRefused(t *testing.T, markup string, maxAllocated uint64) {
 		require.Empty(t, out, name)
 		require.Less(t, u.allocated, maxAllocated, name)
 		require.Less(t, u.peak, uint64(maxRefusedPeak), name)
-		if !raceEnabled {
-			require.Less(t, u.elapsed, maxRefusedTime, name)
-		}
+		timelimit.Less(t, name, u.elapsed, maxRefusedTime, func() { _, _ = convert(markup) })
 	}
 }
 
@@ -271,6 +270,7 @@ func TestFramesetDoesNotGiveTheCostOfTheBodyBack(t *testing.T) {
 
 // The attributes that come from the input count too, not only the copies.
 func TestManyAttributesInManyTagsAreRefused(t *testing.T) {
+	skipUnderRace(t)
 	// Before: 4 MiB, not refused, 190 MiB.
 	in := attributesInManyTagsHTML(4 << 20)
 	requireRefused(t, in, maxRefusedAllocation)
@@ -304,6 +304,7 @@ func TestOneLongAttributeIsConverted(t *testing.T) {
 // keeps them in its list. The parser counts what it makes, so it does not matter
 // to us. The documents that the parser does not amplify are converted.
 func TestAmplifyingHTMLInEveryWayThatIsStillOpen(t *testing.T) {
+	skipUnderRace(t)
 	var b strings.Builder
 	b.WriteString("<p>")
 	for i := 0; i < 400; i++ {
@@ -340,9 +341,7 @@ func TestAmplifyingHTMLInEveryWayThatIsStillOpen(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
-			if !raceEnabled {
-				require.Less(t, u.elapsed, maxRefusedTime)
-			}
+			timelimit.Less(t, "HTMLToText", u.elapsed, maxRefusedTime, func() { _, _ = HTMLToText(tc.markup) })
 		})
 	}
 }
@@ -351,6 +350,7 @@ func TestAmplifyingHTMLInEveryWayThatIsStillOpen(t *testing.T) {
 // the text of select, svg, math and noscript in different ways. The parser does
 // not depend on the tokens.
 func TestHTMLWithRawTextOrForeignContentIsStillBounded(t *testing.T) {
+	skipUnderRace(t)
 	payload := amplifiedHTML(500, 4000)
 	tricks := map[string]string{
 		"select, math, textarea, xmp": "<select><math></select><textarea></math><xmp></textarea>" + payload,
@@ -393,6 +393,7 @@ func treeCost(n *xhtml.Node) (cost, nodes, attrs, attrBytes int) {
 // A realistic mail still converts, with at least a half of the limit left. The
 // numbers are in the log.
 func TestRealisticDocumentsAreConverted(t *testing.T) {
+	skipUnderRace(t)
 	for _, tc := range []struct {
 		size   int
 		extras bool
@@ -488,9 +489,7 @@ func requireTooLargeRefused(t *testing.T, convert func(string) (string, error), 
 	require.Empty(t, out)
 	require.Less(t, u.allocated, maxAllocated)
 	require.Less(t, u.peak, uint64(maxRefusedPeak))
-	if !raceEnabled {
-		require.Less(t, u.elapsed, time.Second)
-	}
+	timelimit.Less(t, "the conversion", u.elapsed, time.Second, func() { _, _ = convert(markup) })
 	return u
 }
 
@@ -500,6 +499,7 @@ func requireTooLargeRefused(t *testing.T, convert func(string) (string, error), 
 // MiB of allocations. Now the rendered tree, or the result of the sanitizer,
 // reaches the limit and VisibleHTML stops.
 func TestVisibleHTMLThatWouldBeTooLargeIsRefused(t *testing.T) {
+	skipUnderRace(t)
 	for _, tc := range []struct {
 		name         string
 		markup       string
@@ -536,6 +536,7 @@ func TestVisibleHTMLThatWouldBeTooLargeIsRefused(t *testing.T) {
 // whole url was shown, the text was 43 MB from 85 KB of markup, which took 0.98 s,
 // +204 MiB and 764 MiB of allocations. Now each copy is cut.
 func TestHTMLToTextOfCopiedLinksIsSmall(t *testing.T) {
+	skipUnderRace(t)
 	for name, in := range map[string]string{
 		"text in each copy (85 KB)": shownLinkCopiedHTML(20_968),
 		"the url alone (147 KB)":    strings.ReplaceAll(shownLinkCopiedHTML(20_968), "<p>y", "<p><br>"),
@@ -553,6 +554,7 @@ func TestHTMLToTextOfCopiedLinksIsSmall(t *testing.T) {
 // counts the text as it is built, with the line breaks of the blocks, so the
 // text here is not in a paragraph.
 func TestHTMLToTextIsLimitedToMaxConvertedTextBytes(t *testing.T) {
+	skipUnderRace(t)
 	const euro = "\U000020ac" // three bytes in UTF-8
 	atTheLimit := strings.Repeat("a", maxConvertedTextBytes-3) + euro
 	out, err := HTMLToText(atTheLimit)
@@ -569,6 +571,7 @@ func TestHTMLToTextIsLimitedToMaxConvertedTextBytes(t *testing.T) {
 // The limit on the rendered tree is exact. Render writes the html and body
 // elements around the paragraph, and the sanitizer takes them away.
 func TestVisibleHTMLIsLimitedToMaxVisibleHTMLBytes(t *testing.T) {
+	skipUnderRace(t)
 	frame := len(renderedVisibleHTML(t, "<p>"))
 	text := strings.Repeat("a", maxVisibleHTMLBytes-frame)
 	require.Len(t, renderedVisibleHTML(t, "<p>"+text), maxVisibleHTMLBytes)

@@ -8,7 +8,8 @@ code_areas:
   - internal/testutil/webtest/webtest.go
   - internal/testutil/chrometest/chrometest.go
   - internal/testutil/storetest/storetest.go
-  - test/noracecheck/noracecheck_test.go
+  - internal/testutil/seedfile/seedfile.go
+  - internal/testutil/timelimit/timelimit.go
   - internal/e2e/harness_test.go
   - internal/e2e/security_test.go
   - internal/e2e/capture_test.go
@@ -41,7 +42,7 @@ the tests of a feature.
 
 | Kind | Where | How it runs | What it proves |
 |---|---|---|---|
-| Unit tests | the `_test.go` files next to the code | `make test`: `go test -race`, and `go test` without `-race` for the packages of `NORACE_PKGS` (see [The race detector](#the-race-detector)) | One package does what its comments say, often with fake parts around it. |
+| Unit tests | the `_test.go` files next to the code | `make test`: `go test -race ./...`, then the packages of `NORACE_PKGS` again without `-race` (see [The race detector](#the-race-detector)) | One package does what its comments say, often with fake parts around it. |
 | End-to-end tests | `internal/e2e` | `make test`, with `-race` | The whole program, started as in a real run, behaves as each named test says (see [the list](#the-end-to-end-tests)). |
 | Screenshots and layout | `internal/e2e`, build tag `screenshots` | `make screenshots` | Each page of the program that the manual shows exists and has the expected texts. The images of the manual come from here. |
 | Site tests | `test/sitecheck` | `go test ./...`, and `make site` with the build tags | The checker of the docs site finds what it must find. |
@@ -110,7 +111,9 @@ folder with a database that already has every migration. `storetest.Seed(t,
 dir)` writes the database file into `dir`, and `store.Open` then runs no
 migration. Use it in a fixture (the shared setup of the tests of a package)
 that opens a new store. The first call runs the migrations once in the test
-binary and keeps the file in memory. Each later call writes a copy of it.
+binary and keeps the file in memory. Each later call writes a copy of it. A
+test that checks the database of a seeded folder against a freshly migrated
+one compares the schema, every row and the settings.
 
 This matters for speed. SQLite parses the whole schema again after each
 change to it. The SQLite of `modernc.org/sqlite` is Go code, so the race
@@ -119,11 +122,20 @@ migrations of one new file take about 170 ms, and hundreds of tests open a new
 store. Before `storetest`, the migrations were up to half of the time of some
 packages.
 
-The tests of `internal/store` cannot import `storetest`: `storetest` imports
-`store`, so that import is a cycle. `newTestStore` in
-{{< src "internal/store/store_test.go" >}} does the same for them. The tests
-of `store.Open` and of the migrations, the end-to-end tests and the command
-tests start from an empty folder on purpose, because they test a first start.
+The copy itself is {{< src "internal/testutil/seedfile/seedfile.go" >}}. It
+makes a file once in a test binary, and writes it into a folder with mode
+0700 and the file with mode 0600, as `store.Open` does. It fails when making
+the file leaves a second file, such as the write-ahead log of SQLite, because
+the file alone would then not be complete. `seedfile` does not import `store`.
+So the tests of `internal/store`, which cannot import `storetest` (that import
+would be a cycle), use it too: see `newTestStore` in
+{{< src "internal/store/store_test.go" >}}.
+
+The tests of `store.Open` and of the migrations, and the end-to-end tests,
+start from an empty folder on purpose, because they test a first start. So do
+the command tests that run a command on a new data folder. The command test
+helpers that write a data folder themselves (`prepareDataDir` and `openData`)
+seed it.
 
 ## The end-to-end tests
 
@@ -219,28 +231,36 @@ The code has a few points where a test puts in its own part:
 
 ## The race detector
 
-`make test` runs the tests with `-race`, except the packages of `NORACE_PKGS`
-in the Makefile: `internal/mime` and `internal/thirdparty/xhtml`. CI and the
-release run `make test` too. The race detector makes the code many times
-slower. So a few packages have two files,
-`race_on_test.go` (build tag `race`) and `race_off_test.go` (build tag
-`!race`), that set the constant `raceEnabled`. Go sets the tag `race` by
-itself under `-race`. A test that measures time skips that check, or skips
-itself, when `raceEnabled` is true. The tests of the work limits of
-`internal/mime` also check memory, which holds with the detector too. See
-{{< src "internal/mime/race_on_test.go" >}} and
-{{< src "internal/mime/race_off_test.go" >}}.
+`make test` runs two times. The first run tests every package with `-race`.
+The second run tests the packages of `NORACE_PKGS` in the Makefile again,
+without `-race`: `internal/mime` and `internal/thirdparty/xhtml`. The second
+run always runs, also when the first fails, so you see the failures of both.
+It starts after the first run ends, so the machine is quiet while the time
+limits are checked. CI and the release run `make test` too.
 
-The packages of `NORACE_PKGS` start no goroutine, so the detector cannot find
-a race in their own tests. But it made their CPU-heavy limit tests about 10
-times slower: `internal/mime` alone took more than 3 minutes in CI. Without
-the detector, these tests also check their time limits. The detector still
-checks this code in the tests of the packages that call it, for example
-`internal/provider/imapsmtp`.
-{{< src "test/noracecheck/noracecheck_test.go" >}} reads `NORACE_PKGS` and
-fails when the code of one of these packages starts a goroutine or imports
-`sync` or `sync/atomic`. If such code needs a goroutine, take its package out
-of `NORACE_PKGS`, so its tests run with `-race` again.
+The race detector makes the code many times slower. So a few packages have
+two files, `race_on_test.go` (build tag `race`) and `race_off_test.go` (build
+tag `!race`), that set the constant `raceEnabled`. Go sets the tag `race` by
+itself under `-race`. See {{< src "internal/mime/race_on_test.go" >}} and
+{{< src "internal/mime/race_off_test.go" >}}. Two kinds of test use it:
+
+- A heavy test of `internal/mime` calls `skipUnderRace` first (see
+  {{< src "internal/mime/heavy_test.go" >}}). Such a test converts large or
+  hostile HTML in one goroutine. Under `-race` each one took from 3 s to 27 s,
+  and together they were most of the time of the run. The detector cannot
+  find a race in work of one goroutine, and the smaller tests of the same code
+  still run with `-race`. The second run of `make test` runs the heavy tests.
+- A time limit goes through `timelimit.Less` (see
+  {{< src "internal/testutil/timelimit/timelimit.go" >}}). Under `-race` it
+  checks nothing. Without `-race`, a first try over the limit is timed again,
+  up to three tries, and the fastest try counts. A shared CI machine can pause
+  a test for a moment. Work that grows too fast, which the limits catch, is
+  slow on every try. The limit tests also check memory, which holds with the
+  detector too.
+
+A new heavy test of a package outside `NORACE_PKGS` must not skip under
+`-race`, because no second run would run it. Add its package to
+`NORACE_PKGS` first.
 
 ## Fuzz targets
 
