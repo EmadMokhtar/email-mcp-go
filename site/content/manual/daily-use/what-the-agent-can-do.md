@@ -34,18 +34,26 @@ means that the tool needs no level. email-mcp reads and writes mail over IMAP
 | `request_permission_change` | any | Returns a link to the settings page of an account. It changes nothing: only you can change a level. This holds for an agent that can only call these tools: see [Security](/manual/daily-use/security/). |
 | `list_folders`, `list_tags` | 1 | Lists the folders and the tags (IMAP keywords: labels that the mail server keeps on a message). |
 | `search_messages`, `list_new_messages` | 1 | Finds messages. At most 100 per page, with a snippet of at most 200 characters. See the details below. |
-| `get_message`, `get_attachment` | 1 | Reads one message or one attachment (at most 10 MiB). See the details below. |
+| `get_message`, `get_attachment` | 1 | Reads one message, or one attachment of at most 10 MiB. See the details below. |
 | `get_send_status` | 1 | Shows whether a send is queued, sent, failed, or waiting for approval. See the details below. |
-| `set_flags`, `tag_messages`, `move_messages` | 2 | Marks as read or unread, flags (marks on a message), tags and moves messages. `move_messages` never moves mail to the Trash (the folder of deleted mail) or to a folder inside it, at any level: use `trash_messages` (level 5). A folder with a common Trash name (such as `Trash`, `Deleted Items` or `Bin`) counts as the Trash, also when the server does not mark it. |
+| `set_flags`, `tag_messages`, `move_messages` | 2 | Marks as read or unread, flags (marks on a message), tags and moves messages. `move_messages` never moves mail to a Trash folder (the folder of deleted mail) that email-mcp recognizes, or to a folder inside it, at any level: use `trash_messages` (level 5). Mail servers differ, so email-mcp may not recognize every Trash folder. When it matters, look in your Trash yourself. |
 | `create_folder`, `create_tag` | 2 | Makes a folder or a tag. There is no tool that deletes a folder. `create_folder` never makes a folder inside the Trash. |
 | `create_draft`, `discard_draft` | 3 | Writes a draft (a message that is saved but not sent), or moves a draft to the Trash. |
 | `send_message`, `cancel_send` | 4 | Sends a new message, a reply or a forward, and cancels a send during its undo window, or a send that waits for approval. |
 | `trash_messages` | 5 | Moves messages to the Trash. It never deletes mail for good. |
 
-A MiB (mebibyte) is 1,048,576 bytes. The limit for an attachment is 10 MiB,
-which is 10 times 1,048,576 bytes. The texts that email-mcp gives to the agent
-say "10 MB" (MB: megabyte, 1,000,000 bytes), but the limit in the program is 10
-MiB.
+A MiB (mebibyte) is 1,048,576 bytes, so 10 MiB is 10 times 1,048,576 bytes.
+`get_attachment` returns one attachment of at most 10 MiB. A message that the
+agent sends can hold at most 10 MiB of attachments in all (after base64
+decoding: base64 is a way to write bytes as text). The same limit holds for a
+draft. The texts that email-mcp gives to the agent say "10 MB" (MB: megabyte,
+1,000,000 bytes), but the limit in the program is 10 MiB.
+
+`trash_messages` and `discard_draft` need a Trash folder that email-mcp can find
+on the server. If it finds none, they fail. Then move the mail to the Trash in
+your mail program. The page [Known
+limitations](/manual/reference/known-limitations/#what-the-mail-server-needs)
+lists what else the mail server needs.
 
 ### Details
 
@@ -80,10 +88,9 @@ MiB.
   - The plain text part shows the address of a link after the link text, but
     only when the address is short enough to show in full. A link keeps its
     address only in that case. A long address is cut in the plain text part,
-    and then the link goes out as text, without its address. The limits are
-    small: for example, a link with more than 31 characters after the `?`, such
-    as a tracking link, goes out without its address. The [known
-    limitations](/manual/reference/known-limitations/) list all the limits.
+    or left out, and then the link goes out as text, without its address. The
+    limits are small, so a tracking link often goes out without its address.
+    The [known limitations](/manual/reference/known-limitations/) say more.
   - In a forward, only your new text is formatted. The original message is
     added as plain text in a quoted block, so its formatting is gone and its
     links are plain text.
@@ -108,8 +115,11 @@ The marker and the instruction are text that the agent reads. They do not force
 the agent. An email can contain hidden instructions, and an agent may follow
 them. This is why a send waits for your yes by default (see
 [Confirmations](/manual/daily-use/confirmations/)). With **Confirm sends** off,
-nobody checks before anything leaves (see [Full autonomy, limits and
-settings](/manual/daily-use/full-autonomy-and-limits/)).
+nobody checks most sends before they leave. The check of an address outside
+ASCII (the basic set of characters: English letters, digits and common signs)
+and the new-recipient check (a setting that asks you before a message goes to a
+new address) can still ask (see [Full autonomy, limits and
+settings](/manual/daily-use/full-autonomy-and-limits/#full-autonomy)).
 
 ## Addresses in received mail
 

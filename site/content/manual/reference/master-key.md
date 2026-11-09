@@ -133,7 +133,8 @@ file must have mode 0600, or a stricter mode, such as 0400. Mode 0600 means that
 you can read and write the file, and nobody else has any access to it.
 email-mcp refuses a key file when any other user of the computer has access to
 it. A file with mode 0644 is refused, for example. Windows has no such modes, so
-email-mcp does not check the mode there.
+email-mcp does not check the mode there. On Windows, keep the key file in a
+folder that only your user account can read.
 
 The command `ls -l` shows the mode in its first column. `-rw-------` is mode
 0600 (a macOS system may add a sign `@` after it). To fix a wrong mode, run
@@ -184,7 +185,8 @@ one](/manual/daily-use/troubleshooting/#the-master-key-is-the-wrong-one).
 `email-mcp key rotate` moves to a new master key. To rotate a key means to
 replace it with a new one. The command re-encrypts only the wrapped keys (the
 keys that protect your passwords, each one encrypted with the master key), so it
-is quick.
+is quick. It does not change your mail passwords. If the old master key may have
+leaked, also change the mail passwords at your mail provider.
 
 1. Stop every program that uses the data folder: `serve`, `setup`, and the AI
    apps that start email-mcp.
@@ -216,3 +218,7 @@ When the command works, it prints "The master key was changed. Every stored key
 is now wrapped by the new master key", and then the new setting to use from now
 on. The page [Commands](/manual/reference/commands/) lists the flags of `key
 rotate`.
+
+If the old master key may have leaked, also change the mail passwords at your
+mail provider. Then reconnect each account with its new password (see [Reconnect
+an account](/manual/daily-use/manage-accounts/#reconnect-an-account)).

@@ -28,13 +28,14 @@ where Windows keeps the data of your programs.
 `--data-dir` or `EMAIL_MCP_DATA_DIR` chooses another folder. `--data-dir` is a
 flag of a command (see [Commands](/manual/reference/commands/)).
 `EMAIL_MCP_DATA_DIR` is an environment variable (a named setting that a program
-reads from its surroundings). When both are set, the flag wins. The folder has
-mode 0700 (only you can open it) and the database file `email-mcp.db` has mode
-0600 (only you can read and write it). The database is SQLite (a database that
+reads from its surroundings). When both are set, the flag wins. email-mcp makes
+the folder with mode 0700 (only you can open it) and the database file
+`email-mcp.db` with mode 0600 (only you can read and write it). Keep both
+private if you copy or restore the folder. `email-mcp doctor` (the command that
+checks the install) checks them. The database is SQLite (a database that
 lives in one file) in WAL mode (write-ahead log: a mode that lets several
 programs use one database file safely), so several email-mcp programs can use
-it at once. On Windows, `email-mcp doctor` (the command that checks the
-install) does not check these two modes. See
+it at once. On Windows, `email-mcp doctor` does not check these two modes. See
 [Troubleshooting](/manual/daily-use/troubleshooting/#start-with-doctor).
 
 ## What is stored

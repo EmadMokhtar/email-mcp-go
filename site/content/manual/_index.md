@@ -13,20 +13,28 @@ that the agent can call, such as `search_messages`. email-mcp is an MCP server.
 MCP (Model Context Protocol) is an open standard that lets AI apps, such as
 Claude Code, call tools that other programs offer.
 
-- It works with any mail provider that offers IMAP (Internet Message Access
+- It works with mail providers that offer IMAP (Internet Message Access
   Protocol: the protocol for reading mail) and SMTP (Simple Mail Transfer
   Protocol: the protocol for sending mail), with a password or an app password.
   An app password is a separate password that you make in your mail account for
   one program. See
-  [App passwords](/manual/getting-started/connect-account/#app-passwords).
+  [App passwords](/manual/getting-started/connect-account/#app-passwords). Some
+  tools need features of the mail server. See [What the mail server
+  needs](/manual/reference/known-limitations/#what-the-mail-server-needs).
 - It runs on your own computer. Your passwords stay on your computer,
   encrypted.
 - You decide what the agent may do, per account: only read, also organize,
   also write drafts, also send, also move mail to the Trash. Each choice is a
   level: a number from 0 (no access) to 5 (also move mail to the Trash).
-- By default, every send waits for your "yes". A move to the Trash needs level
-  5 first, and then it waits for your "yes" too. The one exception is a draft:
-  at level 3, the agent can move a draft to the Trash, and it does not ask you.
+- By default, every send waits for your "yes". Moving mail to the Trash needs
+  level 5. Mail servers differ, so email-mcp may not recognize every Trash
+  folder. At level 5, a move to the Trash waits for your "yes" too. The
+  exceptions are drafts. At level 3 `discard_draft` moves a draft to the Trash
+  without a question. When the agent sends a saved draft (`send_message` with
+  `draft_ref`, the reference of the draft), email-mcp moves that draft to the
+  Trash after the mail server takes the message (level 4 is enough). Neither
+  counts toward the daily Trash limit (the most messages that the agent may
+  move to the Trash in one day).
 - One server can hold several accounts.
 
 ## How the parts fit

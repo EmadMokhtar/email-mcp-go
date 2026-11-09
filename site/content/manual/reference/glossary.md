@@ -31,7 +31,8 @@ alphabetical order.
 - **Checksum:** a short code that a function makes from the content of a file.
   Another content gives another code.
 - **Confirmation:** your "yes" before the agent can send mail or move mail to
-  the Trash. See [Confirmations](/manual/daily-use/confirmations/).
+  the Trash. `discard_draft` moves a draft to the Trash without one. See
+  [Confirmations](/manual/daily-use/confirmations/).
 - **cosign / Sigstore:** tools and a public service that sign files with
   short-lived certificates instead of long-lived keys.
 - **Data folder:** the folder where email-mcp keeps its data. See [Where the
@@ -47,8 +48,10 @@ alphabetical order.
   means that only you can open a folder.
 - **Fingerprint:** a short, unique code of a certificate (its SHA-256 checksum).
   You compare it before you trust a certificate.
-- **Full autonomy:** both confirmation switches are off. The agent acts without
-  asking.
+- **Full autonomy:** both confirmation switches are off, so they do not ask
+  before a send or a move to the Trash. The check of an address outside ASCII
+  and the new-recipient check can still ask. See [Full
+  autonomy](/manual/daily-use/full-autonomy-and-limits/#full-autonomy).
 - **Gatekeeper:** the program check of macOS. It looks at a program that has the
   quarantine mark.
 - **Hosted mode:** one server that many people use. It is planned and not
@@ -82,6 +85,10 @@ alphabetical order.
   encrypt your passwords.
 - **MCP (Model Context Protocol):** an open standard that lets AI apps call
   tools that other programs offer.
+- **New-recipient check:** a setting that asks you before a message goes to an
+  address that email-mcp never sent or queued mail to for this account. See
+  [Full autonomy, limits and
+  settings](/manual/daily-use/full-autonomy-and-limits/).
 - **OAuth:** a way to sign in without giving a program your password. This
   version does not support it.
 - **Outbox:** the queue of messages that wait to go out.
@@ -93,7 +100,8 @@ alphabetical order.
 - **Quarantine:** a mark that macOS puts on a downloaded program. Gatekeeper
   looks at a program that has it.
 - **Request:** one tool call of an agent. The Activity page shows a request for
-  every tool call, also a refused one.
+  every tool call, also a refused one. A call that comes while email-mcp stops
+  has no row.
 - **Rotate (a key):** replace a key with a new one. `email-mcp key rotate`
   replaces the master key.
 - **Sandbox:** a limit, enforced by the operating system, on what shell commands
@@ -101,6 +109,8 @@ alphabetical order.
 - **SBOM (software bill of materials):** a list of every module inside a binary.
 - **Scope:** one permission of a token, such as `email:send`. Scopes add up:
   each scope also allows the levels under it.
+- **SMTPUTF8:** an SMTP extension that lets a mail server take an address with
+  characters outside ASCII. An extension is an optional feature of a server.
 - **stdio:** standard input and output. The AI app starts the program and talks
   to it directly, with no network.
 - **Terminal:** a window where you type commands.
@@ -109,10 +119,17 @@ alphabetical order.
 - **Token:** a secret that an AI app sends to the local HTTP server. It stands
   for a set of scopes.
 - **Tool:** one action that the agent can call, such as `search_messages`.
-- **Trash:** the folder of deleted mail. Level 5 moves mail there.
+- **Trash:** the folder of deleted mail. Level 5 moves mail there. Drafts are
+  the exceptions: `discard_draft` moves a draft there at level 3, and email-mcp
+  moves a saved draft there after it sends it.
 - **Undo window:** the time a send waits in the outbox before it goes out. It
   can be cancelled during this time, by the agent, on the Activity page, or with
-  `email-mcp outbox cancel`.
+  `email-mcp outbox cancel`. While email-mcp stops, the agent cannot cancel. See
+  [When email-mcp
+  stops](/manual/daily-use/activity-and-undo/#when-email-mcp-stops).
+- **UTC (Coordinated Universal Time):** the world standard of time, with no time
+  zone offset. The send limits and the Trash limit count in clock hours and
+  days of UTC.
 - **WAL (write-ahead log):** a SQLite mode that lets several programs use one
   database file safely.
 - **Web pages:** the pages that email-mcp shows in your browser, from your own

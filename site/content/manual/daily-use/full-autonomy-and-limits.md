@@ -4,6 +4,7 @@ description: Learn how to turn confirmations off, which limits stay on, and what
 weight: 60
 code_areas:
   - internal/policy/limiter.go
+  - internal/service/send.go
   - internal/domain/account/
   - internal/outbox/
   - internal/web/settings.go
@@ -56,7 +57,11 @@ accepts the risk." Nothing is saved.
 ## Full autonomy
 
 **Full autonomy** means both switches are off. The agent then sends and moves
-mail to the Trash (the folder of deleted mail) without asking. Every save with
+mail to the Trash (the folder of deleted mail) without asking. The check of an
+address outside ASCII (the basic set of characters: English letters, digits and
+common signs) and the new-recipient check can still ask. The new-recipient
+check is a setting that asks you before a message goes to a new address (see
+[All settings of an account](#all-settings-of-an-account)). Every save with
 both switches off needs the same box again.
 
 The time when you last accepted the risk is stored and shown on the settings
@@ -68,21 +73,32 @@ and later off again, you must accept the risk again.
 These guardrails stay on in full autonomy. You can change the numbers per
 account:
 
-- at most 20 sends per hour and 200 per day;
-- at most 50 recipients per message;
-- at most 500 messages moved to the Trash per day;
+- at most 20 sends in one clock hour and 200 in one day. The hours and the
+  days are those of UTC (Coordinated Universal Time: the world standard of
+  time, with no time zone offset), so 00:00 UTC may not be midnight where you
+  live. The count starts again at the top of each hour and at 00:00 UTC. It
+  does not count back 60 minutes or 24 hours from now. The table below says
+  more;
+- at most 50 recipients per message (you can raise it to 200, not more);
+- at most 500 messages moved to the Trash per day. The drafts that
+  `discard_draft` moves, and the draft that email-mcp moves after it sends a
+  saved draft, do not count;
 - an undo window of 30 seconds for a send without a confirmation (0 seconds
   after you confirmed it; you can set 0 to 300 seconds). The agent or you can
   cancel a send during this window. You cancel on the Activity page, or with
-  `email-mcp outbox cancel <id>`, at any permission level. The page [Activity
-  and undo](/manual/daily-use/activity-and-undo/) has the steps;
+  `email-mcp outbox cancel <id>`, at any permission level. While email-mcp
+  stops, the agent cannot cancel. The page [Activity and
+  undo](/manual/daily-use/activity-and-undo/#cancel-a-send) has the steps, and
+  the section [When email-mcp
+  stops](/manual/daily-use/activity-and-undo/#when-email-mcp-stops) says more;
 - a send is checked again each time it is about to go out. If the level of the
   account no longer allows sending, the send fails and does not go out, even if
   you raise the level again later;
 - no tool ever deletes mail for good;
-- every tool call of an agent is written to the activity log;
-- a recipient with characters outside ASCII (the basic set of characters:
-  English letters, digits and common signs) is always confirmed (see
+- every tool call of an agent is written to the activity log, except a call
+  refused while the program stops, and a call with a wrong access token (see
+  [Activity and undo](/manual/daily-use/activity-and-undo/#the-activity-page));
+- a recipient with characters outside ASCII is always confirmed (see
   [Confirmations](/manual/daily-use/confirmations/#addresses-outside-ascii)).
 
 ## All settings of an account
@@ -90,20 +106,22 @@ account:
 The settings page of an account has these settings. Open it with **Accounts**,
 and then **Permissions and settings** on the account. Click **Save** to keep
 your changes. A count is a whole number from 0 to 1,000,000. An undo window is a
-whole number of seconds from 0 to 300. A count of 0 allows nothing.
+whole number of seconds from 0 to 300. A count of 0 allows nothing. The send
+and Trash counts use UTC: an hour count starts again at the top of each hour,
+and a day count at 00:00 UTC.
 
 | Setting (as on the page) | What it does | Default |
 |---|---|---|
 | **Mail level** | The level of the account: what the agent may do with its mail. The list has 0 Off, 1 Read, 2 Organize, 3 Draft, 4 Send and 5 Delete (moves mail to the Trash). | 4 Send |
 | **Confirm sends** | Asks you before the agent sends a message. | On |
-| **Confirm deletes** | Asks you before the agent moves mail to the Trash. It does not apply to `discard_draft`, which moves a draft to the Trash at level 3. | On |
-| **Sends per hour** | The most sends in one hour. | 20 |
-| **Sends per day** | The most sends in one day. | 200 |
-| **Recipients per message** | The most recipients in one message. | 50 |
-| **Messages moved to Trash per day** | The most messages that the agent moves to the Trash in one day. | 500 |
-| **Undo window without a confirmation, in seconds (0 to 300)** | How long a send waits before it goes out, when you did not confirm it. You and the agent can cancel it in this time. | 30 seconds |
+| **Confirm deletes** | Asks you before the agent moves mail to the Trash. It does not apply to `discard_draft`, which moves a draft to the Trash at level 3, or to the draft that email-mcp moves to the Trash after it sends a saved draft. | On |
+| **Sends per hour** | The most sends in one clock hour (UTC); the count restarts at the top of each hour. | 20 |
+| **Sends per day** | The most sends in one UTC day; restarts at 00:00 UTC, not a sliding 24 hours. | 200 |
+| **Recipients per message** | The most recipients (To, Cc and Bcc) in one message. email-mcp never allows more than 200, whatever you set. | 50 |
+| **Messages moved to Trash per day** | The most messages that the agent moves to the Trash in one UTC day; restarts at 00:00 UTC. The draft moves of `discard_draft`, and of a send of a saved draft, do not count. | 500 |
+| **Undo window without a confirmation, in seconds (0 to 300)** | How long a send waits before it goes out, when you did not confirm it. You and the agent can cancel it in this time. While email-mcp stops, only you can cancel. | 30 seconds |
 | **Undo window after a confirmation, in seconds (0 to 300)** | The same wait, after you confirmed the send. | 0 seconds |
-| **Ask me before a message goes to an address that this account never wrote to** | The new-recipient check. A message to an address that this account never wrote to asks you first, also when **Confirm sends** is off. | Off |
+| **Ask me before a message goes to an address that this account never wrote to** | The new-recipient check. A message to an address that email-mcp never sent or queued mail to for this account (your Sent folder is not read) asks you first, also when **Confirm sends** is off. | Off |
 | **Save a copy of sent mail to Sent** | After the mail server takes a message, email-mcp saves a copy of it in the Sent folder of the account. If the copy cannot be saved, the message is still sent, and it is not sent again. | Off |
 
 The settings page also has the section **Reconnect the account** and the section

@@ -27,9 +27,12 @@ email-mcp), to look after your accounts, and to see what the agent did.
 
 ## The address and the sign-in
 
-The web pages run at `email-mcp.localhost`, a name that always means your own
-computer. You sign in with a link that the command `email-mcp setup` prints. The
-page [Connect your first
+The web pages run at `email-mcp.localhost`, a name that Chrome, Edge and
+Firefox send to your own computer. Other browsers need a line in your hosts file
+(the file where your computer keeps names and their addresses) first. The page
+[Connect your first account][hosts] shows the line, in the section "If your
+browser does not find `email-mcp.localhost`". You sign in with a link that the
+command `email-mcp setup` prints. The page [Connect your first
 account](/manual/getting-started/connect-account/#sign-in-to-the-web-pages)
 has the steps.
 
@@ -39,7 +42,8 @@ The web pages run only while an email-mcp program serves them. `email-mcp setup`
 serves them for as long as it runs. The email-mcp program that your AI app
 started serves them too, but it starts them only when it gives you a link. Each
 time, the pages get a new port (the number that names one service on an
-address). So a tab or a bookmark from an earlier time finds nothing.
+address). So a tab or a bookmark from an earlier time usually finds nothing. Do
+not use one (see [Security](/manual/daily-use/security/)).
 
 To open the pages, run this in a terminal (a window where you type commands),
 and open the link that it prints. Keep the terminal open while you use the
@@ -63,9 +67,10 @@ to the Trash hides the menu: its back link leads to **Waiting for you**. A
 browser that is not signed in has no menu. The menu has these entries:
 
 - **Waiting for you** shows the sends and the moves to the Trash (the folder of
-  deleted mail) that wait for your answer. A number beside the name says how
-  many wait. The page [Confirmations](/manual/daily-use/confirmations/) explains
-  them.
+  deleted mail) that wait for your answer on an approval link. A confirmation
+  that you answer in the form of your AI app is not listed here. A number beside
+  the name says how many wait. The page
+  [Confirmations](/manual/daily-use/confirmations/) explains them.
 - **Accounts** shows your connected accounts. The page [Manage
   accounts](/manual/daily-use/manage-accounts/) explains them.
 - **Activity** shows the sends that wait to go out, and the log of what the
@@ -135,3 +140,4 @@ account](/manual/getting-started/connect-account/#sign-in-to-the-web-pages)
 says more.
 
 [ns]: /manual/daily-use/troubleshooting/#a-web-page-says-to-run-email-mcp-setup
+[hosts]: /manual/getting-started/connect-account/

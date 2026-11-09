@@ -4,6 +4,7 @@ description: Learn when a send or a move to the Trash waits for your yes, what y
 weight: 40
 code_areas:
   - internal/mcpserver/elicit.go
+  - internal/service/send.go
   - internal/confirm/
   - internal/web/approvals.go
   - internal/web/templates/approval.html
@@ -27,9 +28,11 @@ Moving mail to the Trash also needs level 5 first. A level is a number from 0 to
 5 that says what the agent may do with the mail of an account. See [Permission
 levels](/manual/daily-use/permission-levels/).
 
-One move to the Trash is outside these rules: the tool `discard_draft` moves a
-draft (a message that is saved but not sent) to the Trash at level 3, and it
-does not ask you. **Confirm deletes** does not apply to it.
+Two moves of a draft (a message that is saved but not sent) are outside these
+rules. The tool `discard_draft` moves a draft to the Trash at level 3, and it
+does not ask you. When the agent sends a saved draft, email-mcp moves that
+draft to the Trash after the mail server takes the message. **Confirm deletes**
+does not apply to either of them.
 
 ## The path of a send
 
@@ -156,9 +159,10 @@ ASCII is the basic set of characters: English letters, digits and common signs.
 So for a recipient with any character outside printable ASCII:
 
 - The server always asks you. It asks when **Confirm sends** and the
-  new-recipient check are off, and also when you wrote to the address before.
-  The new-recipient check is a setting that asks you before a message goes to an
-  address that the account never wrote to. See [All settings of an
+  new-recipient check are off, and also when email-mcp sent mail to the address
+  before. The new-recipient check is a setting that asks you before a message
+  goes to an address that email-mcp never sent or queued mail to for this
+  account (your Sent folder is not read). See [All settings of an
   account][all].
 - The preview and the approval page show the domain in ASCII next to the address
   (its punycode form, `xn--...`: the ASCII spelling of a domain name with
