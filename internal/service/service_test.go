@@ -22,6 +22,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/imaptest"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/storetest"
 )
 
 // testStart is the time at which the test accounts are created.
@@ -42,6 +43,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
+	storetest.Seed(t, dir)
 	st, err := store.Open(ctx, dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })

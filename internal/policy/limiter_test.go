@@ -12,6 +12,7 @@ import (
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/storetest"
 )
 
 // clock is a time source that a test can move. It is safe for use by many
@@ -41,6 +42,7 @@ var testDay = time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
 // openStore opens a store in dir and closes it when the test ends.
 func openStore(t *testing.T, dir string) *store.Store {
 	t.Helper()
+	storetest.Seed(t, dir)
 	s, err := store.Open(context.Background(), dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -321,7 +323,9 @@ func TestLimiterZeroCountChangesNothing(t *testing.T) {
 }
 
 func TestLimiterFailsClosedWhenTheStoreFails(t *testing.T) {
-	s, err := store.Open(context.Background(), t.TempDir())
+	dir := t.TempDir()
+	storetest.Seed(t, dir)
+	s, err := store.Open(context.Background(), dir)
 	require.NoError(t, err)
 	tenant, acct := newAccountInStore(t, s, "a1")
 	require.NoError(t, s.Close())

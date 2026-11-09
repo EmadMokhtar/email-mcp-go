@@ -39,15 +39,31 @@ SITE_VERSION := $(shell sed -n 's/.*"\.": "\([^"]*\)".*/\1/p' .release-please-ma
 # never reach site/public, the folder that is published. Git ignores it.
 SITE_TABLES_DIR := $(CURDIR)/site/public-tabletest
 
+# The packages whose tests run without the race detector. Their code starts no
+# goroutine, so the detector cannot find a race in their own tests. But it made
+# their CPU-heavy limit tests about 10 times slower: internal/mime alone took
+# more than 3 minutes in CI. Without the detector, the tests also check the
+# time limits, which they skip under -race. The detector still checks this
+# code in the tests of the packages that call it, for example
+# internal/provider/imapsmtp. TestNoRacePackagesStartNoGoroutine in
+# test/noracecheck reads this line, and fails when one of these packages
+# starts a goroutine. Keep the list on one line.
+NORACE_PKGS := github.com/EmadMokhtar/email-mcp-go/internal/mime github.com/EmadMokhtar/email-mcp-go/internal/thirdparty/xhtml
+
 .PHONY: build test lint vuln screenshots site site-serve social-card
 
 # build: compile a static binary into bin/
 build:
 	CGO_ENABLED=0 go build -trimpath -o $(BINARY) ./cmd/email-mcp
 
-# test: run all tests with the race detector
+# test: run every test that needs no build tag. The packages of NORACE_PKGS
+# run without the race detector, and all other packages run with it. grep
+# drops NORACE_PKGS from the list of all packages: -v keeps the lines that do
+# not match, -x matches the whole line, and -F reads each pattern as plain
+# text.
 test:
-	go test -race ./...
+	go test -race $$(go list ./... | grep -v -x -F $(addprefix -e ,$(NORACE_PKGS)))
+	go test $(NORACE_PKGS)
 
 # lint: run go vet, staticcheck and golangci-lint (install golangci-lint v2 first).
 # The interop test (build tag "interop") is checked too, but not run: it needs

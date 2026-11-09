@@ -22,6 +22,7 @@ import (
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/storetest"
 )
 
 // --- helpers ---
@@ -38,6 +39,7 @@ type vaultFixture struct {
 func newVaultFixture(t *testing.T) *vaultFixture {
 	t.Helper()
 	dir := t.TempDir()
+	storetest.Seed(t, dir)
 	st, err := store.Open(context.Background(), dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })

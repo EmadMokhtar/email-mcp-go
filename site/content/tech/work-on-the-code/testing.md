@@ -7,6 +7,8 @@ code_areas:
   - internal/testutil/smtptest/smtptest.go
   - internal/testutil/webtest/webtest.go
   - internal/testutil/chrometest/chrometest.go
+  - internal/testutil/storetest/storetest.go
+  - test/noracecheck/noracecheck_test.go
   - internal/e2e/harness_test.go
   - internal/e2e/security_test.go
   - internal/e2e/capture_test.go
@@ -39,8 +41,8 @@ the tests of a feature.
 
 | Kind | Where | How it runs | What it proves |
 |---|---|---|---|
-| Unit tests | the `_test.go` files next to the code | `go test -race ./...` (`make test`) | One package does what its comments say, often with fake parts around it. |
-| End-to-end tests | `internal/e2e` | `go test -race ./...` | The whole program, started as in a real run, behaves as each named test says (see [the list](#the-end-to-end-tests)). |
+| Unit tests | the `_test.go` files next to the code | `make test`: `go test -race`, and `go test` without `-race` for the packages of `NORACE_PKGS` (see [The race detector](#the-race-detector)) | One package does what its comments say, often with fake parts around it. |
+| End-to-end tests | `internal/e2e` | `make test`, with `-race` | The whole program, started as in a real run, behaves as each named test says (see [the list](#the-end-to-end-tests)). |
 | Screenshots and layout | `internal/e2e`, build tag `screenshots` | `make screenshots` | Each page of the program that the manual shows exists and has the expected texts. The images of the manual come from here. |
 | Site tests | `test/sitecheck` | `go test ./...`, and `make site` with the build tags | The checker of the docs site finds what it must find. |
 | Interop test | `test/interop`, build tag `interop` | by hand or in `interop.yml` | The mail code works with real mail servers: Dovecot (an IMAP server) and Postfix (an SMTP server), in Docker (a tool that runs programs in containers). |
@@ -100,6 +102,28 @@ authority signed) each time a test starts one. A test reads `CertSHA256` to
 check a pinned certificate (one whose fingerprint the person chose to trust),
 or `CertPool` to check the normal verification. These packages are for tests
 only.
+
+## A migrated test database
+
+{{< src "internal/testutil/storetest/storetest.go" >}} gives a test a data
+folder with a database that already has every migration. `storetest.Seed(t,
+dir)` writes the database file into `dir`, and `store.Open` then runs no
+migration. Use it in a fixture (the shared setup of the tests of a package)
+that opens a new store. The first call runs the migrations once in the test
+binary and keeps the file in memory. Each later call writes a copy of it.
+
+This matters for speed. SQLite parses the whole schema again after each
+change to it. The SQLite of `modernc.org/sqlite` is Go code, so the race
+detector checks every memory access of that work. With `-race`, the
+migrations of one new file take about 170 ms, and hundreds of tests open a new
+store. Before `storetest`, the migrations were up to half of the time of some
+packages.
+
+The tests of `internal/store` cannot import `storetest`: `storetest` imports
+`store`, so that import is a cycle. `newTestStore` in
+{{< src "internal/store/store_test.go" >}} does the same for them. The tests
+of `store.Open` and of the migrations, the end-to-end tests and the command
+tests start from an empty folder on purpose, because they test a first start.
 
 ## The end-to-end tests
 
@@ -195,8 +219,10 @@ The code has a few points where a test puts in its own part:
 
 ## The race detector
 
-`make test`, CI and the release run the tests with `-race`. The race detector
-makes the code many times slower. So a few packages have two files,
+`make test` runs the tests with `-race`, except the packages of `NORACE_PKGS`
+in the Makefile: `internal/mime` and `internal/thirdparty/xhtml`. CI and the
+release run `make test` too. The race detector makes the code many times
+slower. So a few packages have two files,
 `race_on_test.go` (build tag `race`) and `race_off_test.go` (build tag
 `!race`), that set the constant `raceEnabled`. Go sets the tag `race` by
 itself under `-race`. A test that measures time skips that check, or skips
@@ -204,6 +230,17 @@ itself, when `raceEnabled` is true. The tests of the work limits of
 `internal/mime` also check memory, which holds with the detector too. See
 {{< src "internal/mime/race_on_test.go" >}} and
 {{< src "internal/mime/race_off_test.go" >}}.
+
+The packages of `NORACE_PKGS` start no goroutine, so the detector cannot find
+a race in their own tests. But it made their CPU-heavy limit tests about 10
+times slower: `internal/mime` alone took more than 3 minutes in CI. Without
+the detector, these tests also check their time limits. The detector still
+checks this code in the tests of the packages that call it, for example
+`internal/provider/imapsmtp`.
+{{< src "test/noracecheck/noracecheck_test.go" >}} reads `NORACE_PKGS` and
+fails when the code of one of these packages starts a goroutine or imports
+`sync` or `sync/atomic`. If such code needs a goroutine, take its package out
+of `NORACE_PKGS`, so its tests run with `-race` again.
 
 ## Fuzz targets
 
@@ -277,10 +314,10 @@ and stops them also when the test failed.
 
 | Workflow | When | What it runs |
 |---|---|---|
-| {{< src ".github/workflows/ci.yml" >}} | each pull request and each push to `main` | the five jobs of [What CI runs](/tech/work-on-the-code/local-development/#what-ci-runs): the tests with `-race`, the linters with the three tags, `goreleaser check`, govulncheck (a check for known vulnerabilities), and `make site`, which runs the screenshot, layout and site tests |
+| {{< src ".github/workflows/ci.yml" >}} | each pull request and each push to `main` | the five jobs of [What CI runs](/tech/work-on-the-code/local-development/#what-ci-runs): `make test`, the linters with the three tags, `goreleaser check`, govulncheck (a check for known vulnerabilities), and `make site`, which runs the screenshot, layout and site tests |
 | {{< src ".github/workflows/docs-check.yml" >}} | each pull request: when it is opened or reopened, when a commit is pushed to it, and when a label is added or removed | `go run ./test/docscheck` with the list of the files that the pull request changes (see [The docs check](/tech/work-on-the-code/local-development/#the-docs-check)) |
 | {{< src ".github/workflows/interop.yml" >}} | each night, each `v*` tag, by hand | the interop test with `-race -count=1` |
-| {{< src ".github/workflows/release.yml" >}} | each `v*` tag | `go vet ./...` without tags, `go test -race ./...`, govulncheck and the version check of `server.json`, before it builds anything; after the release, `make site` through `pages.yml`, except for a pre-release tag |
+| {{< src ".github/workflows/release.yml" >}} | each `v*` tag | `go vet ./...` without tags, `make test`, govulncheck and the version check of `server.json`, before it builds anything; after the release, `make site` through `pages.yml`, except for a pre-release tag |
 
 The interop run of a tag does not stop the release. Look at its result before
 you approve the deployment.

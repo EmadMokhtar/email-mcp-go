@@ -29,6 +29,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/signing"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/storetest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/webtest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/web"
 )
@@ -175,6 +176,7 @@ type testApp struct {
 func openTest(t *testing.T) *testApp {
 	t.Helper()
 	dir := t.TempDir()
+	storetest.Seed(t, dir)
 	keyPath := filepath.Join(t.TempDir(), "master.key")
 	logs := &syncBuffer{}
 	factory := &fakeFactory{backend: &fakeBackend{}}

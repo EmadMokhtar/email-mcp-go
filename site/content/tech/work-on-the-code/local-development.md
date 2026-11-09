@@ -53,7 +53,7 @@ runs:
 
 ```sh
 make build    # bin/email-mcp
-make test     # go test -race ./...
+make test     # go test, most packages with -race
 make lint     # go vet, staticcheck and golangci-lint
 make vuln     # govulncheck
 ```
@@ -67,7 +67,7 @@ both use the same Go.
 | Target | What it runs |
 |---|---|
 | `build` | `CGO_ENABLED=0 go build -trimpath -o bin/email-mcp ./cmd/email-mcp`. `CGO_ENABLED=0` means no C compiler, so the binary is static: it needs no system library to run. `-trimpath` removes the file paths of your computer from the binary. The build sets no version, so `email-mcp version` prints `email-mcp dev`. |
-| `test` | `go test -race ./...`: every test that needs no build tag, with the race detector (a check that finds two goroutines, functions that run at the same time, that use the same memory without a lock). |
+| `test` | Every test that needs no build tag. Most packages run with `-race`, the race detector (a check that finds two goroutines, functions that run at the same time, that use the same memory without a lock). The packages of `NORACE_PKGS` start no goroutine, so they run without it. See [The race detector](/tech/work-on-the-code/testing/#the-race-detector). |
 | `lint` | `go vet` and staticcheck (a linter for Go) with the build tags `interop`, `screenshots` and `sitebuild`, then `golangci-lint run`. The tags make the linters read the files that `go test ./...` leaves out. Install golangci-lint v2 first. |
 | `vuln` | govulncheck, which checks the code and the dependencies for known vulnerabilities. |
 | `screenshots` | The images of the user manual. See [The docs site](#the-docs-site). |
@@ -110,7 +110,7 @@ push to `main`. It has five jobs:
 
 | Job | What it runs |
 |---|---|
-| `vet and test` | `go vet` with the three build tags, then `go test -race ./...` |
+| `vet and test` | `go vet` with the three build tags, then `make test` |
 | `lint` | staticcheck with the three build tags, then golangci-lint, which the job builds with its own Go |
 | `goreleaser check` | `goreleaser check`, which reads `.goreleaser.yaml`, the settings of GoReleaser (the tool that builds the release). A bad key then fails the pull request, and not the release after the tag exists. |
 | `govulncheck` | govulncheck |
@@ -450,6 +450,7 @@ of web servers) is one of the two ways that an AI app talks to the server.
 | `internal/testutil/chrometest` | [Testing][t-testing] | this page |
 | `internal/testutil/imaptest` | [Testing][t-testing] | |
 | `internal/testutil/smtptest` | [Testing][t-testing] | |
+| `internal/testutil/storetest` | [Testing][t-testing] | [Storage and secrets][t-storage] |
 | `internal/testutil/webtest` | [Testing][t-testing] | |
 | `internal/thirdparty/xhtml` | [Mail content][t-content] | [Map of packages][t-packages] |
 | `internal/tokens` | [Local HTTP mode][t-http] | [Permissions][t-perm] |
@@ -492,6 +493,7 @@ the first three rows. It does not count the other rows.
 | `.github/workflows/docs-check.yml`, `test/docscheck/`, `.github/pull_request_template.md` | this page | [Testing][t-testing] |
 | `test/sitecheck/` | this page | [Testing][t-testing] |
 | `test/socialcard/` | this page | [Testing][t-testing] |
+| `test/noracecheck/` | [Testing][t-testing] | this page |
 | `.hugo-version`, `site/hugo.toml`, `site/config/`, `site/layouts/`, `site/assets/` | this page | |
 | `.github/workflows/interop.yml`, `test/interop/` | [Testing][t-testing] | |
 | `.github/workflows/release-please.yml`, `.github/workflows/pages.yml` | [Making a release][t-release] | |

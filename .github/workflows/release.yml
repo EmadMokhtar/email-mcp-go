@@ -62,8 +62,9 @@ jobs:
           cache: false
       - name: go vet
         run: go vet ./...
-      - name: go test
-        run: go test -race ./...
+      # The same tests as CI: see "make test" in the Makefile.
+      - name: make test
+        run: make test
       # Known vulnerabilities in the dependencies or the standard library stop
       # the release. Keep the version the same as in ci.yml and the Makefile.
       - name: govulncheck
