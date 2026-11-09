@@ -162,5 +162,10 @@ If the shell says that it cannot find `email-mcp`, the folder that holds the
 program is not on your `PATH`. Then see the entry [The shell cannot find
 `email-mcp`][shell] of [Troubleshooting](/manual/daily-use/troubleshooting/).
 
+## Update later
+
+email-mcp does not update itself. To install a newer version later, see
+[Update email-mcp](/manual/reference/update/).
+
 [shell]: /manual/daily-use/troubleshooting/#the-shell-cannot-find-email-mcp
 [verify]: /manual/reference/verify-a-release/

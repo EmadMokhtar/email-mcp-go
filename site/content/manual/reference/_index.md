@@ -8,5 +8,6 @@ code_areas:
 ---
 
 These pages are for look-up. They list every command, say where email-mcp keeps
-its data, and explain separate tasks: the master key, local HTTP mode, moving
-from the old email-mcp, and the check of a download.
+its data, and explain separate tasks: the master key, local HTTP mode, the
+update to a new version, moving from the old email-mcp, and the check of a
+download.

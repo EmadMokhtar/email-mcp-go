@@ -46,7 +46,8 @@ email-mcp version
 The page [Install email-mcp][install] shows the other ways: a release archive
 (also for Windows), Go, and the source code. It also explains how Homebrew
 treats the macOS program check, and it links to the page that shows how to
-check the signature of a release.
+check the signature of a release. To install a newer version later, see
+[Update email-mcp][update].
 
 ## Documentation
 
@@ -67,6 +68,7 @@ for version 0.6.2 are in [`site/content/` at the tag v0.6.2][v062].
 [manual]: https://emadmokhtar.github.io/email-mcp-go/manual/
 [tech]: https://emadmokhtar.github.io/email-mcp-go/tech/
 [install]: https://emadmokhtar.github.io/email-mcp-go/manual/getting-started/install/
+[update]: https://emadmokhtar.github.io/email-mcp-go/manual/reference/update/
 [limits]: https://emadmokhtar.github.io/email-mcp-go/manual/reference/known-limitations/
 [v062]: https://github.com/EmadMokhtar/email-mcp-go/tree/v0.6.2/site/content
 
