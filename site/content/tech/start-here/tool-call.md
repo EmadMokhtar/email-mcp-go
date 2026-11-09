@@ -13,6 +13,7 @@ code_areas:
   - internal/mcpserver/errors.go
   - internal/service/service.go
   - internal/service/read.go
+  - internal/service/principal.go
   - internal/service/backends.go
   - internal/service/calls.go
   - internal/service/write.go

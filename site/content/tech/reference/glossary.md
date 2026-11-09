@@ -130,8 +130,8 @@ two or more meanings gives each one.
   1. A Go value that passes values between goroutines. See [The mail
      backend][mbo].
   2. One of the two routes into the use cases: the channel of the agent (the
-     tools) and the channel of the person (the web portal and the commands). See
-     [Security design][sdc].
+     tools) and the channel of the person (the web portal and the commands).
+     The overview calls it a door: see Door. See [Security design][sdc].
   3. The way a question reaches the person: in band, or the approval page. The
      send flow calls it the mode of the action: see Mode. See [Local HTTP
      mode][lhw].
@@ -239,7 +239,8 @@ two or more meanings gives each one.
 - **Docker:** a tool that runs programs in containers. See [Local
   development][ldm].
 - **Door:** a way into the program: the code that a caller goes through to reach
-  the use cases. See [Architecture overview][ov].
+  the use cases. Security design calls the same thing a channel: see Channel.
+  See [Architecture overview][ov].
 - **Dovecot:** an IMAP server. The interop test runs it in Docker. See
   [Testing][tei].
 - **Draft:** a message that is saved but not sent. The agent can send a saved
@@ -763,6 +764,10 @@ two or more meanings gives each one.
   text: base64 or quoted-printable. See [Mail content][mcp].
 - **Transport:** the way that the MCP messages travel: stdio or local HTTP. See
   [Map of packages][pma].
+- **Truth table:** the list of the claims of the landing page, each with the
+  code that proves it, in the design document of the landing page. Each claim
+  of the page has a note with its row, such as `T13`. See [Local
+  development][ldr].
 
 ## U
 

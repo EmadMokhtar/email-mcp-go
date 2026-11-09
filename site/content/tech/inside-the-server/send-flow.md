@@ -106,22 +106,12 @@ message cannot be approved twice: once in the chat and once on the page.
 
 In band means that the question appears in the chat of the client (the AI app
 that talks to the server). `canElicitInBand` in
-{{< src "internal/mcpserver/elicit.go" >}} needs three things:
-
-- The caller may confirm in band (`Principal.InBandConfirm`). The caller of
-  stdio (standard input and output: the client starts the server and talks to it
-  through two pipes) always may. Over HTTP (HyperText Transfer Protocol), only a
-  token that the person allowed to do it may. The person allows it with
-  `--in-band-confirm` at the terminal, or with the box "Let this app ask me in
-  its own window" on the Connections page of the web portal. A token is a secret
-  that a program sends with its requests. Any program that holds one can say
-  that it shows a form, and then answer the form by itself.
-- The client says that it can show a form (form elicitation: a way for a server
-  to ask the person a question through the app).
-- There is a way to ask. From the MCP (Model Context Protocol) version
-  `2026-07-28` (`mrtrProtocolVersion`), a result can hold input requests. On
-  stdio, `InBandLegacyElicitation` also lets the SDK (software development kit,
-  the official Go library for MCP) ask an older client in the same session.
+{{< src "internal/mcpserver/elicit.go" >}} decides whether this caller may
+confirm in band, and whether the client can show the question as a form in
+this call (form elicitation: a way for a server to ask the person a question
+through the app). [Who gets which
+channel](/tech/ways-in/local-http/#who-gets-which-channel) has its three
+conditions and the channel of each caller.
 
 {{< diagram "send-two-calls" >}}
 
@@ -324,9 +314,9 @@ the level to Off and then cancel what waits (`CancelQueuedSend` in
 {{< src "internal/service/queue.go" >}} and
 {{< src "cmd/email-mcp/outbox.go" >}}). Once a send is running, the cancel is
 too late (`outbox.ErrTooLate`). While the program stops, it refuses every tool
-call, `cancel_send` too. During the stop, the Activity page can cancel only when
-this program already runs its web server. Otherwise `email-mcp outbox cancel`
-works, from another process.
+call, `cancel_send` too. [Startup and
+shutdown](/tech/inside-the-server/startup-and-shutdown/#close-six-steps) says
+how the person can still cancel during a stop.
 
 ## Trash uses the same path
 

@@ -9,7 +9,7 @@ code_areas:
   - internal/app/kek.go
   - internal/service/service.go
   - internal/service/principal.go
-  - internal/mcpserver/server.go
+  - cmd/email-mcp/console.go
   - internal/mcpserver/useronly_test.go
   - internal/store/store.go
   - internal/store/tenants.go
@@ -247,6 +247,12 @@ why the program was built this way, but the code changed after them. Where a
 design document and the code differ, the code is right. The main one is the
 design spec of the rewrite:
 {{< src "docs/superpowers/specs/2026-10-27-email-mcp-rewrite-design.md" >}}.
+One part is kept current: the truth table (the list of the claims of the
+landing page, each with the code that proves it) in the design document of the
+landing page,
+{{< src "docs/superpowers/specs/2026-11-05-landing-page-design.md" >}}. It is
+kept current because `site/content/_index.md` and
+`test/sitecheck/landing_test.go` point to it.
 
 ## Related pages
 

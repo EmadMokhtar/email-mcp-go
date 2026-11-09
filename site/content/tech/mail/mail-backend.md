@@ -281,12 +281,12 @@ more gives `ErrNotFound`.
 into a folder name with the `SPECIAL-USE` attributes (an IMAP extension in which
 the server marks the Trash folder, the Sent folder and so on). `INBOX` has a
 fixed name. When no folder has the attribute of an alias, the error wraps
-`ErrNotFound`, and a folder is not guessed by its name. A folder with several
-attributes gets one alias, chosen by `aliasPriority`, which starts with
-`@trash`. The counts of unread and total messages come with the list only when
-the server supports `LIST-STATUS` (an IMAP extension that sends the counts with
-the list of folders). A folder name has at most 1,024 bytes (`maxFolderNameLen`)
-and no control character.
+`ErrNotFound`, and the alias lookup does not guess a folder by its name. A
+folder with several attributes gets one alias, chosen by `aliasPriority`, which
+starts with `@trash`. The counts of unread and total messages come with the
+list only when the server supports `LIST-STATUS` (an IMAP extension that sends
+the counts with the list of folders). A folder name has at most 1,024 bytes
+(`maxFolderNameLen`) and no control character.
 
 **Tags.** {{< src "internal/provider/imapsmtp/tags.go" >}} makes a tag from an
 IMAP keyword (a flag without a backslash). One rule (`isTag`) says what a tag

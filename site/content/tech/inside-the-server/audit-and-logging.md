@@ -152,8 +152,8 @@ that text can hold text from a mail server. Five parts keep this true:
 - **`errtype.Chain`** in {{< src "internal/errtype/errtype.go" >}} returns the
   Go type names of an error and of the errors it wraps, at most six. A type name
   holds no text from the error. The log gets this, never the error.
-- **`secrets.Secret`** prints `[redacted]`, so a value of this type is hidden in
-  a line in the normal cases. Its doc comment lists what it does not cover.
+- **`secrets.Secret`** prints `[redacted]`. It hides a value in the normal cases
+  only, so keep a secret out of a log line on purpose.
 - **The logger of the SDK is not set.** The SDK writes error texts to it.
   `mcpserver.New` gives it no logger, and `Options.Logger` is a different logger
   that only gets fixed codes.

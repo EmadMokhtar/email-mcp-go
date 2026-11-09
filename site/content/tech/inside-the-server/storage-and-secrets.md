@@ -15,6 +15,11 @@ code_areas:
   - internal/app/app.go
   - internal/app/kek.go
   - cmd/email-mcp/key.go
+  - internal/web/session.go
+  - internal/tokens/tokens.go
+  - internal/policy/limiter.go
+  - internal/confirm/confirm.go
+  - internal/audit/audit.go
 ---
 
 This page shows where email-mcp keeps its data, which fields are encrypted,
@@ -217,10 +222,10 @@ old key in memory.
 ### Secrets in output
 
 `secrets.Secret` is a string type that prints `[redacted]` in `fmt`, in
-`log/slog` and in JSON (JavaScript Object Notation) in the normal cases. The doc
-comment of `Secret` lists the cases that it does not cover. Only `Reveal` gives
-the value, so each place that uses a value is easy to find in a review. The same
-holds for the `Vault`.
+`log/slog` and in JSON (JavaScript Object Notation). It hides a value in the
+normal cases only. Keep a secret out of a log line on purpose. `Reveal` is the
+call that gives the value on purpose, so each place that uses a value is easy
+to find in a review. The same holds for the `Vault`.
 
 ## How long data is kept
 

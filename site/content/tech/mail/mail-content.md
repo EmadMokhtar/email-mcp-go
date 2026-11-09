@@ -149,8 +149,8 @@ body with up to 4 other versions (`maxOtherVersions`). With more than 4, the
 result says that the versions differ. The result also says when it left text out
 (`text_left_out`) and when another version of the body says something else
 (`alternatives_differ`). `TextsDiffer` compares the words of the two versions,
-not their text. It gives a hint to the reader. It is not a check that stops a
-message.
+not their text. This result is a hint for the reader. It is not a security
+check.
 
 ## How HTML becomes text
 
@@ -160,7 +160,8 @@ use the hidden parts to give instructions to an agent. The rules are in
 {{< src "internal/mime/html.go" >}} and {{< src "internal/mime/css.go" >}}. This
 page gives the groups. email-mcp cannot always tell what a reader sees. A mail
 can hold hidden text even when `get_message` does not return
-`hidden_content_suspected: true`. When it matters, open the mail yourself.
+`hidden_content_suspected: true`. When it matters, open the mail yourself (see
+[Known limitations](/manual/reference/known-limitations/)).
 
 The text leaves out:
 
@@ -182,10 +183,11 @@ The text leaves out:
 
 **The principle: a hiding rule on an element wins.** A style can come from the
 `style` attribute and from the rules for the name, the classes and the id of the
-element. If any of them hides the element, it is hidden. The order, the strength
-of the source and `!important` do not matter. This is stricter than a browser,
-which picks one source. Inside one source, `display`, `visibility`, `opacity`
-and `font-size` work as in a browser: the last declaration counts.
+element. If any of them hides the element, it is hidden. When the sources of a
+style disagree, email-mcp leaves the text out, because it cannot be sure that a
+reader sees it. So it can also miss text that a reader sees. Inside one source,
+`display`, `visibility`, `opacity` and `font-size` work as in a browser: the
+last declaration counts.
 
 **When a style cannot be worked out.** The code reads just enough CSS (Cascading
 Style Sheets, the language of styles) to find hidden elements. A value that

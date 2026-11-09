@@ -36,8 +36,10 @@ loopback address (an address on this computer that no other computer can reach)
 with a port: an IPv4 (Internet Protocol version 4) address in `127.0.0.0/8`,
 `[::1]` or `localhost`. The address must be written exactly: brackets only
 around an IPv6 (version 6) address, and an IP address in its usual short form.
-So `0.0.0.0:8765` and `[127.0.0.1]:8765` are refused. Any program on this
-computer can reach the address, so the token decides who may use the server.
+So `0.0.0.0:8765` and `[127.0.0.1]:8765` are refused. Only `127.0.0.1`,
+`[::1]` and `localhost` pass the [`Host` check](#the-checks-in-order), so use
+one of these. Any program on this computer can reach the address, so the token
+decides who may use the server.
 
 `--allow-origin` adds a browser origin (the scheme, host and port of a web page,
 such as `http://localhost:5173`) that may call the server. It needs `--http`.
@@ -62,7 +64,7 @@ order:
 | Step | Code | Refused with | Log code |
 |---|---|---|---|
 | 1. Concurrency limit | `limitRequests`: at most 8 requests at once (`maxConcurrentRequests`). A request over the limit waits up to 30 seconds (`requestQueueWait`) for a free place, before its body is read. | 503 (Service Unavailable), with `Retry-After: 1` | `too_many_requests` |
-| 2. Path | The router passes on a request whose path is `/mcp` (`mcpPath`), with any method. It answers any other path itself. A path that is not clean, such as `//mcp`, gets a redirect to its clean form. | 404 (Not Found), or a redirect to the clean path (307, Temporary Redirect, with Go 1.27.3, the Go version of the release build; older Go versions send 301) | none |
+| 2. Path | The router passes on a request whose path is `/mcp` (`mcpPath`), with any method. It answers any other path itself. A path that is not clean, such as `//mcp`, gets a redirect to its clean form. | 404 (Not Found), or a redirect to the clean path (307, Temporary Redirect, in the Go version that `.go-version` names; older Go versions send 301) | none |
 | 3. `Host` | `hostAllowed`: the connection came in on a loopback address, and the `Host` header is exactly `localhost:<port>`, `127.0.0.1:<port>` or `[::1]:<port>`, with the port of the connection (`LoopbackPort`). | 403 (Forbidden) | `bad_host` |
 | 4. `Origin` | `originAllowed`: no `Origin` header, or exactly one whose value is in the list of `--allow-origin`. | 403 | `bad_origin` |
 | 5. Stated body size | A `Content-Length` over 15 MiB (`MaxBodyBytes`) is refused at once. Any other body is cut at that limit while it is read (`http.MaxBytesReader`). | 413 (Request Entity Too Large) | `body_too_large` |
