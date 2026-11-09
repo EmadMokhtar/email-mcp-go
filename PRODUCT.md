@@ -11,7 +11,7 @@ web
 One person, on their own computer, who lets an AI agent look after their email.
 They use the portal for quick decisions: the agent gives them a link, they check
 one action, decide, and leave. Setup (connecting accounts, setting permissions)
-happens rarely. Hosted mode for many people is planned (M3), not built.
+happens rarely. Hosted mode for many people is planned, not built.
 
 ## Product Purpose
 

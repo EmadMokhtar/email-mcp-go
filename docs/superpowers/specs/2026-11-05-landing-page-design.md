@@ -328,9 +328,9 @@ that moment.
   send it. On the approval page, you see who will get it, including hidden
   copies (Bcc), the subject, the attachments and the whole text of the
   message. If the text of the message also has characters that cannot be
-  seen, the page says so. For a draft that you wrote in another mail program, the page shows
-  the text that a mail program would show, without its styles or images. The
-  page lists each attachment by name and type. Then you press Reject or
+  seen, the page says so. The page shows the message as plain text: the text
+  that a mail program would show. The page lists each attachment by name and
+  type. Then you press Reject or
   Approve and send."
 - Four rows, one sentence each:
   - "Approve and send appears only when the page can show the whole text of
@@ -363,15 +363,16 @@ that moment.
 - The approval page shows the text of the message, not every character that
   goes out. So the page says "the whole text of the message" and not "the full
   text", and it says that the page tells you when the text of the message
-  also has characters that cannot be seen (T19, T20). This is the meaning of the manual
-  (`manual/daily-use/confirmations.md`: "The approval page shows the whole
-  text").
+  also has characters that cannot be seen (T19, T20). This is the meaning of
+  the manual (`manual/daily-use/confirmations.md`: "The approval page shows
+  the whole text").
 - The page said "the whole text as the recipient will see it" in the first
-  draft. The approval page shows text: for a message with HTML, `Body` is the
-  text of the HTML, so a draft written in another mail program shows no styles
-  or images. Attachments are shown by name and media type, not by content
-  (`manual/daily-use/security.md`). So the paragraph now says "the whole text
-  of the message" and names these two limits (T19).
+  draft. The approval page shows plain text: for a message with HTML, `Body`
+  is the text of the HTML, so the page shows no formatting, styles or images.
+  This holds for a message that the agent writes and for a draft that you
+  wrote in another mail program. Attachments are shown by name and media type,
+  not by content (`manual/daily-use/security.md`). So the paragraph now says
+  "the whole text of the message" and names these two limits (T19).
 
 ### 5. email-mcp runs on your computer
 
@@ -401,8 +402,8 @@ that moment.
 **Notes.**
 
 - The last row is a limit. Without it, "runs on your computer" could suggest
-  that the content of mail never leaves the computer. (My call: it is not in
-  the README today. I add it because hiding it would mislead.)
+  that the content of mail never leaves the computer. (My call: I add it
+  because hiding it would mislead. The owner confirmed this sentence, T29.)
 - `email-mcp.localhost` uses the inline code style of DESIGN.md.
 
 ### 6. What it covers today
@@ -980,17 +981,17 @@ for access, which only gives a link, and nothing changes until you choose.**
   The page links to the Security page of the manual right after the
   paragraph, and adds no claim.
 
-**T19. On the approval page, you see who gets it (Bcc included), the subject,
-the attachments and the whole text of the message. If the text of the message
-also has characters that cannot be seen, the page says so. For a draft that you
-wrote in another mail program, the page shows the text that a mail program
-would show, without its styles or images. The page lists each attachment by
-name and type.**
+**T19. On the approval page, you see who will get it, including hidden copies
+(Bcc), the subject, the attachments and the whole text of the message. If the
+text of the message also has characters that cannot be seen, the page says so.
+The page shows the message as plain text: the text that a mail program would
+show. The page lists each attachment by name and type.**
 - Manual: `manual/daily-use/confirmations.md` ("What you see": the approval
   page shows the whole text; the preview of the AI app shows the first 500
   characters); `manual/daily-use/security.md` (a confirmation shows the media
-  type of each attachment and not its content; a draft that you write in
-  another mail program).
+  type of each attachment and not its content; the HTML of a message that an
+  agent writes is reduced, and the text of the message is made from it; a
+  draft that you write in another mail program).
 - Code: `internal/web/templates/approval.html` (the labels `From`, `To, every
   recipient (Bcc included)` and `Attachments`, and `message-body`);
   `internal/service/approvals.go` (`Body`: "the whole text that the recipient
@@ -998,8 +999,12 @@ name and type.**
   file name of each attachment, with its media type; `MoreChars`: the count of
   the characters that cannot be seen);
   `internal/service/send.go` (`sendContent`: `body` and `hidden`;
-  `draftUnseen`; for a draft, `Body` is `ShownText`, the text of the parts that
-  a mail program shows, as `LayoutOf` in `internal/mime/parts.go` decides);
+  `composedContent`: for a message that the agent writes with HTML, `Body` is
+  the text part that `mime.Build` makes from the reduced HTML, with the block
+  of a forward (`outgoingHTML` in `internal/mime/visible.go` reduces it);
+  `draftUnseen`; for a draft, `Body` is `ShownText` in
+  `internal/mime/decode.go`, the text of the parts that a mail program shows,
+  as `LayoutOf` in `internal/mime/parts.go` decides);
   `internal/web/approvals.go` (the page shows `Body` and adds the `MoreChars`
   line).
 - The comment on `Body` says "the whole text that the recipient sees". The page
@@ -1007,9 +1012,9 @@ name and type.**
 - Scope: the approval page only. An AI app that asks in its own window shows
   the start of the text (T24), so the heading of section 4 and step 4 of
   section 2 say "the message", not "the whole message".
-- Limit: `Body` is text. The page does not show the styles or the images of a
-  message with HTML, so the page says "the whole text of the message" and not
-  "as the recipient will see it".
+- Limit: `Body` is plain text. The page does not show the formatting, the
+  styles or the images of any message with HTML, so the page says "the whole
+  text of the message" and not "as the recipient will see it".
 
 **T20. Approve and send appears only when the page can show the whole text of
 the message.**
@@ -1020,8 +1025,9 @@ the message.**
   `internal/service/approvals.go` (`Body`, `MoreChars`).
 
 **T21. If the message changes after you look at it, it does not go out.**
-- Manual: `manual/daily-use/security.md` ("What you approve is what goes
-  out"): a change means that you are asked again.
+- Manual: `manual/daily-use/security.md` (the list under the bold lead-in
+  "What you approve is what goes out": the approval covers the whole message,
+  and a change means that you are asked again).
 - Code: `internal/confirm/confirm.go` (`Claim` checks the payload hash);
   `internal/service/send.go` (`answerSend`);
   `internal/web/approvals.go` (`msgMessageChanged`: "nothing was sent").
