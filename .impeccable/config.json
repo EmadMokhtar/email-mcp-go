@@ -1,0 +1,13 @@
+{
+  "detector": {
+    "ignoreValues": [
+      {
+        "rule": "design-system-font-size",
+        "value": "1.875rem",
+        "files": ["site/assets/css/site.css"],
+        "createdAt": "2026-11-07T21:53:26.040Z",
+        "reason": "The landing spec docs/superpowers/specs/2026-11-05-landing-page-design.md sets the hero h1 to clamp(1.875rem, 1.2rem + 3vw, 2.75rem)."
+      }
+    ]
+  }
+}

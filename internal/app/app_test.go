@@ -763,7 +763,7 @@ func TestSenderDoesNotMarkAnAccountThatWasReconnectedDuringTheSend(t *testing.T)
 
 // A send that waits in the outbox is checked again when it goes out. The user
 // lowered the level below Send after the send was queued, so the item fails for
-// good, with a fixed text, and nothing reaches the mail server (M-4).
+// good, with a fixed text, and nothing reaches the mail server.
 func TestOutboxFailsAQueuedSendWhenTheLevelNoLongerAllowsIt(t *testing.T) {
 	for name, level := range map[string]account.Level{
 		"draft":         account.MailDraft,

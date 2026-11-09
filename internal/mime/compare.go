@@ -23,10 +23,7 @@ const maxMissingWords = 8
 // space and links do not count, and neither does the order of the words. Text
 // that only shown has does not count either: the reader sees it.
 //
-// A text of fewer than 20 words may not have one word that shown does not have.
-// A longer text may have one in 20, and at most 8. So a few words added to a long
-// text are not reported. This result is a hint for the reader. It is not a
-// security check: the other version is not returned to the agent.
+// This result is a hint for the reader. It is not a security check.
 func TextsDiffer(shown, other string) bool {
 	seen := map[string]bool{}
 	for _, word := range textWords(shown) {

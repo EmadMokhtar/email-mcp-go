@@ -47,9 +47,9 @@ import (
 // used when its selector is one class, one id, one element name, or "*", or a
 // compound of these such as p.x or .x.y, alone or in a comma list. Rules in
 // @media (when the query holds, see matchMedia), @layer and @supports are used.
-// A rule with a longer selector (descendant, child, attribute or pseudo
-// selectors, and so on), or in an at-rule that cannot be worked out, is not used,
-// but when it hides something the report says so (see HiddenReport).
+// Rules with other selectors, and rules in an at-rule that cannot be worked
+// out, are not used. When such a rule hides something, the report says so (see
+// HiddenReport).
 //
 // Hiding wins on each element, between different sources: the style attribute
 // and the rules for its name, its classes and its id. It does not matter which
@@ -58,32 +58,19 @@ import (
 // revert take the value of the parent, and a relative size is a multiple of the
 // size of the parent. If any source hides, the element is hidden. If none does,
 // the element is shown, and the size that its children get is the smallest of
-// its sizes. This is stricter than a browser, which picks one source. The known
-// cost is that text which a sender hides and then shows again from another
-// source (for example font-size:0 in a rule and font-size:14px in the style
-// attribute) is dropped. A child is a different element, so it can still show
-// its text inside a hidden parent. A display:none, and the other declarations
-// that hide a whole element, are applied even if something else would show the
-// element again.
+// its sizes. This is stricter than a browser, which picks one source, so some
+// text that a browser shows is dropped here. A child is a different element, so
+// it can still show its text inside a hidden parent. A display:none, and the
+// other declarations that hide a whole element, are applied even if something
+// else would show the element again.
 //
 // Inside one source, the declarations of display, visibility, opacity and
 // font-size work as they do in a browser, so "font-size:0;font-size:16px" shows
 // the text (see lastDeclarations).
 //
-// It does not find text that is hidden in other ways. Text coloured like its
-// background, such as white text on a white background, is not detected, and
-// neither is a colour with a small alpha that is not zero. The same is true for
-// text moved off the page by a small offset, a box that is small but more than 2
-// pixels, a clip or clip-path that leaves a small part, filters other than
-// opacity, and text placed behind other content (a negative z-index only gives a
-// warning). The default styles of the browser are not applied, and values that
-// need a calculation (calc, var) are not worked out: see parseStyle for what they
-// do.
-//
-// It also drops some text that a browser shows. A table cell with width:0 or
-// max-width:0 and clipped overflow is hidden here, but some mails use that
-// style to cut a long line with an ellipsis, and a browser shows the start of
-// the line. The rule is kept, because a cell is an easy place to hide text.
+// It does not find every way to hide text, and some of its rules drop text that
+// a browser shows. When it matters, the person reads the mail in a mail program
+// (see the page Known limitations of the user manual).
 //
 // Links are written as "text (url)". The url is parsed and shown with spaces,
 // round brackets and other unsafe characters written as %XX, so that it is one
