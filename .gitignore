@@ -62,3 +62,7 @@ site/resources/
 site/.hugo_build.lock
 site/assets/screenshots/
 site/static/icon.svg
+
+# Local files of the impeccable design checker. config.json is shared.
+.impeccable/*
+!.impeccable/config.json
