@@ -219,7 +219,7 @@ The workflow has three jobs:
 
 | Job | Permissions | Steps |
 |---|---|---|
-| `vet, test and govulncheck` (`check`) | `contents: read` | `go vet ./...`, `go test -race ./...`, govulncheck, and the version check of `server.json` |
+| `vet, test and govulncheck` (`check`) | `contents: read` | `go vet ./...`, `make test`, govulncheck, and the version check of `server.json` |
 | `GoReleaser` (`release`), after `check`, in the environment `release` | `contents: write`, `packages: write`, `id-token: write`, `attestations: write` | install cosign and Syft; set up Buildx (the Docker tool that builds an image for several platforms); sign in to GHCR; GoReleaser; check the signature of `checksums.txt` as the manual tells users to; attest the release files; find the one digest of the image (the hash that names it); attest the image |
 | `publish the site` (`site`), after `release`, not for a pre-release tag | `contents: read`, `pages: write`, `id-token: write` | calls `pages.yml` (see [How the site is published](#how-the-site-is-published)) |
 

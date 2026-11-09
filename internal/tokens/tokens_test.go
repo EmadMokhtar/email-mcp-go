@@ -19,6 +19,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/policy"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/storetest"
 )
 
 // testNow is the clock of the manager in these tests.
@@ -38,6 +39,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
+	storetest.Seed(t, dir)
 	st, err := store.Open(ctx, dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })

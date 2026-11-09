@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/account"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/seedfile"
 )
 
 // testNow is a fixed time with a millisecond part. The store keeps time as
@@ -22,13 +23,38 @@ var testNow = time.Date(2026, 10, 27, 9, 30, 15, 123_000_000, time.UTC)
 
 // newTestStore opens a store in a new temporary directory. It closes the store
 // when the test ends.
+//
+// The directory starts with a copy of migratedFile, so Open runs no migration.
+// The tests of Open and of the migrations call Open on an empty directory
+// themselves.
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(context.Background(), t.TempDir())
+	dir := t.TempDir()
+	migratedFile.Seed(t, dir)
+
+	s, err := Open(context.Background(), dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s
 }
+
+// migratedFile is a database file that has every migration. It is made once
+// in the test binary. With the race detector the migrations of a new file take
+// about 170 ms, and most tests of this package open a new store.
+//
+// It is the same file as the one of internal/testutil/storetest, which the
+// other packages use. The tests of this package cannot import storetest:
+// storetest imports store, so the import would be a cycle. So the few lines
+// that make the file are here a second time. Closing the last connection
+// copies the write-ahead log into the database file and removes the log;
+// seedfile fails when the log stays.
+var migratedFile = seedfile.New(DBFileName, func(dir string) error {
+	s, err := Open(context.Background(), dir)
+	if err != nil {
+		return err
+	}
+	return s.Close()
+})
 
 // testServer returns valid mail server settings.
 func testServer() account.MailServer {

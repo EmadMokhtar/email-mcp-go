@@ -37,6 +37,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/imaptest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/smtptest"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/storetest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/tokens"
 )
 
@@ -105,7 +106,9 @@ type httpEnv struct {
 func newHTTPEnv(t *testing.T, allowedOrigins []string) *httpEnv {
 	t.Helper()
 	ctx := context.Background()
-	st, err := store.Open(ctx, t.TempDir())
+	dir := t.TempDir()
+	storetest.Seed(t, dir)
+	st, err := store.Open(ctx, dir)
 	require.NoError(t, err)
 	// A test may close the store itself, so the second close is not checked.
 	t.Cleanup(func() { _ = st.Close() })
@@ -508,7 +511,9 @@ func TestNormalizeOrigin(t *testing.T) {
 }
 
 func TestHandlerRefusesABadAllowedOrigin(t *testing.T) {
-	st, err := store.Open(context.Background(), t.TempDir())
+	dir := t.TempDir()
+	storetest.Seed(t, dir)
+	st, err := store.Open(context.Background(), dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 	tm := tokens.New(st, nil)

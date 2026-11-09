@@ -160,7 +160,9 @@ and a frameset that took the body out, where the cost is higher).
    that adds attributes to a node:
    `grep -n "&Node{\|clone()\|new(Node)\|\.Attr = \|Attr = append" parse.go`.
    If upstream has a new place, it must be counted, or the test in step 5 fails.
-5. Run `env -u GOROOT go test -race ./internal/thirdparty/... ./internal/mime/`.
+5. Run `env -u GOROOT go test -race ./internal/thirdparty/... ./internal/mime/`,
+   then the same without `-race`. The heavy tests of `internal/mime` and the
+   time limits run only without `-race`.
    `TestCostIsTheCostOfTheTree` finds a place that is not counted.
    `TestTreesAreTheSameAsUpstream` checks that the trees are the same as the
    trees of upstream for the same documents.

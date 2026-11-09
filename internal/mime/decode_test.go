@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/EmadMokhtar/email-mcp-go/internal/domain/mail"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/timelimit"
 )
 
 // msg joins lines with CRLF, the line ending that mail uses on the wire.
@@ -1231,7 +1232,9 @@ func TestParseDeeplyNestedBodyOfLineEndingsIsFast(t *testing.T) {
 	require.Len(t, p.Attachments, 1)
 	require.Equal(t, int64(25<<20), p.Attachments[0].Size)
 	// About 0.3 s on a laptop. Before the fix, this took 38 s.
-	require.Less(t, elapsed, 3*time.Second)
+	timelimit.Less(t, "parseMessage", elapsed, 3*time.Second, func() {
+		_, _, _ = parseMessage(strings.NewReader(raw), 0)
+	})
 }
 
 func TestDecodeTransfer(t *testing.T) {

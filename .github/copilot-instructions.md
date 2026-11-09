@@ -68,8 +68,9 @@ hosted mode come in later milestones, with their own packages.
 
 ## Commands
 
-- `make test` — all tests under the race detector. Run before proposing
-  changes.
+- `make test` — all tests; every package under the race detector, then the
+  packages of `NORACE_PKGS` in the Makefile again without it. Run before
+  proposing changes.
 - `make lint` — `go vet`, staticcheck and golangci-lint (needs golangci-lint
   v2 installed).
 - `make vuln` — govulncheck.

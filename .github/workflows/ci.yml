@@ -40,8 +40,10 @@ jobs:
       # so a change that breaks them shows up at once.
       - name: go vet
         run: go vet -tags interop,screenshots,sitebuild ./...
-      - name: go test
-        run: go test -race ./...
+      # "make test" runs every package with -race, then the packages of
+      # NORACE_PKGS in the Makefile again without it. See the Makefile for why.
+      - name: make test
+        run: make test
 
   lint:
     name: lint

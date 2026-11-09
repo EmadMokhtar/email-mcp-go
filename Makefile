@@ -39,15 +39,31 @@ SITE_VERSION := $(shell sed -n 's/.*"\.": "\([^"]*\)".*/\1/p' .release-please-ma
 # never reach site/public, the folder that is published. Git ignores it.
 SITE_TABLES_DIR := $(CURDIR)/site/public-tabletest
 
+# The packages that "make test" runs a second time, without the race detector.
+# Their heavy tests convert large or hostile HTML in one goroutine. The
+# detector made them about 10 times slower (internal/mime alone took more than
+# 3 minutes in CI), and it cannot find a race in work of one goroutine. So the
+# heavy tests skip themselves under -race, and the time limits are checked
+# only without it (internal/testutil/timelimit). The second run runs them.
+NORACE_PKGS := ./internal/mime ./internal/thirdparty/xhtml
+
 .PHONY: build test lint vuln screenshots site site-serve social-card
 
 # build: compile a static binary into bin/
 build:
 	CGO_ENABLED=0 go build -trimpath -o $(BINARY) ./cmd/email-mcp
 
-# test: run all tests with the race detector
+# test: run every test that needs no build tag. The first run tests every
+# package with the race detector. The second run tests NORACE_PKGS without it.
+# The second run always runs, also when the first one fails, so one run of
+# make shows the failures of both. make fails when either run fails. The second
+# run starts after the first one ends, so the time limits are checked on a
+# machine that runs nothing else.
 test:
-	go test -race ./...
+	@status=0; \
+	echo "go test -race ./..."; go test -race ./... || status=1; \
+	echo "go test $(NORACE_PKGS)"; go test $(NORACE_PKGS) || status=1; \
+	exit $$status
 
 # lint: run go vet, staticcheck and golangci-lint (install golangci-lint v2 first).
 # The interop test (build tag "interop") is checked too, but not run: it needs

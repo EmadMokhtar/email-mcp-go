@@ -1176,7 +1176,8 @@ Questions:
 Must cover (this moves "Development" from the README, and adds to it):
 
 - The make targets and what each one runs (`Makefile`): `build` (static binary,
-  `-trimpath`), `test` (`go test -race ./...`), `lint`, `vuln`. The note about
+  `-trimpath`), `test` (`go test -race ./...`, then the packages of
+  `NORACE_PKGS` again without `-race`), `lint`, `vuln`. The note about
   `GOROOT`. The pinned tool versions live in the Makefile and the workflows.
 - Go version: `.go-version` and the `go` line of `go.mod`.
 - CI (`.github/workflows/ci.yml`): the five jobs (the fifth, `build site`,

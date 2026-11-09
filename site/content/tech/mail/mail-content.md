@@ -283,7 +283,10 @@ the steps. In short:
 3. Rename the package, and apply the patch to the copied `parse.go` and
    `token.go`. Search `parse.go` for every place that makes a node or adds
    attributes. A place that is not counted makes the test of step 4 fail.
-4. Run `go test -race ./internal/thirdparty/... ./internal/mime/`.
+4. Run `go test -race ./internal/thirdparty/... ./internal/mime/`, then the
+   same without `-race`. The heavy tests and the time limits run only without
+   `-race`. See
+   [The race detector](/tech/work-on-the-code/testing/#the-race-detector).
 5. Change the version in the README.
 
 ## Change the hidden-text rules
@@ -308,7 +311,9 @@ the steps. In short:
    must charge for them in `xhtml` (see the README). A loop over the rules needs
    a limit like `maxRuleWork`.
 7. **Run the tests.** `go test -race ./internal/mime/ ./internal/thirdparty/...`
-   runs the unit tests and the seeds of the fuzz tests. To search for more
+   runs the unit tests and the seeds of the fuzz tests. Run it again without
+   `-race` for the heavy tests and the time limits, or run `make test`, which
+   does both. To search for more
    cases, run one fuzz test:
    `go test -run '^$' -fuzz FuzzHTMLToText ./internal/mime/`. The flag
    `-run '^$'` runs no normal test, and `-fuzz` names the fuzz test. There are

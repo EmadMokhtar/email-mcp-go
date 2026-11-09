@@ -28,6 +28,7 @@ import (
 	"github.com/EmadMokhtar/email-mcp-go/internal/secrets"
 	"github.com/EmadMokhtar/email-mcp-go/internal/service"
 	"github.com/EmadMokhtar/email-mcp-go/internal/store"
+	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/storetest"
 	"github.com/EmadMokhtar/email-mcp-go/internal/testutil/webtest"
 )
 
@@ -60,6 +61,7 @@ func prepareDataDir(t *testing.T) (dir, keyPath string, acct *account.Account) {
 	dir = t.TempDir()
 	keyPath = filepath.Join(t.TempDir(), "master.key")
 	require.NoError(t, secrets.GenerateKeyFile(keyPath))
+	storetest.Seed(t, dir)
 	st, err := store.Open(ctx, dir)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, st.Close()) }()
