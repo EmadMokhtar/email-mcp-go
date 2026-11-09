@@ -445,7 +445,7 @@ func TestUpdateAccount(t *testing.T) {
 }
 
 // A settings save that read the account before a failed login must not write
-// back the old status (follow-up N-1). The login failure sets needs_reauth with
+// back the old status. The login failure sets needs_reauth with
 // SetAccountStatus; the save that comes after it with the old copy keeps it.
 func TestUpdateAccountKeepsAStatusSetAfterTheRead(t *testing.T) {
 	s := newTestStore(t)

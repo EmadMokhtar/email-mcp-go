@@ -1582,7 +1582,7 @@ func TestDoctorNeverMakesAKey(t *testing.T) {
 // A database that a newer email-mcp wrote has a migration version that this
 // binary does not know. doctor reports it under "database schema" with the
 // fixed text of store.ErrNewerSchema, not under "master key": the key is not
-// the problem (follow-up N-2).
+// the problem.
 func TestDoctorReportsANewerSchema(t *testing.T) {
 	dir, keyPath := newCLIEnv(t)
 	srv := startLocal(t, imaptest.ModeTLS, smtptest.ModeTLS)

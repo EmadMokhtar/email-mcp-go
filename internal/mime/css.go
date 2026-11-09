@@ -201,6 +201,9 @@ const (
 // past a box that clips it.
 func (p hideParts) hide() bool {
 	return p&(tinyHeight|clipY) == tinyHeight|clipY ||
+		// This hides a table cell too. Some mails cut a long line in a cell
+		// this way, and a browser shows the start of it. The rule stays,
+		// because a cell is an easy place to hide text.
 		p&(tinyWidth|clipX) == tinyWidth|clipX ||
 		p&(positioned|farOffset) == positioned|farOffset ||
 		p&(farIndent|noWrap|clipX) == farIndent|noWrap|clipX

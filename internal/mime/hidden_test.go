@@ -18,7 +18,7 @@ func readable(t testing.TB, markup string) (string, HiddenReport) {
 	return out, report
 }
 
-// hiddenPayloads are the cases of finding M-3. Each one has the word HID in a
+// hiddenPayloads are the hidden-text cases. Each one has the word HID in a
 // place that a reader does not see. absent says that the check works the case
 // out, so the word is gone. Without absent the check cannot work it out, so the
 // word may stay, but the report must say so.
@@ -369,7 +369,7 @@ func TestHiddenLastDeclarationInABlockWins(t *testing.T) {
 	require.Equal(t, "", htmlText(t, `<style>.x{font-size:0}</style><p class=x style="font-size:16px">secret</p>`))
 }
 
-// L-5: a style sheet that a browser does not use must not hide anything.
+// A style sheet that a browser does not use must not hide anything.
 func TestHiddenStyleThatDoesNotApplyHidesNothing(t *testing.T) {
 	const element = `<p class=msg>shown</p>`
 	for _, style := range []string{
@@ -399,7 +399,7 @@ func TestHiddenStyleThatDoesNotApplyHidesNothing(t *testing.T) {
 	require.True(t, report.Suspected)
 }
 
-// L-5: the report counts what a hiding rule left out.
+// The report counts what a hiding rule left out.
 func TestHiddenReportCountsDroppedParts(t *testing.T) {
 	tests := []struct {
 		name, markup string
