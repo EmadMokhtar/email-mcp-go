@@ -30,7 +30,7 @@ ARG BINARY_FROM=source
 # The Go version is the latest stable release, the same as the "stable" Go of
 # the CI. The digest pins the exact image (all platforms). To update it, run:
 #   docker buildx imagetools inspect golang:<version>-trixie
-FROM --platform=$BUILDPLATFORM golang:1.27.3-trixie@sha256:c65ecfe613b539ac74c62a4c3b2c27e8f8a6076384c8f27e8a3c0f3be17cc385 AS source
+FROM --platform=$BUILDPLATFORM golang:1.27.3-trixie@sha256:af1bfc2614ebb1dbd31af514b78740fd678850e76498762b425ecee4c5c6ea80 AS source
 WORKDIR /src
 # Download the modules first, so Docker can reuse this layer while go.mod and
 # go.sum do not change.
