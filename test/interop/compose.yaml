@@ -19,7 +19,7 @@ name: email-mcp-interop
 services:
   dovecot:
     # The image of the Dovecot project.
-    image: dovecot/dovecot:2.4.5@sha256:43c14def08a57f25107593cbcf64a0a6fbae84a7b9de7aa038513c9b21e91914
+    image: dovecot/dovecot:2.4.5@sha256:a2e908c9a93698f3923104ea5be7f4beacde9586242aff5d8059599d0042c62a
     environment:
       # The password of the one test user, interop@example.test. It is a test
       # value. interop_test.go has the same value.
